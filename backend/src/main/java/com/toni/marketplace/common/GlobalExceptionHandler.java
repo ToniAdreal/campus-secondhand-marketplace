@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -36,6 +37,18 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleMissingPart(MissingServletRequestPartException ex) {
     return ResponseEntity.badRequest()
         .body(ApiResponse.fail(400, "missing required part: " + ex.getRequestPartName()));
+  }
+
+  /**
+   * Query-param-bound endpoints (e.g. {@code GET /api/messages?itemId=}):
+   * a missing parameter would otherwise leave the JSON envelope for the
+   * container's default error page.
+   */
+  @ExceptionHandler(MissingServletRequestParameterException.class)
+  public ResponseEntity<ApiResponse<Void>> handleMissingParam(
+      MissingServletRequestParameterException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, "missing required parameter: " + ex.getParameterName()));
   }
 
   @ExceptionHandler(InvalidImageException.class)
