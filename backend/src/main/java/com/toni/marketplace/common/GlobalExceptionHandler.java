@@ -1,5 +1,8 @@
 package com.toni.marketplace.common;
 
+import com.toni.marketplace.auth.DuplicateUserException;
+import com.toni.marketplace.auth.InvalidCredentialsException;
+import com.toni.marketplace.auth.InvalidTokenException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -16,6 +19,18 @@ public class GlobalExceptionHandler {
         .map(e -> e.getField() + ": " + e.getDefaultMessage())
         .findFirst().orElse("validation failed");
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, msg));
+  }
+
+  @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
+  public ResponseEntity<ApiResponse<Void>> handleAuthFailure(RuntimeException ex) {
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+        .body(ApiResponse.fail(401, ex.getMessage()));
+  }
+
+  @ExceptionHandler(DuplicateUserException.class)
+  public ResponseEntity<ApiResponse<Void>> handleConflict(DuplicateUserException ex) {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(ApiResponse.fail(409, ex.getMessage()));
   }
 
   @ExceptionHandler(ResponseStatusException.class)

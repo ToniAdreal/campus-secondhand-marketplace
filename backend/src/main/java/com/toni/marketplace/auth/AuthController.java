@@ -1,0 +1,75 @@
+package com.toni.marketplace.auth;
+
+import com.toni.marketplace.common.ApiResponse;
+import jakarta.validation.Valid;
+import java.time.Duration;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * Public auth endpoints. The refresh token travels exclusively in the
+ * httpOnly {@code refresh_token} cookie (never in the JSON body), so page
+ * JavaScript cannot exfiltrate it; the access token goes to the SPA in memory.
+ */
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+
+  private static final String REFRESH_COOKIE = "refresh_token";
+
+  private final AuthService auth;
+  private final JwtProperties jwtProps;
+
+  public AuthController(AuthService auth, JwtProperties jwtProps) {
+    this.auth = auth;
+    this.jwtProps = jwtProps;
+  }
+
+  @PostMapping("/register")
+  public ResponseEntity<ApiResponse<AuthResponse>> register(
+      @Valid @RequestBody RegisterRequest request) {
+    return ok(auth.register(request.username(), request.email(), request.password()));
+  }
+
+  @PostMapping("/login")
+  public ResponseEntity<ApiResponse<AuthResponse>> login(
+      @Valid @RequestBody LoginRequest request) {
+    return ok(auth.login(request.usernameOrEmail(), request.password()));
+  }
+
+  @PostMapping("/refresh")
+  public ResponseEntity<ApiResponse<AuthResponse>> refresh(
+      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
+    if (refreshToken == null || refreshToken.isBlank()) {
+      throw new InvalidRefreshTokenException("missing refresh token");
+    }
+    return ok(auth.refresh(refreshToken));
+  }
+
+  private ResponseEntity<ApiResponse<AuthResponse>> ok(AuthService.AuthResult result) {
+    AuthResponse body = AuthResponse.of(result.user(), result.pair(),
+        jwtProps.getAccessTtl().toSeconds());
+    return ResponseEntity.status(HttpStatus.OK)
+        .header(HttpHeaders.SET_COOKIE, refreshCookie(result.pair().refreshToken()).toString())
+        .body(ApiResponse.ok(body));
+  }
+
+  private ResponseCookie refreshCookie(String token) {
+    Duration maxAge = jwtProps.getRefreshTtl();
+    return ResponseCookie.from(REFRESH_COOKIE, token)
+        .httpOnly(true)
+        // Local dev runs plain HTTP; production behind HTTPS must set Secure.
+        .secure(false)
+        .path("/")
+        .sameSite("Lax")
+        .maxAge(maxAge)
+        .build();
+  }
+}
