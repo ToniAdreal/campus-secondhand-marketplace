@@ -5,6 +5,7 @@ import com.toni.marketplace.auth.InvalidCredentialsException;
 import com.toni.marketplace.auth.InvalidTokenException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -31,6 +32,17 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleConflict(DuplicateUserException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiResponse.fail(409, ex.getMessage()));
+  }
+
+  /**
+   * {@code @PreAuthorize} denials are thrown by the method-security
+   * interceptor inside the DispatcherServlet, so they surface here rather
+   * than at the filter layer — map them to the same JSON 403 envelope.
+   */
+  @ExceptionHandler(AccessDeniedException.class)
+  public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(ApiResponse.fail(HttpStatus.FORBIDDEN.value(), "forbidden"));
   }
 
   @ExceptionHandler(ResponseStatusException.class)

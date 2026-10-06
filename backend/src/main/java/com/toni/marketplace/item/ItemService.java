@@ -26,4 +26,15 @@ public class ItemService {
     return items.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
   }
+
+  /**
+   * Removes a listing permanently. Role checks live on the controller's
+   * {@code @PreAuthorize}; the service stays role-agnostic.
+   */
+  @Transactional
+  public void deleteItem(Long id) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    items.delete(item);
+  }
 }
