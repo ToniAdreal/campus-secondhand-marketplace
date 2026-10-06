@@ -31,8 +31,9 @@ public class ItemController {
   @GetMapping
   public ApiResponse<Page<ItemDto>> list(
       @RequestParam(required = false) Long categoryId,
+      @RequestParam(name = "q", required = false) String keyword,
       @PageableDefault(size = 20) Pageable pageable) {
-    return ApiResponse.ok(itemService.listItems(pageable, categoryId));
+    return ApiResponse.ok(itemService.listItems(pageable, categoryId, keyword));
   }
 
   @GetMapping("/{id}")

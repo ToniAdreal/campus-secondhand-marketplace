@@ -43,6 +43,33 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   Page<ItemDto> findListViewByCategoryId(@Param("categoryId") Long categoryId, Pageable pageable);
 
   /**
+   * Combined category + keyword list view, same constructor projection as
+   * {@link #findListView} (single SELECT, no N+1). Both parameters are
+   * optional: a null {@code categoryId} matches every category and a null
+   * {@code keyword} disables the text filter. The keyword is matched
+   * case-insensitively against title and description; {@code %}, {@code _}
+   * and the escape character are escaped ({@code LIKE ... ESCAPE}) so a
+   * literal user search string never acts as a wildcard.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "from Item i left join i.category c "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')",
+      countQuery = "select count(i) from Item i "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')")
+  Page<ItemDto> findListViewFiltered(@Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    Pageable pageable);
+
+  /**
    * Detail view: JPQL fetch join pulls the optional category together with
    * the item, so the {@link ItemDto} mapping needs no extra lazy query.
    */

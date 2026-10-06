@@ -25,16 +25,27 @@ public class ItemService {
   }
 
   /**
-   * List view; optionally narrowed to one category. The queries are
-   * constructor DTO projections ({@link ItemRepository#findListView}) so the
-   * whole page — category names included — is rendered by a single SELECT
-   * instead of N+1 lazy loads.
+   * List view; optionally narrowed to one category and/or a free-text
+   * keyword. The queries are constructor DTO projections
+   * ({@link ItemRepository#findListViewFiltered}) so the whole page —
+   * category names included — is rendered by a single SELECT instead of
+   * N+1 lazy loads.
    */
   @Transactional(readOnly = true)
-  public Page<ItemDto> listItems(Pageable pageable, Long categoryId) {
-    return categoryId == null
-        ? items.findListView(pageable)
-        : items.findListViewByCategoryId(categoryId, pageable);
+  public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword) {
+    return items.findListViewFiltered(categoryId, normalizeKeyword(keyword), pageable);
+  }
+
+  /**
+   * Normalizes a raw {@code ?q=} parameter: trims whitespace, treats blank
+   * as "no filter", and escapes the LIKE wildcards ({@code %}, {@code _},
+   * backslash) so the search string is matched literally.
+   */
+  static String normalizeKeyword(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    return raw.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
   }
 
   @Transactional(readOnly = true)
