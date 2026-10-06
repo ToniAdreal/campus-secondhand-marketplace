@@ -6,6 +6,7 @@ import com.toni.marketplace.item.ItemStatus;
 import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,12 +21,14 @@ public class OrderService {
   private final OrderRepository orders;
   private final ItemRepository items;
   private final IdempotencyKeyService idempotency;
+  private final PaymentService payments;
 
   public OrderService(OrderRepository orders, ItemRepository items,
-                     IdempotencyKeyService idempotency) {
+                     IdempotencyKeyService idempotency, PaymentService payments) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
+    this.payments = payments;
   }
 
   /**
@@ -121,5 +124,58 @@ public class OrderService {
           "Idempotency-Key too long (max 64 characters)");
     }
     return trimmed;
+  }
+
+  /**
+   * Captures payment for an order (mock PSP — no real money moves) and
+   * transitions it PENDING → PAID. Rules:
+   * <ul>
+   *   <li>Only the order's buyer may pay; anyone else gets 403. The check
+   *       runs before anything else so an order id never leaks whether the
+   *       caller could have paid.</li>
+   *   <li>Paying an already-PAID order is idempotent: it returns the order
+   *       without a second capture (no double-charge).</li>
+   *   <li>Terminal orders (COMPLETED/CANCELLED) cannot be paid → 422.</li>
+   *   <li>The listing flips AVAILABLE → RESERVED in the same transaction, so
+   *       the list view stops offering an item that has just been paid for.</li>
+   *   <li>A concurrent modification of the order row between read and write
+   *       surfaces as {@code ObjectOptimisticLockingFailureException} from
+   *       the {@code @Version} field and is mapped to 409, fail-fast.</li>
+   * </ul>
+   */
+  @Transactional
+  public OrderDto pay(Long buyerId, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!order.getBuyerId().equals(buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the buyer can pay for this order");
+    }
+    if (order.getStatus() == OrderStatus.PAID) {
+      return OrderDto.from(order);
+    }
+    if (order.getStatus() == OrderStatus.COMPLETED
+        || order.getStatus() == OrderStatus.CANCELLED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", payment is not allowed");
+    }
+    try {
+      payments.capture(order);
+      order.setStatus(OrderStatus.PAID);
+      order.getItem().setStatus(ItemStatus.RESERVED);
+      OrderDto dto = OrderDto.from(orders.save(order));
+      // Flush deliberately inside the transaction (not at commit): the
+      // UPDATE runs now, so a concurrent modification of the order row
+      // between read and write surfaces here as
+      // ObjectOptimisticLockingFailureException and is mapped to 409.
+      // Without the flush the version check would happen at commit, outside
+      // this try/catch, and the caller would see a 500 instead.
+      orders.flush();
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "order was updated concurrently, please retry");
+    }
   }
 }

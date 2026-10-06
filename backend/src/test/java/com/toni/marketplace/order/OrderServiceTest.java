@@ -46,11 +46,14 @@ class OrderServiceTest {
   @Mock
   private IdempotencyKeyService idempotency;
 
+  @Mock
+  private PaymentService payments;
+
   private OrderService service;
 
   @BeforeEach
   void setUp() {
-    service = new OrderService(orders, items, idempotency);
+    service = new OrderService(orders, items, idempotency, payments);
   }
 
   private static Item listing(long sellerId) {
@@ -235,5 +238,99 @@ class OrderServiceTest {
         .isSameAs(appFailure);
     verify(idempotency).fail(42L);
     verify(idempotency, never()).complete(anyLong(), anyLong());
+  }
+
+  // --- pay (mock PSP capture) ---
+
+  private static Order paidOrder(long orderId, long buyerId) {
+    Item item = listing(9L);
+    Order order = new Order(item, buyerId, 2500L);
+    order.setStatus(OrderStatus.PAID);
+    return order;
+  }
+
+  private static Order pendingOrder(long buyerId) {
+    Item item = listing(9L);
+    return new Order(item, buyerId, 2500L);
+  }
+
+  @Test
+  void pay_unknownOrder_throws404() {
+    when(orders.findById(99L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.pay(7L, 99L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.NOT_FOUND));
+    verify(payments, never()).capture(any());
+  }
+
+  @Test
+  void pay_nonBuyer_throws403AndCapturesNothing() {
+    Order order = pendingOrder(7L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+
+    assertThatThrownBy(() -> service.pay(8L, 5L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.FORBIDDEN));
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    verify(payments, never()).capture(any());
+    verify(orders, never()).save(any());
+  }
+
+  @Test
+  void pay_alreadyPaid_isIdempotentWithoutRecapture() {
+    Order order = paidOrder(5L, 7L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+
+    OrderDto dto = service.pay(7L, 5L);
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
+    verify(payments, never()).capture(any());
+    verify(orders, never()).save(any());
+  }
+
+  @Test
+  void pay_cancelledOrder_throws422() {
+    Order order = pendingOrder(7L);
+    order.setStatus(OrderStatus.CANCELLED);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+
+    assertThatThrownBy(() -> service.pay(7L, 5L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+    verify(payments, never()).capture(any());
+  }
+
+  @Test
+  void pay_pendingOrder_capturesTransitionsAndReservesItem() {
+    Order order = pendingOrder(7L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(payments.capture(order))
+        .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
+    when(orders.save(order)).thenAnswer(inv -> inv.getArgument(0));
+
+    OrderDto dto = service.pay(7L, 5L);
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
+    assertThat(order.getItem().getStatus()).isEqualTo(ItemStatus.RESERVED);
+    verify(payments).capture(order);
+  }
+
+  @Test
+  void pay_versionConflictOnSave_throws409() {
+    Order order = pendingOrder(7L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(payments.capture(order))
+        .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
+    when(orders.save(order)).thenThrow(
+        new org.springframework.orm.ObjectOptimisticLockingFailureException(Order.class, 5L));
+
+    assertThatThrownBy(() -> service.pay(7L, 5L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.CONFLICT));
   }
 }
