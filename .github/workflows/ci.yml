@@ -4,6 +4,8 @@ on: [push, pull_request]
 
 jobs:
   backend-unit:
+    # `verify` (not just `test`) so the JaCoCo line-coverage gate (>= 80% on
+    # src/main) is enforced on every push in this Docker-free job.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -11,7 +13,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - run: mvn -B -q -f backend/pom.xml test
+      - run: mvn -B -q -f backend/pom.xml verify
 
   backend-integration:
     # Testcontainers spins up a real MySQL 8; requires Docker (available on GH runners)

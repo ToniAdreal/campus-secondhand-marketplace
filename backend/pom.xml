@@ -22,6 +22,7 @@
     <jjwt.version>0.12.6</jjwt.version>
     <mapstruct.version>1.5.5.Final</mapstruct.version>
     <testcontainers.version>1.19.7</testcontainers.version>
+    <jacoco.version>0.8.12</jacoco.version>
   </properties>
 
   <dependencies>
@@ -127,6 +128,72 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.version}</version>
+        <!-- Coverage gate: `mvn verify` fails the build when line coverage of
+             src/main drops below 80%. prepare-agent instruments the test JVMs;
+             report + check run at verify (so plain `mvn test` stays fast and
+             never fails on coverage). Excluded from the gate: the generated
+             MapStruct mapper impls (code-generated, covered incidentally) and
+             the declarative Spring wiring classes (entrypoint + *Config), whose
+             behavior is exercised through MockMvc but whose "coverage" is not a
+             meaningful quality signal. The HTML report at
+             target/site/jacoco/index.html uses the same excludes. -->
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+            <configuration>
+              <excludes>
+                <exclude>com/toni/marketplace/item/ItemMapperImpl.class</exclude>
+                <exclude>com/toni/marketplace/MarketplaceApplication.class</exclude>
+                <exclude>com/toni/marketplace/auth/AuthConfig.class</exclude>
+                <exclude>com/toni/marketplace/auth/SecurityConfig.class</exclude>
+                <exclude>com/toni/marketplace/common/UploadWebConfig.class</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <execution>
+            <id>check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <excludes>
+                    <exclude>com.toni.marketplace.item.ItemMapperImpl</exclude>
+                    <exclude>com.toni.marketplace.MarketplaceApplication</exclude>
+                    <exclude>com.toni.marketplace.auth.AuthConfig</exclude>
+                    <exclude>com.toni.marketplace.auth.SecurityConfig</exclude>
+                    <exclude>com.toni.marketplace.common.UploadWebConfig</exclude>
+                  </excludes>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.80</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
