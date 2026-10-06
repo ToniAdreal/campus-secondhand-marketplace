@@ -48,6 +48,7 @@ cd frontend && npm install && npm run dev
 ```
 
 Full MySQL path: `docker compose up --build` (uses the `mysql` Spring profile).
+Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 
 ## Testing
 

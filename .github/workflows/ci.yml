@@ -36,3 +36,43 @@ jobs:
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
       - run: npm test --prefix frontend -- --run --passWithNoTests
+
+  docker-compose-smoke:
+    # Full-stack smoke on real MySQL 8: compose builds the backend + frontend
+    # images, then register/login/create-listing are exercised through the
+    # nginx /api proxy with the backend on the `mysql` Spring profile.
+    # Manual version: docs/smoke-test.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up --build -d
+      - name: Wait for the API through the nginx /api proxy
+        run: |
+          code=""
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/api/items || true)
+            # 401 (JSON envelope) means nginx → backend → security chain is live
+            if [ "$code" = "401" ]; then echo "API is up"; break; fi
+            echo "waiting for API (got [$code])…"
+            sleep 10
+          done
+          if [ "$code" != "401" ]; then
+            echo "API never came up through the proxy"
+            docker compose logs backend
+            exit 1
+          fi
+      - name: Register, login and create a listing through the proxy
+        run: |
+          curl -fsS -X POST http://localhost/api/auth/register \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"smoke","email":"smoke@example.com","password":"Sm0kePass123"}' \
+            -o /tmp/register.json
+          TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/register.json"))["data"]["accessToken"])')
+          curl -fsS http://localhost/api/items -H "Authorization: Bearer $TOKEN" -o /dev/null
+          curl -fsS -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"smoke listing","priceCents":1999}' -o /dev/null
+          echo "smoke OK: register + list + create-listing all answered through the proxy"
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

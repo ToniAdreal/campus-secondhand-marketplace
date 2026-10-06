@@ -10,6 +10,15 @@ services:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+    # MySQL 8 takes ~10-20s to initialize on first boot; without this the
+    # backend starts against a closed port, fails datasource init, and exits.
+    # Backend waits for the healthy condition below before starting.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   backend:
     build: ./backend
@@ -18,7 +27,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: mysql
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
