@@ -16,6 +16,9 @@ function AuthNav() {
 
   return (
     <div className="flex items-center gap-3">
+      <Link to="/items/new" className="text-sm text-blue-600 hover:underline">
+        Sell an item
+      </Link>
       <span className="text-sm text-neutral-600">{user.username}</span>
       <button
         type="button"

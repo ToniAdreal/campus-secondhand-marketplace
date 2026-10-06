@@ -79,3 +79,15 @@ export function useCreateListing() {
     },
   });
 }
+
+/**
+ * POST /api/items/{id}/photo (multipart). Axios sets the multipart
+ * Content-Type + boundary itself from the FormData — no manual header.
+ */
+export function uploadItemPhoto(itemId: number, file: File): Promise<Item> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  return api
+    .post<ApiResponse<Item>>(`/items/${itemId}/photo`, form)
+    .then((res) => res.data.data);
+}
