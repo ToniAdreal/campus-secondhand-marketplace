@@ -21,21 +21,21 @@ public class ItemService {
   }
 
   /**
-   * List view; optionally narrowed to one category. The category path goes
-   * through {@code idx_item_category_status_created} (Flyway V3) rather than
-   * a full table scan.
+   * List view; optionally narrowed to one category. The queries are
+   * constructor DTO projections ({@link ItemRepository#findListView}) so the
+   * whole page — category names included — is rendered by a single SELECT
+   * instead of N+1 lazy loads.
    */
   @Transactional(readOnly = true)
   public Page<ItemDto> listItems(Pageable pageable, Long categoryId) {
-    Page<Item> page = categoryId == null
-        ? items.findAll(pageable)
-        : items.findByCategoryId(categoryId, pageable);
-    return page.map(mapper::toDto);
+    return categoryId == null
+        ? items.findListView(pageable)
+        : items.findListViewByCategoryId(categoryId, pageable);
   }
 
   @Transactional(readOnly = true)
   public ItemDto getItem(Long id) {
-    return items.findById(id)
+    return items.findDetailById(id)
         .map(mapper::toDto)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
   }
