@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    # Local dev default: in-memory H2 (MySQL compatibility mode), migrated by Flyway.
+    # Real MySQL path: docker compose up (uses the `mysql` profile below).
+    url: jdbc:h2:mem:marketdb;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.format_sql: true
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mysql
+  datasource:
+    url: jdbc:mysql://mysql:3306/marketdb?createDatabaseIfNotExist=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: market
+    password: market
