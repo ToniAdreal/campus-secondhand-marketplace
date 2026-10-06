@@ -25,6 +25,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -116,6 +117,7 @@ class OrderServiceTest {
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.CONFLICT));
     verify(orders, never()).save(any());
+    verify(items, never()).save(any());
   }
 
   @Test
@@ -156,6 +158,10 @@ class OrderServiceTest {
     assertThat(dto.status()).isEqualTo(OrderStatus.PENDING);
     assertThat(dto.amountCents()).isEqualTo(2500L);
     assertThat(dto.buyerId()).isEqualTo(7L);
+    // The listing is reserved as part of creation so the list view stops
+    // offering it immediately.
+    assertThat(lamp.getStatus()).isEqualTo(ItemStatus.RESERVED);
+    verify(items).save(lamp);
   }
 
   // --- createOrder orchestration (spy over createOrderTx) ---
@@ -236,6 +242,23 @@ class OrderServiceTest {
 
     assertThatThrownBy(() -> spied.createOrder(7L, 3L, "key-1"))
         .isSameAs(appFailure);
+    verify(idempotency).fail(42L);
+    verify(idempotency, never()).complete(anyLong(), anyLong());
+  }
+
+  @Test
+  void createOrder_itemVersionRace_burnsKeyAndThrows409() {
+    var reservation = created(42L);
+    when(idempotency.reserve(7L, "key-1", 3L)).thenReturn(reservation);
+
+    OrderService spied = spy(service);
+    doThrow(new ObjectOptimisticLockingFailureException(Item.class, 3L))
+        .when(spied).createOrderTx(7L, 3L);
+
+    assertThatThrownBy(() -> spied.createOrder(7L, 3L, "key-1"))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.CONFLICT));
     verify(idempotency).fail(42L);
     verify(idempotency, never()).complete(anyLong(), anyLong());
   }

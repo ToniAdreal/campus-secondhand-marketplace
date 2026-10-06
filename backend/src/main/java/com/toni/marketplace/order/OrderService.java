@@ -77,6 +77,14 @@ public class OrderService {
       idempotency.fail(record.getId());
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "item already has an active order");
+    } catch (ObjectOptimisticLockingFailureException e) {
+      // Lost the item-status race: a concurrent request flipped the item to
+      // RESERVED first, bumping its @Version, so this request's status flip
+      // failed fast on the stale version. Same outcome as the constraint
+      // race above: 409, key burned, client retries with a NEW key.
+      idempotency.fail(record.getId());
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "item already has an active order");
     } catch (RuntimeException e) {
       idempotency.fail(record.getId());
       throw e;
@@ -125,6 +133,16 @@ public class OrderService {
    * {@code existsByItem_IdAndStatusIn} check gives a friendly 409; the
    * {@code uq_order_active_item} database constraint stays the final arbiter
    * under races (mapped to 409 by the caller).
+   *
+   * <p>The listing flips AVAILABLE → RESERVED as part of creation, so the
+   * list view (which projects {@code Item.status}) stops offering an item
+   * the moment someone orders it — not only once it is paid for. The flip
+   * goes through {@link ItemRepository#save} (merge): the item was read by
+   * its own repository transaction and is detached here, and the merge
+   * bumps {@code Item.@Version}, so two concurrent creations racing on one
+   * listing fail fast on the stale version
+   * ({@code ObjectOptimisticLockingFailureException} → 409 in the caller)
+   * instead of both inserting.
    */
   @Transactional
   public OrderDto createOrderTx(Long buyerId, Long itemId) {
@@ -140,6 +158,8 @@ public class OrderService {
     if (orders.existsByItem_IdAndStatusIn(itemId, ACTIVE)) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "item already has an active order");
     }
+    item.setStatus(ItemStatus.RESERVED);
+    items.save(item);
     return OrderDto.from(orders.save(new Order(item, buyerId, item.getPriceCents())));
   }
 
@@ -167,7 +187,10 @@ public class OrderService {
    *       without a second capture (no double-charge).</li>
    *   <li>Terminal orders (COMPLETED/CANCELLED) cannot be paid → 422.</li>
    *   <li>The listing flips AVAILABLE → RESERVED in the same transaction, so
-   *       the list view stops offering an item that has just been paid for.</li>
+   *       the list view stops offering an item that has just been paid for.
+   *       (Since order creation now reserves the listing, this is usually a
+   *       no-op; it still enforces the invariant for orders created before
+   *       that change.)</li>
    *   <li>A concurrent modification of the order row between read and write
    *       surfaces as {@code ObjectOptimisticLockingFailureException} from
    *       the {@code @Version} field and is mapped to 409, fail-fast.</li>
