@@ -31,6 +31,17 @@ public class ItemService {
   }
 
   /**
+   * Creates a listing for the authenticated user. The seller id is the JWT
+   * principal ({@link Long}), never a request parameter — a client cannot
+   * post on someone else's behalf.
+   */
+  @Transactional
+  public ItemDto createItem(Long sellerId, ItemCreateRequest request) {
+    Item item = items.save(mapper.toEntity(request, sellerId));
+    return mapper.toDto(item);
+  }
+
+  /**
    * Removes a listing permanently. Role checks live on the controller's
    * {@code @PreAuthorize}; the service stays role-agnostic.
    */
