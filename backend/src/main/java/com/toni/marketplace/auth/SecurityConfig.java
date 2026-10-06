@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.toni.marketplace.common.ApiResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -21,7 +22,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * React SPA and native clients, not browser forms).
  *
  * <ul>
- *   <li>{@code /api/auth/**} is public (register/login/refresh land here).</li>
+ *   <li>{@code /api/auth/**} is public (register/login/refresh land here),
+ *       except {@code POST /api/auth/logout}, which needs a Bearer access
+ *       token because it revokes the caller's own session.</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
  *       viewable by any visitor.</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
@@ -79,6 +82,9 @@ public class SecurityConfig {
         .csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
+            // Logout needs the caller's identity: a valid Bearer access
+            // token. The rest of /api/auth/** stays public.
+            .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             .anyRequest().authenticated())
         .exceptionHandling(eh -> eh

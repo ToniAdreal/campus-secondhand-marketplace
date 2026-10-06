@@ -9,10 +9,11 @@ interface AuthState {
    * scope — never localStorage/sessionStorage). The refresh token lives in
    * an httpOnly cookie managed by the browser (see api/client.ts). */
   login: (user: AuthUser, accessToken: string) => void;
-  /** Clears the in-memory token and the user. Note: there is no server-side
-   * logout endpoint yet, so the httpOnly refresh cookie lingers until it
-   * expires (7d) — it is useless without an access token and rotates on
-   * every refresh, so a stale cookie cannot mint a session on its own. */
+  /** Clears the in-memory token and the user. Note: this store does not call
+   * the server-side POST /api/auth/logout yet, so the httpOnly refresh
+   * cookie lingers until it expires (7d) — it is useless without an access
+   * token and rotates on every refresh, so a stale cookie cannot mint a
+   * session on its own. */
   logout: () => void;
 }
 

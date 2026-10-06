@@ -66,4 +66,15 @@ public class AuthService {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     return new AuthResult(user, pair);
   }
+
+  /**
+   * Logs out: deletes every refresh token of the user (all their sessions,
+   * on all devices), so no presented refresh cookie can mint new access
+   * tokens afterwards. The httpOnly cookie itself is cleared by the
+   * controller with an expired {@code Set-Cookie}.
+   */
+  @Transactional
+  public void logout(long userId) {
+    jwt.revokeAll(userId);
+  }
 }

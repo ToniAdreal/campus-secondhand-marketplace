@@ -7,6 +7,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -51,6 +52,34 @@ public class AuthController {
       throw new InvalidRefreshTokenException("missing refresh token");
     }
     return ok(auth.refresh(refreshToken));
+  }
+
+  /**
+   * Logs out the caller (identified by the Bearer access token — the
+   * SecurityConfig requires authentication for this route): every refresh
+   * token of the user is revoked server-side, and the httpOnly
+   * {@code refresh_token} cookie is cleared with an expired
+   * {@code Set-Cookie}. Anonymous callers get the JSON 401 envelope.
+   */
+  @PostMapping("/logout")
+  public ResponseEntity<ApiResponse<Void>> logout(@AuthenticationPrincipal Long userId) {
+    auth.logout(userId);
+    return ResponseEntity.status(HttpStatus.OK)
+        .header(HttpHeaders.SET_COOKIE, clearedRefreshCookie().toString())
+        .body(ApiResponse.ok(null));
+  }
+
+  /** Cookie-clearing counterpart of {@link #refreshCookie}: identical name,
+   * path and SameSite so the browser overwrites it; Max-Age=0 expires it. */
+  private ResponseCookie clearedRefreshCookie() {
+    return ResponseCookie.from(REFRESH_COOKIE, "")
+        .httpOnly(true)
+        // Local dev runs plain HTTP; production behind HTTPS must set Secure.
+        .secure(false)
+        .path("/")
+        .sameSite("Lax")
+        .maxAge(Duration.ZERO)
+        .build();
   }
 
   private ResponseEntity<ApiResponse<AuthResponse>> ok(AuthService.AuthResult result) {

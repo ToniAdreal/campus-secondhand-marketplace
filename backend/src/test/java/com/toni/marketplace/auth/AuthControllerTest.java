@@ -201,6 +201,55 @@ class AuthControllerTest {
         .andExpect(status().isOk());
   }
 
+  @Test
+  void logoutRevokesFamilyAndSubsequentRefreshFails() throws Exception {
+    MvcResult registered = register(REGISTER);
+    String access = com.jayway.jsonpath.JsonPath.read(
+        registered.getResponse().getContentAsString(), "$.data.accessToken");
+    Cookie first = registered.getResponse().getCookie("refresh_token");
+    assertThat(first).isNotNull();
+
+    // A second session for the same user (e.g. another device).
+    MvcResult login = mockMvc.perform(post("/api/auth/login")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+        .andExpect(status().isOk())
+        .andReturn();
+    Cookie second = login.getResponse().getCookie("refresh_token");
+    assertThat(second).isNotNull();
+    assertThat(refreshTokens.count()).isEqualTo(2);
+
+    // Logout with the Bearer access token: server-side revocation + cleared cookie.
+    MvcResult logout = mockMvc.perform(post("/api/auth/logout")
+            .header("Authorization", "Bearer " + access))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0))
+        .andReturn();
+
+    String setCookie = logout.getResponse().getHeader("Set-Cookie");
+    assertThat(setCookie)
+        .contains("refresh_token=")
+        .contains("Max-Age=0");
+
+    // The whole family is gone server-side: both sessions' refresh cookies are dead.
+    assertThat(refreshTokens.count()).isZero();
+    mockMvc.perform(post("/api/auth/refresh").cookie(first))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+    mockMvc.perform(post("/api/auth/refresh").cookie(second))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+  }
+
+  @Test
+  void logoutWithoutBearerTokenReturns401() throws Exception {
+    // The route is behind authentication; an anonymous caller has no session to kill.
+    mockMvc.perform(post("/api/auth/logout"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401))
+        .andExpect(jsonPath("$.message").value("unauthorized"));
+  }
+
   private MvcResult register(String body) throws Exception {
     return mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
