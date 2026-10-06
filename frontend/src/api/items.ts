@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 
 export interface Item {
@@ -50,5 +50,32 @@ export function useItem(id: number) {
     queryKey: itemKeys.detail(id),
     queryFn: () =>
       api.get<ApiResponse<Item>>(`/items/${id}`).then((res) => res.data.data),
+  });
+}
+
+export interface CreateListingInput {
+  title: string;
+  description?: string;
+  priceCents: number;
+  categoryId?: number | null;
+}
+
+/**
+ * POST /api/items. On success the whole `items` subtree is invalidated
+ * (every list page / search query and every detail view) instead of editing
+ * the cache by hand — a new listing's position in paginated, filtered lists
+ * cannot be computed locally, so an invalidation + refetch is the only
+ * correct source of truth.
+ */
+export function useCreateListing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateListingInput) =>
+      api
+        .post<ApiResponse<Item>>('/items', input)
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
   });
 }
