@@ -15,6 +15,14 @@ spring:
     properties:
       hibernate.format_sql: true
 
+app:
+  jwt:
+    # Base64 HS256 key (256 bits). Dev-only placeholder — production MUST set
+    # the APP_JWT_SECRET environment variable. Access 15 min / refresh 7 days.
+    secret: ${APP_JWT_SECRET:74xcpYqCpoJStMnkqprFiMYwsQIZD/zPa3LgyU83nbE=}
+    access-ttl: 15m
+    refresh-ttl: 7d
+
 ---
 spring:
   config:

@@ -16,8 +16,8 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * A second-hand listing. Seller linkage is a plain sellerId in this scaffold;
- * the User entity and auth arrive in a later step.
+ * A second-hand listing. {@code sellerId} references the {@code app_user} id
+ * of the seller (see the auth package).
  */
 @Entity
 @Table(name = "item")
