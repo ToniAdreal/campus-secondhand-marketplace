@@ -5,6 +5,8 @@ import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
 import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -87,6 +89,34 @@ public class OrderService {
         .map(OrderDto::from)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
             "idempotency record points at a missing order"));
+  }
+
+  /**
+   * Lists one buyer's orders (newest first — enforced by the controller's
+   * default sort). Scoped strictly to the caller's own {@code buyerId}, so
+   * one buyer can never page into another's orders.
+   */
+  @Transactional(readOnly = true)
+  public Page<OrderDto> listOrders(Long buyerId, Pageable pageable) {
+    return orders.findByBuyerId(buyerId, pageable).map(OrderDto::from);
+  }
+
+  /**
+   * Reads a single order for the buyer who placed it — or for an ADMIN.
+   * Unknown id → 404; anyone else → 403. The 403 deliberately mirrors
+   * {@link #pay(Long, Long)}: an order id never leaks whether the caller
+   * could have paid for it.
+   */
+  @Transactional(readOnly = true)
+  public OrderDto getOrderFor(Long callerId, boolean callerIsAdmin, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getBuyerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "order does not belong to you");
+    }
+    return OrderDto.from(order);
   }
 
   /**
