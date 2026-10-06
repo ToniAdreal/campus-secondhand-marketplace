@@ -21,3 +21,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.iml
+
+# tsc -b emit artifacts
+vite.config.js
+vite.config.d.ts
