@@ -11,19 +11,22 @@ import org.springframework.web.server.ResponseStatusException;
 public class ItemService {
 
   private final ItemRepository items;
+  private final ItemMapper mapper;
 
-  public ItemService(ItemRepository items) {
+  public ItemService(ItemRepository items, ItemMapper mapper) {
     this.items = items;
+    this.mapper = mapper;
   }
 
   @Transactional(readOnly = true)
-  public Page<Item> listItems(Pageable pageable) {
-    return items.findAll(pageable);
+  public Page<ItemDto> listItems(Pageable pageable) {
+    return items.findAll(pageable).map(mapper::toDto);
   }
 
   @Transactional(readOnly = true)
-  public Item getItem(Long id) {
+  public ItemDto getItem(Long id) {
     return items.findById(id)
+        .map(mapper::toDto)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
   }
 

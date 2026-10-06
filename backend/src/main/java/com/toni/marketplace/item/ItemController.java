@@ -22,12 +22,12 @@ public class ItemController {
   }
 
   @GetMapping
-  public ApiResponse<Page<Item>> list(@PageableDefault(size = 20) Pageable pageable) {
+  public ApiResponse<Page<ItemDto>> list(@PageableDefault(size = 20) Pageable pageable) {
     return ApiResponse.ok(itemService.listItems(pageable));
   }
 
   @GetMapping("/{id}")
-  public ApiResponse<Item> get(@PathVariable Long id) {
+  public ApiResponse<ItemDto> get(@PathVariable Long id) {
     return ApiResponse.ok(itemService.getItem(id));
   }
 
