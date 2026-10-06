@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,6 +21,12 @@ public class GlobalExceptionHandler {
         .map(e -> e.getField() + ": " + e.getDefaultMessage())
         .findFirst().orElse("validation failed");
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, msg));
+  }
+
+  @ExceptionHandler(MissingRequestHeaderException.class)
+  public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, "missing required header: " + ex.getHeaderName()));
   }
 
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
