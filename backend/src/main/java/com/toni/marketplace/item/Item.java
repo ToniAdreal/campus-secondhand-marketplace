@@ -12,6 +12,8 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * A second-hand listing. Seller linkage is a plain sellerId in this scaffold;
@@ -36,6 +38,7 @@ public class Item {
   private Long priceCents;
 
   @Enumerated(EnumType.STRING)
+  @JdbcTypeCode(SqlTypes.VARCHAR)
   @Column(nullable = false, length = 16)
   private ItemStatus status = ItemStatus.AVAILABLE;
 
