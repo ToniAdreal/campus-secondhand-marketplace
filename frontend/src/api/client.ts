@@ -9,9 +9,9 @@ import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
  * - On 401, exactly one refresh request is in flight; concurrent failed
  *   requests queue on the same promise instead of each triggering a refresh.
  *
- * NOTE: POST /api/auth/refresh does not exist yet — the auth endpoints are a
- * later roadmap step. The queueing logic is written first so the behavior is
- * unit-testable without a backend.
+ * NOTE: POST /api/auth/refresh is served by AuthController (httpOnly cookie,
+ * token rotation). The queueing logic is unit-tested via a fake adapter, so it
+ * needs no backend to verify.
  */
 
 let accessToken: string | null = null;

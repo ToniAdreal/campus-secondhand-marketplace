@@ -84,4 +84,66 @@ describe('api client', () => {
     await expect(api.get('/items')).rejects.toThrow('unauthorized');
     expect(getAccessToken()).toBeNull();
   });
+
+  it('attempts a fresh refresh for a later 401 wave after a failed refresh', async () => {
+    setAccessToken('expired-token');
+    let refreshCalls = 0;
+    installAdapter(async (config) => {
+      if (config.url?.includes('/auth/refresh')) {
+        refreshCalls++;
+        if (refreshCalls === 1) {
+          throw httpError(config, 500, 'refresh backend down');
+        }
+        return ok(config, { data: { accessToken: 'recovered-789' } });
+      }
+      if (readAuth(config) !== 'Bearer recovered-789') {
+        throw httpError(config, 401, 'unauthorized');
+      }
+      return ok(config, { ok: true });
+    });
+
+    // Wave 1: refresh fails → request rejects, token cleared.
+    await expect(api.get('/items')).rejects.toThrow('unauthorized');
+    expect(refreshCalls).toBe(1);
+    expect(getAccessToken()).toBeNull();
+
+    // Wave 2 (a later 401): a NEW refresh is attempted — the settled promise
+    // from wave 1 must not be reused (refreshPromise is reset in finally()).
+    setAccessToken('expired-token');
+    const res = await api.get('/items');
+    expect(refreshCalls).toBe(2);
+    expect(res.data.ok).toBe(true);
+    expect(getAccessToken()).toBe('recovered-789');
+  });
+
+  it('does not touch the refresh queue for non-401 errors', async () => {
+    setAccessToken('tok-123');
+    let refreshCalls = 0;
+    installAdapter(async (config) => {
+      if (config.url?.includes('/auth/refresh')) {
+        refreshCalls++;
+        return ok(config, { data: { accessToken: 'x' } });
+      }
+      throw httpError(config, 403, 'forbidden');
+    });
+
+    await expect(api.get('/items')).rejects.toThrow('forbidden');
+    expect(refreshCalls).toBe(0);
+    expect(getAccessToken()).toBe('tok-123'); // token left alone
+  });
+
+  it('rejects without a second refresh when the retried request also 401s', async () => {
+    setAccessToken('expired-token');
+    let refreshCalls = 0;
+    installAdapter(async (config) => {
+      if (config.url?.includes('/auth/refresh')) {
+        refreshCalls++;
+        return ok(config, { data: { accessToken: 'still-bad' } });
+      }
+      throw httpError(config, 401, 'unauthorized');
+    });
+
+    await expect(api.get('/items')).rejects.toThrow('unauthorized');
+    expect(refreshCalls).toBe(1); // _retry guard: no refresh retry loop
+  });
 });
