@@ -61,6 +61,16 @@ public class Item {
   @Version
   private Long version;
 
+  /**
+   * Public URL path of the listing's primary photo, e.g.
+   * {@code /uploads/3f2a…​.png}, set by POST /api/items/{id}/photo. Nullable:
+   * listings created before image upload existed have no photo. The stored
+   * filename is a UUID (see ImageStorageService) — never the original client
+   * filename, which is discarded at upload time.
+   */
+  @Column(name = "photo_url", length = 1024)
+  private String photoUrl;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -101,6 +111,8 @@ public class Item {
   public Category getCategory() { return category; }
   public void setCategory(Category category) { this.category = category; }
   public Long getVersion() { return version; }
+  public String getPhotoUrl() { return photoUrl; }
+  public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

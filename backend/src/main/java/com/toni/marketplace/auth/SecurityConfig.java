@@ -22,6 +22,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *
  * <ul>
  *   <li>{@code /api/auth/**} is public (register/login/refresh land here).</li>
+ *   <li>{@code /uploads/**} is public — listing photos are meant to be
+ *       viewable by any visitor.</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
  *   <li>Everything else requires a valid Bearer access token.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
@@ -77,7 +79,7 @@ public class SecurityConfig {
         .csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
-            .requestMatchers("/api/auth/**", "/error").permitAll()
+            .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             .anyRequest().authenticated())
         .exceptionHandling(eh -> eh
             .authenticationEntryPoint(entryPoint)

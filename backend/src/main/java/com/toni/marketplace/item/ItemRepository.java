@@ -24,7 +24,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
-          + "c.id, c.name, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
           + "from Item i left join i.category c",
       countQuery = "select count(i) from Item i")
   Page<ItemDto> findListView(Pageable pageable);
@@ -37,7 +37,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
-          + "c.id, c.name, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
           + "from Item i left join i.category c where i.category.id = :categoryId",
       countQuery = "select count(i) from Item i where i.category.id = :categoryId")
   Page<ItemDto> findListViewByCategoryId(@Param("categoryId") Long categoryId, Pageable pageable);

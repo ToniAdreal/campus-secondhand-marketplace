@@ -10,6 +10,7 @@ export interface Item {
   sellerId: number;
   categoryId: number | null;
   categoryName: string | null;
+  photoUrl: string | null;
 }
 
 export interface Page<T> {

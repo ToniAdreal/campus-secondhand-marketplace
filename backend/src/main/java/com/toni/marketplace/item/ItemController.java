@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/items")
@@ -49,6 +51,20 @@ public class ItemController {
     Long sellerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(itemService.createItem(sellerId, request));
+  }
+
+  /**
+   * Attaches a photo to a listing. The listing's seller — or an ADMIN — may
+   * upload; everyone else gets 403 and anonymous callers get 401. The file
+   * is validated (image type, size) and stored under a UUID name by
+   * {@link ImageStorageService}; the response carries the public
+   * {@code /uploads/<uuid>.<ext>} URL in {@code photoUrl}.
+   */
+  @PostMapping(value = "/{id}/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @PreAuthorize("@itemSecurity.canAttachPhoto(authentication, #id)")
+  public ApiResponse<ItemDto> uploadPhoto(@PathVariable Long id,
+                                         @RequestParam("file") MultipartFile file) {
+    return ApiResponse.ok(itemService.attachPhoto(id, file));
   }
 
   /**

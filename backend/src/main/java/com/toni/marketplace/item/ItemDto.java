@@ -17,6 +17,8 @@ public record ItemDto(
     Long sellerId,
     Long categoryId,
     String categoryName,
+    /** Public URL path of the listing photo ("/uploads/<uuid>.<ext>"), or null. */
+    String photoUrl,
     Instant createdAt,
     Instant updatedAt) {
 }

@@ -3,6 +3,7 @@ package com.toni.marketplace.common;
 import com.toni.marketplace.auth.DuplicateUserException;
 import com.toni.marketplace.auth.InvalidCredentialsException;
 import com.toni.marketplace.auth.InvalidTokenException;
+import com.toni.marketplace.item.InvalidImageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -10,6 +11,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
@@ -27,6 +30,28 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex) {
     return ResponseEntity.badRequest()
         .body(ApiResponse.fail(400, "missing required header: " + ex.getHeaderName()));
+  }
+
+  @ExceptionHandler(MissingServletRequestPartException.class)
+  public ResponseEntity<ApiResponse<Void>> handleMissingPart(MissingServletRequestPartException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, "missing required part: " + ex.getRequestPartName()));
+  }
+
+  @ExceptionHandler(InvalidImageException.class)
+  public ResponseEntity<ApiResponse<Void>> handleInvalidImage(InvalidImageException ex) {
+    return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
+  }
+
+  /**
+   * Oversized multipart requests are rejected by Spring's servlet layer
+   * before the controller is reached; answer 413 in the JSON envelope rather
+   * than the container's HTML error page.
+   */
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  public ResponseEntity<ApiResponse<Void>> handleTooLarge(MaxUploadSizeExceededException ex) {
+    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+        .body(ApiResponse.fail(HttpStatus.PAYLOAD_TOO_LARGE.value(), "image too large"));
   }
 
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
