@@ -21,5 +21,13 @@ public record ItemCreateRequest(
 
     @NotNull(message = "priceCents must be set")
     @Positive(message = "priceCents must be positive")
-    Long priceCents) {
+    Long priceCents,
+
+    /**
+     * Optional category id (see the {@code category} taxonomy seeded by
+     * Flyway V3). {@code @Positive} only constrains non-null values; a
+     * missing category id leaves the listing uncategorized.
+     */
+    @Positive(message = "categoryId must be positive")
+    Long categoryId) {
 }

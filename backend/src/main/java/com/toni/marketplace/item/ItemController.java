@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -26,8 +27,10 @@ public class ItemController {
   }
 
   @GetMapping
-  public ApiResponse<Page<ItemDto>> list(@PageableDefault(size = 20) Pageable pageable) {
-    return ApiResponse.ok(itemService.listItems(pageable));
+  public ApiResponse<Page<ItemDto>> list(
+      @RequestParam(required = false) Long categoryId,
+      @PageableDefault(size = 20) Pageable pageable) {
+    return ApiResponse.ok(itemService.listItems(pageable, categoryId));
   }
 
   @GetMapping("/{id}")

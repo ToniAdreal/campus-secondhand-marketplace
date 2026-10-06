@@ -15,6 +15,8 @@ public record ItemDto(
     Long priceCents,
     ItemStatus status,
     Long sellerId,
+    Long categoryId,
+    String categoryName,
     Instant createdAt,
     Instant updatedAt) {
 }

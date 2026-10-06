@@ -8,6 +8,8 @@ export interface Item {
   priceCents: number;
   status: 'AVAILABLE' | 'RESERVED' | 'SOLD';
   sellerId: number;
+  categoryId: number | null;
+  categoryName: string | null;
 }
 
 export interface Page<T> {

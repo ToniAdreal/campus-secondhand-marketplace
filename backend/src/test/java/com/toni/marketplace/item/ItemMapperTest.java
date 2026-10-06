@@ -48,22 +48,54 @@ class ItemMapperTest {
 
   @Test
   void toEntityBindsRequestWithSellerId() {
-    ItemCreateRequest request = new ItemCreateRequest("Bike", "City bike", 45000L);
+    ItemCreateRequest request = new ItemCreateRequest("Bike", "City bike", 45000L, null);
 
-    Item item = mapper.toEntity(request, 42L);
+    Item item = mapper.toEntity(request, 42L, null);
 
     assertThat(item.getTitle()).isEqualTo("Bike");
     assertThat(item.getDescription()).isEqualTo("City bike");
     assertThat(item.getPriceCents()).isEqualTo(45000L);
     assertThat(item.getSellerId()).isEqualTo(42L);
     assertThat(item.getStatus()).isEqualTo(ItemStatus.AVAILABLE);
+    assertThat(item.getCategory()).isNull();
+  }
+
+  @Test
+  void toEntityAttachesCategory() {
+    Category category = new Category("Electronics", "electronics");
+    ItemCreateRequest request = new ItemCreateRequest("Phone", "Pixel", 99000L, 5L);
+
+    Item item = mapper.toEntity(request, 42L, category);
+
+    assertThat(item.getCategory()).isSameAs(category);
+  }
+
+  @Test
+  void toDtoExposesCategoryIdAndName() {
+    Item item = new Item("Used ThinkPad", "T480, good battery", 129900L, 7L);
+    item.setCategory(new Category("Electronics", "electronics"));
+
+    ItemDto dto = mapper.toDto(item);
+
+    assertThat(dto.categoryId()).isNull(); // transient category, no id yet
+    assertThat(dto.categoryName()).isEqualTo("Electronics");
+  }
+
+  @Test
+  void toDtoLeavesCategoryFieldsNullWhenUncategorized() {
+    Item item = new Item("Mug", "Free mug", 100L, 7L);
+
+    ItemDto dto = mapper.toDto(item);
+
+    assertThat(dto.categoryId()).isNull();
+    assertThat(dto.categoryName()).isNull();
   }
 
   @Test
   void dtoRoundTripPreservesValues() {
-    ItemCreateRequest request = new ItemCreateRequest("Lamp", "Desk lamp", 8000L);
+    ItemCreateRequest request = new ItemCreateRequest("Lamp", "Desk lamp", 8000L, null);
 
-    ItemDto dto = mapper.toDto(mapper.toEntity(request, 9L));
+    ItemDto dto = mapper.toDto(mapper.toEntity(request, 9L, null));
 
     assertThat(dto.title()).isEqualTo("Lamp");
     assertThat(dto.priceCents()).isEqualTo(8000L);

@@ -4,9 +4,12 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -44,6 +47,15 @@ public class Item {
 
   @Column(name = "seller_id", nullable = false)
   private Long sellerId;
+
+  /**
+   * Optional category (Flyway V3 taxonomy). Nullable: listings created before
+   * categories existed are simply uncategorized. Lazy — the list view maps
+   * through it inside the service transaction.
+   */
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "category_id")
+  private Category category;
 
   /** Optimistic locking: concurrent buyers racing on one item fail fast. */
   @Version
@@ -86,6 +98,8 @@ public class Item {
   public ItemStatus getStatus() { return status; }
   public void setStatus(ItemStatus status) { this.status = status; }
   public Long getSellerId() { return sellerId; }
+  public Category getCategory() { return category; }
+  public void setCategory(Category category) { this.category = category; }
   public Long getVersion() { return version; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }

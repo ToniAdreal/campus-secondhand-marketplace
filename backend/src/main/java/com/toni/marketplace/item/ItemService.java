@@ -11,16 +11,26 @@ import org.springframework.web.server.ResponseStatusException;
 public class ItemService {
 
   private final ItemRepository items;
+  private final CategoryRepository categories;
   private final ItemMapper mapper;
 
-  public ItemService(ItemRepository items, ItemMapper mapper) {
+  public ItemService(ItemRepository items, CategoryRepository categories, ItemMapper mapper) {
     this.items = items;
+    this.categories = categories;
     this.mapper = mapper;
   }
 
+  /**
+   * List view; optionally narrowed to one category. The category path goes
+   * through {@code idx_item_category_status_created} (Flyway V3) rather than
+   * a full table scan.
+   */
   @Transactional(readOnly = true)
-  public Page<ItemDto> listItems(Pageable pageable) {
-    return items.findAll(pageable).map(mapper::toDto);
+  public Page<ItemDto> listItems(Pageable pageable, Long categoryId) {
+    Page<Item> page = categoryId == null
+        ? items.findAll(pageable)
+        : items.findByCategoryId(categoryId, pageable);
+    return page.map(mapper::toDto);
   }
 
   @Transactional(readOnly = true)
@@ -33,11 +43,17 @@ public class ItemService {
   /**
    * Creates a listing for the authenticated user. The seller id is the JWT
    * principal ({@link Long}), never a request parameter — a client cannot
-   * post on someone else's behalf.
+   * post on someone else's behalf. An unknown category id is rejected 404
+   * with the JSON envelope before anything is persisted.
    */
   @Transactional
   public ItemDto createItem(Long sellerId, ItemCreateRequest request) {
-    Item item = items.save(mapper.toEntity(request, sellerId));
+    Category category = null;
+    if (request.categoryId() != null) {
+      category = categories.findById(request.categoryId())
+          .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "category not found"));
+    }
+    Item item = items.save(mapper.toEntity(request, sellerId, category));
     return mapper.toDto(item);
   }
 
