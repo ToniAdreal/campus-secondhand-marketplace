@@ -1,0 +1,152 @@
+package com.toni.marketplace.auth;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.toni.marketplace.common.ApiResponse;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
+import java.io.IOException;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+/**
+ * Throttles the credential endpoints {@code POST /api/auth/login} and
+ * {@code POST /api/auth/register} per client IP via {@link AuthRateLimiter}
+ * (default 5 attempts/minute — see {@link AuthRateLimitProperties}).
+ * Brute-force on login is otherwise unthrottled.
+ *
+ * <p>Behavior:
+ * <ul>
+ *   <li>Every attempt on the two endpoints consumes one token — success or
+ *       failure, login or register share one bucket per IP.</li>
+ *   <li>An empty bucket short-circuits with {@code 429} in the project's
+ *       {@code {code,message,data}} envelope plus a {@code Retry-After}
+ *       header (seconds until the next token). The security chain is never
+ *       reached.</li>
+ *   <li>A <em>successful</em> login (2xx) resets the caller's bucket, so
+ *       legitimate users are not punished for earlier typos. Register does
+ *       not reset — the natural next step is a login, which does.</li>
+ * </ul>
+ *
+ * <p>Runs at {@link Ordered#HIGHEST_PRECEDENCE} so throttled requests are
+ * rejected before any security processing. Only POSTs to the two paths are
+ * inspected; everything else passes through untouched.
+ *
+ * <p>Client identity is {@code request.getRemoteAddr()}. Behind the
+ * docker-compose nginx proxy that is the proxy's address, not the end
+ * user's — honoring {@code X-Forwarded-For} from trusted proxies is a
+ * documented follow-up, not done here (trusting the header blindly would let
+ * attackers spoof their bucket key).
+ */
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class AuthRateLimitFilter extends OncePerRequestFilter {
+
+  static final String RETRY_AFTER_HEADER = "Retry-After";
+  private static final String LOGIN_PATH = "/api/auth/login";
+  private static final String REGISTER_PATH = "/api/auth/register";
+
+  private final AuthRateLimiter limiter;
+  private final ObjectMapper mapper;
+
+  public AuthRateLimitFilter(AuthRateLimiter limiter, ObjectMapper mapper) {
+    this.limiter = limiter;
+    this.mapper = mapper;
+  }
+
+  @Override
+  protected boolean shouldNotFilter(HttpServletRequest request) {
+    if (!limiter.isEnabled()) {
+      return true;
+    }
+    if (!"POST".equalsIgnoreCase(request.getMethod())) {
+      return true;
+    }
+    String path = pathOf(request);
+    return !(LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path));
+  }
+
+  @Override
+  protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                  FilterChain chain) throws ServletException, IOException {
+    String ip = clientIp(request);
+    if (!limiter.tryConsume(ip)) {
+      writeTooManyRequests(response, limiter.retryAfterSeconds(ip));
+      return;
+    }
+    if (LOGIN_PATH.equals(pathOf(request))) {
+      StatusCapture wrapped = new StatusCapture(response);
+      chain.doFilter(request, wrapped);
+      if (wrapped.getStatus() / 100 == 2) {
+        limiter.reset(ip);
+      }
+    } else {
+      chain.doFilter(request, response);
+    }
+  }
+
+  private void writeTooManyRequests(HttpServletResponse response, long retryAfterSeconds)
+      throws IOException {
+    response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+    response.setCharacterEncoding("UTF-8");
+    response.setHeader(RETRY_AFTER_HEADER, Long.toString(retryAfterSeconds));
+    mapper.writeValue(response.getWriter(),
+        ApiResponse.fail(HttpStatus.TOO_MANY_REQUESTS.value(), "too many requests"));
+  }
+
+  private static String pathOf(HttpServletRequest request) {
+    String path = request.getServletPath();
+    if (path == null || path.isEmpty()) {
+      path = request.getRequestURI();
+    }
+    return path;
+  }
+
+  private static String clientIp(HttpServletRequest request) {
+    String ip = request.getRemoteAddr();
+    return (ip == null || ip.isBlank()) ? "unknown" : ip;
+  }
+
+  /**
+   * Records the status the downstream chain sets, so the filter can tell a
+   * successful login (2xx → reset the bucket) from a failed one. Covers both
+   * {@code setStatus} and {@code sendError} paths.
+   */
+  private static final class StatusCapture extends HttpServletResponseWrapper {
+    private int status = HttpServletResponse.SC_OK;
+
+    StatusCapture(HttpServletResponse response) {
+      super(response);
+    }
+
+    @Override
+    public void setStatus(int sc) {
+      this.status = sc;
+      super.setStatus(sc);
+    }
+
+    @Override
+    public void sendError(int sc) throws IOException {
+      this.status = sc;
+      super.sendError(sc);
+    }
+
+    @Override
+    public void sendError(int sc, String msg) throws IOException {
+      this.status = sc;
+      super.sendError(sc, msg);
+    }
+
+    @Override
+    public int getStatus() {
+      return status;
+    }
+  }
+}
