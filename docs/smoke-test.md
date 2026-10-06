@@ -58,9 +58,22 @@ curl -s -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
 # → {"code":0,"message":"ok","data":{"id":1,"title":"smoke listing",…}}
 ```
 
-Everything except `/api/auth/**`, `/uploads/**`, and `/error` requires a Bearer token —
+Everything except `/api/auth/**`, `/uploads/**`, `/actuator/health`,
+`/actuator/info`, and `/error` requires a Bearer token —
 an unauthenticated `curl http://localhost/api/items` must return the JSON 401 envelope,
 which itself proves the proxy → security filter chain path works.
+
+### Actuator probes
+
+The backend exposes Spring Boot Actuator:
+
+- `curl http://localhost:8080/actuator/health` → `{"status":"UP"}` — public,
+  unauthenticated; this is the liveness probe for the compose stack (CI curls
+  it after the backend is up — see the `docker-compose-smoke` job).
+- `curl http://localhost:8080/actuator/info` — public, app name/version.
+- `/actuator/metrics` (and anything else under `/actuator/**`) — requires a
+  valid Bearer token like any API endpoint. Metrics live in-memory only; no
+  external metrics export is configured yet.
 
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.

@@ -61,6 +61,12 @@ jobs:
             docker compose logs backend
             exit 1
           fi
+      - name: Actuator health is public and UP (liveness probe for the stack)
+        run: |
+          body=$(curl -fsS http://localhost:8080/actuator/health)
+          echo "$body"
+          echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["status"]=="UP", d'
+          echo "actuator /health is public and UP"
       - name: Register, login and create a listing through the proxy
         run: |
           curl -fsS -X POST http://localhost/api/auth/register \

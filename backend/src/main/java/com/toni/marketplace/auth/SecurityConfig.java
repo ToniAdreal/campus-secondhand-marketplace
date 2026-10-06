@@ -27,6 +27,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *       token because it revokes the caller's own session.</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
  *       viewable by any visitor.</li>
+ *   <li>{@code /actuator/health} and {@code /actuator/info} are public —
+ *       unauthenticated liveness/readiness probes for the compose stack; every
+ *       other actuator endpoint ({@code /actuator/**}, currently only
+ *       {@code /actuator/metrics}) needs a Bearer access token. Micrometer
+ *       ships in-memory only: no external metrics export is configured yet
+ *       (follow-up).</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
  *   <li>Everything else requires a valid Bearer access token.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
@@ -86,6 +92,11 @@ public class SecurityConfig {
             // token. The rest of /api/auth/** stays public.
             .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
+            // Actuator: public liveness/readiness probes, everything else
+            // authenticated. Matcher order matters — the more specific
+            // health/info matchers come first.
+            .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+            .requestMatchers("/actuator/**").authenticated()
             .anyRequest().authenticated())
         .exceptionHandling(eh -> eh
             .authenticationEntryPoint(entryPoint)

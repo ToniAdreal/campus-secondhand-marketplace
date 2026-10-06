@@ -34,6 +34,29 @@ app:
     access-ttl: 15m
     refresh-ttl: 7d
 
+management:
+  info:
+    # Exposes info.* application properties on /actuator/info (the env info
+    # contributor is opt-in since Spring Boot 3.2 — it defaults to off).
+    env:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        # health + info are public (permitAll in SecurityConfig) so the
+        # compose stack / a load balancer has a liveness probe without
+        # credentials; metrics is exposed for operators but stays behind
+        # auth (same SecurityConfig rule). Nothing else is registered for
+        # the web; /actuator/** matches are authenticated regardless.
+        include: health,info,metrics
+
+info:
+  app:
+    name: campus-secondhand-marketplace
+    # Honest scope: this is a portfolio/reconstruction project, not a
+    # production system (see README scope notes).
+    description: Campus second-hand marketplace backend (portfolio/reconstruction project)
+
 ---
 spring:
   config:
