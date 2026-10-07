@@ -187,11 +187,12 @@ public class OrderService {
    *   <li>Only the order's buyer may cancel; anyone else gets 403. The check
    *       runs before anything else, mirroring {@link #pay(Long, Long)}, so
    *       an order id never leaks what the caller may do with it.</li>
-   *   <li>Only PENDING orders can be cancelled. PAID orders → 422 (cancel the
-   *       mock payment instead — cancellation after capture is out of
-   *       scope); terminal (COMPLETED/CANCELLED) orders → 422, except that
-   *       re-cancelling an already-CANCELLED order is idempotent and simply
-   *       returns the order.</li>
+   *   <li>Only PENDING orders can be cancelled. PAID orders → 422 ("cancel the
+   *       mock payment instead" via {@link #refund(Long, boolean, Long)} —
+   *       cancellation after capture is out of scope); terminal
+   *       (COMPLETED/CANCELLED) orders → 422, except that re-cancelling an
+   *       already-CANCELLED order is idempotent and simply returns the
+   *       order.</li>
    *   <li>The listing flips RESERVED → AVAILABLE in the same transaction, so
    *       the list view offers the item again. Before this endpoint a PENDING
    *       order stranded the listing in RESERVED forever — there was no
@@ -220,6 +221,11 @@ public class OrderService {
     }
     if (order.getStatus() == OrderStatus.CANCELLED) {
       return OrderDto.from(order);
+    }
+    if (order.getStatus() == OrderStatus.PAID) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is PAID — cancel the mock payment instead via "
+              + "POST /api/orders/{id}/refund");
     }
     if (order.getStatus() != OrderStatus.PENDING) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -369,6 +375,85 @@ public class OrderService {
       // and is mapped to 409. Without the flush the version check would
       // happen at commit, outside this try/catch, and the caller would see a
       // 500.
+      orders.flush();
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "order was updated concurrently, please retry");
+    }
+  }
+
+  /**
+   * Refunds a captured order (mock PSP — see {@link PaymentService}):
+   * PAID → REFUNDED. Rules:
+   * <ul>
+   *   <li>Only the listing's seller (or an ADMIN) may refund; the buyer and
+   *       anyone else gets 403. This is a deliberate design decision: the
+   *       buyer cannot self-refund after capture — capture settles money
+   *       with the seller, so releasing the refund is the seller's (or a
+   *       platform admin's) call. The check runs before anything else,
+   *       mirroring {@link #pay(Long, Long)}, so an order id never leaks
+   *       whether the caller could have acted on it.</li>
+   *   <li>Only PAID orders can be refunded. PENDING/CANCELLED/COMPLETED
+   *       orders → 422; a re-refund of an already-REFUNDED order is
+   *       idempotent and simply returns the order without calling the PSP
+   *       seam again (the mock counts refund calls — see
+   *       {@link PaymentService#refundsIssued()} — and tests pin the
+   *       single-invocation guarantee).</li>
+   *   <li>The listing flips RESERVED → AVAILABLE in the same transaction, so
+   *       the list view offers the refunded item again. The flip only runs
+   *       when the item is actually RESERVED: a listing the seller already
+   *       marked SOLD by hand (PATCH /api/items/{id}/status) is left alone.
+   *       Once the order is terminal the {@code uq_order_active_item} guard
+   *       releases, so the buyer may order the item again.</li>
+   *   <li>The flip goes through {@link ItemRepository#save} (merge), the same
+   *       path as {@link #cancel(Long, Long)} and
+   *       {@link OrderCreationService#create}. The merge bumps
+   *       {@code Item.@Version}, and the in-transaction
+   *       {@code orders.flush()} surfaces a concurrent order-row transition
+   *       as {@code ObjectOptimisticLockingFailureException}, mapped to 409
+   *       fail-fast. Honest scope, inherited from {@link #pay(Long, Long)}:
+   *       on a refund race the losing thread still calls
+   *       {@link PaymentService#refund} before its version check fails at
+   *       flush — the mock is side-effect-free, so nothing double-refunds
+   *       here. A real PSP client must pass an order-scoped idempotency key
+   *       to the refund call so the loser's pre-flush call is a no-op
+   *       (declared follow-up).</li>
+   * </ul>
+   */
+  @Transactional
+  public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getItem().getSellerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the seller can refund this order");
+    }
+    if (order.getStatus() == OrderStatus.REFUNDED) {
+      return OrderDto.from(order);
+    }
+    if (order.getStatus() != OrderStatus.PAID) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", refund is not allowed");
+    }
+    try {
+      payments.refund(order);
+      order.setStatus(OrderStatus.REFUNDED);
+      Item item = items.findById(order.getItem().getId())
+          .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+              "order points at a missing item"));
+      if (item.getStatus() == ItemStatus.RESERVED) {
+        item.setStatus(ItemStatus.AVAILABLE);
+        items.save(item);
+      }
+      OrderDto dto = OrderDto.from(orders.save(order));
+      // Flush deliberately inside the transaction (not at commit), mirroring
+      // pay()/cancel()/complete(): a concurrent transition of the order row
+      // between read and write surfaces here as
+      // ObjectOptimisticLockingFailureException and is mapped to 409.
+      // Without the flush the version check would happen at commit, outside
+      // this try/catch, and the caller would see a 500 instead.
       orders.flush();
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {

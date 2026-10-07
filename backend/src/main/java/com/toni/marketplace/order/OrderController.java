@@ -115,4 +115,23 @@ public class OrderController {
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return ApiResponse.ok(orderService.complete(callerId, admin, id));
   }
+
+  /**
+   * Refunds a captured order (mock PSP — see {@code PaymentService}):
+   * PAID → REFUNDED. Only the listing's seller (or an ADMIN) may refund —
+   * the buyer cannot self-refund after capture (deliberate design decision,
+   * see the service javadoc); anything but PAID → 422, and a re-refund of
+   * an already-REFUNDED order is idempotent. The listing flips
+   * RESERVED → AVAILABLE in the same transaction, and a {@code @Version}
+   * conflict surfaces as 409.
+   */
+  @PostMapping("/{id}/refund")
+  public ApiResponse<OrderDto> refund(@PathVariable Long id) {
+    Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = (Long) authentication.getPrincipal();
+    boolean admin = authentication.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(orderService.refund(callerId, admin, id));
+  }
 }
