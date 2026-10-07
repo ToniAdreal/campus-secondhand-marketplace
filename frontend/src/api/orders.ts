@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { itemKeys, type ApiResponse } from './items';
 
@@ -9,6 +9,46 @@ export interface Order {
   status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
   amountCents: number;
   createdAt: string;
+}
+
+/**
+ * GET /api/orders/{id} — the caller's own order (buyer), or any order (ADMIN).
+ * Backed by the buyer order reads landed on the backend; the order
+ * confirmation page reads through this hook.
+ */
+export function useOrder(id: number) {
+  return useQuery({
+    queryKey: ['orders', id],
+    queryFn: () =>
+      api.get<ApiResponse<Order>>(`/orders/${id}`).then((res) => res.data.data),
+  });
+}
+
+/**
+ * Maps a failed POST /api/orders to a user-facing message. The backend speaks
+ * the {code,message,data} envelope; we keep the raw server message for
+ * unexpected cases but rewrite the known conflict cases into plain language
+ * (the 409 "already has an active order" races a concurrent buyer — telling
+ * the user "someone just bought it" is both accurate and kind).
+ */
+export function describeOrderError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 409 || /already has an active order|not available|purchased by someone else/i.test(message)) {
+    return 'Someone just grabbed this item — it is no longer available.';
+  }
+  if (code === 422 || /own listing/i.test(message)) {
+    return 'You cannot buy your own listing.';
+  }
+  if (code === 401) {
+    return 'Please log in to buy this item.';
+  }
+  if (code === 404) {
+    return 'This listing no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
 }
 
 function newIdempotencyKey(): string {

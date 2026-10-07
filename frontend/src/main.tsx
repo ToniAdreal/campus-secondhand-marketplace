@@ -8,6 +8,7 @@ import CreateListingPage from './pages/CreateListingPage';
 import HomePage from './pages/HomePage';
 import ItemDetailPage from './pages/ItemDetailPage';
 import LoginPage from './pages/LoginPage';
+import OrderConfirmationPage from './pages/OrderConfirmationPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: 'items/new', element: <CreateListingPage /> },
       { path: 'items/:id', element: <ItemDetailPage /> },
+      { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'login', element: <LoginPage /> },
     ],
   },
