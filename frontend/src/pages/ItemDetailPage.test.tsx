@@ -76,6 +76,10 @@ describe('ItemDetailPage buy-now', () => {
   beforeEach(() => {
     currentPath = '';
     useAuthStore.getState().logout(); // also clears the in-memory access token
+    // Default route: the message-thread endpoint answers an empty thread.
+    // Tests pin their own GET with mockResolvedValueOnce, which fires first
+    // (the item query mounts before the child thread query).
+    getSpy.mockImplementation(() => Promise.resolve(envelope([])));
   });
 
   afterEach(() => {
@@ -115,9 +119,12 @@ describe('ItemDetailPage buy-now', () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValueOnce(envelope(fakeItem));
     // After the successful buy the page navigates to /orders/9, whose
-    // confirmation view reads the order — keep that fetch mocked too so the
-    // test never touches the real network.
-    getSpy.mockResolvedValue(envelope(fakeOrder));
+    // confirmation view reads the order — route that fetch to the order and
+    // keep the message thread on an empty thread, so the test never touches
+    // the real network.
+    getSpy.mockImplementation((url: string) =>
+      Promise.resolve(envelope(url === '/orders/9' ? fakeOrder : [])),
+    );
     postSpy.mockResolvedValueOnce(envelope(fakeOrder));
     renderAt('/items/7');
 

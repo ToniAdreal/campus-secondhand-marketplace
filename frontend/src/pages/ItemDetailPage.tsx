@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useItem } from '../api/items';
 import { describeOrderError, useCreateOrder } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
+import MessageThread from '../components/MessageThread';
 
 export default function ItemDetailPage() {
   const { id } = useParams();
@@ -60,6 +61,12 @@ export default function ItemDetailPage() {
           </p>
         )}
       </div>
+
+      {user && (
+        <div className="mt-8 border-t pt-6">
+          <MessageThread itemId={data.id} sellerId={data.sellerId} />
+        </div>
+      )}
     </article>
   );
 }
