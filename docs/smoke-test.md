@@ -9,9 +9,16 @@ Manual end-to-end verification of the full stack on real MySQL 8:
 - `frontend` — React build served by nginx on port 80; **`/api/` is reverse-proxied to
   `backend:8080`** (`frontend/nginx.conf`), so the browser app and API share one origin
 
-This is a portfolio/reconstruction project, not production: the compose stack uses the
-dev JWT-signing placeholder baked into `application.yml`. Set `APP_JWT_SECRET` on the
-backend service for anything beyond a smoke run.
+This is a portfolio/reconstruction project, not production, but the backend will not
+boot on the `mysql` profile with the dev JWT-signing placeholder baked into
+`application.yml` — `JwtSecretStartupCheck` fails fast so a forgotten secret can
+never sign tokens with a public key. Export a random 256-bit secret before the
+first `docker compose up` (the compose file errors out early with a reminder if
+you forget):
+
+```bash
+export APP_JWT_SECRET=$(openssl rand -base64 32)
+```
 
 ## Prerequisites
 

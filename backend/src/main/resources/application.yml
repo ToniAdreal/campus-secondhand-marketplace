@@ -38,8 +38,10 @@ app:
     refresh-token-retention: 30
     idempotency-retention: 90
   jwt:
-    # Base64 HS256 key (256 bits). Dev-only placeholder — production MUST set
-    # the APP_JWT_SECRET environment variable. Access 15 min / refresh 7 days.
+    # Base64 HS256 key (256 bits). Dev-only placeholder for local H2 runs.
+    # On the `mysql` profile (the docker-compose path) the app REFUSES to boot
+    # with this placeholder — JwtSecretStartupCheck fails fast unless the
+    # APP_JWT_SECRET environment variable is set. Access 15 min / refresh 7 days.
     secret: ${APP_JWT_SECRET:74xcpYqCpoJStMnkqprFiMYwsQIZD/zPa3LgyU83nbE=}
     access-ttl: 15m
     refresh-ttl: 7d
