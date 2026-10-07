@@ -3,6 +3,7 @@ package com.toni.marketplace.order;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import java.time.Instant;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -252,6 +253,61 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
     }
+  }
+
+  /**
+   * Cancels one stale PENDING order and releases its listing — the per-row
+   * step of the stale-order expiry job (see
+   * {@link PendingOrderExpiryService}). Rules:
+   * <ul>
+   *   <li>Only PENDING orders older than {@code cutoff} are touched. The
+   *       status and age are re-checked inside this transaction: a
+   *       concurrent pay/complete/cancel that committed after the job's
+   *       worklist scan simply makes this method return {@code false},
+   *       never double-transitions.</li>
+   *   <li>The listing flips RESERVED → AVAILABLE in the same transaction, so
+   *       the list view offers the item again. The flip only runs when the
+   *       item is actually RESERVED: a listing the seller already marked
+   *       SOLD by hand (PATCH /api/items/{id}/status) is left alone, while
+   *       the order is still cancelled (it can no longer be completed).</li>
+   *   <li>The flip goes through {@link ItemRepository#save} (merge), the
+   *       same path as {@link #cancel(Long, Long)} and
+   *       {@link OrderCreationService#create}. The merge bumps
+   *       {@code Item.@Version}, and the in-transaction
+   *       {@code orders.flush()} surfaces a concurrent order-row transition
+   *       as {@code ObjectOptimisticLockingFailureException}, which the job
+   *       catches per row and treats as "the concurrent transition won" —
+   *       skipped, no retry, no crash loop.</li>
+   * </ul>
+   *
+   * @return {@code true} when the order was expired by this call,
+   *         {@code false} when it was already non-PENDING or not stale.
+   */
+  @Transactional
+  public boolean expireStaleOrder(Long orderId, Instant cutoff) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new IllegalStateException(
+            "order " + orderId + " vanished from the expiry worklist"));
+    if (order.getStatus() != OrderStatus.PENDING || !order.getCreatedAt().isBefore(cutoff)) {
+      return false;
+    }
+    order.setStatus(OrderStatus.CANCELLED);
+    Item item = items.findById(order.getItem().getId())
+        .orElseThrow(() -> new IllegalStateException(
+            "order " + orderId + " points at a missing item"));
+    if (item.getStatus() == ItemStatus.RESERVED) {
+      item.setStatus(ItemStatus.AVAILABLE);
+      items.save(item);
+    }
+    orders.save(order);
+    // Flush deliberately inside the transaction (not at commit), mirroring
+    // pay()/cancel(): a concurrent transition of the order row between read
+    // and write surfaces here as ObjectOptimisticLockingFailureException.
+    // Without the flush the version check would happen at commit, outside
+    // the job's per-row try/catch, and the batch would die on the first
+    // race instead of skipping the row.
+    orders.flush();
+    return true;
   }
 
   /**

@@ -37,6 +37,15 @@ app:
     #   are never purged.
     refresh-token-retention: 30
     idempotency-retention: 90
+  orders:
+    # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
+    # minutes server-local). A buyer who creates an order and never pays
+    # strands the listing in RESERVED until they cancel manually (#33);
+    # PENDING orders older than this TTL are cancelled automatically and the
+    # listing flips back to AVAILABLE. Default 30 minutes; expiry granularity
+    # is the 5-minute cadence, so a stale order holds its listing at most
+    # TTL + one cadence.
+    pending-ttl: 30m
   jwt:
     # Base64 HS256 key (256 bits). Dev-only placeholder for local H2 runs.
     # On the `mysql` profile (the docker-compose path) the app REFUSES to boot
