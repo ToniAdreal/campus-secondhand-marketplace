@@ -20,7 +20,7 @@ class UserRepositoryTest {
 
     assertThat(saved.getId()).isNotNull();
     assertThat(saved.getCreatedAt()).isNotNull();
-    assertThat(users.findByUsername("alice"))
+    assertThat(users.findByUsernameIgnoreCase("alice"))
         .hasValueSatisfying(u -> {
           assertThat(u.getEmail()).isEqualTo("alice@example.com");
           assertThat(u.getRoles()).containsExactly(Role.USER);
@@ -51,8 +51,21 @@ class UserRepositoryTest {
     user.setRoles(EnumSet.of(Role.USER, Role.ADMIN));
     users.saveAndFlush(user);
 
-    assertThat(users.findByUsername("carol"))
+    assertThat(users.findByUsernameIgnoreCase("carol"))
         .hasValueSatisfying(u ->
             assertThat(u.getRoles()).containsExactlyInAnyOrder(Role.USER, Role.ADMIN));
+  }
+
+  @Test
+  void lookupsAreCaseInsensitiveRegardlessOfStoredCase() {
+    // Rows written before V9's backfill may carry mixed case; the contract
+    // is that lookups find them anyway, on every database collation.
+    users.saveAndFlush(new User("Alice", "Alice@Example.com", "$2a$12$hashed"));
+
+    assertThat(users.findByUsernameIgnoreCase("alice")).isPresent();
+    assertThat(users.findByUsernameIgnoreCase("ALICE")).isPresent();
+    assertThat(users.findByEmailIgnoreCase("alice@example.com")).isPresent();
+    assertThat(users.findByEmailIgnoreCase("ALICE@EXAMPLE.COM")).isPresent();
+    assertThat(users.findByUsernameIgnoreCase("nobody")).isEmpty();
   }
 }

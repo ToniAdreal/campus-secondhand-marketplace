@@ -1,11 +1,22 @@
 package com.toni.marketplace.auth;
 
+import java.util.Locale;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Registration / login / refresh flows. HTTP concerns (cookies, status codes)
  * live in {@link AuthController}; this class owns the domain logic.
+ *
+ * <p>Case rule: usernames and emails are normalized to lowercase
+ * ({@link Locale#ROOT}) at registration and stored canonical; every lookup
+ * is case-insensitive (see {@link UserRepository}). "Toni" and "toni" are
+ * the same account on every database — before this change the duplicate
+ * checks were case-sensitive Java-side, so H2 allowed both rows while MySQL's
+ * case-insensitive collation threw a raw constraint error instead of 409.
+ * Rows written before normalization are backfilled by
+ * {@code V9__normalize_user_case.sql}; see its header for the
+ * true-case-duplicate concern.
  */
 @Service
 public class AuthService {
@@ -23,31 +34,43 @@ public class AuthService {
   /** Registered user plus their first token pair. */
   public record AuthResult(User user, JwtTokenService.TokenPair pair) {}
 
+  /** Canonical form for usernames and emails. {@code Locale.ROOT} avoids the Turkish-I surprise. */
+  static String canonical(String raw) {
+    return raw.toLowerCase(Locale.ROOT);
+  }
+
   /**
    * Registers a new user. Weak passwords → 400 (see
    * {@link PasswordStrengthValidator}); duplicate username or email → 409.
+   * The username and email are stored canonical-lowercase, so the response
+   * echoes the canonical form ("Alice" registers as "alice").
    */
   @Transactional
   public AuthResult register(String username, String email, String rawPassword) {
     PasswordStrengthValidator.requireStrong(rawPassword);
-    if (users.findByUsername(username).isPresent()) {
+    String canonicalUsername = canonical(username);
+    String canonicalEmail = canonical(email);
+    if (users.findByUsernameIgnoreCase(canonicalUsername).isPresent()) {
       throw new DuplicateUserException("username is already taken");
     }
-    if (users.findByEmail(email).isPresent()) {
+    if (users.findByEmailIgnoreCase(canonicalEmail).isPresent()) {
       throw new DuplicateUserException("email is already registered");
     }
-    User user = users.save(new User(username, email, passwords.encode(rawPassword)));
+    User user = users.save(new User(canonicalUsername, canonicalEmail, passwords.encode(rawPassword)));
     return new AuthResult(user, jwt.createTokenPair(user));
   }
 
   /**
-   * Verifies credentials and issues a fresh token pair. Unknown identifier
-   * and wrong password produce the identical error — no user enumeration.
+   * Verifies credentials and issues a fresh token pair. The identifier is
+   * normalized before lookup, so "ALICE" logs into the "alice" account.
+   * Unknown identifier and wrong password produce the identical error —
+   * no user enumeration.
    */
   @Transactional
   public AuthResult login(String usernameOrEmail, String rawPassword) {
-    User user = users.findByUsername(usernameOrEmail)
-        .or(() -> users.findByEmail(usernameOrEmail))
+    String identifier = canonical(usernameOrEmail);
+    User user = users.findByUsernameIgnoreCase(identifier)
+        .or(() -> users.findByEmailIgnoreCase(identifier))
         .orElseThrow(InvalidCredentialsException::new);
     if (!passwords.matches(rawPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();

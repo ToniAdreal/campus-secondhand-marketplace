@@ -66,7 +66,7 @@ class AuthMeTest {
   @Test
   void meReflectsCurrentRolesSorted() throws Exception {
     accessToken(register());
-    User alice = users.findByUsername("alice").orElseThrow();
+    User alice = users.findByUsernameIgnoreCase("alice").orElseThrow();
     alice.setRoles(EnumSet.of(Role.USER, Role.ADMIN));
     users.save(alice);
 

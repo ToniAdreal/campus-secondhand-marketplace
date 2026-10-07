@@ -1,0 +1,22 @@
+-- V9: backfill case normalization for usernames and emails.
+--
+-- From this version on, the application stores usernames and emails
+-- canonical-lowercase at registration (see AuthService.canonical) and looks
+-- them up case-insensitively on every database. Rows written before that
+-- change may carry mixed case, so this migration normalizes them in place.
+-- Rows written by the new code are already lowercase: the UPDATE is a no-op
+-- for them.
+--
+-- BACKFILL CONCERN — read before deploying against real data:
+-- If two rows differ only by case ("Toni" vs "toni", or "A@x.com" vs
+-- "a@x.com") this UPDATE violates uq_app_user_username / uq_app_user_email
+-- and the migration FAILS LOUDLY. That is deliberate: two case-variants of
+-- the same identifier are the same account under the new contract, and only
+-- a human can decide which row survives (merge or rename the loser, then
+-- rerun). Note the asymmetry that made this a real bug: on MySQL's default
+-- case-insensitive collation such duplicates can never exist (the unique
+-- constraint already prevented them, throwing a raw error instead of the
+-- application's 409), while on H2 or a case-sensitive collation they can —
+-- so this migration is most likely to bite exactly the databases where the
+-- duplicates were silently allowed.
+UPDATE app_user SET username = LOWER(username), email = LOWER(email);

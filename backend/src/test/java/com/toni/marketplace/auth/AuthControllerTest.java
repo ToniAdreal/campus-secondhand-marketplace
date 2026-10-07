@@ -78,7 +78,7 @@ class AuthControllerTest {
         .contains("HttpOnly")
         .contains("SameSite=Lax");
 
-    User saved = users.findByUsername("alice").orElseThrow();
+    User saved = users.findByUsernameIgnoreCase("alice").orElseThrow();
     assertThat(saved.getPasswordHash()).startsWith("$2a$");
     assertThat(saved.getPasswordHash()).doesNotContain("s3cret-pass");
   }
