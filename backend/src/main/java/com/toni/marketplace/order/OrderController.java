@@ -97,4 +97,22 @@ public class OrderController {
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(orderService.pay(buyerId, id));
   }
+
+  /**
+   * Marks an order COMPLETED — the seller confirms the handoff after the
+   * buyer paid. Only the listing's seller (or an ADMIN) may complete (403
+   * otherwise, buyer included); only PAID orders transition (anything else
+   * → 422, re-completing a COMPLETED order is idempotent); the listing
+   * flips RESERVED → SOLD in the same transaction, and a {@code @Version}
+   * conflict surfaces as 409.
+   */
+  @PostMapping("/{id}/complete")
+  public ApiResponse<OrderDto> complete(@PathVariable Long id) {
+    Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = (Long) authentication.getPrincipal();
+    boolean admin = authentication.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(orderService.complete(callerId, admin, id));
+  }
 }

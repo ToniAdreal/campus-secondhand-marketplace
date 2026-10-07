@@ -309,4 +309,71 @@ public class OrderService {
           "order was updated concurrently, please retry");
     }
   }
+
+  /**
+   * Marks an order COMPLETED: the seller confirms the handoff after the
+   * buyer paid. Rules:
+   * <ul>
+   *   <li>Only the listing's seller (or an ADMIN) may complete; the buyer
+   *       and anyone else gets 403. The check runs before anything else,
+   *       mirroring {@link #pay(Long, Long)}, so an order id never leaks
+   *       whether the caller could have paid for it.</li>
+   *   <li>Only PAID orders can be completed. PENDING/CANCELLED orders →
+   *       422; a re-complete of an already-COMPLETED order is idempotent and
+   *       simply returns the order.</li>
+   *   <li>The listing flips RESERVED → SOLD in the same transaction, so the
+   *       list view stops offering a paid-for item. Without this endpoint a
+   *       PAID order stranded its listing in RESERVED forever — the mirror
+   *       image of the PENDING strand bug {@link #cancel(Long, Long)}
+   *       fixed. The flip only runs when the item is actually RESERVED: a
+   *       listing the seller already marked SOLD by hand (PATCH
+   *       /api/items/{id}/status) is left alone.</li>
+   *   <li>The flip goes through {@link ItemRepository#save} (merge), the same
+   *       path as {@link #cancel(Long, Long)} and
+   *       {@link OrderCreationService#create}. The merge bumps
+   *       {@code Item.@Version}, and the in-transaction
+   *       {@code orders.flush()} surfaces a concurrent order-row transition
+   *       as {@code ObjectOptimisticLockingFailureException}, mapped to 409
+   *       fail-fast.</li>
+   * </ul>
+   */
+  @Transactional
+  public OrderDto complete(Long callerId, boolean callerIsAdmin, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getItem().getSellerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the seller can complete this order");
+    }
+    if (order.getStatus() == OrderStatus.COMPLETED) {
+      return OrderDto.from(order);
+    }
+    if (order.getStatus() != OrderStatus.PAID) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", completion is not allowed");
+    }
+    try {
+      order.setStatus(OrderStatus.COMPLETED);
+      Item item = items.findById(order.getItem().getId())
+          .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+              "order points at a missing item"));
+      if (item.getStatus() == ItemStatus.RESERVED) {
+        item.setStatus(ItemStatus.SOLD);
+        items.save(item);
+      }
+      OrderDto dto = OrderDto.from(orders.save(order));
+      // Flush deliberately inside the transaction (not at commit), mirroring
+      // pay()/cancel(): a concurrent transition of the order row between read
+      // and write surfaces here as ObjectOptimisticLockingFailureException
+      // and is mapped to 409. Without the flush the version check would
+      // happen at commit, outside this try/catch, and the caller would see a
+      // 500.
+      orders.flush();
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "order was updated concurrently, please retry");
+    }
+  }
 }
