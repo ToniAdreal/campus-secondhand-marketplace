@@ -55,6 +55,21 @@ public class AuthController {
   }
 
   /**
+   * Changes the caller's password (identified by the Bearer access token —
+   * SecurityConfig requires authentication for this route). The current
+   * password is required; the new one must pass the strength policy. On
+   * success the caller's other sessions are revoked server-side (their
+   * refresh cookies 401 afterwards) while the current session receives a
+   * fresh refresh cookie — the caller stays logged in.
+   */
+  @PostMapping("/password")
+  public ResponseEntity<ApiResponse<AuthResponse>> changePassword(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody PasswordChangeRequest request) {
+    return ok(auth.changePassword(userId, request.currentPassword(), request.newPassword()));
+  }
+
+  /**
    * Logs out the caller (identified by the Bearer access token — the
    * SecurityConfig requires authentication for this route): every refresh
    * token of the user is revoked server-side, and the httpOnly

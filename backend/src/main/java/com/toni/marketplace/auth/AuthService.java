@@ -72,6 +72,28 @@ public class AuthService {
   }
 
   /**
+   * Changes the user's password. Requires the current password — a wrong
+   * current password produces the identical 401 as a bad login, so no
+   * oracle leaks whether the attempt was "wrong user" or "wrong password".
+   * The new password must satisfy {@link PasswordStrengthValidator} (weak →
+   * 400). On success the whole refresh-token family is revoked — every
+   * other session dies — and the caller's session gets a fresh pair, so
+   * they stay logged in while stolen/other sessions are cut off.
+   */
+  @Transactional
+  public AuthResult changePassword(long userId, String currentPassword, String newPassword) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    PasswordStrengthValidator.requireStrong(newPassword);
+    user.setPasswordHash(passwords.encode(newPassword));
+    users.save(user);
+    jwt.revokeAll(userId);
+    return new AuthResult(user, jwt.createTokenPair(user));
+  }
+
+  /**
    * Logs out: deletes every refresh token of the user (all their sessions,
    * on all devices), so no presented refresh cookie can mint new access
    * tokens afterwards. The httpOnly cookie itself is cleared by the
