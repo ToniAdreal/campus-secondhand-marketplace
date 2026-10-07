@@ -12,9 +12,11 @@ import OrderConfirmationPage from './OrderConfirmationPage';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const patchSpy = vi.spyOn(api, 'patch');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 const seller: AuthUser = { id: 3, username: 'seller', email: 'seller@example.com', roles: ['USER'] };
+const admin: AuthUser = { id: 99, username: 'admin', email: 'admin@example.com', roles: ['ADMIN'] };
 
 const fakeItem: Item = {
   id: 7,
@@ -214,5 +216,127 @@ describe('ItemDetailPage buy-now', () => {
       '/items/7',
     );
     expect(getSpy).toHaveBeenCalledWith('/orders/9');
+  });
+});
+
+describe('ItemDetailPage mark-as-sold', () => {
+  const emptyPage = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    // Route GETs by URL: the item query answers from itemResponse, the
+    // message-thread query answers an empty page. Swapping itemResponse
+    // before a mutation simulates the invalidated refetch after the server
+    // flips the status.
+    let itemResponse: Item = fakeItem;
+    getSpy.mockImplementation((url: unknown) =>
+      url === '/items/7'
+        ? Promise.resolve(envelope(itemResponse))
+        : Promise.resolve(envelope(emptyPage)),
+    );
+    (getSpy as unknown as { setItemResponse: (i: Item) => void }).setItemResponse = (i) => {
+      itemResponse = i;
+    };
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  function setItemResponse(item: Item) {
+    (getSpy as unknown as { setItemResponse: (i: Item) => void }).setItemResponse(item);
+  }
+
+  it('the seller sees "Mark as sold" on an AVAILABLE listing; success patches {status:SOLD} and the page shows SOLD', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const soldItem: Item = { ...fakeItem, status: 'SOLD' };
+    patchSpy.mockResolvedValueOnce(envelope(soldItem));
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+
+    // the refetch after invalidation answers the SOLD listing
+    setItemResponse(soldItem);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as sold' }));
+
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+    expect(patchSpy).toHaveBeenCalledWith('/items/7/status', { status: 'SOLD' });
+
+    // success invalidates the items subtree -> useItem refetches, SOLD lands
+    await waitFor(() => expect(screen.getByText('SOLD')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Mark as sold' })).toBeNull();
+  });
+
+  it('the button shows on a RESERVED listing and disables while marking', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    setItemResponse({ ...fakeItem, status: 'RESERVED' });
+    let resolvePatch!: (value: unknown) => void;
+    patchSpy.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve; }));
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Mark as sold' })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as sold' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Marking…' })).toBeTruthy());
+    expect((screen.getByRole('button', { name: 'Marking…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    setItemResponse({ ...fakeItem, status: 'SOLD' });
+    resolvePatch(envelope({ ...fakeItem, status: 'SOLD' }));
+    await waitFor(() => expect(screen.getByText('SOLD')).toBeTruthy());
+  });
+
+  it('an ADMIN who is not the seller sees the button on their own-listing view', async () => {
+    useAuthStore.getState().login(admin, 'tok');
+    patchSpy.mockResolvedValue(envelope({ ...fakeItem, status: 'SOLD' }));
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Mark as sold' })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as sold' }));
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith('/items/7/status', { status: 'SOLD' }));
+  });
+
+  it('a 422 (already SOLD) maps to a friendly message and the raw envelope message never leaks', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    patchSpy.mockRejectedValueOnce(axiosFailure(422, 'item is already SOLD'));
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Mark as sold' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as sold' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe(
+      'This listing is already sold — it can no longer be marked sold.',
+    );
+    expect(screen.queryByText(/item is already SOLD/)).toBeNull();
+  });
+
+  it('a non-owner sees no mark-sold button', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Mark as sold' })).toBeNull();
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
+  it('anonymous visitors see no mark-sold button', async () => {
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Mark as sold' })).toBeNull();
+  });
+
+  it('the seller sees no button once the listing is SOLD', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    setItemResponse({ ...fakeItem, status: 'SOLD' });
+
+    renderAt('/items/7');
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Mark as sold' })).toBeNull();
+    expect(patchSpy).not.toHaveBeenCalled();
   });
 });

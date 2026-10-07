@@ -162,3 +162,52 @@ export function usePayOrder() {
     },
   });
 }
+
+/**
+ * Maps a failed POST /api/orders/{id}/cancel to a user-facing message. The
+ * backend speaks the {code,message,data} envelope; a 422 means the order is
+ * no longer in a cancellable state (already PAID, COMPLETED, CANCELLED, or
+ * REFUNDED) — the buyer then needs the mock payment refund path instead.
+ */
+export function describeCancelError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422 || /cannot be cancelled|no longer cancellable|not in PENDING/i.test(message)) {
+    return 'This order can no longer be cancelled — it was already paid, completed, or cancelled.';
+  }
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 403) {
+    return 'Only the buyer of this order can cancel it.';
+  }
+  if (code === 401) {
+    return 'Please log in to cancel this order.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/cancel — the buyer cancels a PENDING order. The
+ * server flips the order to CANCELLED and the listing back to AVAILABLE in
+ * the same transaction, so both subtrees are invalidated: the order detail
+ * refetches (CANCELLED) and the listing detail/list badges go back to
+ * AVAILABLE. Re-cancelling an already-CANCELLED order is idempotent server-
+ * side, so a double-click is safe.
+ */
+export function useCancelOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api.post<ApiResponse<Order>>(`/orders/${orderId}/cancel`, {}).then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}

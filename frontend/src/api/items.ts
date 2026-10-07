@@ -91,3 +91,48 @@ export function uploadItemPhoto(itemId: number, file: File): Promise<Item> {
     .post<ApiResponse<Item>>(`/items/${itemId}/photo`, form)
     .then((res) => res.data.data);
 }
+
+/**
+ * Maps a failed PATCH /api/items/{id}/status to a user-facing message. The
+ * backend speaks the {code,message,data} envelope; a 422 means the listing
+ * is already SOLD (no onward transition exists) or the requested status was
+ * not SOLD — this client only ever sends SOLD.
+ */
+export function describeMarkSoldError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422 || /already SOLD|only the SOLD transition/i.test(message)) {
+    return 'This listing is already sold — it can no longer be marked sold.';
+  }
+  if (code === 403) {
+    return 'Only the seller (or an admin) can mark this listing sold.';
+  }
+  if (code === 401) {
+    return 'Please log in to update this listing.';
+  }
+  if (code === 404) {
+    return 'This listing no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * PATCH /api/items/{id}/status — the seller (or an ADMIN) marks a listing
+ * SOLD. SOLD is terminal on the backend (AVAILABLE/RESERVED → SOLD only), so
+ * on success the whole `items` subtree is invalidated rather than patched:
+ * the detail badge, the list rows, and any filtered pages refetch.
+ */
+export function useMarkSold() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (itemId: number) =>
+      api
+        .patch<ApiResponse<Item>>(`/items/${itemId}/status`, { status: 'SOLD' })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useItem } from '../api/items';
+import { describeMarkSoldError, useItem, useMarkSold } from '../api/items';
 import { describeOrderError, useCreateOrder } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
 import MessageThread from '../components/MessageThread';
@@ -12,18 +12,36 @@ export default function ItemDetailPage() {
   const { data, isLoading, isError } = useItem(Number(id));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const createOrder = useCreateOrder();
+  const markSold = useMarkSold();
 
   if (isLoading) return <p>Loading…</p>;
   if (isError || !data) return <p className="text-red-600">Item not found.</p>;
 
   const isSeller = user !== null && user.id === data.sellerId;
+  const isAdmin = user !== null && user.roles.includes('ADMIN');
   const canBuy = user !== null && !isSeller && data.status === 'AVAILABLE';
+  // Mirrors the backend's ItemSecurity.canMarkSold: the listing's seller or
+  // an ADMIN may mark it SOLD. SOLD is terminal server-side, so the button
+  // is only offered on AVAILABLE/RESERVED listings.
+  const canMarkSold =
+    user !== null &&
+    (isSeller || isAdmin) &&
+    (data.status === 'AVAILABLE' || data.status === 'RESERVED');
 
   const handleBuy = () => {
     setErrorMessage(null);
     createOrder.mutate(data.id, {
       onSuccess: (order) => navigate(`/orders/${order.id}`),
       onError: (error) => setErrorMessage(describeOrderError(error)),
+    });
+  };
+
+  const handleMarkSold = () => {
+    setErrorMessage(null);
+    // SOLD is terminal on the backend (no onward transition), so the
+    // invalidated detail refetch shows SOLD and the button disappears.
+    markSold.mutate(data.id, {
+      onError: (error) => setErrorMessage(describeMarkSoldError(error)),
     });
   };
 
@@ -54,6 +72,21 @@ export default function ItemDetailPage() {
             </Link>{' '}
             to buy this item.
           </p>
+        )}
+        {canMarkSold && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={handleMarkSold}
+              disabled={markSold.isLoading}
+              className="rounded bg-neutral-800 px-5 py-2 font-medium text-white hover:bg-neutral-900 disabled:opacity-50"
+            >
+              {markSold.isLoading ? 'Marking…' : 'Mark as sold'}
+            </button>
+            <p className="mt-2 text-sm text-neutral-500">
+              Sold is final on this demo — the listing stops being offered.
+            </p>
+          </div>
         )}
         {errorMessage && (
           <p role="alert" className="mt-2 text-sm text-red-600">

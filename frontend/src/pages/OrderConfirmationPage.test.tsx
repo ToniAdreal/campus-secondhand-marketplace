@@ -12,6 +12,7 @@ const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
+const intruder: AuthUser = { id: 11, username: 'intruder', email: 'intruder@example.com', roles: ['USER'] };
 
 const pendingOrder: Order = {
   id: 9,
@@ -23,6 +24,7 @@ const pendingOrder: Order = {
 };
 
 const paidOrder: Order = { ...pendingOrder, status: 'PAID' };
+const cancelledOrder: Order = { ...pendingOrder, status: 'CANCELLED' };
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -162,6 +164,124 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
 
     renderAt('/orders/9');
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Pay now (demo)' })).toBeNull();
+  });
+});
+
+describe('OrderConfirmationPage cancel-order', () => {
+  const confirmSpy = vi.spyOn(window, 'confirm');
+
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    confirmSpy.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('the buyer sees Cancel order on a PENDING order; confirming posts /orders/9/cancel and the page shows cancelled', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    // initial read -> PENDING; the invalidated refetch after cancel -> CANCELLED
+    getSpy
+      .mockResolvedValueOnce(envelope(pendingOrder))
+      .mockResolvedValue(envelope(cancelledOrder));
+    postSpy.mockResolvedValueOnce(envelope(cancelledOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel order' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/cancel', {});
+
+    // success invalidates the orders subtree -> useOrder refetches, CANCELLED lands
+    await waitFor(() =>
+      expect(screen.getByText(/This order was cancelled/)).toBeTruthy(),
+    );
+    expect(screen.queryByRole('button', { name: 'Cancel order' })).toBeNull();
+    // a cancelled order can no longer be paid either
+    expect(screen.queryByRole('button', { name: 'Pay now (demo)' })).toBeNull();
+  });
+
+  it('declining the confirm dialog sends nothing', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    confirmSpy.mockReturnValue(false);
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel order' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('the button disables and reads "Cancelling…" while the cancel is in flight', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+    let resolveCancel!: (value: unknown) => void;
+    postSpy.mockImplementationOnce(() => new Promise((resolve) => { resolveCancel = resolve; }));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel order' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeTruthy());
+    expect((screen.getByRole('button', { name: 'Cancelling…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    getSpy.mockResolvedValue(envelope(cancelledOrder));
+    resolveCancel(envelope(cancelledOrder));
+    await waitFor(() => expect(screen.getByText(/This order was cancelled/)).toBeTruthy());
+  });
+
+  it('a 422 on cancel maps to a friendly "no longer cancellable" message', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+    postSpy.mockRejectedValueOnce(axiosFailure(422, 'order is not in PENDING status'));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel order' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/This order can no longer be cancelled/)).toBeTruthy(),
+    );
+    // the raw envelope message never leaks to the UI
+    expect(screen.queryByText(/order is not in PENDING status/)).toBeNull();
+  });
+
+  it('a non-buyer sees no cancel button on a PENDING order', async () => {
+    useAuthStore.getState().login(intruder, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Cancel order' })).toBeNull();
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('the buyer sees no cancel button on a PAID order', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(paidOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Cancel order' })).toBeNull();
+  });
+
+  it('anonymous visitors see no cancel button on a PENDING order', async () => {
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Cancel order' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pay now (demo)' })).toBeNull();
   });
 });
