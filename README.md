@@ -22,16 +22,23 @@ message sellers, and mark items sold. Monorepo with a Spring Boot backend and a 
 ```
 backend/                 Spring Boot 3.2 API (Java 17, Maven)
   src/main/java/com/toni/marketplace
+    auth/                register/login/refresh/logout, JWT + RBAC, token-bucket
+                         auth rate limiting
     common/              ApiResponse envelope, GlobalExceptionHandler
-    item/                Item entity, repository, service, controller
+    item/                Item entity, repository, service, controller, photo upload
+    message/             offline buyer↔seller messaging (v1)
+    order/               Order entity, idempotent order creation, mock payment capture
   src/main/resources
     application.yml      H2 by default for local dev; mysql profile for Docker
     db/migration/        Flyway migrations (schema is migration-managed, never hbm2ddl)
   src/test               @DataJpaTest slice tests (H2); *IT Testcontainers tests (CI only)
 frontend/                React 18 + Vite 5 + TypeScript
-  src/api/client.ts      Axios instance: in-memory access token, httpOnly refresh cookie,
-                         single-flight 401 refresh with request queueing
-  src/pages/             Home (listing), ItemDetail, Login
+  src/api/               client.ts (Axios: in-memory access token, httpOnly refresh
+                         cookie, single-flight 401 refresh with request queueing)
+                         + domain modules: auth, items, orders, categories, messages
+  src/pages/             Home (listing), ItemDetail, Login, CreateListing (sell),
+                         OrderConfirmation (after buy-now)
+  src/components/        MessageThread (buyer↔seller thread on the item detail page)
   src/store/             Zustand auth/UI store
 .github/workflows/ci.yml  backend unit + integration (Testcontainers) + frontend build/test
 docker-compose.yml        mysql + backend jar + nginx (serves frontend, proxies /api)
@@ -48,14 +55,20 @@ Browser ──(local dev)──▶ Vite :5173 ── /api ──▶ Spring Boot 
 Request path inside the backend (package `com.toni.marketplace`):
 
 ```
-JwtAuthenticationFilter ──▶ SecurityConfig (stateless, /api/auth/** + /uploads/** public)
-      │  Bearer <redacted> ── userId principal, ROLE_USER / ROLE_ADMIN authorities
+JwtAuthenticationFilter ──▶ SecurityConfig (stateless)
+      │  Bearer <redacted> ── userId principal, ROLE_USER / ROLE_ADMIN authorities.
+      │  Public: /api/auth/** (except POST /api/auth/logout), /uploads/**,
+      │  /actuator/health + /actuator/info. Everything else needs a Bearer <redacted>.
       ▼
-auth/        AuthController  /api/auth/register, /login, /refresh
+auth/        AuthController  /api/auth/register, /login, /refresh, /logout
              AuthService + JwtTokenService — jjwt HS256, access 15 min,
              refresh 7 d, single-use rotation in the httpOnly `refresh_token`
-             cookie; replay of a consumed refresh token revokes the whole family.
+             cookie; replay of a consumed refresh token revokes the whole family;
+             /logout revokes the caller's whole refresh-token family server-side
+             and clears the cookie with an expired Set-Cookie.
              BCrypt(cost 12) password hashing. Tables: app_user, refresh_token.
+             AuthRateLimitFilter — token bucket, 5 attempts/min per IP on
+             /api/auth/login and /api/auth/register (JVM-local, not distributed).
       ▼
 item/        ItemController  CRUD + ?q= search + ?categoryId= filter, pagination
              ItemService / ItemRepository — JPQL DTO projections for list/detail
@@ -66,9 +79,16 @@ item/        ItemController  CRUD + ?q= search + ?categoryId= filter, pagination
              /uploads/** from app.uploads.dir (default ./uploads).
              ItemSecurity — seller-or-ADMIN @PreAuthorize policy for
              DELETE and photo upload.
-order/       OrderController  POST /api/orders (Idempotency-Key header)
+order/       OrderController  POST /api/orders (Idempotency-Key header),
+             POST /api/orders/{id}/pay (mock capture), GET /api/orders
+             + /api/orders/{id} (buyer reads)
              OrderService — @Version optimistic locking; one active order per
-             item guarded by a DB-generated unique column (NULL when terminal).
+             item guarded by a DB-generated unique column (NULL when terminal);
+             order creation flips the listing AVAILABLE→RESERVED (@Version
+             fail-fast → 409 on races). PaymentService is an honest mock PSP
+             (no network I/O, no real money): pay() is PENDING→PAID, buyer-only,
+             idempotent on replay, explicit flush so a version conflict maps
+             to 409 instead of surfacing as a 500 at commit.
              IdempotencyKeyService — same key + same item replays the original
              order; concurrent same-key losers get 409 while IN_PROGRESS.
              Tables: orders, idempotency_key.
@@ -96,15 +116,15 @@ no real users, no real money.)
 
 | Feature | What it does | What it does not do |
 |---|---|---|
-| JWT auth (access + rotating refresh) | HS256 access (15 min) + single-use rotating refresh tokens in an httpOnly `SameSite=Lax` cookie; replay revokes the token family; identical 401s for unknown user vs wrong password (no enumeration oracle) | No server-side logout yet — the refresh cookie lives its full 7 d (open backlog); no brute-force throttling on /api/auth/login (open backlog) |
+| JWT auth (access + rotating refresh) | HS256 access (15 min) + single-use rotating refresh tokens in an httpOnly `SameSite=Lax` cookie; replay revokes the token family; identical 401s for unknown user vs wrong password (no enumeration oracle); POST /api/auth/logout revokes the caller's whole refresh-token family server-side and clears the httpOnly cookie with an expired Set-Cookie; token-bucket rate limit of 5 attempts/min per client IP on /login and /register (a successful login resets the bucket) | Rate limiting is JVM-local, not distributed; logout kills every session on every device, not just the current one; /api/auth/refresh is not yet rate-limited (open backlog) |
 | RBAC | ADMIN role; `@PreAuthorize("hasRole('ADMIN')")` on DELETE /api/items/{id}; 403 in the JSON envelope | Only one elevated operation (delete) is RBAC-guarded so far |
-| Listings | POST /api/items with jakarta validation; MapStruct DTOs (no JPA in JSON); category taxonomy (Flyway V3); debounced URL-synced `?q=` search; photo upload (UUID filename, type/size validated, served under /uploads/**) | Search is LIKE-based, not full-text; photos persist on local disk (in docker-compose they live in the container's /app/uploads and do not survive a container recreate — only mysql-data is a named volume); no listing edit endpoint yet (status SOLD transition is open backlog) |
+| Listings | POST /api/items with jakarta validation; MapStruct DTOs (no JPA in JSON); category taxonomy (Flyway V3); debounced URL-synced `?q=` search; photo upload (UUID filename, type/size validated, served under /uploads/**); PATCH /api/items/{id}/status lets the seller (or ADMIN) mark a listing SOLD (AVAILABLE/RESERVED → SOLD only) | Search is LIKE-based, not full-text; photos persist on local disk (in docker-compose they live in the container's /app/uploads and do not survive a container recreate — only mysql-data is a named volume); SOLD is one-way — no general listing edit endpoint |
 | N+1 fix | List/detail/filter reads are single-SELECT JPQL DTO projections, asserted by Hibernate statistics in slice tests; composite index on (category_id, status, created_at) | Index benefit was asserted on H2/MySQL-compat SQL shape, not measured with production-scale data — no benchmark numbers are claimed |
-| Orders | Optimistic locking (@Version); one active order per item via a DB-generated unique guard column; Idempotency-Key header replays the original order (REQUIRES_NEW reserve, 10-min IN_PROGRESS reclaim); two-buyer race proven exactly-once by a Testcontainers MySQL 8 IT (CI) | Order creation does NOT flip the item to RESERVED yet (open backlog — the list view still shows it as buyable; the unique guard prevents a second order); orders stop at PENDING — no pay/refund/cancel transitions yet (mock capture is open backlog) |
+| Orders | Optimistic locking (@Version); one active order per item via a DB-generated unique guard column; Idempotency-Key header replays the original order (REQUIRES_NEW reserve, 10-min IN_PROGRESS reclaim); two-buyer race proven exactly-once by a Testcontainers MySQL 8 IT (CI); order creation flips the listing AVAILABLE→RESERVED (@Version fail-fast → 409 on races); POST /api/orders/{id}/pay is a mock capture (PENDING→PAID, buyer-only, idempotent replay, explicit flush so a version conflict maps to 409); buyer order reads via GET /api/orders (paginated) + /api/orders/{id} | No cancel/refund transitions yet (cancel is open backlog); the item flip and the order insert currently commit in separate repository transactions — the @Transactional on createOrderTx is bypassed by self-invocation (restructure is open backlog) |
 | Buyer↔seller messaging v1 | POST/GET /api/messages?itemId=; chronological threads; sender from JWT (no impersonation); 403 for non-participants; 422 messaging yourself | Offline only — no WebSocket, no read receipts, no notifications; plain `message_body` column (BODY is an H2 keyword) |
-| Frontend auth flow | Login page wired to /api/auth/login; zustand store with in-memory token; single-flight 401 refresh with queued retries, verified by unit tests | In-memory token only — a page reload loses the session until refresh runs; no social login |
-| Listing UX | Create-listing form with client validation mirroring the backend; envelope field-errors mapped onto fields; optional photo upload; TanStack Query invalidation on mutations | No buy-now button or message-thread UI yet (open backlog); error messages are not yet localized |
-| Observability / testing | GitHub Actions CI (unit + Testcontainers MySQL 8 IT + frontend build/test); docker-compose smoke test with a manual checklist in docs/smoke-test.md | No actuator/health endpoint yet, no coverage gate (both open backlog); integration tests only run in CI — this sandbox has no Docker |
+| Frontend auth flow | Login page wired to /api/auth/login; zustand store with in-memory token; single-flight 401 refresh with queued retries, verified by unit tests | In-memory token only — a page reload loses the session until refresh runs; the store's logout does not call POST /api/auth/logout yet, so server-side sessions survive a UI logout (open backlog); no social login |
+| Listing UX | Create-listing form with client validation mirroring the backend; envelope field-errors mapped onto fields; optional photo upload; TanStack Query invalidation on mutations; buy-now button on the item detail page (fresh Idempotency-Key per click, 409 mapped to friendly copy, success lands on /orders/:id); message thread UI — a 403 for non-participants shows a privacy note instead of the thread | The pay endpoint has no button on the confirmation page yet (mock capture is endpoint-only so far); error messages are not yet localized |
+| Observability / testing | GitHub Actions CI (unit + Testcontainers MySQL 8 IT + frontend build/test); docker-compose smoke test with a manual checklist in docs/smoke-test.md; spring-boot-starter-actuator with public /actuator/health+info (everything else behind auth); JaCoCo line-coverage gate ≥ 80% on `mvn verify` (currently ~94%) | Metrics are in-memory Micrometer only — no external metrics export (open backlog); integration tests only run in CI — this sandbox has no Docker |
 | Compose ops | mysql healthcheck (mysqladmin ping) + service_healthy depends_on, so the backend no longer boots against a closed 3306 on cold starts | compose is verified statically in this environment; the full up/curl smoke sequence was validated in CI, not locally |
 
 ## Run locally
@@ -130,13 +150,13 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 ## Roadmap (from the original project)
 
 - [x] Monorepo scaffold, CI, docker-compose
-- [ ] JWT auth (jjwt, access + rotating refresh, RBAC admin)
+- [x] JWT auth (jjwt, access + rotating refresh, RBAC admin)
 - [x] Consistent `{code, message, data}` error envelope (validation, `ResponseStatusException`, unexpected)
-- [ ] Listing CRUD with MapStruct DTOs (no lazy associations in JSON)
-- [ ] N+1 fix: fetch-join + DTO projection + composite index on (category, status, created_at)
+- [x] Listing CRUD with MapStruct DTOs (no lazy associations in JSON)
+- [x] N+1 fix: fetch-join + DTO projection + composite index on (category, status, created_at)
 - [x] Optimistic locking (`@Version` on `Item`, covered by a slice test)
-- [ ] Order entity + idempotent order creation via client request id
-- [ ] MultipartFile image upload (UUID filename, type/size validation)
+- [x] Order entity + idempotent order creation via client request id
+- [x] MultipartFile image upload (UUID filename, type/size validation)
 - [x] Axios 401 single-flight refresh queue (unit-tested, no backend needed)
-- [ ] TanStack Query invalidation, debounced URL-synced search
-- [ ] Offline message table (v1, no WebSocket)
+- [x] TanStack Query invalidation, debounced URL-synced search
+- [x] Offline message table (v1, no WebSocket)
