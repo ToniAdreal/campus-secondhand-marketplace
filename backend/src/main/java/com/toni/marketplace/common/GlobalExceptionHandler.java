@@ -3,6 +3,7 @@ package com.toni.marketplace.common;
 import com.toni.marketplace.auth.DuplicateUserException;
 import com.toni.marketplace.auth.InvalidCredentialsException;
 import com.toni.marketplace.auth.InvalidTokenException;
+import com.toni.marketplace.auth.WeakPasswordException;
 import com.toni.marketplace.item.InvalidImageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -77,6 +78,11 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException ex) {
     return ResponseEntity.badRequest()
         .body(ApiResponse.fail(400, "malformed request body"));
+  }
+
+  @ExceptionHandler(WeakPasswordException.class)
+  public ResponseEntity<ApiResponse<Void>> handleWeakPassword(WeakPasswordException ex) {
+    return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
   }
 
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})

@@ -23,9 +23,13 @@ public class AuthService {
   /** Registered user plus their first token pair. */
   public record AuthResult(User user, JwtTokenService.TokenPair pair) {}
 
-  /** Registers a new user. Duplicate username or email → 409. */
+  /**
+   * Registers a new user. Weak passwords → 400 (see
+   * {@link PasswordStrengthValidator}); duplicate username or email → 409.
+   */
   @Transactional
   public AuthResult register(String username, String email, String rawPassword) {
+    PasswordStrengthValidator.requireStrong(rawPassword);
     if (users.findByUsername(username).isPresent()) {
       throw new DuplicateUserException("username is already taken");
     }
