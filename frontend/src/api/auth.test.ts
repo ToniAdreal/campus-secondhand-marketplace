@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from './client';
-import { login } from './auth';
+import { login, me } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
+const getSpy = vi.spyOn(api, 'get');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -55,5 +56,36 @@ describe('login', () => {
     // POST /api/auth/login answers with Set-Cookie: refresh_token (httpOnly);
     // withCredentials is what lets the browser store and re-send it.
     expect(api.defaults.withCredentials).toBe(true);
+  });
+});
+
+describe('me', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('GETs /auth/me and returns the profile from the envelope', async () => {
+    const profile = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
+    getSpy.mockResolvedValueOnce(envelope(profile));
+
+    const result = await me();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/me');
+    expect(result).toEqual(profile);
+    // the projection carries no secret material — the hash stays server-side
+    expect('passwordHash' in result).toBe(false);
+  });
+
+  it('propagates the 401 when no session exists so the store can log out', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 401,
+        data: { code: 401, message: 'unauthorized', data: null },
+      },
+    };
+    getSpy.mockRejectedValueOnce(failure);
+
+    await expect(me()).rejects.toBe(failure);
   });
 });

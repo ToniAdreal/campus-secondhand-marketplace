@@ -23,7 +23,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *
  * <ul>
  *   <li>{@code /api/auth/**} is public (register/login/refresh land here),
- *       except {@code POST /api/auth/logout} and {@code POST /api/auth/password},
+ *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password}
+ *       and {@code GET /api/auth/me},
  *       which need a Bearer access token because they act on the caller's own
  *       session.</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
@@ -89,10 +90,12 @@ public class SecurityConfig {
         .csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
-            // Logout and password change need the caller's identity: a valid
-            // Bearer access token. The rest of /api/auth/** stays public.
+            // Logout, password change and session restore need the caller's
+            // identity: a valid Bearer access token. The rest of /api/auth/**
+            // stays public.
             .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
+            .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             // Actuator: public liveness/readiness probes, everything else
             // authenticated. Matcher order matters — the more specific

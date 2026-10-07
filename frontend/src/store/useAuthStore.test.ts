@@ -5,11 +5,16 @@ import { queryClient } from '../queryClient';
 import { useAuthStore } from './useAuthStore';
 
 const postSpy = vi.spyOn(api, 'post');
+const getSpy = vi.spyOn(api, 'get');
 
 const fakeUser: AuthUser = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
 
 function okEnvelope() {
   return { data: { code: 0, message: 'ok', data: null } } as never;
+}
+
+function userEnvelope(user: AuthUser) {
+  return { data: { code: 0, message: 'ok', data: user } } as never;
 }
 
 describe('useAuthStore logout', () => {
@@ -69,5 +74,51 @@ describe('useAuthStore logout', () => {
     expect(useAuthStore.getState().user).toEqual(fakeUser);
     expect(getAccessToken()).toBe('tok-abc');
     expect(localStorage.length).toBe(0);
+  });
+});
+
+describe('useAuthStore hydrate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  it('restores the user from GET /auth/me and resolves it', async () => {
+    getSpy.mockResolvedValueOnce(userEnvelope(fakeUser));
+
+    const result = await useAuthStore.getState().hydrate();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/me');
+    expect(result).toEqual(fakeUser);
+    expect(useAuthStore.getState().user).toEqual(fakeUser);
+  });
+
+  it('never throws when no session exists — user stays null and the credential is dropped', async () => {
+    setAccessToken('stale-tok');
+    getSpy.mockRejectedValueOnce(new Error('Request failed with status code 401'));
+
+    const result = await useAuthStore.getState().hydrate();
+
+    expect(result).toBeNull();
+    expect(useAuthStore.getState().user).toBeNull();
+    // the UI and the request layer agree on logged-out
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it('keeps the in-memory credential on success — the 401 interceptor owns token placement', async () => {
+    setAccessToken('tok-abc');
+    getSpy.mockResolvedValueOnce(userEnvelope(fakeUser));
+
+    await useAuthStore.getState().hydrate();
+
+    expect(getAccessToken()).toBe('tok-abc');
+    expect(useAuthStore.getState().user).toEqual(fakeUser);
   });
 });

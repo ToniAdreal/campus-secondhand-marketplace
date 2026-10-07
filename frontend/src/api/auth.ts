@@ -60,3 +60,19 @@ export async function login(payload: LoginPayload): Promise<LoginResult> {
 export async function logout(): Promise<void> {
   await api.post('/auth/logout');
 }
+
+/**
+ * GET /api/auth/me. Returns the caller's profile (id/username/email/roles)
+ * for session restore on SPA reload. When the in-memory credential is
+ * missing or stale, the shared client's 401 interceptor silently refreshes
+ * it via the httpOnly cookie and retries — so a surviving cookie is enough
+ * to come back logged in. The interceptor puts any fresh credential in
+ * module scope (see client.ts); callers only need the user from here.
+ *
+ * Throws the Axios error when no session exists (no cookie, refresh
+ * rejected) — the store's hydrate() converts that into a logged-out state.
+ */
+export async function me(): Promise<AuthUser> {
+  const res = await api.get<ApiResponse<AuthUser>>('/auth/me');
+  return res.data.data;
+}

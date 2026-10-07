@@ -10,6 +10,7 @@ import ItemDetailPage from './pages/ItemDetailPage';
 import LoginPage from './pages/LoginPage';
 import OrderConfirmationPage from './pages/OrderConfirmationPage';
 import { queryClient } from './queryClient';
+import { useAuthStore } from './store/useAuthStore';
 
 const router = createBrowserRouter([
   {
@@ -24,6 +25,12 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// Restore the session on boot: a surviving httpOnly refresh cookie is
+// enough to come back logged in (silent refresh -> /me). Fire-and-forget —
+// hydrate() never throws; the header flips from "Login" to the username
+// when it lands.
+useAuthStore.getState().hydrate();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

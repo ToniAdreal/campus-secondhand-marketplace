@@ -9,6 +9,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -52,6 +53,22 @@ public class AuthController {
       throw new InvalidRefreshTokenException("missing refresh token");
     }
     return ok(auth.refresh(refreshToken));
+  }
+
+  /**
+   * Returns the caller's own profile — session restore for the SPA. The
+   * access token and the user summary live only in memory, so a page reload
+   * wipes them; the httpOnly refresh cookie survives, and after the client
+   * silently refreshes it, this endpoint tells the client who is logged in.
+   * Requires a Bearer access token (SecurityConfig); anonymous callers get
+   * the JSON 401 envelope. The body is the {@link AuthResponse.UserSummary}
+   * projection — never the {@link User} entity — so the password hash can
+   * never leak into a response.
+   */
+  @GetMapping("/me")
+  public ResponseEntity<ApiResponse<AuthResponse.UserSummary>> me(
+      @AuthenticationPrincipal Long userId) {
+    return ResponseEntity.ok(ApiResponse.ok(AuthResponse.UserSummary.of(auth.me(userId))));
   }
 
   /**

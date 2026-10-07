@@ -94,6 +94,16 @@ public class AuthService {
   }
 
   /**
+   * Session restore for the SPA: resolves the caller behind a valid access
+   * token to their profile. A valid token whose user row is gone (deleted
+   * user) reads as invalid credentials — the session no longer exists.
+   */
+  @Transactional(readOnly = true)
+  public User me(long userId) {
+    return users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+  }
+
+  /**
    * Logs out: deletes every refresh token of the user (all their sessions,
    * on all devices), so no presented refresh cookie can mint new access
    * tokens afterwards. The httpOnly cookie itself is cleared by the

@@ -12,14 +12,24 @@ public record AuthResponse(
     long expiresInSeconds,
     UserSummary user) {
 
-  public record UserSummary(long id, String username, String email, List<String> roles) {}
+  public record UserSummary(long id, String username, String email, List<String> roles) {
+
+    /**
+     * Projection of the caller for session-restore responses. Built from the
+     * entity deliberately instead of serializing {@link User} — the password
+     * hash must never reach the wire.
+     */
+    public static UserSummary of(User user) {
+      List<String> roles = user.getRoles().stream().map(Role::name).sorted().toList();
+      return new UserSummary(user.getId(), user.getUsername(), user.getEmail(), roles);
+    }
+  }
 
   public static AuthResponse of(User user, JwtTokenService.TokenPair pair, long accessTtlSeconds) {
-    List<String> roles = user.getRoles().stream().map(Role::name).sorted().toList();
     return new AuthResponse(
         pair.accessToken(),
         "Bearer",
         accessTtlSeconds,
-        new UserSummary(user.getId(), user.getUsername(), user.getEmail(), roles));
+        UserSummary.of(user));
   }
 }
