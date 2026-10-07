@@ -118,6 +118,20 @@ public class OrderService {
   }
 
   /**
+   * Lists orders placed on the caller's own listings (newest first —
+   * enforced by the controller's default sort). Scoped strictly to listings
+   * whose {@code sellerId} is the caller, so a seller can never page into
+   * another seller's orders. Unlike {@link #getSellerOrderFor(Long, boolean,
+   * Long)}, ADMIN gets no bypass here: admins have
+   * {@code GET /api/orders/{id}} for any single order, and expanding the
+   * list to "all orders" would change the endpoint's documented scope.
+   */
+  @Transactional(readOnly = true)
+  public Page<OrderDto> listSellerOrders(Long sellerId, Pageable pageable) {
+    return orders.findByItem_SellerId(sellerId, pageable).map(OrderDto::from);
+  }
+
+  /**
    * Reads a single order for the buyer who placed it — or for an ADMIN.
    * Unknown id → 404; anyone else → 403. The 403 deliberately mirrors
    * {@link #pay(Long, Long)}: an order id never leaks whether the caller
@@ -131,6 +145,25 @@ public class OrderService {
     if (!callerIsAdmin && !order.getBuyerId().equals(callerId)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "order does not belong to you");
+    }
+    return OrderDto.from(order);
+  }
+
+  /**
+   * Reads a single order for the seller whose listing the order is on — or
+   * for an ADMIN. Unknown id → 404; an order on somebody else's listing →
+   * 403. The admin bypass mirrors {@link #getOrderFor(Long, boolean, Long)};
+   * the list endpoint {@link #listSellerOrders(Long, Pageable)} stays
+   * strictly scoped to the caller's own listings even for admins.
+   */
+  @Transactional(readOnly = true)
+  public OrderDto getSellerOrderFor(Long callerId, boolean callerIsAdmin, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getItem().getSellerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "order is not on one of your listings");
     }
     return OrderDto.from(order);
   }
