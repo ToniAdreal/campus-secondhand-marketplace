@@ -8,6 +8,7 @@ import CreateListingPage from './pages/CreateListingPage';
 import HomePage from './pages/HomePage';
 import ItemDetailPage from './pages/ItemDetailPage';
 import LoginPage from './pages/LoginPage';
+import MyOrdersPage from './pages/MyOrdersPage';
 import OrderConfirmationPage from './pages/OrderConfirmationPage';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: 'items/new', element: <CreateListingPage /> },
       { path: 'items/:id', element: <ItemDetailPage /> },
+      { path: 'orders', element: <MyOrdersPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'login', element: <LoginPage /> },
     ],

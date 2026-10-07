@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import { itemKeys, type ApiResponse } from './items';
+import { itemKeys, type ApiResponse, type Page } from './items';
 
 export interface Order {
   id: number;
@@ -14,15 +14,46 @@ export interface Order {
 }
 
 /**
+ * Query keys for the orders subtree. Everything hangs off `['orders']` so a
+ * single prefix invalidation (e.g. after the mock capture) refetches both
+ * the detail pages and the list pages.
+ */
+export const orderKeys = {
+  all: ['orders'] as const,
+  list: () => [...orderKeys.all, 'list'] as const,
+  detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
+};
+
+/**
  * GET /api/orders/{id} — the caller's own order (buyer), or any order (ADMIN).
  * Backed by the buyer order reads landed on the backend; the order
  * confirmation page reads through this hook.
  */
 export function useOrder(id: number) {
   return useQuery({
-    queryKey: ['orders', id],
+    queryKey: orderKeys.detail(id),
     queryFn: () =>
       api.get<ApiResponse<Order>>(`/orders/${id}`).then((res) => res.data.data),
+  });
+}
+
+/**
+ * GET /api/orders — the caller's own orders, newest first, as an infinite
+ * list. The backend defaults to size 20 sorted createdAt desc, id desc (two
+ * orders can share a createdAt instant); the My-orders page stitches pages
+ * behind a "Load more" button. New pages stop when the server says there
+ * are no more (number+1 >= totalPages).
+ */
+export function useOrdersInfinite(size = 20, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: orderKeys.list(),
+    queryFn: ({ pageParam = 0 }) =>
+      api
+        .get<ApiResponse<Page<Order>>>('/orders', { params: { page: pageParam, size } })
+        .then((res) => res.data.data),
+    getNextPageParam: (lastPage) =>
+      lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
+    enabled,
   });
 }
 

@@ -16,6 +16,9 @@ function AuthNav() {
 
   return (
     <div className="flex items-center gap-3">
+      <Link to="/orders" className="text-sm text-blue-600 hover:underline">
+        My orders
+      </Link>
       <Link to="/items/new" className="text-sm text-blue-600 hover:underline">
         Sell an item
       </Link>
