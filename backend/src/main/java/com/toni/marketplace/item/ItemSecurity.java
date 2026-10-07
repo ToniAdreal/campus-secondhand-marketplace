@@ -30,4 +30,17 @@ public class ItemSecurity {
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return admin || item.getSellerId().equals(auth.getPrincipal());
   }
+
+  /**
+   * A listing may be marked SOLD by its seller or by an ADMIN. Same
+   * ownership semantics as {@link #canAttachPhoto}: a missing listing is
+   * 404, not a misleading 403.
+   */
+  public boolean canMarkSold(Authentication auth, Long itemId) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    boolean admin = auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return admin || item.getSellerId().equals(auth.getPrincipal());
+  }
 }

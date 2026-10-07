@@ -10,6 +10,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -66,6 +67,19 @@ public class ItemController {
   public ApiResponse<ItemDto> uploadPhoto(@PathVariable Long id,
                                          @RequestParam("file") MultipartFile file) {
     return ApiResponse.ok(itemService.attachPhoto(id, file));
+  }
+
+  /**
+   * Marks a listing SOLD. The listing's seller — or an ADMIN — may do so;
+   * everyone else gets 403 and anonymous callers get 401. Only the
+   * AVAILABLE/RESERVED → SOLD transitions exist: any other requested status
+   * and any already-SOLD listing are answered 422 with the JSON envelope.
+   */
+  @PatchMapping("/{id}/status")
+  @PreAuthorize("@itemSecurity.canMarkSold(authentication, #id)")
+  public ApiResponse<ItemDto> markSold(@PathVariable Long id,
+                                      @Valid @RequestBody ItemStatusUpdateRequest request) {
+    return ApiResponse.ok(itemService.markSold(id, request.status()));
   }
 
   /**

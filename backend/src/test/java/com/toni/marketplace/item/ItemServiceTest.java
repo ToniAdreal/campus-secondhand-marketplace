@@ -170,6 +170,70 @@ class ItemServiceTest {
     verify(items, never()).delete(any());
   }
 
+  // --- markSold ---
+
+  @Test
+  void markSold_flipsAvailableToSoldAndReturnsDto() {
+    Item item = listing(5L);
+    ItemDto dto = new ItemDto(3L, "Desk lamp", "a used desk lamp", 2500L, ItemStatus.SOLD,
+        5L, null, null, null, null, null);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    when(mapper.toDto(item)).thenReturn(dto);
+
+    assertThat(service.markSold(3L, ItemStatus.SOLD)).isSameAs(dto);
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.SOLD);
+  }
+
+  @Test
+  void markSold_reservedListingCanBeMarkedSold() {
+    Item item = listing(5L);
+    item.setStatus(ItemStatus.RESERVED);
+    ItemDto dto = new ItemDto(3L, "Desk lamp", "a used desk lamp", 2500L, ItemStatus.SOLD,
+        5L, null, null, null, null, null);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    when(mapper.toDto(item)).thenReturn(dto);
+
+    service.markSold(3L, ItemStatus.SOLD);
+
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.SOLD);
+  }
+
+  @Test
+  void markSold_nonSoldRequested_throws422AndKeepsStatus() {
+    Item item = listing(5L);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+
+    assertThatThrownBy(() -> service.markSold(3L, ItemStatus.AVAILABLE))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.AVAILABLE);
+    verify(mapper, never()).toDto(any());
+  }
+
+  @Test
+  void markSold_alreadySold_throws422() {
+    Item item = listing(5L);
+    item.setStatus(ItemStatus.SOLD);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+
+    assertThatThrownBy(() -> service.markSold(3L, ItemStatus.SOLD))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+  }
+
+  @Test
+  void markSold_missing_throws404() {
+    when(items.findById(9L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.markSold(9L, ItemStatus.SOLD))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.NOT_FOUND));
+    verify(mapper, never()).toDto(any());
+  }
+
   // --- attachPhoto ---
 
   @Test

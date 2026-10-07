@@ -6,6 +6,7 @@ import com.toni.marketplace.auth.InvalidTokenException;
 import com.toni.marketplace.item.InvalidImageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
@@ -65,6 +66,17 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleTooLarge(MaxUploadSizeExceededException ex) {
     return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
         .body(ApiResponse.fail(HttpStatus.PAYLOAD_TOO_LARGE.value(), "image too large"));
+  }
+
+  /**
+   * Malformed JSON request bodies (e.g. an enum-typed field carrying a
+   * value that is not a valid enum constant) would otherwise surface as a
+   * 500 through the generic handler — answer 400 in the JSON envelope.
+   */
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, "malformed request body"));
   }
 
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})

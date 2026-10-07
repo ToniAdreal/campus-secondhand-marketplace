@@ -84,6 +84,34 @@ public class ItemService {
   }
 
   /**
+   * Marks a listing SOLD. Only the AVAILABLE → SOLD and RESERVED → SOLD
+   * transitions exist: the requested value must be {@link ItemStatus#SOLD}
+   * (this endpoint marks listings sold, it is not a general status machine)
+   * and a listing that is already SOLD has no onward transition. Both
+   * violations are answered 422 with the JSON envelope. The flip is
+   * optimistic-locked via {@code Item.@Version}, so a concurrent flip fails
+   * fast instead of silently overwriting.
+   *
+   * <p>Ownership/role checks live on the controller's {@code @PreAuthorize}
+   * ({@link ItemSecurity}); the service stays role-agnostic.
+   */
+  @Transactional
+  public ItemDto markSold(Long id, ItemStatus requested) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (requested != ItemStatus.SOLD) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "only the SOLD transition is supported on this endpoint");
+    }
+    if (item.getStatus() != ItemStatus.AVAILABLE && item.getStatus() != ItemStatus.RESERVED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "item is already SOLD");
+    }
+    item.setStatus(ItemStatus.SOLD);
+    return mapper.toDto(item);
+  }
+
+  /**
    * Attaches a photo to a listing: validates and stores the upload, then
    * records its public URL path ({@code /uploads/<uuid>.<ext>}) on the item.
    * Ownership/role checks live on the controller's {@code @PreAuthorize}
