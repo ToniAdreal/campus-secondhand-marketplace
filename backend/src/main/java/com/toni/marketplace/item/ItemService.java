@@ -1,5 +1,9 @@
 package com.toni.marketplace.item;
 
+import java.io.IOException;
+import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -10,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ItemService {
+
+  private static final Logger log = LoggerFactory.getLogger(ItemService.class);
 
   private final ItemRepository items;
   private final CategoryRepository categories;
@@ -73,14 +79,21 @@ public class ItemService {
   }
 
   /**
-   * Removes a listing permanently. Role checks live on the controller's
-   * {@code @PreAuthorize}; the service stays role-agnostic.
+   * Removes a listing permanently, and best-effort deletes its stored photo
+   * so a deleted listing stops leaking a file under {@code /uploads/}.
+   * The row delete is forced (flush) before the filesystem is touched: a
+   * database-level failure must surface first, so a failed row delete never
+   * leaves behind a prematurely deleted file. Role checks live on the
+   * controller's {@code @PreAuthorize}; the service stays role-agnostic.
    */
   @Transactional
   public void deleteItem(Long id) {
     Item item = items.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    String photoUrl = item.getPhotoUrl();
     items.delete(item);
+    items.flush();
+    deletePhotoBestEffort(photoUrl);
   }
 
   /**
@@ -114,8 +127,15 @@ public class ItemService {
   /**
    * Attaches a photo to a listing: validates and stores the upload, then
    * records its public URL path ({@code /uploads/<uuid>.<ext>}) on the item.
-   * Ownership/role checks live on the controller's {@code @PreAuthorize}
+   * Replacing an existing photo best-effort deletes the old file, so
+   * repeated photo uploads stop leaking one file per replace. Ownership/role
+   * checks live on the controller's {@code @PreAuthorize}
    * ({@link ItemSecurity}); the service stays role-agnostic.
+   *
+   * <p>Ordering is deliberate: the new file is stored <i>first</i>, so a
+   * validation failure throws before the old URL is touched — a rejected
+   * upload never deletes the listing's current photo. The old file is only
+   * removed after the URL has been replaced.
    *
    * <p>Note: the file is written to disk before the transaction commits, so
    * a rollback after a successful write can leave an orphan file — accepted
@@ -126,7 +146,34 @@ public class ItemService {
   public ItemDto attachPhoto(Long itemId, MultipartFile file) {
     Item item = items.findById(itemId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
-    item.setPhotoUrl(imageStorage.store(file));
+    String newUrl = imageStorage.store(file);
+    String oldUrl = item.getPhotoUrl();
+    item.setPhotoUrl(newUrl);
+    if (!Objects.equals(oldUrl, newUrl)) {
+      deletePhotoBestEffort(oldUrl);
+    }
     return mapper.toDto(item);
+  }
+
+  /**
+   * Removes the file behind a stored photo URL without touching the
+   * database transaction. A filesystem failure is logged and swallowed, so
+   * it can never roll back (or block) the row operation it accompanies —
+   * the row is the source of truth and the file is just its attachment.
+   * A leftover file on a disk failure is the accepted cost; it is inert
+   * (unreferenced) rather than a broken reference.
+   */
+  private void deletePhotoBestEffort(String publicPath) {
+    if (publicPath == null || publicPath.isBlank()) {
+      return;
+    }
+    try {
+      if (imageStorage.delete(publicPath)) {
+        log.debug("deleted orphaned upload {}", publicPath);
+      }
+    } catch (IOException e) {
+      log.warn("could not delete upload {} — row operation proceeds, file left on disk",
+          publicPath, e);
+    }
   }
 }

@@ -3,11 +3,14 @@ package com.toni.marketplace.item;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -170,6 +173,45 @@ class ItemServiceTest {
     verify(items, never()).delete(any());
   }
 
+  @Test
+  void deleteItem_deletesStoredPhotoFile() throws IOException {
+    Item item = listing(5L);
+    item.setPhotoUrl("/uploads/old.png");
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+
+    service.deleteItem(3L);
+
+    verify(items).delete(item);
+    verify(imageStorage).delete("/uploads/old.png");
+  }
+
+  @Test
+  void deleteItem_withoutPhoto_neverTouchesStorage() throws IOException {
+    Item item = listing(5L);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+
+    service.deleteItem(3L);
+
+    verify(items).delete(item);
+    verify(imageStorage, never()).delete(anyString());
+  }
+
+  /**
+   * A filesystem failure during cleanup must never roll back (or block) the
+   * row delete — the file is best-effort, the row is the source of truth.
+   */
+  @Test
+  void deleteItem_storageFailure_doesNotBlockRowDelete() throws IOException {
+    Item item = listing(5L);
+    item.setPhotoUrl("/uploads/old.png");
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    doThrow(new IOException("disk on fire")).when(imageStorage).delete("/uploads/old.png");
+
+    service.deleteItem(3L); // must not throw
+
+    verify(items).delete(item);
+  }
+
   // --- markSold ---
 
   @Test
@@ -261,5 +303,55 @@ class ItemServiceTest {
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.NOT_FOUND));
     verify(imageStorage, never()).store(any());
+  }
+
+  @Test
+  void attachPhoto_replacesOldPhotoAndDeletesOldFile() throws IOException {
+    Item item = listing(5L);
+    item.setPhotoUrl("/uploads/old.png");
+    var file = new MockMultipartFile("file", "lamp.png", "image/png", new byte[]{1, 2, 3});
+    ItemDto dto = new ItemDto(3L, "Desk lamp", "a used desk lamp", 2500L, ItemStatus.AVAILABLE,
+        5L, null, null, "/uploads/new.png", null, null);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    when(imageStorage.store(file)).thenReturn("/uploads/new.png");
+    when(mapper.toDto(item)).thenReturn(dto);
+
+    assertThat(service.attachPhoto(3L, file)).isSameAs(dto);
+    assertThat(item.getPhotoUrl()).isEqualTo("/uploads/new.png");
+    verify(imageStorage).delete("/uploads/old.png");
+  }
+
+  @Test
+  void attachPhoto_withoutOldPhoto_neverDeletes() throws IOException {
+    Item item = listing(5L);
+    var file = new MockMultipartFile("file", "lamp.png", "image/png", new byte[]{1, 2, 3});
+    ItemDto dto = new ItemDto(3L, "Desk lamp", "a used desk lamp", 2500L, ItemStatus.AVAILABLE,
+        5L, null, null, "/uploads/first.png", null, null);
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    when(imageStorage.store(file)).thenReturn("/uploads/first.png");
+    when(mapper.toDto(item)).thenReturn(dto);
+
+    service.attachPhoto(3L, file);
+
+    verify(imageStorage, never()).delete(anyString());
+  }
+
+  /**
+   * A rejected upload must not delete the listing's current photo: the new
+   * file is stored (validated) before the old URL is touched.
+   */
+  @Test
+  void attachPhoto_storeFailure_keepsOldPhotoAndNeverDeletes() throws IOException {
+    Item item = listing(5L);
+    item.setPhotoUrl("/uploads/old.png");
+    var file = new MockMultipartFile("file", "lamp.png", "image/png", new byte[]{1, 2, 3});
+    when(items.findById(3L)).thenReturn(Optional.of(item));
+    when(imageStorage.store(file))
+        .thenThrow(new InvalidImageException("unsupported image type: text/plain"));
+
+    assertThatThrownBy(() -> service.attachPhoto(3L, file))
+        .isInstanceOf(InvalidImageException.class);
+    assertThat(item.getPhotoUrl()).isEqualTo("/uploads/old.png");
+    verify(imageStorage, never()).delete(anyString());
   }
 }

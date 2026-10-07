@@ -43,6 +43,9 @@ public class ImageStorageService {
       "image/webp", ".webp",
       "image/gif", ".gif");
 
+  /** Public URL prefix of every stored upload; the DB's photoUrl values. */
+  static final String PUBLIC_PREFIX = "/uploads/";
+
   private final Path dir;
   private final DataSize maxSize;
 
@@ -90,6 +93,32 @@ public class ImageStorageService {
     } catch (IOException e) {
       throw new InvalidImageException("could not store image");
     }
-    return "/uploads/" + filename;
+    return PUBLIC_PREFIX + filename;
+  }
+
+  /**
+   * Best-effort delete of a previously stored upload, identified by its
+   * public URL path ({@code /uploads/<uuid>.<ext>}).
+   *
+   * <p>Only paths inside the upload directory are ever touched: anything
+   * else (null/blank, a foreign prefix, or a {@code ..} traversal that
+   * resolves outside the directory) is a no-op returning {@code false}, and
+   * only regular files are deleted — never directories.
+   *
+   * @return {@code true} if a file was actually removed.
+   * @throws IOException on an unexpected filesystem failure. Callers that
+   *         delete alongside a database row must treat this as best-effort
+   *         (log and continue) so a disk hiccup can never roll back the row
+   *         operation — filesystem deletes are not transactional.
+   */
+  public boolean delete(String publicPath) throws IOException {
+    if (publicPath == null || publicPath.isBlank() || !publicPath.startsWith(PUBLIC_PREFIX)) {
+      return false;
+    }
+    Path target = dir.resolve(publicPath.substring(PUBLIC_PREFIX.length())).normalize();
+    if (!target.startsWith(dir) || !Files.isRegularFile(target)) {
+      return false;
+    }
+    return Files.deleteIfExists(target);
   }
 }

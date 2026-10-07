@@ -89,4 +89,43 @@ class ImageStorageServiceTest {
         .isInstanceOf(InvalidImageException.class)
         .hasMessageContaining("image file is required");
   }
+
+  @Test
+  void delete_removesPreviouslyStoredFile() throws IOException {
+    MockMultipartFile file =
+        new MockMultipartFile("file", "lamp.png", "image/png", new byte[]{1, 2, 3});
+    String url = storage.store(file);
+
+    assertThat(storage.delete(url)).isTrue();
+    assertThat(uploadDir.resolve(url.substring("/uploads/".length()))).doesNotExist();
+  }
+
+  @Test
+  void delete_missingFile_isNoOpReturningFalse() throws IOException {
+    assertThat(storage.delete("/uploads/00000000-0000-0000-0000-000000000000.png"))
+        .isFalse();
+  }
+
+  @Test
+  void delete_nullBlankOrForeignPrefix_areNoOps() throws IOException {
+    assertThat(storage.delete(null)).isFalse();
+    assertThat(storage.delete("   ")).isFalse();
+    assertThat(storage.delete("/other/x.png")).isFalse();
+    assertThat(storage.delete("uploads/x.png")).isFalse();
+  }
+
+  @Test
+  void delete_refusesPathTraversalOutsideUploadDir() throws IOException {
+    Path secret = tmpDir.resolve("secret.txt");
+    Files.write(secret, "do not touch".getBytes());
+
+    assertThat(storage.delete("/uploads/../secret.txt")).isFalse();
+    assertThat(secret).exists().content().isEqualTo("do not touch");
+  }
+
+  @Test
+  void delete_prefixAlone_neverDeletesTheDirectoryItself() throws IOException {
+    assertThat(storage.delete("/uploads/")).isFalse();
+    assertThat(uploadDir).isDirectory();
+  }
 }
