@@ -73,6 +73,19 @@ public class OrderController {
   }
 
   /**
+   * Cancels an order (PENDING → CANCELLED) and releases the listing back to
+   * AVAILABLE so the list view offers it again. Only the order's buyer may
+   * cancel (403 otherwise); already-PAID or otherwise terminal orders are
+   * rejected 422 (a re-cancel of an already-CANCELLED order is idempotent).
+   */
+  @PostMapping("/{id}/cancel")
+  public ApiResponse<OrderDto> cancel(@PathVariable Long id) {
+    Long buyerId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(orderService.cancel(buyerId, id));
+  }
+
+  /**
    * Captures payment for an order (mock PSP — see {@code PaymentService}).
    * Only the order's buyer may pay (403 otherwise); paying an already-PAID
    * order is idempotent and returns the order unchanged; a {@code @Version}
