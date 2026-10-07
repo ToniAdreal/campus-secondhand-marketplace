@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { api, getAccessToken } from '../api/client';
+import { api, getAccessToken, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 import LoginPage from './LoginPage';
@@ -55,13 +55,17 @@ describe('LoginPage', () => {
   beforeEach(() => {
     currentPath = '';
     localStorage.clear();
-    useAuthStore.getState().logout(); // also clears the in-memory access token
+    // synchronous local-state reset — the store's logout() now hits the
+    // server, which teardowns must not do (it would pollute the api.post spy)
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
   });
 
   afterEach(() => {
     cleanup(); // vitest runs with globals off, so RTL's auto-cleanup is not registered
     vi.clearAllMocks();
-    useAuthStore.getState().logout();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
   });
 
   it('renders the form and blocks empty submits without calling the API', async () => {

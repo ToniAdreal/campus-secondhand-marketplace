@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 import CreateListingPage from './CreateListingPage';
@@ -79,14 +79,17 @@ describe('CreateListingPage', () => {
   beforeEach(() => {
     currentPath = '';
     localStorage.clear();
-    useAuthStore.getState().logout();
+    // synchronous reset — store logout() now calls the server (would pollute spies)
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
     getSpy.mockResolvedValue(envelope(fakeCategories));
   });
 
   afterEach(() => {
     cleanup(); // vitest runs with globals off, so RTL's auto-cleanup is not registered
     vi.clearAllMocks();
-    useAuthStore.getState().logout();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
   });
 
   it('redirects unauthenticated visitors to /login', async () => {

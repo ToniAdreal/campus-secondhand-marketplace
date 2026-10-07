@@ -41,3 +41,22 @@ export async function login(payload: LoginPayload): Promise<LoginResult> {
   const body = res.data.data;
   return { user: body.user, accessToken: body.accessToken };
 }
+
+/**
+ * POST /api/auth/logout. Goes through the shared `api` instance, which
+ * attaches the in-memory bearer credential — the backend requires
+ * authentication on this route (SecurityConfig): it revokes the caller's
+ * whole refresh-token family server-side and answers with an expired
+ * Set-Cookie that wipes the httpOnly `refresh_token` cookie. The call takes
+ * no payload and the response body carries no tokens.
+ *
+ * Throws the Axios error on failure (e.g. 401 when the access token already
+ * expired — note the client's 401 interceptor may silently refresh once and
+ * then retry the logout, which is harmless: the retry just revokes the
+ * rotated family instead). Callers must clear local auth state in a
+ * `finally`, never only on success — a failed server call must not leave the
+ * UI looking logged in.
+ */
+export async function logout(): Promise<void> {
+  await api.post('/auth/logout');
+}

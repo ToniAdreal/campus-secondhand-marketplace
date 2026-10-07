@@ -23,8 +23,12 @@ function AuthNav() {
       <button
         type="button"
         onClick={() => {
-          logout();
-          navigate('/');
+          // logout() always resets local state (even when the server call
+          // fails); navigate home either way.
+          logout().then(
+            () => navigate('/'),
+            () => navigate('/'),
+          );
         }}
         className="text-sm text-blue-600 hover:underline"
       >

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
 import type { Message } from '../api/messages';
 import { useAuthStore } from '../store/useAuthStore';
@@ -63,7 +63,9 @@ function renderThread() {
 
 describe('MessageThread', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout(); // also clears the in-memory access token
+    // synchronous reset — store logout() now calls the server (would pollute spies)
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
   });
 
   afterEach(() => {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
 import type { Item } from '../api/items';
 import { type Order, useCreateOrder } from '../api/orders';
@@ -75,7 +75,9 @@ function renderAt(initialEntry: string) {
 describe('ItemDetailPage buy-now', () => {
   beforeEach(() => {
     currentPath = '';
-    useAuthStore.getState().logout(); // also clears the in-memory access token
+    // synchronous reset — store logout() now calls the server (would pollute spies)
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
     // Default route: the message-thread endpoint answers an empty page.
     // Tests pin their own GET with mockResolvedValueOnce, which fires first
     // (the item query mounts before the child thread query).

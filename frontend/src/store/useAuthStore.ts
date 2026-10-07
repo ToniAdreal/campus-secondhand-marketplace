@@ -1,20 +1,29 @@
 import { create } from 'zustand';
 import { setAccessToken } from '../api/client';
+import { logout as serverLogout } from '../api/auth';
+import { queryClient } from '../queryClient';
 import type { AuthUser } from '../api/auth';
 
 interface AuthState {
   /** Logged-in user summary, or null when logged out. */
   user: AuthUser | null;
-  /** Stores the user and keeps the access token in memory (client.ts module
-   * scope — never localStorage/sessionStorage). The refresh token lives in
-   * an httpOnly cookie managed by the browser (see api/client.ts). */
+  /** Stores the user and keeps the bearer credential in memory (client.ts
+   * module scope — never localStorage/sessionStorage). The refresh token
+   * lives in an httpOnly cookie managed by the browser (see api/client.ts). */
   login: (user: AuthUser, accessToken: string) => void;
-  /** Clears the in-memory token and the user. Note: this store does not call
-   * the server-side POST /api/auth/logout yet, so the httpOnly refresh
-   * cookie lingers until it expires (7d) — it is useless without an access
-   * token and rotates on every refresh, so a stale cookie cannot mint a
-   * session on its own. */
-  logout: () => void;
+  /**
+   * Server-side logout: calls POST /api/auth/logout so the backend revokes
+   * the refresh-token family and the browser drops the httpOnly cookie via
+   * the server's expired Set-Cookie. Afterwards clears the in-memory
+   * credential, the user, and the whole TanStack query cache — no other
+   * user's server state may linger after logout.
+   *
+   * A failed server call still clears local state (the `finally`): the UI
+   * must never look logged in after the user asked to log out. The error
+   * propagates so callers can decide what to do (the logout button navigates
+   * home either way).
+   */
+  logout: () => Promise<void>;
 }
 
 /** UI/auth state only — server state lives in TanStack Query. */
@@ -24,8 +33,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     setAccessToken(accessToken);
     set({ user });
   },
-  logout: () => {
-    setAccessToken(null);
-    set({ user: null });
+  logout: async () => {
+    try {
+      await serverLogout();
+    } finally {
+      setAccessToken(null);
+      set({ user: null });
+      queryClient.clear();
+    }
   },
 }));
