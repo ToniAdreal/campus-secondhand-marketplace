@@ -44,9 +44,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       guesses one valid token hammer indefinitely.</li>
  * </ul>
  *
- * <p>Runs at {@link Ordered#HIGHEST_PRECEDENCE} so throttled requests are
- * rejected before any security processing. Only POSTs to the three paths are
- * inspected; everything else passes through untouched.
+ * <p>Runs just after {@link com.toni.marketplace.common.RequestIdFilter}
+ * ({@code HIGHEST_PRECEDENCE + 1}) so a throttled {@code 429} still carries
+ * the {@code X-Request-ID} echo, and still before any security processing.
+ * Only POSTs to the three paths are inspected; everything else passes
+ * through untouched.
  *
  * <p>Client identity is {@code request.getRemoteAddr()}. Behind the
  * docker-compose nginx proxy that is the proxy's address, not the end
@@ -55,7 +57,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * attackers spoof their bucket key).
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1) // RequestIdFilter (HIGHEST_PRECEDENCE) attaches first
 public class AuthRateLimitFilter extends OncePerRequestFilter {
 
   static final String RETRY_AFTER_HEADER = "Retry-After";

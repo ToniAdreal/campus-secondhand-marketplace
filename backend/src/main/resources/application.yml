@@ -48,6 +48,12 @@ app:
     # the token family (theft detection).
     refresh-grace-window: 60s
 
+logging:
+  pattern:
+    # %X{requestId} is set by RequestIdFilter (backlog #44) — every request's
+    # log lines carry its X-Request-ID; empty when nothing is in the MDC.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{requestId}] %logger{36} - %msg%n"
+
 management:
   info:
     # Exposes info.* application properties on /actuator/info (the env info
