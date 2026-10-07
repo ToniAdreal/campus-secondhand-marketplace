@@ -2,7 +2,13 @@ package com.toni.marketplace.message;
 
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.ItemRepository;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +35,10 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Service
 public class MessageService {
+
+  /** Hard cap on a thread page: an unbounded thread read is a response-size
+   * and memory DoS vector, so oversized requests are clamped, not honored. */
+  public static final int MAX_THREAD_PAGE_SIZE = 50;
 
   private final MessageRepository messages;
   private final ItemRepository items;
@@ -57,17 +67,40 @@ public class MessageService {
     return MessageDto.from(saved);
   }
 
+  /**
+   * One page of the caller's conversation thread for a listing.
+   *
+   * <p>Page 0 is the <em>newest</em> page; within a page the messages are
+   * chronological, so a chat UI can render each page top-to-bottom and stitch
+   * older pages above the current one. {@code size} is clamped to
+   * [1, {@value #MAX_THREAD_PAGE_SIZE}] and negative pages to 0 — oversized
+   * reads would turn one long thread into an unbounded response.
+   *
+   * <p>The sort is deliberately not client-overridable: thread order is a
+   * product contract, not a query preference.
+   */
   @Transactional(readOnly = true)
-  public List<MessageDto> thread(Long userId, Long itemId) {
+  public Page<MessageDto> thread(Long userId, Long itemId, int page, int size) {
     if (!items.existsById(itemId)) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
     }
-    List<MessageDto> thread = messages.findThreadByItemAndParticipant(itemId, userId)
-        .stream().map(MessageDto::from).toList();
-    if (thread.isEmpty()) {
+    PageRequest pageable = PageRequest.of(
+        Math.max(page, 0),
+        Math.min(Math.max(size, 1), MAX_THREAD_PAGE_SIZE),
+        Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+    Page<Message> fetched =
+        messages.findThreadPageByItemAndParticipant(itemId, userId, pageable);
+    if (fetched.getTotalElements() == 0) {
+      // totalElements == 0 means the caller has no message on this listing,
+      // which is exactly the old "not a participant" condition — it holds on
+      // every page, so an out-of-range page for a real participant is a 200
+      // empty page, while a stranger on any page gets 403.
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "not a participant in this conversation");
     }
-    return thread;
+    List<MessageDto> chronological = new ArrayList<>(
+        fetched.stream().map(MessageDto::from).toList());
+    Collections.reverse(chronological);
+    return new PageImpl<>(chronological, pageable, fetched.getTotalElements());
   }
 }

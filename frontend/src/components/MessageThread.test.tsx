@@ -34,6 +34,15 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
+function pageEnvelope(messages: Message[]) {
+  return envelope({
+    content: messages,
+    totalElements: messages.length,
+    totalPages: 1,
+    number: 0,
+  });
+}
+
 function axiosFailure(status: number, message: string) {
   return {
     isAxiosError: true,
@@ -64,7 +73,7 @@ describe('MessageThread', () => {
 
   it('renders the thread chronologically with You/Seller labels', async () => {
     useAuthStore.getState().login(buyer, 'tok');
-    getSpy.mockResolvedValueOnce(envelope([msg1, msg2]));
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
     renderThread();
 
     await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
@@ -84,8 +93,8 @@ describe('MessageThread', () => {
       body: 'Great, see you then!',
       createdAt: '2026-10-07T03:00:00Z',
     };
-    getSpy.mockResolvedValueOnce(envelope([msg1, msg2])); // initial thread load
-    getSpy.mockResolvedValueOnce(envelope([msg1, msg2, msg3])); // refetch after send
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2])); // initial thread load
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2, msg3])); // refetch after send
     postSpy.mockResolvedValueOnce(envelope(msg3));
     renderThread();
 
@@ -130,7 +139,7 @@ describe('MessageThread', () => {
 
   it('the seller sees the thread but gets no send box (no self-messaging)', async () => {
     useAuthStore.getState().login(seller, 'tok');
-    getSpy.mockResolvedValueOnce(envelope([msg1, msg2]));
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
     renderThread();
 
     await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
@@ -141,7 +150,7 @@ describe('MessageThread', () => {
 
   it('a failed send shows a friendly error and keeps the draft', async () => {
     useAuthStore.getState().login(buyer, 'tok');
-    getSpy.mockResolvedValueOnce(envelope([msg1, msg2]));
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
     postSpy.mockRejectedValueOnce(axiosFailure(422, 'cannot send a message to yourself'));
     renderThread();
 

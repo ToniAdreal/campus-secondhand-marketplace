@@ -128,11 +128,11 @@ class MessageTest {
             .param("itemId", String.valueOf(item.getId())))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0))
-        .andExpect(jsonPath("$.data.length()").value(3))
-        .andExpect(jsonPath("$.data[0].body").value("Is this still available?"))
-        .andExpect(jsonPath("$.data[1].body").value("Yes, pickup tomorrow?"))
-        .andExpect(jsonPath("$.data[2].body").value("Deal."))
-        .andExpect(jsonPath("$.data[1].senderId").value(seller.getId()));
+        .andExpect(jsonPath("$.data.content.length()").value(3))
+        .andExpect(jsonPath("$.data.content[0].body").value("Is this still available?"))
+        .andExpect(jsonPath("$.data.content[1].body").value("Yes, pickup tomorrow?"))
+        .andExpect(jsonPath("$.data.content[2].body").value("Deal."))
+        .andExpect(jsonPath("$.data.content[1].senderId").value(seller.getId()));
   }
 
   @Test
@@ -147,8 +147,8 @@ class MessageTest {
             .header("Authorization", "Bearer " + token(seller))
             .param("itemId", String.valueOf(item.getId())))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.length()").value(1))
-        .andExpect(jsonPath("$.data[0].receiverId").value(seller.getId()));
+        .andExpect(jsonPath("$.data.content.length()").value(1))
+        .andExpect(jsonPath("$.data.content[0].receiverId").value(seller.getId()));
   }
 
   @Test

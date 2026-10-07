@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { ApiResponse } from './items';
+import type { ApiResponse, Page } from './items';
 
 export interface Message {
   id: number;
@@ -17,19 +17,22 @@ export const messageKeys = {
 };
 
 /**
- * GET /api/messages?itemId= — the caller's conversation thread for one
- * listing, oldest first. The backend answers 403 (not an empty list) when
- * the caller never participated, so a third party cannot tell "no
- * conversation" from "none of your business"; callers render that 403 as
- * a privacy note, never the thread.
+ * GET /api/messages?itemId= — one page of the caller's conversation thread
+ * for a listing. The backend paginates the thread: page 0 is the newest
+ * page (default 20, capped at 50), messages are chronological within the
+ * page. This hook reads the first page only; fetching older pages ("load
+ * earlier messages") is a follow-up for long threads. The backend answers
+ * 403 (not an empty list) when the caller never participated, so a third
+ * party cannot tell "no conversation" from "none of your business";
+ * callers render that 403 as a privacy note, never the thread.
  */
 export function useMessageThread(itemId: number) {
   return useQuery({
     queryKey: messageKeys.thread(itemId),
     queryFn: () =>
       api
-        .get<ApiResponse<Message[]>>('/messages', { params: { itemId } })
-        .then((res) => res.data.data),
+        .get<ApiResponse<Page<Message>>>('/messages', { params: { itemId } })
+        .then((res) => res.data.data.content),
   });
 }
 
