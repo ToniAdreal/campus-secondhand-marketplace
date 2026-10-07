@@ -6,7 +6,9 @@ export interface Order {
   id: number;
   itemId: number;
   buyerId: number;
-  status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
+  // 'REFUNDED' landed on the backend with the mock refund endpoint; this
+  // union mirrors the server-side OrderStatus enum.
+  status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
   amountCents: number;
   createdAt: string;
 }
@@ -51,6 +53,35 @@ export function describeOrderError(error: unknown): string {
   return message || 'Something went wrong. Please try again.';
 }
 
+/**
+ * Maps a failed POST /api/orders/{id}/pay to a user-facing message. The
+ * backend speaks the {code,message,data} envelope; paying an already-PAID
+ * order is idempotent on the server (no second capture), so "success" there
+ * just returns the order — this mapper only runs on real failures.
+ */
+export function describePayError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 422 || /not in PENDING|can no longer|terminal/i.test(message)) {
+    return 'This order can no longer be paid — it was cancelled, completed, or refunded.';
+  }
+  if (code === 403) {
+    return 'Only the buyer of this order can pay for it.';
+  }
+  if (code === 401) {
+    return 'Please log in to pay for this order.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
 function newIdempotencyKey(): string {
   // The backend replays a retried request with the same Idempotency-Key
   // instead of double-creating an order; a fresh key makes each explicit
@@ -78,6 +109,25 @@ export function useCreateOrder() {
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/orders/{id}/pay — mock capture (no real money moves). The server
+ * makes this idempotent: paying an already-PAID order returns the order
+ * unchanged, so no second capture can happen, and a double-click only
+ * resolves one capture. On success every `orders` query refetches rather
+ * than being patched: the order's status flips PENDING → PAID and local
+ * cache surgery cannot know which paginated pages contain it.
+ */
+export function usePayOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api.post<ApiResponse<Order>>(`/orders/${orderId}/pay`, {}).then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }

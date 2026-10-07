@@ -1,16 +1,36 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useOrder } from '../api/orders';
+import { describePayError, useOrder, usePayOrder } from '../api/orders';
+import { useAuthStore } from '../store/useAuthStore';
 
 /**
  * Order confirmation — shown right after a successful buy-now. Reads the
- * order through the buyer order-reads endpoint (GET /api/orders/{id}).
+ * order through the buyer order-reads endpoint (GET /api/orders/{id}) and
+ * wires the mock capture endpoint (POST /api/orders/{id}/pay) behind an
+ * honest "Pay now (demo)" button — no real money moves.
  */
 export default function OrderConfirmationPage() {
   const { id } = useParams();
+  const user = useAuthStore((s) => s.user);
   const { data, isLoading, isError } = useOrder(Number(id));
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const payOrder = usePayOrder();
 
   if (isLoading) return <p>Loading…</p>;
   if (isError || !data) return <p className="text-red-600">Order not found.</p>;
+
+  const orderId = Number(id);
+  const canPay = user !== null && data.status === 'PENDING';
+  const paid = data.status === 'PAID';
+
+  const handlePay = () => {
+    setErrorMessage(null);
+    // The server's already-PAID idempotency makes a retry safe: the same
+    // click can never trigger a second capture.
+    payOrder.mutate(orderId, {
+      onError: (error) => setErrorMessage(describePayError(error)),
+    });
+  };
 
   return (
     <section className="rounded-lg bg-white p-6 shadow-sm">
@@ -29,11 +49,33 @@ export default function OrderConfirmationPage() {
           <dd>{data.status}</dd>
         </div>
       </dl>
-      <p className="mt-4 text-sm text-neutral-500">
-        Portfolio-demo note: no real payment is taken. The mock capture
-        endpoint (POST /api/orders/{data.id}/pay) exists on the backend but is
-        not wired to a button yet.
-      </p>
+      {canPay && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handlePay}
+            disabled={payOrder.isLoading}
+            className="rounded bg-green-600 px-5 py-2 font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {payOrder.isLoading ? 'Paying…' : 'Pay now (demo)'}
+          </button>
+          <p className="mt-2 text-sm text-neutral-500">
+            Portfolio-demo note: this is a mock capture — no real money
+            moves. The button is safe to press twice; the backend returns the
+            already-paid order instead of charging again.
+          </p>
+        </div>
+      )}
+      {paid && (
+        <p className="mt-4 text-sm text-green-700">
+          Paid (demo capture) — the seller will now confirm the handoff.
+        </p>
+      )}
+      {errorMessage && (
+        <p role="alert" className="mt-2 text-sm text-red-600">
+          {errorMessage}
+        </p>
+      )}
       <Link to={`/items/${data.itemId}`} className="mt-4 inline-block text-sm text-blue-600 hover:underline">
         Back to the listing
       </Link>
