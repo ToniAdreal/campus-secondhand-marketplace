@@ -17,10 +17,23 @@ public class JwtProperties {
 
   private Duration refreshTtl = Duration.ofDays(7);
 
+  /**
+   * How long after a rotation the just-replaced refresh token is still
+   * accepted once more (concurrent-tab grace; backlog #39). A replayed
+   * token whose successor is still live and whose revocation is no older
+   * than this rotates the live token instead of triggering theft detection.
+   * Replays after the window still kill the family. Default 60 seconds.
+   */
+  private Duration refreshGraceWindow = Duration.ofSeconds(60);
+
   public String getSecret() { return secret; }
   public void setSecret(String secret) { this.secret = secret; }
   public Duration getAccessTtl() { return accessTtl; }
   public void setAccessTtl(Duration accessTtl) { this.accessTtl = accessTtl; }
   public Duration getRefreshTtl() { return refreshTtl; }
   public void setRefreshTtl(Duration refreshTtl) { this.refreshTtl = refreshTtl; }
+  public Duration getRefreshGraceWindow() { return refreshGraceWindow; }
+  public void setRefreshGraceWindow(Duration refreshGraceWindow) {
+    this.refreshGraceWindow = refreshGraceWindow;
+  }
 }

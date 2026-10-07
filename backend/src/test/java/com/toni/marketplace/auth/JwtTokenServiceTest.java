@@ -42,7 +42,7 @@ class JwtTokenServiceTest {
     key = Keys.hmacShaKeyFor(bytes);
     refreshTokens = mock(RefreshTokenRepository.class);
     users = mock(UserRepository.class);
-    service = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7),
+    service = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60),
         refreshTokens, users, Clock.fixed(NOW, ZoneOffset.UTC));
 
     alice = new User("alice", "alice@example.com", "$2a$12$hashed");
@@ -91,7 +91,7 @@ class JwtTokenServiceTest {
   @Test
   void parseAccessToken_rejectsExpiredToken() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
-    JwtTokenService later = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7),
+    JwtTokenService later = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60),
         refreshTokens, users, Clock.fixed(NOW.plus(Duration.ofMinutes(16)), ZoneOffset.UTC));
 
     assertThatThrownBy(() -> later.parseAccessToken(pair.accessToken()))

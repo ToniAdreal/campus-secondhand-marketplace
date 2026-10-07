@@ -7,10 +7,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -18,15 +22,28 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * AuthController end-to-end via MockMvc: register → login → refresh with
- * rotating httpOnly cookies, including the replay-theft revocation rule.
+ * rotating httpOnly cookies, including the replay-theft revocation rule and
+ * the concurrent-refresh grace window.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // each test rolls back the users it creates
 class AuthControllerTest {
 
+  @TestConfiguration
+  static class ControllableClock {
+    @Bean
+    @Primary
+    MutableClock testClock() {
+      return new MutableClock();
+    }
+  }
+
   @Autowired
   private MockMvc mockMvc;
+
+  @Autowired
+  private MutableClock clock;
 
   @Autowired
   private UserRepository users;
@@ -133,7 +150,7 @@ class AuthControllerTest {
   }
 
   @Test
-  void refreshRotatesTokensAndOldRefreshTokenDies() throws Exception {
+  void refreshRotatesTokensAndConcurrentReplayIsGracedOnce() throws Exception {
     Cookie first = register(REGISTER).getResponse().getCookie("refresh_token");
     assertThat(first).isNotNull();
 
@@ -147,13 +164,27 @@ class AuthControllerTest {
     assertThat(second).isNotNull();
     assertThat(second.getValue()).isNotEqualTo(first.getValue());
 
-    // Replaying the consumed (rotated) token → 401, family revoked.
+    // Concurrent-tab race: the just-rotated token replays immediately (still
+    // inside the grace window) → accepted once more, chain stays linear.
+    MvcResult graced = mockMvc.perform(post("/api/auth/refresh").cookie(first))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0))
+        .andReturn();
+    Cookie third = graced.getResponse().getCookie("refresh_token");
+    assertThat(third).isNotNull();
+    assertThat(third.getValue()).isNotEqualTo(second.getValue());
+    assertThat(refreshTokens.count()).isEqualTo(3); // family intact
+
+    // Past the grace window the same replay is theft: family revoked.
+    clock.advance(Duration.ofSeconds(61));
     mockMvc.perform(post("/api/auth/refresh").cookie(first))
         .andExpect(status().isUnauthorized())
-        .andExpect(jsonPath("$.code").value(401));
+        .andExpect(jsonPath("$.code").value(401))
+        .andExpect(jsonPath("$.message")
+            .value("refresh token reused or expired; session revoked"));
 
-    // The revoked family kills the new token too — theft-detection semantics.
-    mockMvc.perform(post("/api/auth/refresh").cookie(second))
+    // The revoked family kills the remaining tokens too.
+    mockMvc.perform(post("/api/auth/refresh").cookie(third))
         .andExpect(status().isUnauthorized());
     assertThat(refreshTokens.count()).isZero();
   }

@@ -43,6 +43,10 @@ app:
     secret: ${APP_JWT_SECRET:74xcpYqCpoJStMnkqprFiMYwsQIZD/zPa3LgyU83nbE=}
     access-ttl: 15m
     refresh-ttl: 7d
+    # How long a just-rotated refresh token is still accepted once more
+    # (concurrent-tab grace, backlog #39). Replays after the window kill
+    # the token family (theft detection).
+    refresh-grace-window: 60s
 
 management:
   info:

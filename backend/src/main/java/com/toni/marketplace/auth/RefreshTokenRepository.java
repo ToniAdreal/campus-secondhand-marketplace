@@ -11,6 +11,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
 
   Optional<RefreshToken> findByTokenHash(String tokenHash);
 
+  /** Follows the rotation chain: the row issued in place of a revoked token. */
+  Optional<RefreshToken> findByJti(String jti);
+
   /** Hard-delete the whole family (logout / refresh-token theft detected). */
   void deleteByUserId(Long userId);
 

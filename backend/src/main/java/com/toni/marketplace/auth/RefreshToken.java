@@ -39,6 +39,14 @@ public class RefreshToken {
   @Column(nullable = false)
   private boolean revoked;
 
+  /**
+   * When the row was revoked by rotation. NULL for never-revoked rows and
+   * for rows revoked before the V8 migration; the rotation grace window
+   * (backlog #39) is measured from here.
+   */
+  @Column(name = "revoked_at")
+  private Instant revokedAt;
+
   @Column(name = "replaced_by", length = 36)
   private String replacedBy;
 
@@ -70,6 +78,8 @@ public class RefreshToken {
   public Instant getExpiresAt() { return expiresAt; }
   public boolean isRevoked() { return revoked; }
   public void setRevoked(boolean revoked) { this.revoked = revoked; }
+  public Instant getRevokedAt() { return revokedAt; }
+  public void setRevokedAt(Instant revokedAt) { this.revokedAt = revokedAt; }
   public String getReplacedBy() { return replacedBy; }
   public void setReplacedBy(String replacedBy) { this.replacedBy = replacedBy; }
   public Instant getCreatedAt() { return createdAt; }

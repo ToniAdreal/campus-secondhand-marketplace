@@ -24,6 +24,19 @@ import javax.crypto.SecretKey;
  *   <li>Refresh token: 7 days, single-use, rotating. Each successful rotation
  *       revokes the consumed token and issues a new pair; replaying an old
  *       refresh token revokes the whole family (theft detection).</li>
+ *   <li>Concurrent-tab grace (backlog #39): the just-replaced token is
+ *       accepted <em>once more</em> inside a short grace window (default
+ *       60 s), keyed off the {@code replacedBy} chain — two tabs racing to
+ *       refresh no longer kill each other's session. The grace rotates the
+ *       live successor (the chain stays linear), so the same stale token
+ *       cannot be graced twice; a replay after the window, or whose
+ *       successor is no longer live, still kills the family.</li>
+ *   <li>Honest trade-off: the grace window weakens theft detection inside
+ *       the window. A stolen token replayed within the window races the
+ *       legitimate chain (each side keeps rotating the other's successor)
+ *       instead of triggering revocation; theft is only caught by replays
+ *       outside the window. The window is deliberately short (60 s) to
+ *       bound this.</li>
  *   <li>Only the SHA-256 of a refresh token is stored server-side.</li>
  * </ul>
  *
@@ -37,15 +50,18 @@ public class JwtTokenService {
   private final SecretKey key;
   private final Duration accessTtl;
   private final Duration refreshTtl;
+  private final Duration refreshGraceWindow;
   private final RefreshTokenRepository refreshTokens;
   private final UserRepository users;
   private final Clock clock;
 
   public JwtTokenService(SecretKey key, Duration accessTtl, Duration refreshTtl,
+                         Duration refreshGraceWindow,
                          RefreshTokenRepository refreshTokens, UserRepository users, Clock clock) {
     this.key = key;
     this.accessTtl = accessTtl;
     this.refreshTtl = refreshTtl;
+    this.refreshGraceWindow = refreshGraceWindow;
     this.refreshTokens = refreshTokens;
     this.users = users;
     this.clock = clock;
@@ -103,7 +119,9 @@ public class JwtTokenService {
   /**
    * Consumes a refresh token and issues a fresh pair (rotation). The old token
    * is revoked. Replaying an already-revoked or unknown token deletes the
-   * whole family and raises, so a stolen token cannot be silently reused.
+   * whole family and raises, so a stolen token cannot be silently reused —
+   * except for the concurrent-tab grace: the just-replaced token is accepted
+   * once more inside {@link #refreshGraceWindow} (see class javadoc).
    */
   public TokenPair rotateRefreshToken(String refreshToken) {
     Claims claims = parse(refreshToken);
@@ -115,8 +133,25 @@ public class JwtTokenService {
           return new InvalidRefreshTokenException("unknown refresh token");
         });
 
-    if (stored.isRevoked() || stored.isExpired(clock.instant())) {
-      // Possible replay/theft: kill the family, then reject.
+    Instant now = clock.instant();
+
+    if (stored.isRevoked() && !stored.isExpired(now)) {
+      // Possible legitimate concurrent refresh: two tabs raced each other
+      // and the slower tab's refresh arrived with the just-replaced token.
+      // Grace it once by rotating the live successor (the chain stays
+      // linear, so this exact stale token cannot be graced twice). If the
+      // token is past the grace window — or its successor is no longer the
+      // live token — treat the replay as theft: kill the family and reject.
+      TokenPair graced = tryGraceRotation(stored, claims, now);
+      if (graced != null) {
+        return graced;
+      }
+      refreshTokens.deleteByUserId(stored.getUserId());
+      throw new InvalidRefreshTokenException("refresh token reused or expired; session revoked");
+    }
+
+    if (stored.isExpired(now)) {
+      // Expired tokens never qualify for grace; same theft treatment.
       refreshTokens.deleteByUserId(stored.getUserId());
       throw new InvalidRefreshTokenException("refresh token reused or expired; session revoked");
     }
@@ -126,7 +161,43 @@ public class JwtTokenService {
       throw new InvalidRefreshTokenException("refresh token user mismatch");
     }
 
-    Instant now = clock.instant();
+    return rotateLive(stored, userId, claims.getSubject(), now);
+  }
+
+  /**
+   * Concurrent-refresh grace: accepts a just-replaced token once more if its
+   * {@code replacedBy} successor is still the live token of this chain and
+   * the revocation happened inside the grace window. Returns {@code null}
+   * when the token does not qualify — the caller then takes the theft path.
+   */
+  private TokenPair tryGraceRotation(RefreshToken stale, Claims claims, Instant now) {
+    String successorJti = stale.getReplacedBy();
+    Instant revokedAt = stale.getRevokedAt();
+    if (successorJti == null || revokedAt == null) {
+      return null;
+    }
+    if (revokedAt.isBefore(now.minus(refreshGraceWindow))) {
+      return null;
+    }
+    RefreshToken successor = refreshTokens.findByJti(successorJti).orElse(null);
+    if (successor == null || successor.isRevoked() || successor.isExpired(now)) {
+      return null;
+    }
+    long userId = Long.parseLong(claims.getSubject());
+    if (stale.getUserId() != userId || successor.getUserId() != userId) {
+      return null;
+    }
+    // Rotate the live successor: both tabs end up with a working token and
+    // the chain stays linear, spending this stale token's single grace grant.
+    return rotateLive(successor, userId, claims.getSubject(), now);
+  }
+
+  /**
+   * Rotates a live (non-revoked, non-expired) stored refresh token: marks it
+   * revoked — timestamped so the grace window can be measured — and issues
+   * the next pair for the same user.
+   */
+  private TokenPair rotateLive(RefreshToken live, long userId, String subject, Instant now) {
     Instant accessExp = now.plus(accessTtl);
     Instant refreshExp = now.plus(refreshTtl);
 
@@ -142,7 +213,7 @@ public class JwtTokenService {
     // Revoke the consumed token, then issue a new pair for the same user.
     String newJti = UUID.randomUUID().toString();
     String newRefreshToken = Jwts.builder()
-        .subject(claims.getSubject())
+        .subject(subject)
         .claim("type", TYPE_REFRESH)
         .id(newJti)
         .issuedAt(Date.from(now))
@@ -150,13 +221,14 @@ public class JwtTokenService {
         .signWith(key)
         .compact();
 
-    stored.setRevoked(true);
-    stored.setReplacedBy(newJti);
-    refreshTokens.save(stored);
+    live.setRevoked(true);
+    live.setRevokedAt(now);
+    live.setReplacedBy(newJti);
+    refreshTokens.save(live);
     refreshTokens.save(new RefreshToken(sha256Hex(newRefreshToken), newJti, userId, refreshExp));
 
     String newAccessToken = Jwts.builder()
-        .subject(claims.getSubject())
+        .subject(subject)
         .claim("username", user.getUsername())
         .claim("roles", roles)
         .claim("type", TYPE_ACCESS)
