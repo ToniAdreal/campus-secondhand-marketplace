@@ -27,6 +27,16 @@ app:
     # Override with the APP_UPLOADS_DIR environment variable in production.
     dir: ${APP_UPLOADS_DIR:./uploads}
     max-size: 5MB
+  cleanup:
+    # Nightly purge of stale auth/order bookkeeping rows
+    # (DataRetentionService, @Scheduled 03:00 server-local). Values in days.
+    # refresh-token-retention: revoked-or-expired refresh_token rows kept
+    #   after creation (audit + rotation-chain visibility), default 30.
+    # idempotency-retention: terminal (COMPLETED/FAILED) idempotency_key rows
+    #   kept after their last state transition, default 90. IN_PROGRESS rows
+    #   are never purged.
+    refresh-token-retention: 30
+    idempotency-retention: 90
   jwt:
     # Base64 HS256 key (256 bits). Dev-only placeholder — production MUST set
     # the APP_JWT_SECRET environment variable. Access 15 min / refresh 7 days.
