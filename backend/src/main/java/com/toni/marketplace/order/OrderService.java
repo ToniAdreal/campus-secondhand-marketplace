@@ -265,7 +265,13 @@ public class OrderService {
    *       that change.)</li>
    *   <li>A concurrent modification of the order row between read and write
    *       surfaces as {@code ObjectOptimisticLockingFailureException} from
-   *       the {@code @Version} field and is mapped to 409, fail-fast.</li>
+   *       the {@code @Version} field and is mapped to 409, fail-fast.
+   *       Honest scope: on a pay race the losing thread still calls
+   *       {@link PaymentService#capture} before its version check fails at
+   *       flush — the mock is side-effect-free, so nothing double-charges
+   *       here. A real PSP client must pass an order-scoped idempotency key
+   *       to capture so the loser's pre-flush call is a no-op (declared
+   *       follow-up).</li>
    * </ul>
    */
   @Transactional
