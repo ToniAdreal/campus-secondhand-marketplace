@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.IOException;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -16,26 +17,35 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Throttles the credential endpoints {@code POST /api/auth/login} and
- * {@code POST /api/auth/register} per client IP via {@link AuthRateLimiter}
- * (default 5 attempts/minute — see {@link AuthRateLimitProperties}).
- * Brute-force on login is otherwise unthrottled.
+ * Throttles the auth brute-force surfaces per client IP:
+ * {@code POST /api/auth/login} and {@code POST /api/auth/register} share one
+ * token bucket (default 5 attempts/minute — see
+ * {@link AuthRateLimitProperties}), while {@code POST /api/auth/refresh}
+ * has its <em>own</em> bucket (default 30/minute). The refresh endpoint is
+ * unauthenticated (cookie-presented) and is otherwise a token-guessing
+ * surface; it needs throttling of its own, but must neither share the tight
+ * credential bucket (legitimate multi-tab clients refresh routinely) nor
+ * consume it.
  *
  * <p>Behavior:
  * <ul>
- *   <li>Every attempt on the two endpoints consumes one token — success or
- *       failure, login or register share one bucket per IP.</li>
+ *   <li>Every attempt on a throttled endpoint consumes one token from its
+ *       surface's bucket — login and register share one bucket per IP;
+ *       refresh has a separate one.</li>
  *   <li>An empty bucket short-circuits with {@code 429} in the project's
  *       {@code {code,message,data}} envelope plus a {@code Retry-After}
  *       header (seconds until the next token). The security chain is never
  *       reached.</li>
- *   <li>A <em>successful</em> login (2xx) resets the caller's bucket, so
- *       legitimate users are not punished for earlier typos. Register does
- *       not reset — the natural next step is a login, which does.</li>
+ *   <li>A <em>successful</em> login (2xx) resets the caller's credential
+ *       bucket, so legitimate users are not punished for earlier typos.
+ *       Register does not reset — the natural next step is a login, which
+ *       does. Refresh never resets its bucket: a successful refresh is the
+ *       normal flow, and resetting on success would let an attacker who
+ *       guesses one valid token hammer indefinitely.</li>
  * </ul>
  *
  * <p>Runs at {@link Ordered#HIGHEST_PRECEDENCE} so throttled requests are
- * rejected before any security processing. Only POSTs to the two paths are
+ * rejected before any security processing. Only POSTs to the three paths are
  * inspected; everything else passes through untouched.
  *
  * <p>Client identity is {@code request.getRemoteAddr()}. Behind the
@@ -51,40 +61,47 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   static final String RETRY_AFTER_HEADER = "Retry-After";
   private static final String LOGIN_PATH = "/api/auth/login";
   private static final String REGISTER_PATH = "/api/auth/register";
+  private static final String REFRESH_PATH = "/api/auth/refresh";
 
-  private final AuthRateLimiter limiter;
+  private final AuthRateLimiter credentialLimiter;
+  private final AuthRateLimiter refreshLimiter;
   private final ObjectMapper mapper;
 
-  public AuthRateLimitFilter(AuthRateLimiter limiter, ObjectMapper mapper) {
-    this.limiter = limiter;
+  public AuthRateLimitFilter(@Qualifier("credentialRateLimiter") AuthRateLimiter credentialLimiter,
+                             @Qualifier("refreshRateLimiter") AuthRateLimiter refreshLimiter,
+                             ObjectMapper mapper) {
+    this.credentialLimiter = credentialLimiter;
+    this.refreshLimiter = refreshLimiter;
     this.mapper = mapper;
   }
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    if (!limiter.isEnabled()) {
+    if (!credentialLimiter.isEnabled()) {
       return true;
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
     String path = pathOf(request);
-    return !(LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path));
+    return !(LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path));
   }
 
   @Override
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                   FilterChain chain) throws ServletException, IOException {
+    String path = pathOf(request);
+    AuthRateLimiter limiter = REFRESH_PATH.equals(path) ? refreshLimiter : credentialLimiter;
     String ip = clientIp(request);
     if (!limiter.tryConsume(ip)) {
       writeTooManyRequests(response, limiter.retryAfterSeconds(ip));
       return;
     }
-    if (LOGIN_PATH.equals(pathOf(request))) {
+    if (LOGIN_PATH.equals(path)) {
       StatusCapture wrapped = new StatusCapture(response);
       chain.doFilter(request, wrapped);
       if (wrapped.getStatus() / 100 == 2) {
-        limiter.reset(ip);
+        credentialLimiter.reset(ip);
       }
     } else {
       chain.doFilter(request, response);

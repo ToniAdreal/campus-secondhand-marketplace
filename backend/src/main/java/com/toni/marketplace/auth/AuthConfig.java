@@ -25,6 +25,31 @@ public class AuthConfig {
     return new PasswordService();
   }
 
+  /**
+   * Token bucket for the credential endpoints
+   * ({@code POST /api/auth/login}, {@code POST /api/auth/register}) —
+   * default 5 attempts/minute per client IP.
+   */
+  @Bean
+  public AuthRateLimiter credentialRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    return new AuthRateLimiter(clock, props);
+  }
+
+  /**
+   * Separate token bucket for {@code POST /api/auth/refresh} (default
+   * 30/minute per client IP). The refresh endpoint is its own
+   * unauthenticated brute-force surface: it must not share the tight
+   * credential bucket (legitimate multi-tab clients refresh routinely),
+   * and the credential bucket must not be consumed by refresh traffic.
+   */
+  @Bean
+  public AuthRateLimiter refreshRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties refreshProps = new AuthRateLimitProperties();
+    refreshProps.setEnabled(props.isEnabled());
+    refreshProps.setAttemptsPerMinute(props.getRefreshAttemptsPerMinute());
+    return new AuthRateLimiter(clock, refreshProps);
+  }
+
   @Bean
   public JwtTokenService jwtTokenService(JwtProperties props,
                                          RefreshTokenRepository refreshTokens,

@@ -3,7 +3,6 @@ package com.toni.marketplace.auth;
 import java.time.Clock;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Component;
 
 /**
  * In-memory token-bucket rate limiter, one bucket per key (used with the
@@ -11,17 +10,20 @@ import org.springframework.stereotype.Component;
  * injected {@link Clock} so tests can drive time deterministically.
  *
  * <p>Policy: token bucket sized and refilled at
- * {@code attemptsPerMinute} per client IP (default 5/min — see
+ * {@code attemptsPerMinute} per client IP (see
  * {@link AuthRateLimitProperties}). A bucket holds at most that many tokens,
  * so a short burst passes but sustained hammering is throttled. Buckets are
  * created lazily and idle entries are evicted opportunistically to bound
  * memory (an attacker cycling IPs must not grow the map forever).
  *
+ * <p>Instances are plain objects, not components: {@code AuthConfig} builds
+ * one per throttled surface (credential endpoints vs. the refresh endpoint),
+ * each with its own policy from {@link AuthRateLimitProperties}.
+ *
  * <p>This is brute-force throttling, not a distributed rate limiter: with
  * more than one app instance each keeps its own buckets. Noted here so a
  * future horizontal scale-out knows to move this to Redis.
  */
-@Component
 public class AuthRateLimiter {
 
   private final int capacity;
