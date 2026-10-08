@@ -8,12 +8,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 import javax.crypto.SecretKey;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +80,35 @@ class JwtTokenServiceTest {
     assertThatThrownBy(() -> service.parseAccessToken(pair.refreshToken()))
         .isInstanceOf(InvalidTokenException.class)
         .hasMessageContaining("not an access token");
+  }
+
+  @Test
+  void createTokenPair_embedsTokenVersionInAccessClaims() {
+    alice.setTokenVersion(3);
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+
+    JwtTokenService.AccessClaims claims = service.parseAccessToken(pair.accessToken());
+    assertThat(claims.tokenVersion()).isEqualTo(3);
+  }
+
+  @Test
+  void parseAccessToken_defaultsMissingVersionClaimToZero() {
+    // Tokens minted before the tver claim existed carry no version — they
+    // parse as 0, matching the V10 backfill so pre-release sessions survive
+    // until their next password change.
+    String legacyToken = Jwts.builder()
+        .subject("42")
+        .claim("username", "alice")
+        .claim("roles", List.of("USER"))
+        .claim("type", "access")
+        .issuedAt(Date.from(NOW))
+        .expiration(Date.from(NOW.plus(Duration.ofMinutes(15))))
+        .signWith(key)
+        .compact();
+
+    JwtTokenService.AccessClaims claims = service.parseAccessToken(legacyToken);
+    assertThat(claims.userId()).isEqualTo(42L);
+    assertThat(claims.tokenVersion()).isEqualTo(0L);
   }
 
   @Test

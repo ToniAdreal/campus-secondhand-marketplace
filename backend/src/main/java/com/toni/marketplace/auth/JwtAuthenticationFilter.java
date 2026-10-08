@@ -21,6 +21,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *   <li>No token present → request continues unauthenticated (the security
  *       filter chain's entry point answers 401 with the JSON envelope).</li>
  *   <li>Invalid/expired/wrong-type token → also left unauthenticated; same 401.</li>
+ *   <li>Stale token → the {@code tver} claim disagrees with the user's
+ *       {@code token_version} row (password was changed after the token was
+ *       issued) → unauthenticated, same 401. The row lookup costs one extra
+ *       query per authenticated request; that is the price of server-side
+ *       bearer revocation without a token denylist.</li>
+ *   <li>Token for a user row that no longer exists → unauthenticated.</li>
  *   <li>Roles from the token are mapped to {@code ROLE_<name>} authorities so
  *       that method-level {@code @PreAuthorize("hasRole('ADMIN')")} works.</li>
  * </ul>
@@ -34,9 +40,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final JwtTokenService jwt;
+  private final UserRepository users;
 
-  public JwtAuthenticationFilter(JwtTokenService jwt) {
+  public JwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
     this.jwt = jwt;
+    this.users = users;
   }
 
   @Override
@@ -49,13 +57,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       String token = header.substring(BEARER_PREFIX.length()).trim();
       try {
         JwtTokenService.AccessClaims claims = jwt.parseAccessToken(token);
-        List<SimpleGrantedAuthority> authorities = claims.roles().stream()
-            .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
-            .toList();
-        UsernamePasswordAuthenticationToken auth =
-            new UsernamePasswordAuthenticationToken(claims.userId(), null, authorities);
-        auth.setDetails(request.getRemoteAddr());
-        SecurityContextHolder.getContext().setAuthentication(auth);
+        // Server-side revocation check: a password change bumps the row's
+        // tokenVersion, invalidating every previously issued bearer token.
+        if (isStale(claims)) {
+          SecurityContextHolder.clearContext();
+        } else {
+          List<SimpleGrantedAuthority> authorities = claims.roles().stream()
+              .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+              .toList();
+          UsernamePasswordAuthenticationToken auth =
+              new UsernamePasswordAuthenticationToken(claims.userId(), null, authorities);
+          auth.setDetails(request.getRemoteAddr());
+          SecurityContextHolder.getContext().setAuthentication(auth);
+        }
       } catch (RuntimeException ignored) {
         // Malformed, expired, wrong signature or not an access token:
         // stay unauthenticated and let the entry point answer 401.
@@ -63,5 +77,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       }
     }
     filterChain.doFilter(request, response);
+  }
+
+  private boolean isStale(JwtTokenService.AccessClaims claims) {
+    return users.findById(claims.userId())
+        .map(user -> user.getTokenVersion() != claims.tokenVersion())
+        .orElse(true);
   }
 }

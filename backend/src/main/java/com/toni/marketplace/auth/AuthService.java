@@ -100,8 +100,10 @@ public class AuthService {
    * oracle leaks whether the attempt was "wrong user" or "wrong password".
    * The new password must satisfy {@link PasswordStrengthValidator} (weak →
    * 400). On success the whole refresh-token family is revoked — every
-   * other session dies — and the caller's session gets a fresh pair, so
-   * they stay logged in while stolen/other sessions are cut off.
+   * other session dies — the row's tokenVersion is bumped so all
+   * previously issued bearer tokens 401 immediately, and the caller's
+   * session gets a fresh pair (minted at the new version), so they stay
+   * logged in while stolen/other sessions are cut off.
    */
   @Transactional
   public AuthResult changePassword(long userId, String currentPassword, String newPassword) {
@@ -111,6 +113,7 @@ public class AuthService {
     }
     PasswordStrengthValidator.requireStrong(newPassword);
     user.setPasswordHash(passwords.encode(newPassword));
+    user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);
     jwt.revokeAll(userId);
     return new AuthResult(user, jwt.createTokenPair(user));

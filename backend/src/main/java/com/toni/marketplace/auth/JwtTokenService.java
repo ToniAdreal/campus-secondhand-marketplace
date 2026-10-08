@@ -20,7 +20,14 @@ import javax.crypto.SecretKey;
  * Issues and validates JWT access/refresh tokens (jjwt 0.12.x, HS256).
  *
  * <ul>
- *   <li>Access token: 15 min, carries sub (user id), username, roles.</li>
+ *   <li>Access token: 15 min, carries sub (user id), username, roles — plus a
+ *       {@code tver} claim (the user's {@code token_version} at issuance).
+ *       The authentication filter compares it against the row on every
+ *       request, so a password change (which bumps the row) kills all
+ *       pre-change tokens immediately instead of leaving them valid for
+ *       their full TTL. Tokens minted before this field existed carry no
+ *       claim and parse as 0 — they survive only until the account's next
+ *       password change.</li>
  *   <li>Refresh token: 7 days, single-use, rotating. Each successful rotation
  *       revokes the consumed token and issues a new pair; replaying an old
  *       refresh token revokes the whole family (theft detection).</li>
@@ -46,6 +53,7 @@ public class JwtTokenService {
 
   private static final String TYPE_ACCESS = "access";
   private static final String TYPE_REFRESH = "refresh";
+  private static final String CLAIM_TOKEN_VERSION = "tver";
 
   private final SecretKey key;
   private final Duration accessTtl;
@@ -72,7 +80,7 @@ public class JwtTokenService {
                           Instant accessExpiresAt, Instant refreshExpiresAt) {}
 
   /** Claims extracted from a validated access token. */
-  public record AccessClaims(long userId, String username, List<String> roles) {}
+  public record AccessClaims(long userId, String username, List<String> roles, long tokenVersion) {}
 
   public TokenPair createTokenPair(User user) {
     Instant now = clock.instant();
@@ -85,6 +93,7 @@ public class JwtTokenService {
         .subject(String.valueOf(user.getId()))
         .claim("username", user.getUsername())
         .claim("roles", roles)
+        .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))
@@ -113,7 +122,10 @@ public class JwtTokenService {
     String username = claims.get("username", String.class);
     @SuppressWarnings("unchecked")
     List<String> roles = claims.get("roles", List.class);
-    return new AccessClaims(userId, username, roles);
+    // Tokens minted before the tokenVersion field existed carry no claim —
+    // they parse as 0, matching the V10 backfill on existing rows.
+    Long tokenVersion = claims.get(CLAIM_TOKEN_VERSION, Long.class);
+    return new AccessClaims(userId, username, roles, tokenVersion == null ? 0L : tokenVersion);
   }
 
   /**
@@ -231,6 +243,7 @@ public class JwtTokenService {
         .subject(subject)
         .claim("username", user.getUsername())
         .claim("roles", roles)
+        .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))

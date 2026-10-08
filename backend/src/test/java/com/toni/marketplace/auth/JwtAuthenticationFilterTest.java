@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import jakarta.servlet.FilterChain;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * Pure unit tests for {@link JwtAuthenticationFilter}: no Spring context.
@@ -24,13 +26,15 @@ import org.springframework.security.core.context.SecurityContextHolder;
 class JwtAuthenticationFilterTest {
 
   private JwtTokenService jwt;
+  private UserRepository users;
   private JwtAuthenticationFilter filter;
   private FilterChain chain;
 
   @BeforeEach
   void setUp() {
     jwt = mock(JwtTokenService.class);
-    filter = new JwtAuthenticationFilter(jwt);
+    users = mock(UserRepository.class);
+    filter = new JwtAuthenticationFilter(jwt, users);
     chain = mock(FilterChain.class);
     SecurityContextHolder.clearContext();
   }
@@ -48,10 +52,18 @@ class JwtAuthenticationFilterTest {
     return request;
   }
 
+  private User userWithVersion(long version) {
+    User user = new User("alice", "alice@example.com", "$2a$12$hashed");
+    ReflectionTestUtils.setField(user, "id", 42L);
+    user.setTokenVersion(version);
+    return user;
+  }
+
   @Test
   void validTokenInstallsAuthenticationWithRoleAuthorities() throws Exception {
     when(jwt.parseAccessToken("good-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER")));
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L));
+    when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(0)));
 
     filter.doFilter(requestWith("Bearer good-token"), new MockHttpServletResponse(), chain);
 
@@ -67,13 +79,40 @@ class JwtAuthenticationFilterTest {
   @Test
   void multipleRolesMapToMultipleRoleAuthorities() throws Exception {
     when(jwt.parseAccessToken("admin-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(7L, "root", List.of("ADMIN", "USER")));
+        .thenReturn(new JwtTokenService.AccessClaims(7L, "root", List.of("ADMIN", "USER"), 0L));
+    User root = new User("root", "root@example.com", "$2a$12$hashed");
+    ReflectionTestUtils.setField(root, "id", 7L);
+    when(users.findById(7L)).thenReturn(Optional.of(root));
 
     filter.doFilter(requestWith("Bearer admin-token"), new MockHttpServletResponse(), chain);
 
     assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities())
         .extracting(Object::toString)
         .containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_USER");
+  }
+
+  @Test
+  void staleTokenVersionLeavesRequestUnauthenticated() throws Exception {
+    // The token was issued at version 0; a password change bumped the row
+    // to 1 — the bearer token must die even though it is still unexpired.
+    when(jwt.parseAccessToken("stale-token"))
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L));
+    when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(1)));
+
+    filter.doFilter(requestWith("Bearer stale-token"), new MockHttpServletResponse(), chain);
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+  }
+
+  @Test
+  void tokenForDeletedUserLeavesRequestUnauthenticated() throws Exception {
+    when(jwt.parseAccessToken("orphan-token"))
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L));
+    when(users.findById(42L)).thenReturn(Optional.empty());
+
+    filter.doFilter(requestWith("Bearer orphan-token"), new MockHttpServletResponse(), chain);
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
   }
 
   @Test
