@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -18,6 +19,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -47,6 +49,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *   <li>CORS is an explicit allowlist ({@code app.cors.allowed-origins}):
  *       cross-origin calls are honored only from listed origins; credentials
  *       (the httpOnly refresh cookie) are never combined with a wildcard.</li>
+ *   <li>Every response carries {@code X-Content-Type-Options: nosniff},
+ *       {@code X-Frame-Options: DENY} and {@code Referrer-Policy:
+ *       no-referrer}; {@code Strict-Transport-Security} is opt-in via
+ *       {@code app.security.headers.hsts-enabled} for HTTPS deployments
+ *       (off by default for local plain-HTTP dev). No CSP yet.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
  *       project's {@code {code,message,data}} envelope, never a redirect or
  *       the Spring default HTML error page.</li>
@@ -57,7 +64,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity // enables @PreAuthorize on controller methods
-@EnableConfigurationProperties(CorsProperties.class)
+@EnableConfigurationProperties({CorsProperties.class, SecurityHeadersProperties.class})
 public class SecurityConfig {
 
   @Bean
@@ -96,11 +103,31 @@ public class SecurityConfig {
                                                  JwtAuthenticationFilter jwtFilter,
                                                  AuthenticationEntryPoint entryPoint,
                                                  AccessDeniedHandler accessDeniedHandler,
-                                                 CorsConfigurationSource corsConfigurationSource)
+                                                 CorsConfigurationSource corsConfigurationSource,
+                                                 SecurityHeadersProperties securityHeaders)
       throws Exception {
     http
         .cors(cors -> cors.configurationSource(corsConfigurationSource))
         .csrf(AbstractHttpConfigurer::disable)
+        .headers(headers -> headers
+            // Security response headers (backlog #64). Spring Security's
+            // defaults are kept where they match the intent: nosniff and
+            // DENY framing; Referrer-Policy is not in the defaults so it is
+            // declared explicitly. HSTS is opt-in via
+            // app.security.headers.hsts-enabled — it stays off on local
+            // plain-HTTP dev and is enabled for HTTPS deployments.
+            // No Content-Security-Policy yet: a strict CSP that doesn't
+            // break the SPA's inline scripts is a declared follow-up.
+            .contentTypeOptions(Customizer.withDefaults())
+            .frameOptions(frame -> frame.deny())
+            .referrerPolicy(ref -> ref.policy(ReferrerPolicy.NO_REFERRER))
+            .httpStrictTransportSecurity(hsts -> {
+              if (securityHeaders.isHstsEnabled()) {
+                hsts.maxAgeInSeconds(31536000).includeSubDomains(true);
+              } else {
+                hsts.disable();
+              }
+            }))
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
             // Logout, password change, session restore and per-session

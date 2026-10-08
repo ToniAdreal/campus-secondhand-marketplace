@@ -29,6 +29,16 @@ app:
     # proxied API in practice). Production must override with the real SPA
     # origin, e.g. app.cors.allowed-origins=https://app.example.com.
     # allowed-origins: http://localhost:5173,http://localhost
+  security:
+    headers:
+      # Security response headers (SecurityConfig, backlog #64). Every
+      # response carries X-Content-Type-Options: nosniff, X-Frame-Options:
+      # DENY and Referrer-Policy: no-referrer. HSTS
+      # (Strict-Transport-Security) is opt-in: leave OFF for local
+      # plain-HTTP dev, turn ON (app.security.headers.hsts-enabled=true)
+      # on any HTTPS-served deployment. Honest scope: headers only, no CSP
+      # yet (a strict CSP for the SPA is a declared follow-up).
+      # hsts-enabled: false
   uploads:
     # Local directory for listing photos (served publicly under /uploads/**).
     # Override with the APP_UPLOADS_DIR environment variable in production.
