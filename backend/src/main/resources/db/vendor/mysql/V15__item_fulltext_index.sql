@@ -1,0 +1,20 @@
+-- V15: FULLTEXT index for listing search (backlog #68).
+--
+-- MySQL-only migration: it lives under db/vendor/mysql/ and is picked up via
+-- the `{vendor}` placeholder in spring.flyway.locations (Spring Boot replaces
+-- it with the JDBC database product id). It is a sibling of db/migration/ on
+-- purpose — Flyway scans locations recursively, so nesting it under
+-- db/migration/ would apply it on every database, including H2. The local H2
+-- profile resolves db/vendor/h2/, which does not exist and is skipped: H2 in
+-- MySQL-compatibility mode has no FULLTEXT index support, so the H2 path
+-- keeps the leading-wildcard LIKE query in
+-- ItemRepository#findListViewFiltered. The dual path is chosen at runtime by
+-- ItemService from the JDBC database product name, and is documented honestly
+-- in the README scope table.
+--
+-- Natural-language MATCH ... AGAINST is served by this index on the MySQL
+-- profile (docker-compose / CI Testcontainers); results are ordered by
+-- relevance. Known MySQL quirks, not hidden: words shorter than
+-- ft_min_word_len (default 4) and stopwords are ignored, so a query made up
+-- only of those returns an empty page.
+CREATE FULLTEXT INDEX ft_item_title_description ON item(title, description);

@@ -75,4 +75,41 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   @Query("select i from Item i left join fetch i.category where i.id = :id")
   Optional<Item> findDetailById(@Param("id") Long id);
+
+  /**
+   * MySQL-only full-text search, natural-language mode, served by the
+   * {@code FULLTEXT(title, description)} index (Flyway
+   * {@code db/vendor/mysql/V15__item_fulltext_index.sql}). Never called on
+   * the H2 profile — see {@link ItemService#isMySql()} — because H2 has no
+   * {@code MATCH ... AGAINST} support. Returns only the ids, relevance-ordered
+   * (best match first, then newest row as a deterministic tiebreak); the
+   * caller's {@link Pageable} must be unsorted because relevance ordering is
+   * intrinsic to the query.
+   *
+   * <p>Honest MySQL quirks: words shorter than {@code ft_min_word_len}
+   * (default 4) and stopwords are ignored by natural-language mode, so a
+   * keyword made only of those matches nothing.
+   */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by match(i.title, i.description) against (:keyword in natural language mode) desc, "
+          + "i.id desc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltext(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               Pageable pageable);
+
+  /**
+   * Hydrates full-text hits: one SELECT with the optional category
+   * fetch-joined, so mapping to DTOs fires no lazy queries. The relevance
+   * order from {@link #findIdsByFulltext} is re-applied by the caller — SQL
+   * {@code IN} does not preserve it.
+   */
+  @Query("select i from Item i left join fetch i.category where i.id in :ids")
+  List<Item> findDetailsByIds(@Param("ids") List<Long> ids);
 }

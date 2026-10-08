@@ -6,12 +6,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
+import java.util.List;
 import java.util.Optional;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -23,6 +29,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 import com.toni.marketplace.common.InvalidImageException;
 
@@ -46,6 +53,9 @@ class ItemServiceTest {
 
   @Mock
   private ImageStorageService imageStorage;
+
+  @Mock
+  private DataSource dataSource;
 
   @InjectMocks
   private ItemService service;
@@ -81,6 +91,73 @@ class ItemServiceTest {
     service.listItems(pageable, null, "   ");
 
     verify(items).findListViewFiltered(null, null, pageable);
+  }
+
+  // --- listItems: MySQL full-text path (backlog #68) ---
+
+  private void stubDatabaseProduct(String product) throws SQLException {
+    Connection connection = mock(Connection.class);
+    DatabaseMetaData metaData = mock(DatabaseMetaData.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.getMetaData()).thenReturn(metaData);
+    when(metaData.getDatabaseProductName()).thenReturn(product);
+  }
+
+  private static ItemDto dto(long id, String title) {
+    return new ItemDto(id, title, "desc", 1000L, ItemStatus.AVAILABLE,
+        5L, null, null, null, null, null);
+  }
+
+  @Test
+  void listItems_mysql_usesFulltextPathWithRelevanceOrder() throws Exception {
+    stubDatabaseProduct("MySQL");
+    Pageable pageable = PageRequest.of(0, 20);
+    Item best = listing(5L);
+    ReflectionTestUtils.setField(best, "id", 2L);
+    Item weaker = listing(5L);
+    ReflectionTestUtils.setField(weaker, "id", 1L);
+    // Repository returns ids in relevance order; hydration returns entities
+    // in arbitrary (IN-clause) order — the service must re-apply relevance.
+    when(items.findIdsByFulltext(eq(7L), eq("bike"), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(2L, 1L), PageRequest.of(0, 20), 2));
+    when(items.findDetailsByIds(List.of(2L, 1L))).thenReturn(List.of(weaker, best));
+    ItemDto bestDto = dto(2L, "Vintage road bike");
+    ItemDto weakerDto = dto(1L, "Desk lamp");
+    when(mapper.toDto(best)).thenReturn(bestDto);
+    when(mapper.toDto(weaker)).thenReturn(weakerDto);
+
+    Page<ItemDto> result = service.listItems(pageable, 7L, "  bike  ");
+
+    // Unescaped, trimmed keyword goes to MATCH (natural-language mode has no
+    // LIKE wildcards to escape); relevance order is preserved end to end.
+    verify(items).findIdsByFulltext(eq(7L), eq("bike"), any(Pageable.class));
+    verify(items, never()).findListViewFiltered(any(), any(), any());
+    assertThat(result.getContent()).containsExactly(bestDto, weakerDto);
+    assertThat(result.getTotalElements()).isEqualTo(2);
+  }
+
+  @Test
+  void listItems_mysql_blankKeyword_staysOnLikePath() throws Exception {
+    stubDatabaseProduct("MySQL");
+    Pageable pageable = PageRequest.of(0, 20);
+    when(items.findListViewFiltered(null, null, pageable))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    service.listItems(pageable, null, "   ");
+
+    verify(items).findListViewFiltered(null, null, pageable);
+    verify(items, never()).findIdsByFulltext(any(), any(), any());
+  }
+
+  @Test
+  void listItems_probeFailure_fallsBackToLikePath() throws Exception {
+    when(dataSource.getConnection()).thenThrow(new SQLException("pool down"));
+    Pageable pageable = PageRequest.of(0, 20);
+    Page<ItemDto> page = new PageImpl<>(List.of());
+    when(items.findListViewFiltered(eq(7L), eq("bike"), eq(pageable))).thenReturn(page);
+
+    assertThat(service.listItems(pageable, 7L, "bike")).isSameAs(page);
+    verify(items, never()).findIdsByFulltext(any(), any(), any());
   }
 
   // --- getItem ---

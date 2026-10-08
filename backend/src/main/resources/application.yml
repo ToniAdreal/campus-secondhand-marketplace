@@ -8,7 +8,12 @@ spring:
     password:
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    # `{vendor}` is replaced by Spring Boot with the JDBC database product
+    # id (mysql / h2). Vendor-specific migrations live under db/vendor/<id>/
+    # as a SIBLING of db/migration/ — never nested inside it, because Flyway
+    # scans locations recursively and would otherwise apply them on every
+    # database. A missing vendor directory is skipped with a warning.
+    locations: classpath:db/migration,classpath:db/vendor/{vendor}
   servlet:
     multipart:
       # Backstop for upload size; the primary check is in ImageStorageService

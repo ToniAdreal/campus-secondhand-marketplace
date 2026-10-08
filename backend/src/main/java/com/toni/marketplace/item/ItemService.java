@@ -1,10 +1,19 @@
 package com.toni.marketplace.item;
 
 import java.io.IOException;
+import java.sql.Connection;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,25 +30,98 @@ public class ItemService {
   private final CategoryRepository categories;
   private final ItemMapper mapper;
   private final ImageStorageService imageStorage;
+  private final DataSource dataSource;
+
+  /**
+   * Lazily probed once: whether the connected database is MySQL (see
+   * {@link #isMySql()}). Volatile so concurrent first requests see the same
+   * answer without re-probing the pool.
+   */
+  private volatile Boolean mySqlDatabase;
 
   public ItemService(ItemRepository items, CategoryRepository categories,
-                     ItemMapper mapper, ImageStorageService imageStorage) {
+                     ItemMapper mapper, ImageStorageService imageStorage,
+                     DataSource dataSource) {
     this.items = items;
     this.categories = categories;
     this.mapper = mapper;
     this.imageStorage = imageStorage;
+    this.dataSource = dataSource;
   }
 
   /**
    * List view; optionally narrowed to one category and/or a free-text
-   * keyword. The queries are constructor DTO projections
-   * ({@link ItemRepository#findListViewFiltered}) so the whole page —
-   * category names included — is rendered by a single SELECT instead of
-   * N+1 lazy loads.
+   * keyword. Two search paths, chosen by the connected database:
+   *
+   * <ul>
+   *   <li>MySQL — {@code MATCH(title, description) AGAINST (? IN NATURAL
+   *       LANGUAGE MODE)} served by the FULLTEXT index (Flyway
+   *       {@code db/vendor/mysql/V15__item_fulltext_index.sql}), results
+   *       relevance-ordered.
+   *   <li>Anything else (local H2) — the original case-insensitive
+   *       leading-wildcard LIKE ({@link ItemRepository#findListViewFiltered}).
+   * </ul>
+   *
+   * Both paths stay single-SELECT-per-page (constructor DTO projection on
+   * the LIKE path; id-page + fetch-join hydrate on the MySQL path), so the
+   * list view never degrades into N+1 lazy loads.
    */
   @Transactional(readOnly = true)
   public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword) {
+    if (isMySql() && keyword != null && !keyword.isBlank()) {
+      return searchFulltext(pageable, categoryId, keyword.trim());
+    }
     return items.findListViewFiltered(categoryId, normalizeKeyword(keyword), pageable);
+  }
+
+  /**
+   * True when the app is connected to a real MySQL (docker-compose profile
+   * or the Testcontainers CI path). Probed once from the JDBC database
+   * product name and cached. Any probe failure — including a null/closed
+   * data source — falls back to {@code false} (the LIKE path) rather than
+   * failing the request.
+   */
+  boolean isMySql() {
+    Boolean cached = mySqlDatabase;
+    if (cached != null) {
+      return cached;
+    }
+    boolean detected = false;
+    try {
+      try (Connection c = dataSource == null ? null : dataSource.getConnection()) {
+        if (c != null) {
+          detected = c.getMetaData().getDatabaseProductName()
+              .toLowerCase(Locale.ROOT).contains("mysql");
+        }
+      }
+    } catch (Exception e) {
+      log.warn("Database product probe failed; falling back to LIKE-based listing search", e);
+    }
+    mySqlDatabase = detected;
+    return detected;
+  }
+
+  /**
+   * MySQL full-text search: fetch the relevance-ordered id page first, then
+   * hydrate the rows (category fetch-joined) in one SELECT and re-apply the
+   * relevance order in memory — SQL {@code IN} does not preserve it. The
+   * unescaped keyword is passed to {@code MATCH}: unlike LIKE,
+   * natural-language mode has no wildcard characters to escape.
+   */
+  private Page<ItemDto> searchFulltext(Pageable pageable, Long categoryId, String keyword) {
+    Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+    Page<Long> ids = items.findIdsByFulltext(categoryId, keyword, unsorted);
+    if (ids.isEmpty()) {
+      return new PageImpl<>(List.of(), pageable, ids.getTotalElements());
+    }
+    Map<Long, Item> byId = items.findDetailsByIds(ids.getContent()).stream()
+        .collect(Collectors.toMap(Item::getId, Function.identity()));
+    List<ItemDto> dtos = ids.getContent().stream()
+        .map(byId::get)
+        .filter(Objects::nonNull)
+        .map(mapper::toDto)
+        .toList();
+    return new PageImpl<>(dtos, pageable, ids.getTotalElements());
   }
 
   /**
