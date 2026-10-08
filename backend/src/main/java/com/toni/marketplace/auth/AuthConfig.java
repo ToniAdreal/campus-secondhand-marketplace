@@ -51,6 +51,21 @@ public class AuthConfig {
     return new AuthRateLimiter(clock, refreshProps);
   }
 
+  /**
+   * Separate token bucket for {@code POST /api/messages} (default 30
+   * sends/minute per authenticated user). Keyed on the JWT principal id —
+   * message spam is a per-user abuse surface, and keying by IP would let
+   * one NAT address starve every user behind it (or let one user hide in
+   * their household's shared bucket).
+   */
+  @Bean
+  public AuthRateLimiter messageRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties messageProps = new AuthRateLimitProperties();
+    messageProps.setEnabled(props.isEnabled());
+    messageProps.setAttemptsPerMinute(props.getMessageAttemptsPerMinute());
+    return new AuthRateLimiter(clock, messageProps);
+  }
+
   @Bean
   public JwtTokenService jwtTokenService(JwtProperties props,
                                          RefreshTokenRepository refreshTokens,

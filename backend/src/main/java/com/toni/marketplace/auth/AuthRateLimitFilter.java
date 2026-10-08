@@ -27,11 +27,20 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * credential bucket (legitimate multi-tab clients refresh routinely) nor
  * consume it.
  *
+ * <p>{@code POST /api/messages} has a third, per-<em>user</em> bucket
+ * (default 30 sends/minute). Keying on the JWT principal id instead of the
+ * IP keeps one spammer from starving everyone behind the same NAT address,
+ * and keeps one user from hiding in their household's shared bucket. The
+ * filter runs before the security chain, so it parses the
+ * {@code Authorization} Bearer <redacted> itself to recover the principal id; a request
+ * with a missing/invalid token falls back to a per-IP bucket (the security
+ * chain 401s it anyway, but anonymous hammering is still throttled).
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
  *       surface's bucket — login and register share one bucket per IP;
- *       refresh has a separate one.</li>
+ *       refresh has a separate one; message sends have a per-user one.</li>
  *   <li>An empty bucket short-circuits with {@code 429} in the project's
  *       {@code {code,message,data}} envelope plus a {@code Retry-After}
  *       header (seconds until the next token). The security chain is never
@@ -41,20 +50,29 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       Register does not reset — the natural next step is a login, which
  *       does. Refresh never resets its bucket: a successful refresh is the
  *       normal flow, and resetting on success would let an attacker who
- *       guesses one valid token hammer indefinitely.</li>
+ *       guesses one valid token hammer indefinitely. Message sends never
+ *       reset either — the bucket is a usage throttle, not a mistake
+ *       budget; a successful send must not refill the spam allowance.</li>
  * </ul>
  *
  * <p>Runs just after {@link com.toni.marketplace.common.RequestIdFilter}
  * ({@code HIGHEST_PRECEDENCE + 1}) so a throttled {@code 429} still carries
  * the {@code X-Request-ID} echo, and still before any security processing.
- * Only POSTs to the three paths are inspected; everything else passes
+ * Only POSTs to the four paths are inspected; everything else passes
  * through untouched.
  *
- * <p>Client identity is {@code request.getRemoteAddr()}. Behind the
- * docker-compose nginx proxy that is the proxy's address, not the end
- * user's — honoring {@code X-Forwarded-For} from trusted proxies is a
- * documented follow-up, not done here (trusting the header blindly would let
- * attackers spoof their bucket key).
+ * <p>Honest trade-offs, both documented here so they stay deliberate:
+ * <ul>
+ *   <li>The access token on a message send is parsed twice (once here to
+ *       recover the principal id, once by the JWT authentication filter).
+ *       This filter enforces nothing — it only throttles; all auth
+ *       decisions stay downstream.</li>
+ *   <li>Client identity is {@code request.getRemoteAddr()}. Behind the
+ *       docker-compose nginx proxy that is the proxy's address, not the end
+ *       user's — honoring {@code X-Forwarded-For} from trusted proxies is a
+ *       documented follow-up, not done here (trusting the header blindly
+ *       would let attackers spoof their bucket key).</li>
+ * </ul>
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1) // RequestIdFilter (HIGHEST_PRECEDENCE) attaches first
@@ -64,35 +82,55 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String LOGIN_PATH = "/api/auth/login";
   private static final String REGISTER_PATH = "/api/auth/register";
   private static final String REFRESH_PATH = "/api/auth/refresh";
+  private static final String MESSAGE_PATH = "/api/messages";
+  private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
   private final AuthRateLimiter refreshLimiter;
+  private final AuthRateLimiter messageLimiter;
+  private final JwtTokenService jwt;
   private final ObjectMapper mapper;
 
   public AuthRateLimitFilter(@Qualifier("credentialRateLimiter") AuthRateLimiter credentialLimiter,
                              @Qualifier("refreshRateLimiter") AuthRateLimiter refreshLimiter,
+                             @Qualifier("messageRateLimiter") AuthRateLimiter messageLimiter,
+                             JwtTokenService jwt,
                              ObjectMapper mapper) {
     this.credentialLimiter = credentialLimiter;
     this.refreshLimiter = refreshLimiter;
+    this.messageLimiter = messageLimiter;
+    this.jwt = jwt;
     this.mapper = mapper;
   }
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    if (!credentialLimiter.isEnabled()) {
-      return true;
-    }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
     String path = pathOf(request);
-    return !(LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path));
+    if (MESSAGE_PATH.equals(path)) {
+      return !messageLimiter.isEnabled();
+    }
+    if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
+      return !credentialLimiter.isEnabled();
+    }
+    return true;
   }
 
   @Override
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                   FilterChain chain) throws ServletException, IOException {
     String path = pathOf(request);
+    if (MESSAGE_PATH.equals(path)) {
+      String key = messageKey(request);
+      if (!messageLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, messageLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     AuthRateLimiter limiter = REFRESH_PATH.equals(path) ? refreshLimiter : credentialLimiter;
     String ip = clientIp(request);
     if (!limiter.tryConsume(ip)) {
@@ -108,6 +146,28 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     } else {
       chain.doFilter(request, response);
     }
+  }
+
+  /**
+   * Bucket key for a message send: the JWT principal id when the request
+   * presents a parseable access token, otherwise the client IP. The "u:" /
+   * "ip:" prefixes keep the two namespaces from colliding in the same
+   * limiter map.
+   */
+  private String messageKey(HttpServletRequest request) {
+    String header = request.getHeader("Authorization");
+    if (header != null && header.startsWith(BEARER_PREFIX)) {
+      try {
+        long userId = jwt.parseAccessToken(header.substring(BEARER_PREFIX.length()).trim())
+            .userId();
+        return "u:" + userId;
+      } catch (RuntimeException ignored) {
+        // Missing, malformed, expired or wrongly-signed token: throttle by
+        // IP. The JWT filter downstream will 401 the request anyway — the
+        // bucket here only stops anonymous hammering.
+      }
+    }
+    return "ip:" + clientIp(request);
   }
 
   private void writeTooManyRequests(HttpServletResponse response, long retryAfterSeconds)
