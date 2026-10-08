@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
@@ -49,6 +50,9 @@ class ItemServiceTest {
   private CategoryRepository categories;
 
   @Mock
+  private ItemPhotoRepository itemPhotos;
+
+  @Mock
   private ItemMapper mapper;
 
   @Mock
@@ -78,8 +82,12 @@ class ItemServiceTest {
 
     Page<ItemDto> result = service.listItems(pageable, 7L, "  100% ");
 
-    assertThat(result).isSameAs(page);
+    // The service wraps the projection page to merge galleries (one batch
+    // query for a non-empty page); an empty page keeps its content untouched.
+    assertThat(result.getContent()).isEqualTo(page.getContent());
+    assertThat(result.getTotalElements()).isEqualTo(page.getTotalElements());
     verify(items).findListViewFiltered(7L, "100\\%", pageable);
+    verifyNoInteractions(itemPhotos);
   }
 
   @Test
@@ -156,8 +164,10 @@ class ItemServiceTest {
     Page<ItemDto> page = new PageImpl<>(List.of());
     when(items.findListViewFiltered(eq(7L), eq("bike"), eq(pageable))).thenReturn(page);
 
-    assertThat(service.listItems(pageable, 7L, "bike")).isSameAs(page);
+    assertThat(service.listItems(pageable, 7L, "bike").getContent())
+        .isEqualTo(page.getContent());
     verify(items, never()).findIdsByFulltext(any(), any(), any());
+    verifyNoInteractions(itemPhotos);
   }
 
   // --- getItem ---

@@ -10,11 +10,15 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -71,6 +75,18 @@ public class Item {
   @Column(name = "photo_url", length = 1024)
   private String photoUrl;
 
+  /**
+   * The listing's photo gallery (Flyway V15). Display order is the lowest
+   * position first; the first row is the primary photo. Not a JPA
+   * association on the read paths that matter — the detail query fetch-joins
+   * it and the list view merges galleries in one batch query, so the
+   * mapper never triggers lazy per-item SELECTs.
+   */
+  @OneToMany(mappedBy = "item", cascade = jakarta.persistence.CascadeType.ALL,
+      orphanRemoval = true)
+  @OrderBy("position ASC")
+  private List<ItemPhoto> photos = new ArrayList<>();
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -113,6 +129,7 @@ public class Item {
   public Long getVersion() { return version; }
   public String getPhotoUrl() { return photoUrl; }
   public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+  public List<ItemPhoto> getPhotos() { return photos; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

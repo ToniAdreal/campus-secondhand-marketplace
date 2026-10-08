@@ -72,8 +72,12 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   /**
    * Detail view: JPQL fetch join pulls the optional category together with
    * the item, so the {@link ItemDto} mapping needs no extra lazy query.
+   * The gallery ({@link ItemPhoto}) is fetch-joined in the same SELECT so
+   * mapping {@link ItemDto#photos()} fires no lazy per-photo round-trip;
+   * {@code distinct} collapses the photo fan-out back to one row.
    */
-  @Query("select i from Item i left join fetch i.category where i.id = :id")
+  @Query("select distinct i from Item i left join fetch i.category "
+      + "left join fetch i.photos where i.id = :id")
   Optional<Item> findDetailById(@Param("id") Long id);
 
   /**
@@ -108,8 +112,10 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    * Hydrates full-text hits: one SELECT with the optional category
    * fetch-joined, so mapping to DTOs fires no lazy queries. The relevance
    * order from {@link #findIdsByFulltext} is re-applied by the caller — SQL
-   * {@code IN} does not preserve it.
+   * {@code IN} does not preserve it. The gallery is fetch-joined in the
+   * same SELECT so {@link ItemDto#photos()} needs no lazy round-trip.
    */
-  @Query("select i from Item i left join fetch i.category where i.id in :ids")
+  @Query("select distinct i from Item i left join fetch i.category "
+      + "left join fetch i.photos where i.id in :ids")
   List<Item> findDetailsByIds(@Param("ids") List<Long> ids);
 }

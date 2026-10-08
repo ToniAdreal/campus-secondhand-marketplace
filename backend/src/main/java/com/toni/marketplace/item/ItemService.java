@@ -2,6 +2,9 @@ package com.toni.marketplace.item;
 
 import java.io.IOException;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,9 +31,13 @@ public class ItemService {
 
   private final ItemRepository items;
   private final CategoryRepository categories;
+  private final ItemPhotoRepository itemPhotos;
   private final ItemMapper mapper;
   private final ImageStorageService imageStorage;
   private final DataSource dataSource;
+
+  /** Maximum gallery photos per listing (backlog #69). */
+  static final int MAX_PHOTOS = 6;
 
   /**
    * Lazily probed once: whether the connected database is MySQL (see
@@ -40,10 +47,11 @@ public class ItemService {
   private volatile Boolean mySqlDatabase;
 
   public ItemService(ItemRepository items, CategoryRepository categories,
-                     ItemMapper mapper, ImageStorageService imageStorage,
-                     DataSource dataSource) {
+                     ItemPhotoRepository itemPhotos, ItemMapper mapper,
+                     ImageStorageService imageStorage, DataSource dataSource) {
     this.items = items;
     this.categories = categories;
+    this.itemPhotos = itemPhotos;
     this.mapper = mapper;
     this.imageStorage = imageStorage;
     this.dataSource = dataSource;
@@ -64,14 +72,46 @@ public class ItemService {
    *
    * Both paths stay single-SELECT-per-page (constructor DTO projection on
    * the LIKE path; id-page + fetch-join hydrate on the MySQL path), so the
-   * list view never degrades into N+1 lazy loads.
+   * list view never degrades into N+1 lazy loads. The JPQL projections
+   * cannot express the nested photo gallery, so the DTOs they build carry
+   * an empty gallery and the service merges the real galleries with one
+   * additional batch query per page ({@link #withPhotos(List)}) — still
+   * bounded, never per-item.
    */
   @Transactional(readOnly = true)
   public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword) {
     if (isMySql() && keyword != null && !keyword.isBlank()) {
       return searchFulltext(pageable, categoryId, keyword.trim());
     }
-    return items.findListViewFiltered(categoryId, normalizeKeyword(keyword), pageable);
+    Page<ItemDto> page =
+        items.findListViewFiltered(categoryId, normalizeKeyword(keyword), pageable);
+    return new PageImpl<>(withPhotos(page.getContent()), pageable, page.getTotalElements());
+  }
+
+  /**
+   * Merges the real photo galleries into list-view DTOs. The JPQL
+   * constructor projections leave {@link ItemDto#photos()} empty (a
+   * projection cannot build a nested collection), so this runs one batch
+   * query for the whole page and splices the galleries in, ordered by
+   * position. Empty pages skip the query entirely.
+   */
+  private List<ItemDto> withPhotos(List<ItemDto> dtos) {
+    if (dtos.isEmpty()) {
+      return dtos;
+    }
+    List<Long> ids = dtos.stream().map(ItemDto::id).toList();
+    Map<Long, List<ItemPhotoDto>> byItem = new HashMap<>();
+    for (ItemPhoto photo : itemPhotos.findByItemIdInOrderByPositionAsc(ids)) {
+      byItem.computeIfAbsent(photo.getItem().getId(), k -> new ArrayList<>())
+          .add(mapper.toPhotoDto(photo));
+    }
+    return dtos.stream()
+        .map(d -> new ItemDto(
+            d.id(), d.title(), d.description(), d.priceCents(), d.status(),
+            d.sellerId(), d.categoryId(), d.categoryName(), d.photoUrl(),
+            d.createdAt(), d.updatedAt(),
+            byItem.getOrDefault(d.id(), List.of())))
+        .toList();
   }
 
   /**
@@ -161,21 +201,29 @@ public class ItemService {
   }
 
   /**
-   * Removes a listing permanently, and best-effort deletes its stored photo
-   * so a deleted listing stops leaking a file under {@code /uploads/}.
-   * The row delete is forced (flush) before the filesystem is touched: a
-   * database-level failure must surface first, so a failed row delete never
-   * leaves behind a prematurely deleted file. Role checks live on the
-   * controller's {@code @PreAuthorize}; the service stays role-agnostic.
+   * Removes a listing permanently, and best-effort deletes its stored
+   * photos — both the legacy {@code photoUrl} file and every gallery row's
+   * file — so a deleted listing stops leaking files under
+   * {@code /uploads/}. The row delete (which cascades to the gallery rows)
+   * is forced (flush) before the filesystem is touched: a database-level
+   * failure must surface first, so a failed row delete never leaves behind
+   * a prematurely deleted file. Role checks live on the controller's
+   * {@code @PreAuthorize}; the service stays role-agnostic.
    */
   @Transactional
   public void deleteItem(Long id) {
     Item item = items.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
-    String photoUrl = item.getPhotoUrl();
+    List<String> photoUrls = new ArrayList<>();
+    photoUrls.add(item.getPhotoUrl());
+    photoUrls.addAll(itemPhotos.findByItemIdOrderByPositionAsc(id).stream()
+        .map(ItemPhoto::getUrl)
+        .toList());
     items.delete(item);
     items.flush();
-    deletePhotoBestEffort(photoUrl);
+    for (String url : photoUrls) {
+      deletePhotoBestEffort(url);
+    }
   }
 
   /**
@@ -235,6 +283,62 @@ public class ItemService {
       deletePhotoBestEffort(oldUrl);
     }
     return mapper.toDto(item);
+  }
+
+  /**
+   * Appends a photo to a listing's gallery: validates and stores the
+   * upload, then records its public URL path ({@code /uploads/<uuid>.<ext>})
+   * as a new gallery row at the next position. The first photo in the
+   * gallery is the listing's primary photo. A listing holds at most
+   * {@value #MAX_PHOTOS} photos — beyond that the request is answered 422
+   * with the JSON envelope. Ownership/role checks live on the controller's
+   * {@code @PreAuthorize} ({@link ItemSecurity}); the service stays
+   * role-agnostic.
+   *
+   * <p>Ordering is deliberate: the new file is stored <i>first</i>, so a
+   * validation failure throws before any row is touched — a rejected upload
+   * never leaves a dangling gallery row.
+   *
+   * <p>Note: the file is written to disk before the transaction commits, so
+   * a rollback after a successful write can leave an orphan file — accepted
+   * at this scale (same trade-off as {@link #attachPhoto}).
+   */
+  @Transactional
+  public ItemDto addPhoto(Long itemId, MultipartFile file) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (itemPhotos.countByItemId(itemId) >= MAX_PHOTOS) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "photo limit reached: a listing holds at most " + MAX_PHOTOS + " photos");
+    }
+    String url = imageStorage.store(file);
+    int position = itemPhotos.findTopByItemIdOrderByPositionDesc(itemId)
+        .map(p -> p.getPosition() + 1)
+        .orElse(0);
+    ItemPhoto photo = itemPhotos.save(new ItemPhoto(item, url, position));
+    item.getPhotos().add(photo);
+    return mapper.toDto(item);
+  }
+
+  /**
+   * Removes one gallery photo: deletes the row and best-effort deletes its
+   * file (reusing {@link #deletePhotoBestEffort}, so a disk hiccup can never
+   * roll back the row delete). The lookup is scoped to the listing — a
+   * photo id from another listing is 404, never a cross-listing delete.
+   * The photo is detached from the item's in-memory collection first: the
+   * {@code cascade = ALL} on {@link Item#getPhotos()} would otherwise
+   * re-save the deleted row on flush. Ownership/role checks live on the
+   * controller's {@code @PreAuthorize}; the service stays role-agnostic.
+   */
+  @Transactional
+  public void deletePhoto(Long itemId, Long photoId) {
+    ItemPhoto photo = itemPhotos.findByIdAndItemId(photoId, itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "photo not found"));
+    String url = photo.getUrl();
+    photo.getItem().getPhotos().removeIf(p -> photoId.equals(p.getId()));
+    itemPhotos.delete(photo);
+    itemPhotos.flush();
+    deletePhotoBestEffort(url);
   }
 
   /**

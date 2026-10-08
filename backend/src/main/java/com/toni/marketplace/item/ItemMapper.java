@@ -16,6 +16,14 @@ public interface ItemMapper {
   ItemDto toDto(Item item);
 
   /**
+   * Element mapping for the gallery: MapStruct applies it to each row of
+   * {@link Item#getPhotos()} when building {@link ItemDto#photos()}. The
+   * entity side is already position-ordered ({@code @OrderBy}), so the DTO
+   * list keeps gallery order with the primary photo first.
+   */
+  ItemPhotoDto toPhotoDto(ItemPhoto photo);
+
+  /**
    * Creates an entity from a request payload plus the authenticated seller id.
    * Hand-written (not generated): {@link Item} has no sellerId setter and
    * defaults new rows to {@link ItemStatus#AVAILABLE}. The category is

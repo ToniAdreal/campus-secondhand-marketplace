@@ -70,6 +70,37 @@ public class ItemController {
   }
 
   /**
+   * Appends a photo to a listing's gallery. The listing's seller — or an
+   * ADMIN — may upload; everyone else gets 403 and anonymous callers get
+   * 401. The file is validated (image type, size) and stored under a UUID
+   * name by {@link ImageStorageService}; the gallery row carries the public
+   * {@code /uploads/<uuid>.<ext>} URL, and the response's {@code photos}
+   * list shows the full gallery with the first (lowest position) photo as
+   * primary. A listing holds at most 6 photos — beyond that, 422 with the
+   * JSON envelope.
+   */
+  @PostMapping(value = "/{id}/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @PreAuthorize("@itemSecurity.canAttachPhoto(authentication, #id)")
+  public ApiResponse<ItemDto> addPhoto(@PathVariable Long id,
+                                      @RequestParam("file") MultipartFile file) {
+    return ApiResponse.ok(itemService.addPhoto(id, file));
+  }
+
+  /**
+   * Removes one gallery photo from a listing. Same ownership as the upload:
+   * the listing's seller or an ADMIN; everyone else gets 403 and anonymous
+   * callers get 401. A photo id that does not belong to this listing is
+   * 404 — never a cross-listing delete.
+   */
+  @DeleteMapping("/{id}/photos/{photoId}")
+  @PreAuthorize("@itemSecurity.canAttachPhoto(authentication, #id)")
+  public ApiResponse<Void> deletePhoto(@PathVariable Long id,
+                                       @PathVariable Long photoId) {
+    itemService.deletePhoto(id, photoId);
+    return ApiResponse.ok(null);
+  }
+
+  /**
    * Marks a listing SOLD. The listing's seller — or an ADMIN — may do so;
    * everyone else gets 403 and anonymous callers get 401. Only the
    * AVAILABLE/RESERVED → SOLD transitions exist: any other requested status
