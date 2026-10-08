@@ -22,6 +22,8 @@ export const orderKeys = {
   all: ['orders'] as const,
   list: () => [...orderKeys.all, 'list'] as const,
   detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
+  /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
+  sellerList: () => [...orderKeys.all, 'seller', 'list'] as const,
 };
 
 /**
@@ -50,6 +52,26 @@ export function useOrdersInfinite(size = 20, enabled = true) {
     queryFn: ({ pageParam = 0 }) =>
       api
         .get<ApiResponse<Page<Order>>>('/orders', { params: { page: pageParam, size } })
+        .then((res) => res.data.data),
+    getNextPageParam: (lastPage) =>
+      lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
+    enabled,
+  });
+}
+
+/**
+ * GET /api/seller/orders — orders buyers placed on the caller's listings,
+ * newest first, as an infinite list (mirrors useOrdersInfinite). The
+ * backend scopes strictly to the caller's sellerId, so an authenticated
+ * user with no listings just gets empty pages — there is no "buyer" role
+ * to deny, so no 403 for non-sellers on the list endpoint.
+ */
+export function useSellerOrdersInfinite(size = 20, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: orderKeys.sellerList(),
+    queryFn: ({ pageParam = 0 }) =>
+      api
+        .get<ApiResponse<Page<Order>>>('/seller/orders', { params: { page: pageParam, size } })
         .then((res) => res.data.data),
     getNextPageParam: (lastPage) =>
       lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
@@ -89,8 +111,7 @@ export function describeOrderError(error: unknown): string {
  * backend speaks the {code,message,data} envelope; paying an already-PAID
  * order is idempotent on the server (no second capture), so "success" there
  * just returns the order — this mapper only runs on real failures.
- */
-export function describePayError(error: unknown): string {
+ */export function describePayError(error: unknown): string {
   const response = (error as { response?: { data?: { code?: number; message?: string } } })
     .response;
   const code = response?.data?.code;

@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage';
 import MyOrdersPage from './pages/MyOrdersPage';
 import OrderConfirmationPage from './pages/OrderConfirmationPage';
 import SettingsPage from './pages/SettingsPage';
+import SellerOrdersPage from './pages/SellerOrdersPage';
 import NotFoundPage from './pages/NotFoundPage';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: 'items/:id', element: <ItemDetailPage /> },
       { path: 'orders', element: <MyOrdersPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
+      { path: 'seller/orders', element: <SellerOrdersPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'settings', element: <SettingsPage /> },
       // catch-all — unknown paths render the 404 inside the app shell
