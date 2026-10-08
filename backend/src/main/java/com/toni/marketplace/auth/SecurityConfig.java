@@ -31,10 +31,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *       viewable by any visitor.</li>
  *   <li>{@code /actuator/health} and {@code /actuator/info} are public —
  *       unauthenticated liveness/readiness probes for the compose stack; every
- *       other actuator endpoint ({@code /actuator/**}, currently only
- *       {@code /actuator/metrics}) needs a Bearer access token. Micrometer
- *       ships in-memory only: no external metrics export is configured yet
- *       (follow-up).</li>
+ *       other actuator endpoint ({@code /actuator/**}, currently
+ *       {@code /actuator/metrics} and {@code /actuator/prometheus}) needs a
+ *       Bearer access token. {@code /actuator/prometheus} exports the Micrometer
+ *       registry in Prometheus text format (scrape target for an external
+ *       Prometheus server); alerting rules are not configured (follow-up).</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
  *   <li>Everything else requires a valid Bearer access token.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the

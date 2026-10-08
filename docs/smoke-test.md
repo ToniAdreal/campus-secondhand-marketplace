@@ -79,8 +79,24 @@ The backend exposes Spring Boot Actuator:
   it after the backend is up — see the `docker-compose-smoke` job).
 - `curl http://localhost:8080/actuator/info` — public, app name/version.
 - `/actuator/metrics` (and anything else under `/actuator/**`) — requires a
-  valid Bearer token like any API endpoint. Metrics live in-memory only; no
-  external metrics export is configured yet.
+  valid Bearer token like any API endpoint.
+- `/actuator/prometheus` — also behind auth; exports the Micrometer registry in
+  Prometheus text format (`jvm_`, `http.server.requests`, `hikaricp_` series).
+  Scrape target for an external Prometheus server:
+
+  ```yaml
+  scrape_configs:
+    - job_name: campus-marketplace-backend
+      static_configs:
+        - targets: ['backend:8080']   # compose service name; host dev: localhost:8080
+      metrics_path: /actuator/prometheus
+      # bearer_token_file / basic auth required — the endpoint needs a Bearer token
+      authorization:
+        credentials: <backend-api-token>
+  ```
+
+  Honest scope: metrics exist, alerting does not — no alert rules are defined
+  or bundled with this repo.
 
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.

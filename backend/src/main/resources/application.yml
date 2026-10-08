@@ -76,10 +76,11 @@ management:
       exposure:
         # health + info are public (permitAll in SecurityConfig) so the
         # compose stack / a load balancer has a liveness probe without
-        # credentials; metrics is exposed for operators but stays behind
-        # auth (same SecurityConfig rule). Nothing else is registered for
-        # the web; /actuator/** matches are authenticated regardless.
-        include: health,info,metrics
+        # credentials; metrics and prometheus are exposed for operators but
+        # stay behind auth (same SecurityConfig rule). Nothing else is
+        # registered for the web; /actuator/** matches are authenticated
+        # regardless.
+        include: health,info,metrics,prometheus
 
 info:
   app:

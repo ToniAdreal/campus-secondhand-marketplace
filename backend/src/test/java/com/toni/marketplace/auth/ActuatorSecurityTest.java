@@ -1,6 +1,8 @@
 package com.toni.marketplace.auth;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -9,18 +11,27 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Actuator exposure rules (backlog #27): {@code /actuator/health} and
  * {@code /actuator/info} are public liveness/readiness probes for the compose
- * stack; every other actuator endpoint ({@code /actuator/**}, currently only
- * {@code /actuator/metrics}) sits behind the same Bearer auth as the API.
- * No external metrics export is configured (follow-up).
+ * stack; every other actuator endpoint ({@code /actuator/**}, currently
+ * {@code /actuator/metrics} and {@code /actuator/prometheus}) sits behind the
+ * same Bearer auth as the API. {@code /actuator/prometheus} is the
+ * Micrometer Prometheus registry export (backlog #57).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+    // @AutoConfigureMockMvc disables all metrics export by default
+    // (ObservabilityContextCustomizerFactory: management.defaults.metrics.export.enabled=false)
+    // — the dedicated actuator tests opt the prometheus export back in so
+    // /actuator/prometheus is actually registered in the test context.
+    "management.prometheus.metrics.export.enabled=true"
+})
 @Transactional // each test rolls back the users it creates (shared @SpringBootTest DB)
 class ActuatorSecurityTest {
 
@@ -71,5 +82,20 @@ class ActuatorSecurityTest {
     mockMvc.perform(get("/actuator/metrics").header("Authorization", "Bearer " + accessToken))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.names").isArray());
+  }
+
+  @Test
+  void prometheusIsBehindAuthForAnonymous() throws Exception {
+    mockMvc.perform(get("/actuator/prometheus"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+  }
+
+  @Test
+  void prometheusExportsJvmMetricsWithBearerToken() throws Exception {
+    mockMvc.perform(get("/actuator/prometheus").header("Authorization", "Bearer " + accessToken))
+        .andExpect(status().isOk())
+        .andExpect(content().string(containsString("jvm_")))
+        .andExpect(content().string(containsString("# HELP")));
   }
 }
