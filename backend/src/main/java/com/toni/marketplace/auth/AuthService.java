@@ -1,5 +1,8 @@
 package com.toni.marketplace.auth;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,11 +27,16 @@ public class AuthService {
   private final UserRepository users;
   private final PasswordService passwords;
   private final JwtTokenService jwt;
+  private final Clock clock;
+  private final LoginLockoutProperties lockout;
 
-  public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt) {
+  public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
+                     Clock clock, LoginLockoutProperties lockout) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
+    this.clock = clock;
+    this.lockout = lockout;
   }
 
   /** Registered user plus their first token pair. */
@@ -65,6 +73,14 @@ public class AuthService {
    * normalized before lookup, so "ALICE" logs into the "alice" account.
    * Unknown identifier and wrong password produce the identical error —
    * no user enumeration.
+   *
+   * <p>Per-account lockout (backlog #60): consecutive failures are counted on
+   * the user row; after {@code app.auth.login-lockout.max-attempts} failures
+   * the account is locked for {@code lock-duration} and this throws
+   * {@link AccountLockedException} (mapped to 423 + {@code Retry-After}) even
+   * for the correct password. A successful login resets the counter; an
+   * expired lock resets the counter on the next attempt. Unknown identifiers
+   * are never tracked — they keep getting the identical 401.
    */
   @Transactional
   public AuthResult login(String usernameOrEmail, String rawPassword) {
@@ -72,10 +88,41 @@ public class AuthService {
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
         .orElseThrow(InvalidCredentialsException::new);
+    Instant now = clock.instant();
+    if (lockout.isEnabled()) {
+      Instant lockedUntil = user.getLockedUntil();
+      if (lockedUntil != null) {
+        if (now.isBefore(lockedUntil)) {
+          throw new AccountLockedException(retryAfterSeconds(now, lockedUntil));
+        }
+        // Expired lock: the account gets a fresh allowance.
+        user.setLockedUntil(null);
+        user.setFailedLoginAttempts(0);
+      }
+    }
     if (!passwords.matches(rawPassword, user.getPasswordHash())) {
+      if (lockout.isEnabled()) {
+        int attempts = user.getFailedLoginAttempts() + 1;
+        user.setFailedLoginAttempts(attempts);
+        if (attempts >= lockout.getMaxAttempts()) {
+          Instant until = now.plus(lockout.getLockDuration());
+          user.setLockedUntil(until);
+          throw new AccountLockedException(lockout.getLockDuration().getSeconds());
+        }
+      }
       throw new InvalidCredentialsException();
     }
+    if (lockout.isEnabled()
+        && (user.getFailedLoginAttempts() != 0 || user.getLockedUntil() != null)) {
+      user.setFailedLoginAttempts(0);
+      user.setLockedUntil(null);
+    }
     return new AuthResult(user, jwt.createTokenPair(user));
+  }
+
+  /** Whole seconds until the lock expires, never below 1 (the header must be meaningful). */
+  private static long retryAfterSeconds(Instant now, Instant lockedUntil) {
+    return Math.max(1, Duration.between(now, lockedUntil).getSeconds());
   }
 
   /**

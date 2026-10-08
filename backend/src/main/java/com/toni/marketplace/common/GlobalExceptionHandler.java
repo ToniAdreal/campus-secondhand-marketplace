@@ -1,5 +1,6 @@
 package com.toni.marketplace.common;
 
+import com.toni.marketplace.auth.AccountLockedException;
 import com.toni.marketplace.auth.DuplicateUserException;
 import com.toni.marketplace.auth.InvalidCredentialsException;
 import com.toni.marketplace.auth.InvalidTokenException;
@@ -89,6 +90,19 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleAuthFailure(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
         .body(ApiResponse.fail(401, ex.getMessage()));
+  }
+
+  /**
+   * Per-account login lockout (backlog #60): the account is temporarily
+   * locked after {@code app.auth.login-lockout.max-attempts} consecutive
+   * failed logins. Answers {@code 423 Locked} in the JSON envelope with a
+   * {@code Retry-After} header (seconds until the lock expires).
+   */
+  @ExceptionHandler(AccountLockedException.class)
+  public ResponseEntity<ApiResponse<Void>> handleAccountLocked(AccountLockedException ex) {
+    return ResponseEntity.status(HttpStatus.LOCKED)
+        .header("Retry-After", Long.toString(ex.getRetryAfterSeconds()))
+        .body(ApiResponse.fail(HttpStatus.LOCKED.value(), ex.getMessage()));
   }
 
   @ExceptionHandler(DuplicateUserException.class)

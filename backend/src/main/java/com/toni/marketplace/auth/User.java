@@ -45,6 +45,20 @@ public class User {
   @Column(name = "token_version", nullable = false)
   private long tokenVersion;
 
+  /**
+   * Per-account login lockout (backlog #60). Consecutive failed logins since
+   * the last success; a success resets it to 0. When it reaches
+   * {@code app.auth.login-lockout.max-attempts}, {@link #lockedUntil} is set
+   * {@code lock-duration} into the future and the account rejects logins
+   * with 423 until then. An expired {@code lockedUntil} resets the counter
+   * on the next attempt — the account gets a fresh allowance.
+   */
+  @Column(name = "failed_login_attempts", nullable = false)
+  private int failedLoginAttempts;
+
+  @Column(name = "locked_until")
+  private Instant lockedUntil;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -80,6 +94,12 @@ public class User {
   public void setRoles(Set<Role> roles) { this.roles = roles; }
   public long getTokenVersion() { return tokenVersion; }
   public void setTokenVersion(long tokenVersion) { this.tokenVersion = tokenVersion; }
+  public int getFailedLoginAttempts() { return failedLoginAttempts; }
+  public void setFailedLoginAttempts(int failedLoginAttempts) {
+    this.failedLoginAttempts = failedLoginAttempts;
+  }
+  public Instant getLockedUntil() { return lockedUntil; }
+  public void setLockedUntil(Instant lockedUntil) { this.lockedUntil = lockedUntil; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

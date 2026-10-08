@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,12 @@ class AuthServiceNormalizationTest {
 
   @Mock
   private JwtTokenService jwt;
+
+  @Mock
+  private Clock clock;
+
+  @Mock
+  private LoginLockoutProperties lockout;
 
   @InjectMocks
   private AuthService service;

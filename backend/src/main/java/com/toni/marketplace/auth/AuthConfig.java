@@ -7,7 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class})
+@EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class,
+    LoginLockoutProperties.class})
 public class AuthConfig {
 
   /**

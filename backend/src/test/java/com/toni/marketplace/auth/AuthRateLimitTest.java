@@ -39,7 +39,11 @@ import org.springframework.transaction.annotation.Transactional;
     // The shared test profile disables the limiter; this class is the one
     // place that exercises it, so re-enable with the production policy.
     "app.auth.rate-limit.enabled=true",
-    "app.auth.rate-limit.attempts-per-minute=5"
+    "app.auth.rate-limit.attempts-per-minute=5",
+    // These classes exercise the per-IP limiter; the per-account lockout
+    // (backlog #60) would trip on the repeated failed logins and mask the
+    // 401/429 assertions, so it stays off here.
+    "app.auth.login-lockout.enabled=false"
 })
 class AuthRateLimitTest {
 

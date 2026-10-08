@@ -44,7 +44,11 @@ import org.springframework.transaction.annotation.Transactional;
     // with the production policy for both surfaces.
     "app.auth.rate-limit.enabled=true",
     "app.auth.rate-limit.attempts-per-minute=5",
-    "app.auth.rate-limit.refresh-attempts-per-minute=30"
+    "app.auth.rate-limit.refresh-attempts-per-minute=30",
+    // Per-account lockout stays off in this class (see AuthRateLimitTest)
+    // so repeated failed logins cannot trip it and mask the rate-limit
+    // assertions.
+    "app.auth.login-lockout.enabled=false"
 })
 class AuthRefreshRateLimitTest {
 

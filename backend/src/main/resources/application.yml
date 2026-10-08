@@ -27,6 +27,17 @@ app:
     # Override with the APP_UPLOADS_DIR environment variable in production.
     dir: ${APP_UPLOADS_DIR:./uploads}
     max-size: 5MB
+  auth:
+    login-lockout:
+      # Per-account login lockout (AuthService, backlog #60): the per-IP token
+      # bucket stops single-source hammering, but not a distributed slow
+      # brute-force against one account. After max-attempts consecutive
+      # failures the account locks for lock-duration and POST /api/auth/login
+      # answers 423 with a Retry-After header; a successful login resets the
+      # counter. Applies to existing accounts only — unknown identifiers keep
+      # getting the identical 401 (no enumeration oracle).
+      max-attempts: 5
+      lock-duration: 15m
   cleanup:
     # Nightly purge of stale auth/order bookkeeping rows
     # (DataRetentionService, @Scheduled 03:00 server-local). Values in days.
