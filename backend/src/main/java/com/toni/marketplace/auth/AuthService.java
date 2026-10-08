@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.toni.marketplace.common.AccountLockedException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
+import com.toni.marketplace.common.PasswordReuseException;
 
 /**
  * Registration / login / refresh flows. HTTP concerns (cookies, status codes)
@@ -186,6 +187,11 @@ public class AuthService {
    * session gets a fresh pair (minted at the new version), so they stay
    * logged in while stolen/other sessions are cut off.
    *
+   * Reusing the current password is rejected with 400 (compared against the
+   * stored hash via {@code PasswordEncoder.matches} before anything is
+   * encoded — the caller already proved the current password, so this
+   * leaks no new oracle).
+   *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
    */
@@ -195,6 +201,9 @@ public class AuthService {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     if (!passwords.matches(currentPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();
+    }
+    if (passwords.matches(newPassword, user.getPasswordHash())) {
+      throw new PasswordReuseException("new password must differ from the current password");
     }
     PasswordStrengthValidator.requireStrong(newPassword);
     user.setPasswordHash(passwords.encode(newPassword));

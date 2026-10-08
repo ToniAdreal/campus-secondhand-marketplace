@@ -136,6 +136,37 @@ class PasswordChangeTest {
   }
 
   @Test
+  void sameAsCurrentPasswordReturns400() throws Exception {
+    MvcResult registered = register();
+    String access = accessToken(registered);
+    long tokensBefore = refreshTokens.count();
+
+    // The new password is identical to the current one → 400, not a change.
+    mockMvc.perform(post("/api/auth/password")
+            .header("Authorization", "Bearer " + access)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"s3cret-pass\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400))
+        .andExpect(jsonPath("$.message")
+            .value("new password must differ from the current password"));
+
+    // No partial state: nothing revoked, nothing re-encoded — the old
+    // password still works and the session count is unchanged.
+    assertThat(refreshTokens.count()).isEqualTo(tokensBefore);
+    login("alice", "s3cret-pass");
+
+    // And a genuinely new password still changes it fine.
+    mockMvc.perform(post("/api/auth/password")
+            .header("Authorization", "Bearer " + access)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+    login("alice", "n3w-s3cret");
+  }
+
+  @Test
   void anonymousChangePasswordReturns401() throws Exception {
     register();
     mockMvc.perform(post("/api/auth/password")

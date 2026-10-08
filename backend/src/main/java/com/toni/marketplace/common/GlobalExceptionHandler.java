@@ -88,6 +88,11 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
   }
 
+  @ExceptionHandler(PasswordReuseException.class)
+  public ResponseEntity<ApiResponse<Void>> handlePasswordReuse(PasswordReuseException ex) {
+    return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
+  }
+
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
   public ResponseEntity<ApiResponse<Void>> handleAuthFailure(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
