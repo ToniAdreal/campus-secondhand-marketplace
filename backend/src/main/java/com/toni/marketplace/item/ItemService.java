@@ -227,6 +227,59 @@ public class ItemService {
   }
 
   /**
+   * Edits a listing's editable fields (title, description, price, category)
+   * for the seller or an ADMIN. Ownership/role checks live on the
+   * controller's {@code @PreAuthorize} ({@link ItemSecurity}); the service
+   * stays role-agnostic.
+   *
+   * <p>All request fields are nullable: {@code null} means "leave the field
+   * alone" (partial update — there is deliberately no way to clear a
+   * category through this endpoint). A blank-but-present title is 400;
+   * the size/positivity rules are enforced by the controller's
+   * {@code @Valid}. An unknown {@code categoryId} is 404 before anything
+   * is persisted.
+   *
+   * <p>Price integrity: the price may not move on a RESERVED listing (422)
+   * — a live order snapshotted {@code amountCents} at creation (see the
+   * order package), so editing the price under it would rewrite history.
+   * The same holds for SOLD (the listing is final). Price edits on
+   * AVAILABLE listings are allowed.
+   *
+   * <p>The write is optimistic-locked via {@code Item.@Version}, so a
+   * concurrent edit fails fast instead of silently overwriting.
+   */
+  @Transactional
+  public ItemDto updateItem(Long id, ItemUpdateRequest request) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    Category category = null;
+    if (request.categoryId() != null) {
+      category = categories.findById(request.categoryId())
+          .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "category not found"));
+    }
+    if (request.title() != null) {
+      if (request.title().isBlank()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "title must not be blank");
+      }
+      item.setTitle(request.title());
+    }
+    if (request.description() != null) {
+      item.setDescription(request.description());
+    }
+    if (request.priceCents() != null && !request.priceCents().equals(item.getPriceCents())) {
+      if (item.getStatus() != ItemStatus.AVAILABLE) {
+        throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+            "price is locked while the listing has a buyer");
+      }
+      item.setPriceCents(request.priceCents());
+    }
+    if (category != null) {
+      item.setCategory(category);
+    }
+    return mapper.toDto(item);
+  }
+
+  /**
    * Marks a listing SOLD. Only the AVAILABLE → SOLD and RESERVED → SOLD
    * transitions exist: the requested value must be {@link ItemStatus#SOLD}
    * (this endpoint marks listings sold, it is not a general status machine)

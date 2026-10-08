@@ -101,6 +101,22 @@ public class ItemController {
   }
 
   /**
+   * Edits a listing's editable fields (title, description, price,
+   * category). The listing's seller — or an ADMIN — may do so; everyone
+   * else gets 403 and anonymous callers get 401. All fields are optional:
+   * omitted fields are left untouched (partial update). Status is
+   * deliberately untouched — the status machine still lives on
+   * {@code PATCH /api/items/{id}/status}; price changes on a RESERVED or
+   * SOLD listing are answered 422 (the live order snapshotted the price).
+   */
+  @PatchMapping("/{id}")
+  @PreAuthorize("@itemSecurity.canEdit(authentication, #id)")
+  public ApiResponse<ItemDto> update(@PathVariable Long id,
+                                     @Valid @RequestBody ItemUpdateRequest request) {
+    return ApiResponse.ok(itemService.updateItem(id, request));
+  }
+
+  /**
    * Marks a listing SOLD. The listing's seller — or an ADMIN — may do so;
    * everyone else gets 403 and anonymous callers get 401. Only the
    * AVAILABLE/RESERVED → SOLD transitions exist: any other requested status

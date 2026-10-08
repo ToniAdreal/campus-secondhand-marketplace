@@ -36,6 +36,20 @@ public class ItemSecurity {
   }
 
   /**
+   * A listing may be edited by its seller or by an ADMIN. Same ownership
+   * semantics as {@link #canAttachPhoto}: a missing listing is 404, not a
+   * misleading 403. Guards {@code PATCH /api/items/{id}} (title / description
+   * / price / category edits; status still has its own endpoint).
+   */
+  public boolean canEdit(Authentication auth, Long itemId) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    boolean admin = auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return admin || item.getSellerId().equals(auth.getPrincipal());
+  }
+
+  /**
    * A listing may be marked SOLD by its seller or by an ADMIN. Same
    * ownership semantics as {@link #canAttachPhoto}: a missing listing is
    * 404, not a misleading 403.
