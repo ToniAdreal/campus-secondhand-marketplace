@@ -11,6 +11,9 @@ import org.springframework.data.repository.query.Param;
 public interface ItemRepository extends JpaRepository<Item, Long> {
   List<Item> findByStatus(ItemStatus status);
 
+  /** True when at least one listing references the category (via the item.category association). */
+  boolean existsByCategoryId(Long categoryId);
+
   /**
    * List view as a constructor DTO projection: one SELECT with an explicit
    * LEFT JOIN for the optional category. Rendering the list through

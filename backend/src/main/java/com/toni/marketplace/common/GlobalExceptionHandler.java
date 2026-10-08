@@ -1,6 +1,8 @@
 package com.toni.marketplace.common;
 
 import com.toni.marketplace.common.AccountLockedException;
+import com.toni.marketplace.common.CategoryInUseException;
+import com.toni.marketplace.common.DuplicateCategoryException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import com.toni.marketplace.common.InvalidTokenException;
@@ -105,8 +107,9 @@ public class GlobalExceptionHandler {
         .body(ApiResponse.fail(HttpStatus.LOCKED.value(), ex.getMessage()));
   }
 
-  @ExceptionHandler(DuplicateUserException.class)
-  public ResponseEntity<ApiResponse<Void>> handleConflict(DuplicateUserException ex) {
+  @ExceptionHandler({DuplicateUserException.class, DuplicateCategoryException.class,
+      CategoryInUseException.class})
+  public ResponseEntity<ApiResponse<Void>> handleConflict(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiResponse.fail(409, ex.getMessage()));
   }
