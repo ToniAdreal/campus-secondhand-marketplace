@@ -17,6 +17,8 @@ import java.util.Optional;
 import java.util.UUID;
 import javax.crypto.SecretKey;
 import com.toni.marketplace.common.InvalidTokenException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Issues and validates JWT access/refresh tokens (jjwt 0.12.x, HS256).
@@ -32,7 +34,10 @@ import com.toni.marketplace.common.InvalidTokenException;
  *       password change.</li>
  *   <li>Refresh token: 7 days, single-use, rotating. Each successful rotation
  *       revokes the consumed token and issues a new pair; replaying an old
- *       refresh token revokes the whole family (theft detection).</li>
+ *       refresh token revokes the whole family (theft detection) and logs
+ *       the revocation at WARN with the user id — no usernames in the log
+ *       line (ids only; the request id is already in the MDC via the
+ *       RequestIdFilter, so the line correlates with access logs).</li>
  *   <li>Concurrent-tab grace (backlog #39): the just-replaced token is
  *       accepted <em>once more</em> inside a short grace window (default
  *       60 s), keyed off the {@code replacedBy} chain — two tabs racing to
@@ -59,6 +64,8 @@ import com.toni.marketplace.common.InvalidTokenException;
  * Pure-Java except for the repository — constructed directly in unit tests.
  */
 public class JwtTokenService {
+
+  private static final Logger log = LoggerFactory.getLogger(JwtTokenService.class);
 
   private static final String TYPE_ACCESS = "access";
   private static final String TYPE_REFRESH = "refresh";
@@ -200,13 +207,13 @@ public class JwtTokenService {
       if (graced != null) {
         return graced;
       }
-      refreshTokens.deleteByUserId(stored.getUserId());
+      revokeFamilyOnReuse(stored.getUserId());
       throw new InvalidRefreshTokenException("refresh token reused or expired; session revoked");
     }
 
     if (stored.isExpired(now)) {
       // Expired tokens never qualify for grace; same theft treatment.
-      refreshTokens.deleteByUserId(stored.getUserId());
+      revokeFamilyOnReuse(stored.getUserId());
       throw new InvalidRefreshTokenException("refresh token reused or expired; session revoked");
     }
 
@@ -216,6 +223,20 @@ public class JwtTokenService {
     }
 
     return rotateLive(stored, userId, claims.getSubject(), now, meta);
+  }
+
+  /**
+   * Theft-detection revocation (backlog #74): the caller presented a token
+   * that is not the live one — a replayed revoked token outside the grace
+   * window, or an expired one — so the whole family is killed. The WARN
+   * carries the user id only, never the username (PII); the request id is
+   * already in the MDC via the RequestIdFilter, so this line correlates
+   * with the access logs.
+   */
+  private void revokeFamilyOnReuse(long userId) {
+    log.warn("Revoked all refresh-token sessions for user id={} after refresh-token reuse",
+        userId);
+    refreshTokens.deleteByUserId(userId);
   }
 
   /**
