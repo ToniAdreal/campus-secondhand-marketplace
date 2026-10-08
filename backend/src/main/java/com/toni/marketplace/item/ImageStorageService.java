@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
+import com.toni.marketplace.common.InvalidImageException;
 
 /**
  * Stores listing photos on local disk and returns their public URL path.

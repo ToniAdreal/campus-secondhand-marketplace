@@ -15,17 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/categories")
 class CategoryController {
 
-  private final CategoryRepository categories;
+  private final CategoryService categories;
 
-  CategoryController(CategoryRepository categories) {
+  CategoryController(CategoryService categories) {
     this.categories = categories;
   }
 
   @GetMapping
   public ApiResponse<List<CategoryDto>> list() {
-    List<CategoryDto> result = categories.findAllByOrderByIdAsc().stream()
-        .map(CategoryDto::from)
-        .toList();
-    return ApiResponse.ok(result);
+    return ApiResponse.ok(categories.listAll());
   }
 }

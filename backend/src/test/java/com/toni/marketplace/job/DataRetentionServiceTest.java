@@ -1,4 +1,4 @@
-package com.toni.marketplace.common;
+package com.toni.marketplace.job;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

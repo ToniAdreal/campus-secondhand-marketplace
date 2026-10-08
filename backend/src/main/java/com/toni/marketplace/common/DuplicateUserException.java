@@ -1,4 +1,4 @@
-package com.toni.marketplace.auth;
+package com.toni.marketplace.common;
 
 /** Thrown when a username or email is already taken at registration. */
 public class DuplicateUserException extends RuntimeException {

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import javax.crypto.SecretKey;
+import com.toni.marketplace.common.InvalidTokenException;
 
 /**
  * Issues and validates JWT access/refresh tokens (jjwt 0.12.x, HS256).

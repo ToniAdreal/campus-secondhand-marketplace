@@ -3,6 +3,7 @@ package com.toni.marketplace.auth;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import com.toni.marketplace.common.WeakPasswordException;
 
 /**
  * Reusable password-strength policy, shared by registration and the planned

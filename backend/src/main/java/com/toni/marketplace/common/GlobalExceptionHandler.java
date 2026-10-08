@@ -1,11 +1,11 @@
 package com.toni.marketplace.common;
 
-import com.toni.marketplace.auth.AccountLockedException;
-import com.toni.marketplace.auth.DuplicateUserException;
-import com.toni.marketplace.auth.InvalidCredentialsException;
-import com.toni.marketplace.auth.InvalidTokenException;
-import com.toni.marketplace.auth.WeakPasswordException;
-import com.toni.marketplace.item.InvalidImageException;
+import com.toni.marketplace.common.AccountLockedException;
+import com.toni.marketplace.common.DuplicateUserException;
+import com.toni.marketplace.common.InvalidCredentialsException;
+import com.toni.marketplace.common.InvalidTokenException;
+import com.toni.marketplace.common.WeakPasswordException;
+import com.toni.marketplace.common.InvalidImageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;

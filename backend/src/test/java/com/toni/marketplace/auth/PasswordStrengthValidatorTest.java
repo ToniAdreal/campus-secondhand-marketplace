@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
+import com.toni.marketplace.common.WeakPasswordException;
 
 /**
  * Unit matrix for the shared password-strength policy. Pure — no Spring

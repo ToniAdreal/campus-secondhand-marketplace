@@ -24,6 +24,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import com.toni.marketplace.common.InvalidImageException;
 
 /**
  * Pure unit tests for {@link ItemService}: no Spring context, no database.

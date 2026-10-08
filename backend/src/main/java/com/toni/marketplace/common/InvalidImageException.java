@@ -1,4 +1,4 @@
-package com.toni.marketplace.item;
+package com.toni.marketplace.common;
 
 /**
  * Rejected image upload: empty file, unsupported content type, or over the

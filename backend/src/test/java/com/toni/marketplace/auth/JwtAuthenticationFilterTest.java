@@ -17,6 +17,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
+import com.toni.marketplace.common.InvalidTokenException;
 
 /**
  * Pure unit tests for {@link JwtAuthenticationFilter}: no Spring context.

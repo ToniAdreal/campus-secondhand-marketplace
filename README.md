@@ -24,8 +24,13 @@ backend/                 Spring Boot 3.2 API (Java 17, Maven)
   src/main/java/com/toni/marketplace
     auth/                register/login/refresh/logout, JWT + RBAC, token-bucket
                          auth rate limiting
-    common/              ApiResponse envelope, GlobalExceptionHandler
+    common/              ApiResponse envelope, GlobalExceptionHandler, shared
+                         domain exception types (no project-internal deps —
+                         see layering rules below)
     item/                Item entity, repository, service, controller, photo upload
+    job/                 scheduled cross-domain maintenance (data-retention
+                         sweep); the only package allowed to touch several
+                         domains' stores
     message/             offline buyer↔seller messaging (v1)
     order/               Order entity, idempotent order creation, mock payment capture
   src/main/resources
@@ -104,9 +109,36 @@ message/     MessageController  POST /api/messages, GET /api/messages?itemId=
              Table: message (sender/receiver/item as plain ids + FKs).
 common/      ApiResponse<T> {code, message, data} envelope,
              GlobalExceptionHandler (400/401/403/404/409/413/422 → JSON),
-             UploadWebConfig (/uploads/** static mapping),
-             RequestIdFilter (X-Request-ID echo + MDC, JVM-local).
+             shared domain exception types, UploadWebConfig (/uploads/**
+             static mapping), RequestIdFilter (X-Request-ID echo + MDC,
+             JVM-local). common/ depends on NO project package.
+job/         DataRetentionService — the nightly @Scheduled sweep (retention
+             via app.cleanup.*) that purges stale refresh_token and terminal
+             idempotency_key rows. The only cross-domain package: it
+             legitimately touches auth/ and order/ stores.
 ```
+
+Intended package dependency direction (enforced by ArchUnit — see
+`backend/src/test/java/com/toni/marketplace/ArchitectureTest.java`; the
+build fails on violation):
+
+```
+common/ ◀── auth/  item/  order/  message/      (domains depend only on the kernel)
+auth/   ◀── message/                            (sender/receiver lookups)
+order/  ──╳── auth/ web classes                 (order never imports auth web
+                                                classes; shared needs go via
+                                                common/ types)
+*Controller ──▶ *Service ──▶ *Repository        (controllers never touch
+                                                repositories directly)
+job/    ──▶ auth/, order/ stores                (scheduled sweeps only)
+```
+
+The exception types used to live in auth/ and item/ while the
+GlobalExceptionHandler lived in common/ — an inverted edge (common → auth).
+They were moved into common/ so the kernel is genuinely dependency-free;
+InvalidRefreshTokenException stays in auth/ (it extends the common
+InvalidTokenException). CategoryController previously injected
+CategoryRepository directly; it now goes through CategoryService.
 
 Frontend (`frontend/src`) is a React 18 SPA: `api/client.ts` holds the axios
 instance with the in-memory access token and the single-flight 401 refresh queue

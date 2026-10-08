@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
+import com.toni.marketplace.common.AccountLockedException;
+import com.toni.marketplace.common.InvalidCredentialsException;
 
 /**
  * Service-level tests for the per-account login lockout (backlog #60).

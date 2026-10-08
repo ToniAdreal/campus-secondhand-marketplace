@@ -1,4 +1,4 @@
-package com.toni.marketplace.auth;
+package com.toni.marketplace.common;
 
 /**
  * A raw password fails the strength policy — see

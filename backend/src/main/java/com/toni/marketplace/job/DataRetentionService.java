@@ -1,4 +1,4 @@
-package com.toni.marketplace.common;
+package com.toni.marketplace.job;
 
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;

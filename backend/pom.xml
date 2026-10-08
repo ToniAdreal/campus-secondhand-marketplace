@@ -115,6 +115,14 @@
       <artifactId>spring-boot-testcontainers</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- ArchUnit layering tests (backlog #67): the build fails on package /
+           layer violations. Fetched into the offline repo by populate.py. -->
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>1.2.1</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <dependencyManagement>

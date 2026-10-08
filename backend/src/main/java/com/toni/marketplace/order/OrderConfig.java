@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Binds {@code app.orders.*}. Scheduling itself is enabled once for the whole
- * application in {@link com.toni.marketplace.common.CleanupConfig}; this
+ * application in {@link com.toni.marketplace.job.CleanupConfig}; this
  * config only owns the order-domain property binding.
  */
 @Configuration

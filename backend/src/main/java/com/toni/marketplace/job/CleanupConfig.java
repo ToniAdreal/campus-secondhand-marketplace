@@ -1,4 +1,4 @@
-package com.toni.marketplace.common;
+package com.toni.marketplace.job;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;

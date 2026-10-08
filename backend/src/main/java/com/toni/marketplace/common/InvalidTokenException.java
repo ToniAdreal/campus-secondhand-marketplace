@@ -1,4 +1,4 @@
-package com.toni.marketplace.auth;
+package com.toni.marketplace.common;
 
 /** Thrown when an access/refresh token is malformed, tampered with, or expired. */
 public class InvalidTokenException extends RuntimeException {

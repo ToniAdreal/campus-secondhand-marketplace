@@ -1,5 +1,7 @@
 package com.toni.marketplace.auth;
 
+import com.toni.marketplace.common.InvalidTokenException;
+
 /**
  * Thrown when a refresh token cannot be used: unknown, expired, revoked, or
  * reused. Reuse (replay of an already-rotated token) is treated as a possible

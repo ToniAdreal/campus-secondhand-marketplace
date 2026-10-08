@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import com.toni.marketplace.common.AccountLockedException;
+import com.toni.marketplace.common.DuplicateUserException;
+import com.toni.marketplace.common.InvalidCredentialsException;
 
 /**
  * Registration / login / refresh flows. HTTP concerns (cookies, status codes)

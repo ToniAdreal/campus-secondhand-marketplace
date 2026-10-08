@@ -1,4 +1,4 @@
-package com.toni.marketplace.auth;
+package com.toni.marketplace.common;
 
 /**
  * Thrown by {@link AuthService#login} when the identified account is

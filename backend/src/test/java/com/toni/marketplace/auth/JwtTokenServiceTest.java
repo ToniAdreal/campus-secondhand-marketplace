@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
+import com.toni.marketplace.common.InvalidTokenException;
 
 /**
  * Pure unit tests for the token lifecycle — repositories are Mockito mocks,

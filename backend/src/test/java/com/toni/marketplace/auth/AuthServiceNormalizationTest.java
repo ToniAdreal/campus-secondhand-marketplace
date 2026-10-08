@@ -16,6 +16,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.toni.marketplace.common.DuplicateUserException;
 
 /**
  * Pure unit tests for the case-normalization wiring in {@link AuthService}:

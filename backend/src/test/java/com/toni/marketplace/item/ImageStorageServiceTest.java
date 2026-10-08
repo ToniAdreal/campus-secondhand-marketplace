@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.unit.DataSize;
+import com.toni.marketplace.common.InvalidImageException;
 
 /**
  * Unit tests for {@link ImageStorageService} without a Spring context:
