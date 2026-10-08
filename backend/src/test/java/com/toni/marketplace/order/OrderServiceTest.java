@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -283,7 +285,7 @@ class OrderServiceTest {
         .isInstanceOf(ResponseStatusException.class)
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.NOT_FOUND));
-    verify(payments, never()).capture(any());
+    verify(payments, never()).capture(any(), anyString());
   }
 
   @Test
@@ -296,7 +298,7 @@ class OrderServiceTest {
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.FORBIDDEN));
     assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
-    verify(payments, never()).capture(any());
+    verify(payments, never()).capture(any(), anyString());
     verify(orders, never()).save(any());
   }
 
@@ -308,7 +310,7 @@ class OrderServiceTest {
     OrderDto dto = service.pay(7L, 5L);
 
     assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
-    verify(payments, never()).capture(any());
+    verify(payments, never()).capture(any(), anyString());
     verify(orders, never()).save(any());
   }
 
@@ -322,14 +324,14 @@ class OrderServiceTest {
         .isInstanceOf(ResponseStatusException.class)
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
-    verify(payments, never()).capture(any());
+    verify(payments, never()).capture(any(), anyString());
   }
 
   @Test
   void pay_pendingOrder_capturesTransitionsAndReservesItem() {
     Order order = pendingOrder(7L);
     when(orders.findById(5L)).thenReturn(Optional.of(order));
-    when(payments.capture(order))
+    when(payments.capture(eq(order), anyString()))
         .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
     when(orders.save(order)).thenAnswer(inv -> inv.getArgument(0));
 
@@ -337,14 +339,14 @@ class OrderServiceTest {
 
     assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
     assertThat(order.getItem().getStatus()).isEqualTo(ItemStatus.RESERVED);
-    verify(payments).capture(order);
+    verify(payments).capture(eq(order), anyString());
   }
 
   @Test
   void pay_versionConflictOnSave_throws409() {
     Order order = pendingOrder(7L);
     when(orders.findById(5L)).thenReturn(Optional.of(order));
-    when(payments.capture(order))
+    when(payments.capture(eq(order), anyString()))
         .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
     when(orders.save(order)).thenThrow(
         new org.springframework.orm.ObjectOptimisticLockingFailureException(Order.class, 5L));

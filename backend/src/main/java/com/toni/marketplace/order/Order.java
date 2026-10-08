@@ -65,6 +65,25 @@ public class Order {
   private Long version;
 
   /**
+   * Order-scoped idempotency key for the PSP capture (backlog #65,
+   * implements #45's declared follow-up). Generated once by
+   * {@code OrderService.pay} when the order is first paid and reused by every
+   * later capture call, so a retry after a crash between the PSP capture and
+   * the commit replays against the same key instead of issuing a second
+   * charge. Nullable for orders that have never been paid.
+   */
+  @Column(name = "capture_idempotency_key", length = 64)
+  private String captureIdempotencyKey;
+
+  /**
+   * Order-scoped idempotency key for the PSP refund (backlog #65). Distinct
+   * from the capture key — captures and refunds live in separate key
+   * namespaces. Nullable until the order is refunded.
+   */
+  @Column(name = "refund_idempotency_key", length = 64)
+  private String refundIdempotencyKey;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
    * the order is active (PENDING/PAID), NULL once terminal. insertable and
@@ -106,6 +125,14 @@ public class Order {
   public void setStatus(OrderStatus status) { this.status = status; }
   public Long getAmountCents() { return amountCents; }
   public Long getVersion() { return version; }
+  public String getCaptureIdempotencyKey() { return captureIdempotencyKey; }
+  public void setCaptureIdempotencyKey(String captureIdempotencyKey) {
+    this.captureIdempotencyKey = captureIdempotencyKey;
+  }
+  public String getRefundIdempotencyKey() { return refundIdempotencyKey; }
+  public void setRefundIdempotencyKey(String refundIdempotencyKey) {
+    this.refundIdempotencyKey = refundIdempotencyKey;
+  }
   public Long getActiveItemId() { return activeItemId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }

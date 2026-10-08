@@ -4,6 +4,7 @@ import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
 import java.time.Instant;
+import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -169,8 +170,33 @@ public class OrderService {
     return OrderDto.from(order);
   }
 
-  private String validateKey(String key) {
-    if (key == null || key.isBlank()) {
+  /**
+   * Order-scoped PSP idempotency keys (backlog #65): generated once per
+   * order transition and stored on the order row, so a retry after a crash
+   * between the PSP call and the commit reuses the stored key and the PSP
+   * seam replays the original result instead of issuing a second logical
+   * capture/refund. Capture and refund keys are distinct strings in
+   * distinct namespaces. The order is managed inside the surrounding
+   * transaction, so setting the field persists at flush — no explicit save
+   * needed.
+   */
+  private String captureKeyFor(Order order) {
+    if (order.getCaptureIdempotencyKey() == null) {
+      order.setCaptureIdempotencyKey(
+          "cap_" + UUID.randomUUID().toString().replace("-", ""));
+    }
+    return order.getCaptureIdempotencyKey();
+  }
+
+  private String refundKeyFor(Order order) {
+    if (order.getRefundIdempotencyKey() == null) {
+      order.setRefundIdempotencyKey(
+          "rfd_" + UUID.randomUUID().toString().replace("-", ""));
+    }
+    return order.getRefundIdempotencyKey();
+  }
+
+  private String validateKey(String key) {    if (key == null || key.isBlank()) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
           "Idempotency-Key must not be blank");
     }
@@ -328,12 +354,14 @@ public class OrderService {
    *   <li>A concurrent modification of the order row between read and write
    *       surfaces as {@code ObjectOptimisticLockingFailureException} from
    *       the {@code @Version} field and is mapped to 409, fail-fast.
-   *       Honest scope: on a pay race the losing thread still calls
-   *       {@link PaymentService#capture} before its version check fails at
-   *       flush — the mock is side-effect-free, so nothing double-charges
-   *       here. A real PSP client must pass an order-scoped idempotency key
-   *       to capture so the loser's pre-flush call is a no-op (declared
-   *       follow-up).</li>
+   *       The capture carries an order-scoped idempotency key (see
+   *       {@link #captureKeyFor(Order)}): on a pay race the losing thread
+   *       still calls {@link PaymentService#capture} before its version
+   *       check fails at flush, but the key is per-order, so the loser's
+   *       pre-flush call replays the winner's already-stored capture
+   *       result instead of issuing a second logical capture — the mock is
+   *       side-effect-free either way, and a real PSP would apply the same
+   *       replay. Backlog #65 closed the declared follow-up.</li>
    * </ul>
    */
   @Transactional
@@ -354,7 +382,7 @@ public class OrderService {
           "order is " + order.getStatus() + ", payment is not allowed");
     }
     try {
-      payments.capture(order);
+      payments.capture(order, captureKeyFor(order));
       order.setStatus(OrderStatus.PAID);
       order.getItem().setStatus(ItemStatus.RESERVED);
       OrderDto dto = OrderDto.from(orders.save(order));
@@ -468,13 +496,11 @@ public class OrderService {
    *       {@code Item.@Version}, and the in-transaction
    *       {@code orders.flush()} surfaces a concurrent order-row transition
    *       as {@code ObjectOptimisticLockingFailureException}, mapped to 409
-   *       fail-fast. Honest scope, inherited from {@link #pay(Long, Long)}:
-   *       on a refund race the losing thread still calls
-   *       {@link PaymentService#refund} before its version check fails at
-   *       flush — the mock is side-effect-free, so nothing double-refunds
-   *       here. A real PSP client must pass an order-scoped idempotency key
-   *       to the refund call so the loser's pre-flush call is a no-op
-   *       (declared follow-up).</li>
+   *       fail-fast. The refund carries an order-scoped idempotency key
+   *       (see {@link #refundKeyFor(Order)}), mirroring
+   *       {@link #pay(Long, Long)}: on a refund race the loser's pre-flush
+   *       call replays the winner's stored refund result instead of
+   *       issuing a second logical refund (backlog #65).</li>
    * </ul>
    */
   @Transactional
@@ -494,7 +520,7 @@ public class OrderService {
           "order is " + order.getStatus() + ", refund is not allowed");
     }
     try {
-      payments.refund(order);
+      payments.refund(order, refundKeyFor(order));
       order.setStatus(OrderStatus.REFUNDED);
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
