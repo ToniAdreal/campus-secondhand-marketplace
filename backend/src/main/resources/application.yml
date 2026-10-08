@@ -20,6 +20,18 @@ spring:
       # (app.uploads.max-size), which throws InvalidImageException → 400.
       max-file-size: 5MB
       max-request-size: 5MB
+  data:
+    web:
+      pageable:
+        # Cap requested page sizes on every Pageable-backed list endpoint
+        # (backlog #75): GET /api/items, /api/orders and /api/seller/orders
+        # all bind ?page=&size= through Spring Data's pageable resolver, so
+        # ?size=10000 now clamps to this value instead of running an
+        # unbounded row scan. @PageableDefault only sets the default — it
+        # never capped the maximum. The message thread (#41) is unaffected:
+        # it parses size itself (plain @RequestParam) and enforces its own
+        # cap of 50 in MessageService.
+        max-page-size: 100
   jpa:
     hibernate:
       ddl-auto: validate
