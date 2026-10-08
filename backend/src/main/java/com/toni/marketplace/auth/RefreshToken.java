@@ -68,6 +68,22 @@ public class RefreshToken {
   @Column(name = "family_jti", nullable = false, length = 36)
   private String familyJti;
 
+  /**
+   * Device label captured from the login/refresh request's User-Agent
+   * header (backlog #62). NULL for rows written before the V13 migration
+   * and for clients that sent no User-Agent.
+   */
+  @Column(name = "user_agent", length = 512)
+  private String userAgent;
+
+  /**
+   * Remote address captured at the last login/refresh (backlog #62).
+   * Whatever the servlet container saw — behind a proxy that is the
+   * proxy's address (no X-Forwarded-For trust configured).
+   */
+  @Column(name = "ip_address", length = 64)
+  private String ipAddress;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -105,5 +121,9 @@ public class RefreshToken {
   public void setReplacedBy(String replacedBy) { this.replacedBy = replacedBy; }
   public Instant getFamilyIssuedAt() { return familyIssuedAt; }
   public String getFamilyJti() { return familyJti; }
+  public String getUserAgent() { return userAgent; }
+  public void setUserAgent(String userAgent) { this.userAgent = userAgent; }
+  public String getIpAddress() { return ipAddress; }
+  public void setIpAddress(String ipAddress) { this.ipAddress = ipAddress; }
   public Instant getCreatedAt() { return createdAt; }
 }

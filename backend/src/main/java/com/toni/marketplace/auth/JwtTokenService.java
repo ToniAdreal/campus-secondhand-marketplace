@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import javax.crypto.SecretKey;
 
@@ -92,6 +93,14 @@ public class JwtTokenService {
   public record AccessClaims(long userId, String username, List<String> roles, long tokenVersion) {}
 
   public TokenPair createTokenPair(User user) {
+    return createTokenPair(user, SessionMeta.unknown());
+  }
+
+  /**
+   * Issues a token pair and records the session's device info
+   * ({@link SessionMeta}) on the new refresh-token row (backlog #62).
+   */
+  public TokenPair createTokenPair(User user, SessionMeta meta) {
     Instant now = clock.instant();
     Instant accessExp = now.plus(accessTtl);
     Instant refreshExp = now.plus(refreshTtl);
@@ -120,8 +129,11 @@ public class JwtTokenService {
         .compact();
 
     // The issued token founds a new family: its root is this token itself.
-    refreshTokens.save(new RefreshToken(sha256Hex(refreshToken), jti, user.getId(), refreshExp,
-        now, jti));
+    RefreshToken row = new RefreshToken(sha256Hex(refreshToken), jti, user.getId(), refreshExp,
+        now, jti);
+    row.setUserAgent(meta.userAgent());
+    row.setIpAddress(meta.ipAddress());
+    refreshTokens.save(row);
 
     return new TokenPair(accessToken, refreshToken, accessExp, refreshExp);
   }
@@ -147,6 +159,15 @@ public class JwtTokenService {
    * once more inside {@link #refreshGraceWindow} (see class javadoc).
    */
   public TokenPair rotateRefreshToken(String refreshToken) {
+    return rotateRefreshToken(refreshToken, SessionMeta.unknown());
+  }
+
+  /**
+   * Rotation variant that records the caller's device info
+   * ({@link SessionMeta}) on the newly issued row (backlog #62); when the
+   * meta is unknown the new row inherits the consumed row's label.
+   */
+  public TokenPair rotateRefreshToken(String refreshToken, SessionMeta meta) {
     Claims claims = parse(refreshToken);
     requireType(claims, TYPE_REFRESH, "not a refresh token");
 
@@ -174,7 +195,7 @@ public class JwtTokenService {
       // linear, so this exact stale token cannot be graced twice). If the
       // token is past the grace window — or its successor is no longer the
       // live token — treat the replay as theft: kill the family and reject.
-      TokenPair graced = tryGraceRotation(stored, claims, now);
+      TokenPair graced = tryGraceRotation(stored, claims, now, meta);
       if (graced != null) {
         return graced;
       }
@@ -193,7 +214,7 @@ public class JwtTokenService {
       throw new InvalidRefreshTokenException("refresh token user mismatch");
     }
 
-    return rotateLive(stored, userId, claims.getSubject(), now);
+    return rotateLive(stored, userId, claims.getSubject(), now, meta);
   }
 
   /**
@@ -202,7 +223,8 @@ public class JwtTokenService {
    * the revocation happened inside the grace window. Returns {@code null}
    * when the token does not qualify — the caller then takes the theft path.
    */
-  private TokenPair tryGraceRotation(RefreshToken stale, Claims claims, Instant now) {
+  private TokenPair tryGraceRotation(RefreshToken stale, Claims claims, Instant now,
+                                     SessionMeta meta) {
     String successorJti = stale.getReplacedBy();
     Instant revokedAt = stale.getRevokedAt();
     if (successorJti == null || revokedAt == null) {
@@ -221,7 +243,7 @@ public class JwtTokenService {
     }
     // Rotate the live successor: both tabs end up with a working token and
     // the chain stays linear, spending this stale token's single grace grant.
-    return rotateLive(successor, userId, claims.getSubject(), now);
+    return rotateLive(successor, userId, claims.getSubject(), now, meta);
   }
 
   /**
@@ -229,7 +251,8 @@ public class JwtTokenService {
    * revoked — timestamped so the grace window can be measured — and issues
    * the next pair for the same user.
    */
-  private TokenPair rotateLive(RefreshToken live, long userId, String subject, Instant now) {
+  private TokenPair rotateLive(RefreshToken live, long userId, String subject, Instant now,
+                               SessionMeta meta) {
     Instant accessExp = now.plus(accessTtl);
     Instant refreshExp = now.plus(refreshTtl);
 
@@ -261,8 +284,14 @@ public class JwtTokenService {
     // family's issued-at and family jti from the consumed token, so the
     // absolute lifetime is measured from the original login, not the
     // last rotation.
-    refreshTokens.save(new RefreshToken(sha256Hex(newRefreshToken), newJti, userId, refreshExp,
-        live.getFamilyIssuedAt(), live.getFamilyJti()));
+    RefreshToken next = new RefreshToken(sha256Hex(newRefreshToken), newJti, userId, refreshExp,
+        live.getFamilyIssuedAt(), live.getFamilyJti());
+    // Device info is captured at login/refresh; when the caller did not
+    // supply it (legacy/test path) the new row inherits the consumed row's
+    // label so the session keeps a stable device identity.
+    next.setUserAgent(meta.userAgent() != null ? meta.userAgent() : live.getUserAgent());
+    next.setIpAddress(meta.ipAddress() != null ? meta.ipAddress() : live.getIpAddress());
+    refreshTokens.save(next);
 
     String newAccessToken = Jwts.builder()
         .subject(subject)
@@ -281,6 +310,40 @@ public class JwtTokenService {
   /** Logs out: deletes every refresh token of the user. */
   public void revokeAll(long userId) {
     refreshTokens.deleteByUserId(userId);
+  }
+
+  /**
+   * Per-session management (backlog #62): the user's live sessions, one row
+   * per refresh-token family (the live — non-revoked, unexpired — row of
+   * each chain).
+   */
+  public List<RefreshToken> liveSessionTokens(long userId, Instant now) {
+    return refreshTokens.findByUserIdAndRevokedFalseAndExpiresAtAfter(userId, now);
+  }
+
+  /**
+   * The family jti of the session a presented refresh token belongs to —
+   * used to flag the caller's current session. Any row state counts (even a
+   * revoked row maps to its family), so a just-rotated cookie still flags
+   * the right session.
+   */
+  public Optional<String> sessionFamilyOfToken(String refreshToken) {
+    return refreshTokens.findByTokenHash(sha256Hex(refreshToken)).map(RefreshToken::getFamilyJti);
+  }
+
+  /**
+   * Whether every row of the family belongs to {@code userId}. A family id
+   * that does not exist at all reads as not-owned, so unknown ids and other
+   * users' ids are indistinguishable to the caller (no cross-user oracle).
+   */
+  public boolean familyBelongsToUser(long userId, String familyJti) {
+    List<RefreshToken> rows = refreshTokens.findByFamilyJti(familyJti);
+    return !rows.isEmpty() && rows.stream().allMatch(r -> r.getUserId() == userId);
+  }
+
+  /** Revokes one session's family without touching the user's other sessions. */
+  public void revokeFamily(String familyJti) {
+    refreshTokens.deleteByFamilyJti(familyJti);
   }
 
   private Claims parse(String token) {

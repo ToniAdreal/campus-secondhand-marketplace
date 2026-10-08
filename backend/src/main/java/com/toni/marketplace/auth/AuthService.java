@@ -3,9 +3,13 @@ package com.toni.marketplace.auth;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Registration / login / refresh flows. HTTP concerns (cookies, status codes)
@@ -47,14 +51,21 @@ public class AuthService {
     return raw.toLowerCase(Locale.ROOT);
   }
 
+  public AuthResult register(String username, String email, String rawPassword) {
+    return register(username, email, rawPassword, SessionMeta.unknown());
+  }
+
   /**
    * Registers a new user. Weak passwords → 400 (see
    * {@link PasswordStrengthValidator}); duplicate username or email → 409.
    * The username and email are stored canonical-lowercase, so the response
    * echoes the canonical form ("Alice" registers as "alice").
+   *
+   * @param meta device info captured from the request — recorded on the new
+   *     session's refresh-token row (backlog #62)
    */
   @Transactional
-  public AuthResult register(String username, String email, String rawPassword) {
+  public AuthResult register(String username, String email, String rawPassword, SessionMeta meta) {
     PasswordStrengthValidator.requireStrong(rawPassword);
     String canonicalUsername = canonical(username);
     String canonicalEmail = canonical(email);
@@ -65,7 +76,11 @@ public class AuthService {
       throw new DuplicateUserException("email is already registered");
     }
     User user = users.save(new User(canonicalUsername, canonicalEmail, passwords.encode(rawPassword)));
-    return new AuthResult(user, jwt.createTokenPair(user));
+    return new AuthResult(user, jwt.createTokenPair(user, meta));
+  }
+
+  public AuthResult login(String usernameOrEmail, String rawPassword) {
+    return login(usernameOrEmail, rawPassword, SessionMeta.unknown());
   }
 
   /**
@@ -81,9 +96,12 @@ public class AuthService {
    * for the correct password. A successful login resets the counter; an
    * expired lock resets the counter on the next attempt. Unknown identifiers
    * are never tracked — they keep getting the identical 401.
+   *
+   * @param meta device info captured from the request — recorded on the new
+   *     session's refresh-token row (backlog #62)
    */
   @Transactional
-  public AuthResult login(String usernameOrEmail, String rawPassword) {
+  public AuthResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
     String identifier = canonical(usernameOrEmail);
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
@@ -117,7 +135,7 @@ public class AuthService {
       user.setFailedLoginAttempts(0);
       user.setLockedUntil(null);
     }
-    return new AuthResult(user, jwt.createTokenPair(user));
+    return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 
   /** Whole seconds until the lock expires, never below 1 (the header must be meaningful). */
@@ -132,13 +150,26 @@ public class AuthService {
    */
   @Transactional
   public AuthResult refresh(String refreshToken) {
-    JwtTokenService.TokenPair pair = jwt.rotateRefreshToken(refreshToken);
+    return refresh(refreshToken, SessionMeta.unknown());
+  }
+
+  /**
+   * Rotation variant that records the caller's device info
+   * ({@link SessionMeta}) on the newly issued row (backlog #62).
+   */
+  @Transactional
+  public AuthResult refresh(String refreshToken, SessionMeta meta) {
+    JwtTokenService.TokenPair pair = jwt.rotateRefreshToken(refreshToken, meta);
     // Rotation re-reads the user for role changes; resolve it for the response.
     // (Only the stored hash is known here, so re-derive the user from the new
     // access token's claims — the subject is the user id.)
     long userId = jwt.parseAccessToken(pair.accessToken()).userId();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     return new AuthResult(user, pair);
+  }
+
+  public AuthResult changePassword(long userId, String currentPassword, String newPassword) {
+    return changePassword(userId, currentPassword, newPassword, SessionMeta.unknown());
   }
 
   /**
@@ -151,9 +182,13 @@ public class AuthService {
    * previously issued bearer tokens 401 immediately, and the caller's
    * session gets a fresh pair (minted at the new version), so they stay
    * logged in while stolen/other sessions are cut off.
+   *
+   * @param meta device info captured from the request — recorded on the new
+   *     session's refresh-token row (backlog #62)
    */
   @Transactional
-  public AuthResult changePassword(long userId, String currentPassword, String newPassword) {
+  public AuthResult changePassword(long userId, String currentPassword, String newPassword,
+                                   SessionMeta meta) {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     if (!passwords.matches(currentPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();
@@ -163,7 +198,7 @@ public class AuthService {
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);
     jwt.revokeAll(userId);
-    return new AuthResult(user, jwt.createTokenPair(user));
+    return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 
   /**
@@ -185,5 +220,41 @@ public class AuthService {
   @Transactional
   public void logout(long userId) {
     jwt.revokeAll(userId);
+  }
+
+  /**
+   * Per-session management (backlog #62): lists the caller's live
+   * refresh-token sessions (one per family), most recently active first.
+   * The session whose refresh token the caller presented (the
+   * {@code refresh_token} cookie, matched via the token's jti → family) is
+   * flagged {@code current}; an absent or unknown cookie flags nothing.
+   */
+  @Transactional(readOnly = true)
+  public List<SessionDto> sessions(long userId, String presentedRefreshToken) {
+    Instant now = clock.instant();
+    String currentFamily = (presentedRefreshToken == null || presentedRefreshToken.isBlank())
+        ? null
+        : jwt.sessionFamilyOfToken(presentedRefreshToken).orElse(null);
+    return jwt.liveSessionTokens(userId, now).stream()
+        .map(row -> new SessionDto(row.getFamilyJti(), row.getUserAgent(), row.getIpAddress(),
+            row.getFamilyIssuedAt(), row.getCreatedAt(),
+            row.getFamilyJti().equals(currentFamily)))
+        .sorted(Comparator.comparing(SessionDto::lastActiveAt).reversed())
+        .toList();
+  }
+
+  /**
+   * Revokes one session (its refresh-token family) without touching the
+   * caller's other sessions. An unknown session id — or one belonging to
+   * another user — is 404 (no cross-user oracle). Revoking the caller's own
+   * current session takes effect on the next refresh: the dead cookie 401s
+   * and the SPA re-logs-in.
+   */
+  @Transactional
+  public void revokeSession(long userId, String familyJti) {
+    if (!jwt.familyBelongsToUser(userId, familyJti)) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "session not found");
+    }
+    jwt.revokeFamily(familyJti);
   }
 }

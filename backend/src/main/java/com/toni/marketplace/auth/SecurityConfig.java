@@ -23,10 +23,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *
  * <ul>
  *   <li>{@code /api/auth/**} is public (register/login/refresh land here),
- *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password}
- *       and {@code GET /api/auth/me},
+ *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password},
+ *       {@code GET /api/auth/me}, {@code GET /api/auth/sessions} and
+ *       {@code DELETE /api/auth/sessions/**},
  *       which need a Bearer access token because they act on the caller's own
- *       session.</li>
+ *       session(s).</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
  *       viewable by any visitor.</li>
  *   <li>{@code /actuator/health} and {@code /actuator/info} are public —
@@ -91,12 +92,14 @@ public class SecurityConfig {
         .csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
-            // Logout, password change and session restore need the caller's
-            // identity: a valid Bearer access token. The rest of /api/auth/**
-            // stays public.
+            // Logout, password change, session restore and per-session
+            // management need the caller's identity: a valid Bearer access
+            // token. The rest of /api/auth/** stays public.
             .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
+            .requestMatchers(HttpMethod.GET, "/api/auth/sessions").authenticated()
+            .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             // Actuator: public liveness/readiness probes, everything else
             // authenticated. Matcher order matters — the more specific

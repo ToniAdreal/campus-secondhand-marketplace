@@ -1,15 +1,19 @@
 package com.toni.marketplace.auth;
 
 import com.toni.marketplace.common.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Duration;
+import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -36,23 +40,25 @@ public class AuthController {
 
   @PostMapping("/register")
   public ResponseEntity<ApiResponse<AuthResponse>> register(
-      @Valid @RequestBody RegisterRequest request) {
-    return ok(auth.register(request.username(), request.email(), request.password()));
+      @Valid @RequestBody RegisterRequest request, HttpServletRequest http) {
+    return ok(auth.register(request.username(), request.email(), request.password(),
+        SessionMeta.of(http)));
   }
 
   @PostMapping("/login")
   public ResponseEntity<ApiResponse<AuthResponse>> login(
-      @Valid @RequestBody LoginRequest request) {
-    return ok(auth.login(request.usernameOrEmail(), request.password()));
+      @Valid @RequestBody LoginRequest request, HttpServletRequest http) {
+    return ok(auth.login(request.usernameOrEmail(), request.password(), SessionMeta.of(http)));
   }
 
   @PostMapping("/refresh")
   public ResponseEntity<ApiResponse<AuthResponse>> refresh(
-      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
+      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
+      HttpServletRequest http) {
     if (refreshToken == null || refreshToken.isBlank()) {
       throw new InvalidRefreshTokenException("missing refresh token");
     }
-    return ok(auth.refresh(refreshToken));
+    return ok(auth.refresh(refreshToken, SessionMeta.of(http)));
   }
 
   /**
@@ -82,8 +88,42 @@ public class AuthController {
   @PostMapping("/password")
   public ResponseEntity<ApiResponse<AuthResponse>> changePassword(
       @AuthenticationPrincipal Long userId,
-      @Valid @RequestBody PasswordChangeRequest request) {
-    return ok(auth.changePassword(userId, request.currentPassword(), request.newPassword()));
+      @Valid @RequestBody PasswordChangeRequest request, HttpServletRequest http) {
+    return ok(auth.changePassword(userId, request.currentPassword(), request.newPassword(),
+        SessionMeta.of(http)));
+  }
+
+  /**
+   * Per-session management (backlog #62): lists the caller's live
+   * refresh-token sessions — one entry per device/browser that holds a
+   * valid refresh token — with the device label (User-Agent) and IP
+   * captured at login/refresh. The session the caller presented (their
+   * {@code refresh_token} cookie, matched via the token's jti → family) is
+   * flagged {@code current}; an absent cookie flags nothing. Fixes the
+   * long-standing scope-table limitation "logout kills every session on
+   * every device": individual sessions can now be inspected and revoked
+   * with {@code DELETE /api/auth/sessions/{id}}.
+   */
+  @GetMapping("/sessions")
+  public ResponseEntity<ApiResponse<List<SessionDto>>> sessions(
+      @AuthenticationPrincipal Long userId,
+      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.sessions(userId, refreshToken)));
+  }
+
+  /**
+   * Revokes one of the caller's sessions (its whole refresh-token family)
+   * without touching their other sessions. Unknown ids — or ids belonging
+   * to another user — are 404 (no cross-user oracle). The {@code id} is the
+   * session id from {@code GET /api/auth/sessions} (the family's root jti,
+   * stable across rotations).
+   */
+  @DeleteMapping("/sessions/{id}")
+  public ResponseEntity<ApiResponse<Void>> deleteSession(
+      @AuthenticationPrincipal Long userId,
+      @PathVariable("id") String sessionId) {
+    auth.revokeSession(userId, sessionId);
+    return ResponseEntity.ok(ApiResponse.ok(null));
   }
 
   /**

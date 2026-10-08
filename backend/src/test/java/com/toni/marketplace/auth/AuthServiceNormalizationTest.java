@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -54,7 +55,7 @@ class AuthServiceNormalizationTest {
     when(users.findByEmailIgnoreCase("alice@example.com")).thenReturn(Optional.empty());
     when(passwords.encode("s3cret-pass")).thenReturn("$2a$12$hashed");
     when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
-    when(jwt.createTokenPair(any(User.class))).thenReturn(pair());
+    when(jwt.createTokenPair(any(User.class), any(SessionMeta.class))).thenReturn(pair());
 
     AuthService.AuthResult result = service.register("Alice", "Alice@Example.com", "s3cret-pass");
 
@@ -84,7 +85,7 @@ class AuthServiceNormalizationTest {
     User existing = new User("alice", "alice@example.com", "$2a$12$hashed");
     when(users.findByUsernameIgnoreCase("alice")).thenReturn(Optional.of(existing));
     when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
-    when(jwt.createTokenPair(existing)).thenReturn(pair());
+    when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
     AuthService.AuthResult result = service.login("ALICE", "s3cret-pass");
 
@@ -98,7 +99,7 @@ class AuthServiceNormalizationTest {
     when(users.findByUsernameIgnoreCase("alice@example.com")).thenReturn(Optional.empty());
     when(users.findByEmailIgnoreCase("alice@example.com")).thenReturn(Optional.of(existing));
     when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
-    when(jwt.createTokenPair(existing)).thenReturn(pair());
+    when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
     AuthService.AuthResult result = service.login("ALICE@EXAMPLE.COM", "s3cret-pass");
 

@@ -14,6 +14,15 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
   /** Follows the rotation chain: the row issued in place of a revoked token. */
   Optional<RefreshToken> findByJti(String jti);
 
+  /**
+   * The live (non-revoked, unexpired) rows of one user — one row per
+   * refresh-token family, i.e. the user's live sessions (backlog #62).
+   */
+  List<RefreshToken> findByUserIdAndRevokedFalseAndExpiresAtAfter(Long userId, Instant now);
+
+  /** Every row of one refresh-token family (for ownership checks / family revoke). */
+  List<RefreshToken> findByFamilyJti(String familyJti);
+
   /** Hard-delete the whole family (logout / refresh-token theft detected). */
   void deleteByUserId(Long userId);
 
