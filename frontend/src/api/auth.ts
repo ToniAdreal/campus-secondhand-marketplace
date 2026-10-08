@@ -61,6 +61,32 @@ export async function logout(): Promise<void> {
   await api.post('/auth/logout');
 }
 
+export interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+/**
+ * POST /api/auth/password. Changes the caller's password: the current
+ * password must match (a wrong one fails with the same 401 as everywhere
+ * else — no oracle), the new one must pass the strength policy (400 with
+ * the reason verbatim).
+ *
+ * On success the backend has rotated the whole refresh-token family, so
+ * every OTHER device's session is dead; the response carries the fresh
+ * bearer credential for THIS session (the same AuthResponse shape as
+ * login) plus the user profile — callers must store them (e.g. through
+ * the store's login()) so subsequent requests keep working.
+ *
+ * Throws the Axios error on failure; the backend wraps failures in the
+ * {code,message,data} envelope.
+ */
+export async function changePassword(payload: ChangePasswordPayload): Promise<LoginResult> {
+  const res = await api.post<ApiResponse<AuthResponseBody>>('/auth/password', payload);
+  const body = res.data.data;
+  return { user: body.user, accessToken: body.accessToken };
+}
+
 /**
  * GET /api/auth/me. Returns the caller's profile (id/username/email/roles)
  * for session restore on SPA reload. When the in-memory credential is

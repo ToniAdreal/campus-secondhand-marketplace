@@ -10,6 +10,7 @@ import ItemDetailPage from './pages/ItemDetailPage';
 import LoginPage from './pages/LoginPage';
 import MyOrdersPage from './pages/MyOrdersPage';
 import OrderConfirmationPage from './pages/OrderConfirmationPage';
+import SettingsPage from './pages/SettingsPage';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
 
@@ -24,6 +25,7 @@ const router = createBrowserRouter([
       { path: 'orders', element: <MyOrdersPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'login', element: <LoginPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ]);

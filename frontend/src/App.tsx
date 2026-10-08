@@ -22,6 +22,9 @@ function AuthNav() {
       <Link to="/items/new" className="text-sm text-blue-600 hover:underline">
         Sell an item
       </Link>
+      <Link to="/settings" className="text-sm text-blue-600 hover:underline">
+        Settings
+      </Link>
       <span className="text-sm text-neutral-600">{user.username}</span>
       <button
         type="button"

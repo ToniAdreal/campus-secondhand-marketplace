@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from './client';
-import { login, me } from './auth';
+import { login, me, changePassword } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
@@ -87,5 +87,48 @@ describe('me', () => {
     getSpy.mockRejectedValueOnce(failure);
 
     await expect(me()).rejects.toBe(failure);
+  });
+});
+
+describe('changePassword', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts to /auth/password and returns the fresh bearer credential for this session', async () => {
+    const freshPair = {
+      accessToken: 'tok-fresh',
+      tokenType: 'Bearer',
+      expiresInSeconds: 900,
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    };
+    postSpy.mockResolvedValueOnce(envelope(freshPair));
+
+    const result = await changePassword({ currentPassword: 'old', newPassword: 'new-strong-1' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/password', {
+      currentPassword: 'old',
+      newPassword: 'new-strong-1',
+    });
+    // the backend rotated the refresh-token family; this response carries
+    // the new pair for the current session — the caller must store it
+    expect(result).toEqual({
+      accessToken: 'tok-fresh',
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    });
+    expect('refreshToken' in (result as object)).toBe(false);
+  });
+
+  it('propagates the envelope error (401 wrong current password, 400 weak new password)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: { code: 400, message: 'password must be 8-72 characters', data: null },
+      },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(changePassword({ currentPassword: 'old', newPassword: 'x' })).rejects.toBe(failure);
   });
 });
