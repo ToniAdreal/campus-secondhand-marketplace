@@ -50,16 +50,37 @@ public class RefreshToken {
   @Column(name = "replaced_by", length = 36)
   private String replacedBy;
 
+  /**
+   * Instant of the original login that founded this token's family, carried
+   * onto every rotated row. JwtTokenService refuses a refresh past
+   * {@code app.jwt.refresh-max-age} from here (absolute family lifetime,
+   * backlog #61) — even when the presented token is unexpired.
+   */
+  @Column(name = "family_issued_at", nullable = false)
+  private Instant familyIssuedAt;
+
+  /**
+   * The jti of the family's root token (the login-time token). Lets the
+   * family-cap revocation delete only this session's chain instead of every
+   * session on the account (backlog #62 builds per-session management on
+   * this identifier).
+   */
+  @Column(name = "family_jti", nullable = false, length = 36)
+  private String familyJti;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
   protected RefreshToken() {}
 
-  public RefreshToken(String tokenHash, String jti, Long userId, Instant expiresAt) {
+  public RefreshToken(String tokenHash, String jti, Long userId, Instant expiresAt,
+                      Instant familyIssuedAt, String familyJti) {
     this.tokenHash = tokenHash;
     this.jti = jti;
     this.userId = userId;
     this.expiresAt = expiresAt;
+    this.familyIssuedAt = familyIssuedAt;
+    this.familyJti = familyJti;
   }
 
   @PrePersist
@@ -82,5 +103,7 @@ public class RefreshToken {
   public void setRevokedAt(Instant revokedAt) { this.revokedAt = revokedAt; }
   public String getReplacedBy() { return replacedBy; }
   public void setReplacedBy(String replacedBy) { this.replacedBy = replacedBy; }
+  public Instant getFamilyIssuedAt() { return familyIssuedAt; }
+  public String getFamilyJti() { return familyJti; }
   public Instant getCreatedAt() { return createdAt; }
 }

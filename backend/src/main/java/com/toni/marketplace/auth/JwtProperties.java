@@ -26,6 +26,15 @@ public class JwtProperties {
    */
   private Duration refreshGraceWindow = Duration.ofSeconds(60);
 
+  /**
+   * Absolute lifetime of a refresh-token family, measured from the original
+   * login (backlog #61). A refresh presented past this point is rejected
+   * with 401 and the family is revoked — even when the presented refresh
+   * token itself is unexpired — forcing a fresh login. Rotation alone no
+   * longer keeps a session alive forever. Default 30 days.
+   */
+  private Duration refreshMaxAge = Duration.ofDays(30);
+
   public String getSecret() { return secret; }
   public void setSecret(String secret) { this.secret = secret; }
   public Duration getAccessTtl() { return accessTtl; }
@@ -36,4 +45,6 @@ public class JwtProperties {
   public void setRefreshGraceWindow(Duration refreshGraceWindow) {
     this.refreshGraceWindow = refreshGraceWindow;
   }
+  public Duration getRefreshMaxAge() { return refreshMaxAge; }
+  public void setRefreshMaxAge(Duration refreshMaxAge) { this.refreshMaxAge = refreshMaxAge; }
 }

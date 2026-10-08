@@ -69,6 +69,12 @@ app:
     # (concurrent-tab grace, backlog #39). Replays after the window kill
     # the token family (theft detection).
     refresh-grace-window: 60s
+    # Absolute lifetime of a refresh-token family (backlog #61), measured
+    # from the original login. A refresh past this point returns 401 and
+    # revokes the family — even when the presented token is unexpired —
+    # forcing a fresh login; rotation alone can no longer keep a session
+    # alive forever.
+    refresh-max-age: 30d
 
 logging:
   pattern:

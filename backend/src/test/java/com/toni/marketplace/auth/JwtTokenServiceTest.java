@@ -45,7 +45,7 @@ class JwtTokenServiceTest {
     key = Keys.hmacShaKeyFor(bytes);
     refreshTokens = mock(RefreshTokenRepository.class);
     users = mock(UserRepository.class);
-    service = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60),
+    service = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60), Duration.ofDays(30),
         refreshTokens, users, Clock.fixed(NOW, ZoneOffset.UTC));
 
     alice = new User("alice", "alice@example.com", "$2a$12$hashed");
@@ -123,7 +123,7 @@ class JwtTokenServiceTest {
   @Test
   void parseAccessToken_rejectsExpiredToken() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
-    JwtTokenService later = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60),
+    JwtTokenService later = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60), Duration.ofDays(30),
         refreshTokens, users, Clock.fixed(NOW.plus(Duration.ofMinutes(16)), ZoneOffset.UTC));
 
     assertThatThrownBy(() -> later.parseAccessToken(pair.accessToken()))
@@ -134,7 +134,7 @@ class JwtTokenServiceTest {
   void rotate_happyPath_revokesOldAndIssuesNewPair() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
     RefreshToken oldRow = new RefreshToken(
-        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)));
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)), NOW, "family-jti");
     when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
         .thenReturn(Optional.of(oldRow));
     when(users.findById(42L)).thenReturn(Optional.of(alice));
@@ -176,7 +176,7 @@ class JwtTokenServiceTest {
   void rotate_revokedToken_revokesWholeFamily() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
     RefreshToken oldRow = new RefreshToken(
-        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)));
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)), NOW, "family-jti");
     oldRow.setRevoked(true); // replay of an already-consumed token: possible theft
     when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
         .thenReturn(Optional.of(oldRow));
@@ -191,7 +191,8 @@ class JwtTokenServiceTest {
   void rotate_expiredToken_revokesWholeFamily() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
     RefreshToken oldRow = new RefreshToken(
-        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.minusSeconds(1));
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.minusSeconds(1),
+        NOW, "family-jti");
     when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
         .thenReturn(Optional.of(oldRow));
 
@@ -204,7 +205,7 @@ class JwtTokenServiceTest {
   void rotate_deletedUser_revokesFamily() {
     JwtTokenService.TokenPair pair = service.createTokenPair(alice);
     RefreshToken oldRow = new RefreshToken(
-        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)));
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)), NOW, "family-jti");
     when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
         .thenReturn(Optional.of(oldRow));
     when(users.findById(42L)).thenReturn(Optional.empty());
@@ -226,5 +227,94 @@ class JwtTokenServiceTest {
     assertThatThrownBy(() ->
         JwtTokenService.keyFromBase64(java.util.Base64.getEncoder().encodeToString(new byte[16])))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  // --- Backlog #61: absolute family lifetime ---------------------------------
+
+  @Test
+  void createTokenPair_recordsFamilyRoot() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+
+    ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+    verify(refreshTokens).save(captor.capture());
+    RefreshToken stored = captor.getValue();
+    // The issued token founds its own family: root jti is its own jti,
+    // issued-at is the issuance instant.
+    assertThat(stored.getFamilyJti()).isEqualTo(stored.getJti());
+    assertThat(stored.getFamilyIssuedAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void rotate_carriesFamilyFieldsForward() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L,
+        NOW.plus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(5)), "root-family");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+    when(users.findById(42L)).thenReturn(Optional.of(alice));
+
+    service.rotateRefreshToken(pair.refreshToken());
+
+    // createTokenPair saved 1 row, rotate saves 2 (consumed + fresh).
+    ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+    verify(refreshTokens, org.mockito.Mockito.times(3)).save(captor.capture());
+    RefreshToken newRow = captor.getAllValues().get(2);
+    assertThat(newRow.getFamilyIssuedAt()).isEqualTo(NOW.minus(Duration.ofDays(5)));
+    assertThat(newRow.getFamilyJti()).isEqualTo("root-family");
+  }
+
+  @Test
+  void rotate_pastFamilyCap_revokesOnlyThatFamily() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    // Token itself is unexpired (7 d), but the family is 31 days old —
+    // past the 30-day absolute cap.
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L,
+        NOW.plus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(31)), "root-family");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+
+    assertThatThrownBy(() -> service.rotateRefreshToken(pair.refreshToken()))
+        .isInstanceOf(InvalidRefreshTokenException.class)
+        .hasMessageContaining("lifetime exceeded");
+    // Family-scoped revocation — the user's OTHER sessions must survive,
+    // so this is deliberately NOT deleteByUserId.
+    verify(refreshTokens).deleteByFamilyJti("root-family");
+    verify(refreshTokens, never()).deleteByUserId(any());
+  }
+
+  @Test
+  void rotate_exactlyAtCap_rejected() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L,
+        NOW.plus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(30)), "root-family");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+
+    // The cap is an absolute lifetime: now == familyIssuedAt + maxAge is
+    // already expired (valid only while now is strictly before the cap).
+    assertThatThrownBy(() -> service.rotateRefreshToken(pair.refreshToken()))
+        .isInstanceOf(InvalidRefreshTokenException.class)
+        .hasMessageContaining("lifetime exceeded");
+    verify(refreshTokens).deleteByFamilyJti("root-family");
+  }
+
+  @Test
+  void rotate_withinFamilyCap_succeeds() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    // 29 days old, token unexpired: inside the cap, rotation proceeds.
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L,
+        NOW.plus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(29)), "root-family");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+    when(users.findById(42L)).thenReturn(Optional.of(alice));
+
+    JwtTokenService.TokenPair rotated = service.rotateRefreshToken(pair.refreshToken());
+
+    assertThat(rotated.refreshToken()).isNotEqualTo(pair.refreshToken());
+    verify(refreshTokens, never()).deleteByFamilyJti(any());
   }
 }

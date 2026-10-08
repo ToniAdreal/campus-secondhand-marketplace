@@ -58,6 +58,6 @@ public class AuthConfig {
                                          Clock clock) {
     SecretKey key = JwtTokenService.keyFromBase64(props.getSecret());
     return new JwtTokenService(key, props.getAccessTtl(), props.getRefreshTtl(),
-        props.getRefreshGraceWindow(), refreshTokens, users, clock);
+        props.getRefreshGraceWindow(), props.getRefreshMaxAge(), refreshTokens, users, clock);
   }
 }

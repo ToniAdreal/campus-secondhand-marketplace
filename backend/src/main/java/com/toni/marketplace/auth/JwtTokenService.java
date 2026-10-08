@@ -44,6 +44,13 @@ import javax.crypto.SecretKey;
  *       instead of triggering revocation; theft is only caught by replays
  *       outside the window. The window is deliberately short (60 s) to
  *       bound this.</li>
+ *   <li>Absolute family lifetime (backlog #61): rotation alone no longer
+ *       keeps a session alive forever. A refresh past
+ *       {@code refreshMaxAge} (default 30 d) from the original login is
+ *       rejected with 401 and the family revoked — even when the presented
+ *       token is unexpired — forcing a fresh login. Revocation is scoped to
+ *       the family's {@code familyJti}, so the user's other sessions are
+ *       untouched (unlike the theft path, which kills by user id).</li>
  *   <li>Only the SHA-256 of a refresh token is stored server-side.</li>
  * </ul>
  *
@@ -59,17 +66,19 @@ public class JwtTokenService {
   private final Duration accessTtl;
   private final Duration refreshTtl;
   private final Duration refreshGraceWindow;
+  private final Duration refreshMaxAge;
   private final RefreshTokenRepository refreshTokens;
   private final UserRepository users;
   private final Clock clock;
 
   public JwtTokenService(SecretKey key, Duration accessTtl, Duration refreshTtl,
-                         Duration refreshGraceWindow,
+                         Duration refreshGraceWindow, Duration refreshMaxAge,
                          RefreshTokenRepository refreshTokens, UserRepository users, Clock clock) {
     this.key = key;
     this.accessTtl = accessTtl;
     this.refreshTtl = refreshTtl;
     this.refreshGraceWindow = refreshGraceWindow;
+    this.refreshMaxAge = refreshMaxAge;
     this.refreshTokens = refreshTokens;
     this.users = users;
     this.clock = clock;
@@ -110,7 +119,9 @@ public class JwtTokenService {
         .signWith(key)
         .compact();
 
-    refreshTokens.save(new RefreshToken(sha256Hex(refreshToken), jti, user.getId(), refreshExp));
+    // The issued token founds a new family: its root is this token itself.
+    refreshTokens.save(new RefreshToken(sha256Hex(refreshToken), jti, user.getId(), refreshExp,
+        now, jti));
 
     return new TokenPair(accessToken, refreshToken, accessExp, refreshExp);
   }
@@ -146,6 +157,15 @@ public class JwtTokenService {
         });
 
     Instant now = clock.instant();
+
+    // Absolute family lifetime (backlog #61): past the cap the refresh is
+    // rejected and the family revoked — even if the presented token is
+    // unexpired, revoked-within-grace, or simply old. Family-scoped, so
+    // other sessions survive.
+    if (!now.isBefore(stored.getFamilyIssuedAt().plus(refreshMaxAge))) {
+      refreshTokens.deleteByFamilyJti(stored.getFamilyJti());
+      throw new InvalidRefreshTokenException("refresh session lifetime exceeded; login again");
+    }
 
     if (stored.isRevoked() && !stored.isExpired(now)) {
       // Possible legitimate concurrent refresh: two tabs raced each other
@@ -237,7 +257,12 @@ public class JwtTokenService {
     live.setRevokedAt(now);
     live.setReplacedBy(newJti);
     refreshTokens.save(live);
-    refreshTokens.save(new RefreshToken(sha256Hex(newRefreshToken), newJti, userId, refreshExp));
+    // The family root travels with the chain: each rotation inherits the
+    // family's issued-at and family jti from the consumed token, so the
+    // absolute lifetime is measured from the original login, not the
+    // last rotation.
+    refreshTokens.save(new RefreshToken(sha256Hex(newRefreshToken), newJti, userId, refreshExp,
+        live.getFamilyIssuedAt(), live.getFamilyJti()));
 
     String newAccessToken = Jwts.builder()
         .subject(subject)

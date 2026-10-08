@@ -18,6 +18,13 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
   void deleteByUserId(Long userId);
 
   /**
+   * Hard-delete one refresh-token family (absolute lifetime cap expired,
+   * backlog #61) without touching the user's other sessions. Families are
+   * identified by the root token's jti, recorded on every row at V12.
+   */
+  void deleteByFamilyJti(String familyJti);
+
+  /**
    * Ids of rows that are authentication-dead (revoked, or already expired as
    * of {@code now}) and were created before {@code createdBefore} — the
    * retention cut-off computed by the purge job. Ordered by id so the batch
