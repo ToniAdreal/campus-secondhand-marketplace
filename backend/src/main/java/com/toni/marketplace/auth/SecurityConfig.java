@@ -2,6 +2,8 @@ package com.toni.marketplace.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.toni.marketplace.common.ApiResponse;
+import java.util.List;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -16,6 +18,9 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
  * Stateless security: no sessions, no CSRF tokens (the API is consumed by the
@@ -39,6 +44,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *       Prometheus server); alerting rules are not configured (follow-up).</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
  *   <li>Everything else requires a valid Bearer access token.</li>
+ *   <li>CORS is an explicit allowlist ({@code app.cors.allowed-origins}):
+ *       cross-origin calls are honored only from listed origins; credentials
+ *       (the httpOnly refresh cookie) are never combined with a wildcard.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
  *       project's {@code {code,message,data}} envelope, never a redirect or
  *       the Spring default HTML error page.</li>
@@ -49,6 +57,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity // enables @PreAuthorize on controller methods
+@EnableConfigurationProperties(CorsProperties.class)
 public class SecurityConfig {
 
   @Bean
@@ -86,9 +95,11 @@ public class SecurityConfig {
   public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                  JwtAuthenticationFilter jwtFilter,
                                                  AuthenticationEntryPoint entryPoint,
-                                                 AccessDeniedHandler accessDeniedHandler)
+                                                 AccessDeniedHandler accessDeniedHandler,
+                                                 CorsConfigurationSource corsConfigurationSource)
       throws Exception {
     http
+        .cors(cors -> cors.configurationSource(corsConfigurationSource))
         .csrf(AbstractHttpConfigurer::disable)
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
@@ -112,5 +123,27 @@ public class SecurityConfig {
             .accessDeniedHandler(accessDeniedHandler))
         .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
     return http.build();
+  }
+
+  /**
+   * Explicit CORS allowlist (backlog #63). No wildcard origins: credentials
+   * (the httpOnly refresh cookie) are allowed only for the origins listed in
+   * {@link CorsProperties}. Allowed methods/headers cover what the API and
+   * the SPA actually use; {@code X-Request-ID} and {@code Retry-After} are
+   * exposed so the frontend's error handling can read them.
+   */
+  @Bean
+  public CorsConfigurationSource corsConfigurationSource(CorsProperties props) {
+    CorsConfiguration config = new CorsConfiguration();
+    config.setAllowedOrigins(props.getAllowedOrigins());
+    config.setAllowCredentials(true);
+    config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+    config.setAllowedHeaders(List.of(
+        "Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key", "X-Requested-With"));
+    config.setExposedHeaders(List.of("X-Request-ID", "Retry-After"));
+    config.setMaxAge(3600L);
+    UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+    source.registerCorsConfiguration("/**", config);
+    return source;
   }
 }
