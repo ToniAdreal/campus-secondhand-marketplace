@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.toni.marketplace.common.AccountLockedException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
+import com.toni.marketplace.common.InvalidTotpCodeException;
 import com.toni.marketplace.common.PasswordReuseException;
 
 /**
@@ -35,20 +36,39 @@ public class AuthService {
   private final UserRepository users;
   private final PasswordService passwords;
   private final JwtTokenService jwt;
+  private final TotpService totp;
   private final Clock clock;
   private final LoginLockoutProperties lockout;
 
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
-                     Clock clock, LoginLockoutProperties lockout) {
+                     TotpService totp, Clock clock, LoginLockoutProperties lockout) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
+    this.totp = totp;
     this.clock = clock;
     this.lockout = lockout;
   }
 
   /** Registered user plus their first token pair. */
   public record AuthResult(User user, JwtTokenService.TokenPair pair) {}
+
+  /**
+   * Outcome of a password login (backlog #78). Most logins produce a
+   * {@link Pair}; a login for a TOTP-enabled account produces a
+   * {@link Challenge} — a short-lived signed token the client exchanges
+   * (with a valid 6-digit code) at {@code POST /api/auth/2fa/authenticate}.
+   * The sealed type forces every caller to handle both cases.
+   */
+  public sealed interface LoginResult permits LoginResult.Pair, LoginResult.Challenge {
+    /** A finished login: user plus the token pair to return. */
+    record Pair(AuthResult result) implements LoginResult {}
+    /** A 2FA challenge: signed token plus its absolute expiry instant. */
+    record Challenge(String challengeToken, Instant expiresAt) implements LoginResult {}
+  }
+
+  /** Shared secret plus provisioning URI returned by the 2FA setup step. */
+  public record TotpSetup(String secret, String otpauthUri) {}
 
   /** Canonical form for usernames and emails. {@code Locale.ROOT} avoids the Turkish-I surprise. */
   static String canonical(String raw) {
@@ -83,15 +103,14 @@ public class AuthService {
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 
-  public AuthResult login(String usernameOrEmail, String rawPassword) {
+  public LoginResult login(String usernameOrEmail, String rawPassword) {
     return login(usernameOrEmail, rawPassword, SessionMeta.unknown());
   }
 
   /**
-   * Verifies credentials and issues a fresh token pair. The identifier is
-   * normalized before lookup, so "ALICE" logs into the "alice" account.
-   * Unknown identifier and wrong password produce the identical error —
-   * no user enumeration.
+   * Verifies credentials. The identifier is normalized before lookup, so
+   * "ALICE" logs into the "alice" account. Unknown identifier and wrong
+   * password produce the identical error — no user enumeration.
    *
    * <p>Per-account lockout (backlog #60): consecutive failures are counted on
    * the user row; after {@code app.auth.login-lockout.max-attempts} failures
@@ -101,11 +120,16 @@ public class AuthService {
    * expired lock resets the counter on the next attempt. Unknown identifiers
    * are never tracked — they keep getting the identical 401.
    *
+   * <p>TOTP two-factor (backlog #78): when the password is correct but the
+   * account has 2FA enabled, no token pair is issued — the result is a
+   * {@link LoginResult.Challenge} the client exchanges for the pair at
+   * {@code POST /api/auth/2fa/authenticate}.
+   *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
    */
   @Transactional
-  public AuthResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
+  public LoginResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
     String identifier = canonical(usernameOrEmail);
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
@@ -138,6 +162,76 @@ public class AuthService {
         && (user.getFailedLoginAttempts() != 0 || user.getLockedUntil() != null)) {
       user.setFailedLoginAttempts(0);
       user.setLockedUntil(null);
+    }
+    if (user.isTotpEnabled()) {
+      // Password correct, second factor still outstanding: issue a
+      // short-lived signed challenge, never a token pair.
+      Instant expiresAt = now.plus(jwt.getTotpChallengeTtl());
+      return new LoginResult.Challenge(jwt.createTotpChallenge(user), expiresAt);
+    }
+    return new LoginResult.Pair(new AuthResult(user, jwt.createTokenPair(user, meta)));
+  }
+
+  /**
+   * Starts TOTP enrollment (backlog #78): generates a fresh shared secret,
+   * stores it on the user row with {@code totpEnabled=false}, and returns
+   * the secret plus the otpauth:// provisioning URI for the authenticator
+   * app. Re-running setup regenerates the secret and resets enrollment —
+   * the previous authenticator stops working until /enable is completed
+   * again. The endpoint requires authentication (SecurityConfig), so only
+   * the account holder (or someone holding their session) can enroll.
+   */
+  @Transactional
+  public TotpSetup setupTotp(long userId) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    String secret = totp.generateSecret();
+    user.setTotpSecret(secret);
+    user.setTotpEnabled(false);
+    users.save(user);
+    return new TotpSetup(secret, totp.otpauthUri("CampusMarketplace", user.getUsername(), secret));
+  }
+
+  /**
+   * Completes TOTP enrollment: a valid 6-digit code (verified against the
+   * stored secret, ±1 step of clock skew) flips {@code totpEnabled} on.
+   * A wrong code → 400 {@link InvalidTotpCodeException}; no setup yet →
+   * 400 as well (the message says which).
+   */
+  @Transactional
+  public void enableTotp(long userId, String code) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    String secret = user.getTotpSecret();
+    if (secret == null) {
+      throw new InvalidTotpCodeException("run the 2fa setup step first");
+    }
+    if (!totp.verify(secret, code)) {
+      throw new InvalidTotpCodeException("invalid two-factor code");
+    }
+    user.setTotpEnabled(true);
+    users.save(user);
+  }
+
+  /**
+   * Exchanges a 2FA challenge (plus a valid 6-digit code) for the real token
+   * pair. A bad/expired challenge or a wrong code → 401 with the identical
+   * message — the caller already proved the password to obtain the
+   * challenge, so there is no enumeration oracle here, but the uniform
+   * message keeps the failure mode boring on purpose.
+   *
+   * <p>Honest scope: failed TOTP attempts do not feed the per-account login
+   * lockout (#60 counts password failures only), and the authenticate
+   * endpoint has no dedicated rate limit yet — both are declared follow-ups.
+   *
+   * @param meta device info captured from the request — recorded on the new
+   *     session's refresh-token row (backlog #62)
+   */
+  @Transactional
+  public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta) {
+    long userId = jwt.parseTotpChallenge(challenge);
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    String secret = user.getTotpSecret();
+    if (!user.isTotpEnabled() || secret == null || !totp.verify(secret, code)) {
+      throw new InvalidCredentialsException();
     }
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }

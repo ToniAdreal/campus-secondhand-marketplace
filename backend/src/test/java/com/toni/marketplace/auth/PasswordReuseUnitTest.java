@@ -34,6 +34,9 @@ class PasswordReuseUnitTest {
   private JwtTokenService jwt;
 
   @Mock
+  private TotpService totp;
+
+  @Mock
   private Clock clock;
 
   @Mock
@@ -43,7 +46,7 @@ class PasswordReuseUnitTest {
 
   @BeforeEach
   void setUp() {
-    auth = new AuthService(users, passwords, jwt, clock, lockout);
+    auth = new AuthService(users, passwords, jwt, totp, clock, lockout);
   }
 
   private User alice() {

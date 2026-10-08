@@ -59,6 +59,10 @@ import org.slf4j.LoggerFactory;
  *       the family's {@code familyJti}, so the user's other sessions are
  *       untouched (unlike the theft path, which kills by user id).</li>
  *   <li>Only the SHA-256 of a refresh token is stored server-side.</li>
+ *   <li>TOTP 2FA challenge (backlog #78): a short-lived signed JWT
+ *       ({@code totp-challenge}) minted at login for TOTP-enabled accounts
+ *       and exchanged — with a valid 6-digit code — for the real pair. It
+ *       carries no privileges and is accepted by exactly one endpoint.</li>
  * </ul>
  *
  * Pure-Java except for the repository — constructed directly in unit tests.
@@ -69,6 +73,7 @@ public class JwtTokenService {
 
   private static final String TYPE_ACCESS = "access";
   private static final String TYPE_REFRESH = "refresh";
+  private static final String TYPE_TOTP_CHALLENGE = "totp-challenge";
   private static final String CLAIM_TOKEN_VERSION = "tver";
 
   private final SecretKey key;
@@ -76,21 +81,61 @@ public class JwtTokenService {
   private final Duration refreshTtl;
   private final Duration refreshGraceWindow;
   private final Duration refreshMaxAge;
+  private final Duration totpChallengeTtl;
   private final RefreshTokenRepository refreshTokens;
   private final UserRepository users;
   private final Clock clock;
 
   public JwtTokenService(SecretKey key, Duration accessTtl, Duration refreshTtl,
                          Duration refreshGraceWindow, Duration refreshMaxAge,
+                         Duration totpChallengeTtl,
                          RefreshTokenRepository refreshTokens, UserRepository users, Clock clock) {
     this.key = key;
     this.accessTtl = accessTtl;
     this.refreshTtl = refreshTtl;
     this.refreshGraceWindow = refreshGraceWindow;
     this.refreshMaxAge = refreshMaxAge;
+    this.totpChallengeTtl = totpChallengeTtl;
     this.refreshTokens = refreshTokens;
     this.users = users;
     this.clock = clock;
+  }
+
+  public Duration getTotpChallengeTtl() {
+    return totpChallengeTtl;
+  }
+
+  /**
+   * Mints the short-lived signed challenge for a TOTP-enabled account
+   * (backlog #78): {@code POST /api/auth/login} returns it with HTTP 202
+   * instead of a token pair, and {@code POST /api/auth/2fa/authenticate}
+   * exchanges it (plus a valid 6-digit code) for the real pair. The
+   * challenge carries no privileges — it is accepted by exactly one
+   * endpoint — and every use still requires a fresh TOTP code, so replay
+   * inside the TTL is harmless.
+   */
+  public String createTotpChallenge(User user) {
+    Instant now = clock.instant();
+    return Jwts.builder()
+        .subject(String.valueOf(user.getId()))
+        .claim("type", TYPE_TOTP_CHALLENGE)
+        .id(UUID.randomUUID().toString())
+        .issuedAt(Date.from(now))
+        .expiration(Date.from(now.plus(totpChallengeTtl)))
+        .signWith(key)
+        .compact();
+  }
+
+  /**
+   * Validates a 2FA challenge and returns the challenged user id. A wrong
+   * type (e.g. an access or refresh token presented here), an expired
+   * challenge, or a bad signature all throw {@link InvalidTokenException}
+   * → 401.
+   */
+  public long parseTotpChallenge(String token) {
+    Claims claims = parse(token);
+    requireType(claims, TYPE_TOTP_CHALLENGE, "not a two-factor challenge");
+    return Long.parseLong(claims.getSubject());
   }
 
   /** Issued token pair together with absolute expiry instants. */

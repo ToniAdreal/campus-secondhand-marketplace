@@ -97,7 +97,7 @@ class AuthRefreshRateLimitTest {
 
   /** One service-level login, outside the HTTP budget. */
   private Cookie freshRefreshCookie() {
-    String token = auth.login("refreshee", PASSWORD).pair().refreshToken();
+    String token = ((AuthService.LoginResult.Pair) auth.login("refreshee", PASSWORD)).result().pair().refreshToken();
     return new Cookie("refresh_token", token);
   }
 

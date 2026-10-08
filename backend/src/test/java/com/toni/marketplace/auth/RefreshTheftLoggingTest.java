@@ -58,7 +58,7 @@ class RefreshTheftLoggingTest {
     refreshTokens = mock(RefreshTokenRepository.class);
     users = mock(UserRepository.class);
     service = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7),
-        Duration.ofSeconds(60), Duration.ofDays(30), refreshTokens, users, clock);
+        Duration.ofSeconds(60), Duration.ofDays(30), Duration.ofMinutes(5), refreshTokens, users, clock);
 
     alice = new User("alice", "alice@example.com", "$2a$12$hashed");
     ReflectionTestUtils.setField(alice, "id", 42L);

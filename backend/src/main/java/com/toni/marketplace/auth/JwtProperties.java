@@ -35,6 +35,16 @@ public class JwtProperties {
    */
   private Duration refreshMaxAge = Duration.ofDays(30);
 
+  /**
+   * Lifetime of the signed 2FA challenge minted by POST /api/auth/login for
+   * TOTP-enabled accounts (backlog #78). The challenge is presented to POST
+   * /api/auth/2fa/authenticate together with the 6-digit code; it is a
+   * signed JWT (type {@code totp-challenge}) and is stateless — replay
+   * inside the window is harmless because every use still requires a fresh
+   * valid TOTP code. Default 5 minutes.
+   */
+  private Duration totpChallengeTtl = Duration.ofMinutes(5);
+
   public String getSecret() { return secret; }
   public void setSecret(String secret) { this.secret = secret; }
   public Duration getAccessTtl() { return accessTtl; }
@@ -47,4 +57,8 @@ public class JwtProperties {
   }
   public Duration getRefreshMaxAge() { return refreshMaxAge; }
   public void setRefreshMaxAge(Duration refreshMaxAge) { this.refreshMaxAge = refreshMaxAge; }
+  public Duration getTotpChallengeTtl() { return totpChallengeTtl; }
+  public void setTotpChallengeTtl(Duration totpChallengeTtl) {
+    this.totpChallengeTtl = totpChallengeTtl;
+  }
 }

@@ -130,14 +130,18 @@ public class SecurityConfig {
             }))
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
-            // Logout, password change, session restore and per-session
-            // management need the caller's identity: a valid Bearer access
-            // token. The rest of /api/auth/** stays public.
+            // Logout, password change, session restore, per-session
+            // management and 2FA enrollment need the caller's identity: a
+            // valid Bearer access token. The rest of /api/auth/** stays
+            // public — including /api/auth/2fa/authenticate, the
+            // unauthenticated second-factor exchange for the 202 challenge.
             .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/sessions").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/2fa/enable").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             // Actuator: public liveness/readiness probes, everything else
             // authenticated. Matcher order matters — the more specific

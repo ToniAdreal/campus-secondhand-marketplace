@@ -59,6 +59,19 @@ public class User {
   @Column(name = "locked_until")
   private Instant lockedUntil;
 
+  /**
+   * TOTP two-factor (backlog #78). Base32-encoded RFC 6238 shared secret
+   * (160 bits), set by POST /api/auth/2fa/setup; null until then.
+   * {@code totpEnabled} flips on only after POST /api/auth/2fa/enable
+   * verifies a code against the secret. Honest scope: the secret is stored
+   * as-is — encryption at rest is a declared follow-up.
+   */
+  @Column(name = "totp_secret", length = 64)
+  private String totpSecret;
+
+  @Column(name = "totp_enabled", nullable = false)
+  private boolean totpEnabled;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -100,6 +113,10 @@ public class User {
   }
   public Instant getLockedUntil() { return lockedUntil; }
   public void setLockedUntil(Instant lockedUntil) { this.lockedUntil = lockedUntil; }
+  public String getTotpSecret() { return totpSecret; }
+  public void setTotpSecret(String totpSecret) { this.totpSecret = totpSecret; }
+  public boolean isTotpEnabled() { return totpEnabled; }
+  public void setTotpEnabled(boolean totpEnabled) { this.totpEnabled = totpEnabled; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

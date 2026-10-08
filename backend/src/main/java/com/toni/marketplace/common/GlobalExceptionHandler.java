@@ -93,6 +93,18 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
   }
 
+  /**
+   * TOTP 2FA (backlog #78): a well-formed code that does not verify at
+   * {@code POST /api/auth/2fa/enable} (or an enable attempt with no setup
+   * behind it) is 400. A wrong code at the unauthenticated
+   * {@code /2fa/authenticate} step is instead {@link
+   * InvalidCredentialsException} → 401.
+   */
+  @ExceptionHandler(InvalidTotpCodeException.class)
+  public ResponseEntity<ApiResponse<Void>> handleInvalidTotpCode(InvalidTotpCodeException ex) {
+    return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
+  }
+
   @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
   public ResponseEntity<ApiResponse<Void>> handleAuthFailure(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)

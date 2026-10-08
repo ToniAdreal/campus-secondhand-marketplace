@@ -75,7 +75,7 @@ class RefreshRotationGraceTest {
 
   /** Service-level login, outside the HTTP budget. */
   private Cookie freshRefreshCookie() {
-    String token = auth.login("grace-tester", "s3cret-pass").pair().refreshToken();
+    String token = ((AuthService.LoginResult.Pair) auth.login("grace-tester", "s3cret-pass")).result().pair().refreshToken();
     return new Cookie("refresh_token", token);
   }
 

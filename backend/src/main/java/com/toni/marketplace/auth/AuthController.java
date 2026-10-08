@@ -45,10 +45,64 @@ public class AuthController {
         SessionMeta.of(http)));
   }
 
+  /**
+   * Password login. For a TOTP-enabled account the password check alone
+   * does not finish the login: the answer is HTTP 202 with a short-lived
+   * signed challenge (no token pair, no refresh cookie), which the client
+   * exchanges — with the 6-digit code — at {@code POST
+   * /api/auth/2fa/authenticate}.
+   */
   @PostMapping("/login")
-  public ResponseEntity<ApiResponse<AuthResponse>> login(
+  public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest http) {
-    return ok(auth.login(request.usernameOrEmail(), request.password(), SessionMeta.of(http)));
+    AuthService.LoginResult result =
+        auth.login(request.usernameOrEmail(), request.password(), SessionMeta.of(http));
+    if (result instanceof AuthService.LoginResult.Pair pair) {
+      return ok(pair.result());
+    }
+    AuthService.LoginResult.Challenge challenge = (AuthService.LoginResult.Challenge) result;
+    return ResponseEntity.status(HttpStatus.ACCEPTED)
+        .body(ApiResponse.ok(
+            new TotpChallengeResponse(challenge.challengeToken(), challenge.expiresAt())));
+  }
+
+  /**
+   * Starts TOTP enrollment for the caller (authenticated): returns the
+   * Base32 shared secret and the otpauth:// URI to scan into an
+   * authenticator app. Re-running setup regenerates the secret and resets
+   * enrollment — complete {@code /2fa/enable} again afterwards.
+   */
+  @PostMapping("/2fa/setup")
+  public ResponseEntity<ApiResponse<TotpSetupResponse>> setupTotp(
+      @AuthenticationPrincipal Long userId) {
+    AuthService.TotpSetup setup = auth.setupTotp(userId);
+    return ResponseEntity.ok(
+        ApiResponse.ok(new TotpSetupResponse(setup.secret(), setup.otpauthUri())));
+  }
+
+  /**
+   * Completes TOTP enrollment: a valid 6-digit code (checked against the
+   * stored secret) flips 2FA on for the caller. Wrong code → 400; no setup
+   * yet → 400.
+   */
+  @PostMapping("/2fa/enable")
+  public ResponseEntity<ApiResponse<Void>> enableTotp(
+      @AuthenticationPrincipal Long userId, @Valid @RequestBody TotpCodeRequest request) {
+    auth.enableTotp(userId, request.code());
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * The second-factor exchange (public — the caller is not authenticated
+   * yet): the 202 challenge plus the current 6-digit code. On success the
+   * response is the normal token pair with the httpOnly refresh cookie,
+   * exactly like a finished login. Bad/expired challenge or wrong code →
+   * 401.
+   */
+  @PostMapping("/2fa/authenticate")
+  public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
+      @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {
+    return ok(auth.authenticateTotp(request.challenge(), request.code(), SessionMeta.of(http)));
   }
 
   @PostMapping("/refresh")

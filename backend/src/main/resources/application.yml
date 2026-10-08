@@ -109,6 +109,13 @@ app:
     # forcing a fresh login; rotation alone can no longer keep a session
     # alive forever.
     refresh-max-age: 30d
+    # Lifetime of the signed 2FA challenge returned by POST /api/auth/login
+    # (HTTP 202) for TOTP-enabled accounts (backlog #78). The challenge is
+    # exchanged — with a valid 6-digit code — at
+    # POST /api/auth/2fa/authenticate for the real token pair. Stateless:
+    # replay inside the window is harmless because every use still requires
+    # a fresh valid TOTP code.
+    totp-challenge-ttl: 5m
 
 logging:
   pattern:

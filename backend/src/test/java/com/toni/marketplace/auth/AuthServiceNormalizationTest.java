@@ -88,7 +88,7 @@ class AuthServiceNormalizationTest {
     when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
     when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = service.login("ALICE", "s3cret-pass");
+    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE", "s3cret-pass")).result();
 
     verify(users).findByUsernameIgnoreCase("alice");
     assertThat(result.user()).isSameAs(existing);
@@ -102,7 +102,7 @@ class AuthServiceNormalizationTest {
     when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
     when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = service.login("ALICE@EXAMPLE.COM", "s3cret-pass");
+    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE@EXAMPLE.COM", "s3cret-pass")).result();
 
     verify(users).findByUsernameIgnoreCase("alice@example.com");
     verify(users).findByEmailIgnoreCase("alice@example.com");
