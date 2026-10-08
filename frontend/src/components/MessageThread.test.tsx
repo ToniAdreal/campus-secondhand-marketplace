@@ -34,12 +34,12 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function pageEnvelope(messages: Message[]) {
+function pageEnvelope(messages: Message[], page = 0, totalPages = 1) {
   return envelope({
     content: messages,
     totalElements: messages.length,
-    totalPages: 1,
-    number: 0,
+    totalPages,
+    number: page,
   });
 }
 
@@ -82,7 +82,7 @@ describe('MessageThread', () => {
     expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy();
     expect(screen.getByText('You')).toBeTruthy();
     expect(screen.getByText('Seller')).toBeTruthy();
-    expect(getSpy).toHaveBeenCalledWith('/messages', { params: { itemId: 7 } });
+    expect(getSpy).toHaveBeenCalledWith('/messages', { params: { itemId: 7, page: 0 } });
   });
 
   it('sending posts to the seller and the new message arrives via thread refetch', async () => {
@@ -169,5 +169,65 @@ describe('MessageThread', () => {
     expect(
       (screen.getByLabelText(/message the seller/i) as HTMLTextAreaElement).value,
     ).toBe('hello?');
+  });
+
+  it('"Load earlier messages" stitches older pages on top; the button disappears on the last page', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    // page 0 is the newest page; page 1 holds the older messages
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg2], 0, 2)); // initial newest page
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1], 1, 2)); // earlier page
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy());
+    // a second page exists, so the button is shown
+    const loadButton = screen.getByRole('button', { name: /load earlier messages/i });
+    expect(loadButton).toBeTruthy();
+
+    fireEvent.click(loadButton);
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+    expect(getSpy).toHaveBeenCalledWith('/messages', { params: { itemId: 7, page: 1 } });
+
+    // older page stitched above the newest one — chronological overall,
+    // newest page still anchored at the bottom
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toMatch(/Is this still available/);
+    expect(items[1].textContent).toMatch(/Yes — pickup this weekend works/);
+
+    // last page reached — the button disappears
+    expect(screen.queryByRole('button', { name: /load earlier messages/i })).toBeNull();
+  });
+
+  it('sending while older pages are loaded does not duplicate shifted messages', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const msg3: Message = {
+      id: 3,
+      itemId: 7,
+      senderId: 5,
+      receiverId: 3,
+      body: 'Great, see you then!',
+      createdAt: '2026-10-07T03:00:00Z',
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg2], 0, 2)); // initial newest page
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1], 1, 2)); // load earlier
+    // after the send, the refetch shifts one row: msg2 moves onto page 1
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg2, msg3], 0, 2)); // refetched page 0
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2], 1, 2)); // refetched page 1
+    postSpy.mockResolvedValueOnce(envelope(msg3));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/message the seller/i), {
+      target: { value: 'Great, see you then!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    // the shifted msg2 appears in both refetched pages — it must render once
+    await waitFor(() => expect(screen.getByText('Great, see you then!')).toBeTruthy());
+    expect(screen.getAllByText('Yes — pickup this weekend works.')).toHaveLength(1);
+    expect(getSpy).toHaveBeenCalledTimes(4);
   });
 });

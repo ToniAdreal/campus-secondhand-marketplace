@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describeMessageError, useMessageThread, useSendMessage } from '../api/messages';
+import { describeMessageError, stitchThreadPages, useMessageThread, useSendMessage } from '../api/messages';
 import { useAuthStore } from '../store/useAuthStore';
 
 interface MessageThreadProps {
@@ -21,12 +21,21 @@ function isForbidden(error: unknown): boolean {
  *
  * Scope notes: the send box always addresses the seller (buyer → seller),
  * so the seller sees the thread read-only — per-recipient replies are a
- * follow-up. The thread renders the whole conversation unbounded for now;
- * pagination is follow-up work on the backend side.
+ * follow-up. The thread renders newest-first pages (backend page 0 is the
+ * newest page); "Load earlier messages" fetches older pages and prepends
+ * them, so the newest page stays anchored at the bottom.
  */
 export default function MessageThread({ itemId, sellerId }: MessageThreadProps) {
   const user = useAuthStore((s) => s.user);
-  const { data: thread, isLoading, isError, error } = useMessageThread(itemId);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useMessageThread(itemId);
   const sendMessage = useSendMessage();
   const [draft, setDraft] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
@@ -35,7 +44,7 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
 
   const isSeller = user.id === sellerId;
   const hiddenByPrivacy = isError && isForbidden(error);
-  const messages = Array.isArray(thread) ? thread : [];
+  const messages = stitchThreadPages(data?.pages ?? []);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,25 +79,37 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
       )}
 
       {messages.length > 0 && (
-        <ul className="mt-3 space-y-3">
-          {messages.map((m) => {
-            const mine = m.senderId === user.id;
-            return (
-              <li key={m.id} className={mine ? 'text-right' : 'text-left'}>
-                <span className="text-xs text-neutral-500">
-                  {mine ? 'You' : m.senderId === sellerId ? 'Seller' : `User #${m.senderId}`}
-                </span>
-                <p
-                  className={`mt-0.5 inline-block max-w-full rounded-lg px-3 py-2 text-sm ${
-                    mine ? 'bg-blue-600 text-white' : 'bg-neutral-100 text-neutral-800'
-                  }`}
-                >
-                  {m.body}
-                </p>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          {hasNextPage && !isError && (
+            <button
+              type="button"
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+              className="mt-3 text-sm font-medium text-blue-600 hover:underline disabled:opacity-50"
+            >
+              {isFetchingNextPage ? 'Loading…' : 'Load earlier messages'}
+            </button>
+          )}
+          <ul className="mt-3 space-y-3">
+            {messages.map((m) => {
+              const mine = m.senderId === user.id;
+              return (
+                <li key={m.id} className={mine ? 'text-right' : 'text-left'}>
+                  <span className="text-xs text-neutral-500">
+                    {mine ? 'You' : m.senderId === sellerId ? 'Seller' : `User #${m.senderId}`}
+                  </span>
+                  <p
+                    className={`mt-0.5 inline-block max-w-full rounded-lg px-3 py-2 text-sm ${
+                      mine ? 'bg-blue-600 text-white' : 'bg-neutral-100 text-neutral-800'
+                    }`}
+                  >
+                    {m.body}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {!isSeller && (

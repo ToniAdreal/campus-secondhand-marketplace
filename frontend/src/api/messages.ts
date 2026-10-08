@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { ApiResponse, Page } from './items';
 
@@ -17,23 +17,45 @@ export const messageKeys = {
 };
 
 /**
- * GET /api/messages?itemId= — one page of the caller's conversation thread
- * for a listing. The backend paginates the thread: page 0 is the newest
- * page (default 20, capped at 50), messages are chronological within the
- * page. This hook reads the first page only; fetching older pages ("load
- * earlier messages") is a follow-up for long threads. The backend answers
- * 403 (not an empty list) when the caller never participated, so a third
- * party cannot tell "no conversation" from "none of your business";
- * callers render that 403 as a privacy note, never the thread.
+ * GET /api/messages?itemId= — the caller's conversation thread for a
+ * listing, as an infinite query. The backend paginates the thread: page 0
+ * is the newest page (default 20, capped at 50), messages are
+ * chronological within the page, so older pages are numerically higher
+ * and get prepended by the UI. The backend answers 403 (not an empty
+ * list) when the caller never participated, so a third party cannot tell
+ * "no conversation" from "none of your business"; callers render that
+ * 403 as a privacy note, never the thread.
  */
 export function useMessageThread(itemId: number) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: messageKeys.thread(itemId),
-    queryFn: () =>
+    queryFn: ({ pageParam = 0 }) =>
       api
-        .get<ApiResponse<Page<Message>>>('/messages', { params: { itemId } })
-        .then((res) => res.data.data.content),
+        .get<ApiResponse<Page<Message>>>('/messages', { params: { itemId, page: pageParam } })
+        .then((res) => res.data.data),
+    getNextPageParam: (lastPage) =>
+      lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
   });
+}
+
+/**
+ * Stitches the paged thread oldest-first, deduped by id. Deduping
+ * matters because sending a message invalidates the thread and every
+ * fetched page is refetched: the new message shifts one row from page 0
+ * onto page 1, so the same message would otherwise appear twice.
+ */
+export function stitchThreadPages(pages: Page<Message>[]): Message[] {
+  const seen = new Set<number>();
+  const stitched: Message[] = [];
+  for (let i = pages.length - 1; i >= 0; i--) {
+    for (const message of pages[i].content) {
+      if (!seen.has(message.id)) {
+        seen.add(message.id);
+        stitched.push(message);
+      }
+    }
+  }
+  return stitched;
 }
 
 export interface SendMessageInput {
