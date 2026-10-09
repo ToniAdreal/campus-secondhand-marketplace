@@ -1,7 +1,13 @@
 import axios from 'axios';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { changePassword } from '../api/auth';
+import {
+  changePassword,
+  enableTotp,
+  recoveryCodeCount,
+  setupTotp,
+  type TotpSetup,
+} from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -19,6 +25,16 @@ function describePasswordChangeError(err: unknown): string {
     if (!err.response) return 'Network error — is the backend running?';
   }
   return 'Password change failed';
+}
+
+/** Envelope message for the two-factor calls (setup/enable), verbatim. */
+function describeTotpError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Two-factor setup failed';
 }
 
 /**
@@ -39,6 +55,33 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pending, setPending] = useState(false);
+
+  // Two-factor enrollment (backlog #100). The recovery codes live ONLY in
+  // this state, straight from the enable response — they are shown once
+  // and can never be fetched back, so nothing here re-reads them.
+  const [totpSetup, setTotpSetup] = useState<TotpSetup | null>(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [remainingCodes, setRemainingCodes] = useState<number | null>(null);
+  const [totpError, setTotpError] = useState<string | null>(null);
+  const [totpPending, setTotpPending] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    recoveryCodeCount()
+      .then((remaining) => {
+        if (!cancelled) setRemainingCodes(remaining);
+      })
+      .catch(() => {
+        // Degrade to no readout — a failed count must never crash or
+        // block the settings page (backlog #100).
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   if (!user) {
     // Anonymous bounce before any hook fires — no wasted request, and the
@@ -72,6 +115,44 @@ export default function SettingsPage() {
       setError(describePasswordChangeError(err));
     } finally {
       setPending(false);
+    }
+  }
+
+  async function onSetupTotp() {
+    setTotpPending(true);
+    setTotpError(null);
+    setRecoveryCodes(null);
+    try {
+      setTotpSetup(await setupTotp());
+      setTotpCode('');
+    } catch (err) {
+      setTotpError(describeTotpError(err));
+    } finally {
+      setTotpPending(false);
+    }
+  }
+
+  async function onEnableTotp(e: FormEvent) {
+    e.preventDefault();
+    if (totpCode.trim() === '') {
+      setTotpError('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
+    setTotpPending(true);
+    setTotpError(null);
+    try {
+      const result = await enableTotp({ code: totpCode.trim() });
+      // Shown once: keep the codes from THIS response and drop the setup
+      // secret; the remaining readout is derived from the same response,
+      // never from a re-fetch of the codes (there is none).
+      setRecoveryCodes(result.recoveryCodes);
+      setRemainingCodes(result.recoveryCodes.length);
+      setTotpSetup(null);
+      setTotpCode('');
+    } catch (err) {
+      setTotpError(describeTotpError(err));
+    } finally {
+      setTotpPending(false);
     }
   }
 
@@ -139,6 +220,80 @@ export default function SettingsPage() {
           {pending ? 'Changing…' : 'Change password'}
         </button>
       </form>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Two-factor authentication</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Add a 6-digit authenticator code as a second step at login.
+        </p>
+        {remainingCodes !== null && !recoveryCodes && (
+          <p className="mb-3 text-sm text-neutral-600">
+            {remainingCodes} recovery code{remainingCodes === 1 ? '' : 's'} remaining.
+          </p>
+        )}
+        {totpError && (
+          <p role="alert" className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+            {totpError}
+          </p>
+        )}
+        {recoveryCodes ? (
+          <div>
+            <p className="mb-2 text-sm font-medium text-neutral-700">
+              Two-factor authentication is on. These recovery codes are shown once — store
+              them safely. Each one can replace an authenticator code at login, exactly
+              once.
+            </p>
+            <ul className="space-y-1">
+              {recoveryCodes.map((code) => (
+                <li key={code}>
+                  <code className="text-sm">{code}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : totpSetup ? (
+          <form onSubmit={onEnableTotp} className="space-y-3">
+            <p className="text-sm text-neutral-600">
+              Add this secret to your authenticator app, then enter the 6-digit code it
+              shows. No QR code here — enter the secret or the otpauth URI as text.
+            </p>
+            <p className="break-all text-sm">
+              Secret: <code>{totpSetup.secret}</code>
+            </p>
+            <p className="break-all text-sm">
+              otpauth URI: <code>{totpSetup.otpauthUri}</code>
+            </p>
+            <div>
+              <label htmlFor="settings-totp-code" className="mb-1 block text-sm font-medium">
+                Authenticator code
+              </label>
+              <input
+                id="settings-totp-code"
+                type="text"
+                autoComplete="one-time-code"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={totpPending}
+              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {totpPending ? 'Enabling…' : 'Enable two-factor authentication'}
+            </button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={onSetupTotp}
+            disabled={totpPending}
+            className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {totpPending ? 'Setting up…' : 'Set up two-factor authentication'}
+          </button>
+        )}
+      </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Sessions</h2>
         <p className="text-sm text-neutral-500">

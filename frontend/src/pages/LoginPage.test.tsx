@@ -136,6 +136,95 @@ describe('LoginPage', () => {
     expect(status.textContent).toContain('signed out everywhere');
   });
 
+  it('202 challenge switches to the code step; a TOTP code completes the login (backlog #100)', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-123', expiresAt: '2026-10-09T05:00:00Z' },
+      },
+    } as never);
+    postSpy.mockResolvedValueOnce(authSuccess());
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    // code step appears, and nothing is stored yet — no token pair was issued
+    const codeField = await screen.findByLabelText(/two-factor code/i);
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(getAccessToken()).toBeNull();
+
+    fireEvent.change(codeField, { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify code/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/2fa/authenticate', {
+      challenge: 'chal-123',
+      code: '123456',
+    });
+    expect(useAuthStore.getState().user).toEqual(fakeUser);
+    expect(getAccessToken()).toBe('tok-abc');
+    await waitFor(() => expect(currentPath).toBe('/'));
+  });
+
+  it('the same code field accepts a recovery code (backlog #100)', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-456', expiresAt: '2026-10-09T05:00:00Z' },
+      },
+    } as never);
+    postSpy.mockResolvedValueOnce(authSuccess());
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    const codeField = await screen.findByLabelText(/two-factor code/i);
+    fireEvent.change(codeField, { target: { value: 'AAAA-BBBB-CCCC-DDDD' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify code/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/2fa/authenticate', {
+      challenge: 'chal-456',
+      code: 'AAAA-BBBB-CCCC-DDDD',
+    });
+    await waitFor(() => expect(currentPath).toBe('/'));
+    expect(useAuthStore.getState().user).toEqual(fakeUser);
+  });
+
+  it('a wrong code shows the identical 401 copy and stores nothing (backlog #100)', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-789', expiresAt: '2026-10-09T05:00:00Z' },
+      },
+    } as never);
+    postSpy.mockRejectedValueOnce(authFailure401());
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    const codeField = await screen.findByLabelText(/two-factor code/i);
+    fireEvent.change(codeField, { target: { value: '000000' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify code/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('invalid credentials');
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(getAccessToken()).toBeNull();
+    expect(currentPath).toBe('/login');
+  });
+
   it('an already-logged-in user never sees the form', () => {
     useAuthStore.getState().login(fakeUser, 'tok-abc');
     renderLogin('/login');

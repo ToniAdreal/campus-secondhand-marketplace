@@ -26,6 +26,23 @@ export interface LoginResult {
   accessToken: string;
 }
 
+/** The signed second-factor challenge from a 202 login (backlog #100). */
+export interface TotpChallenge {
+  challenge: string;
+  expiresAt: string;
+}
+
+/**
+ * Discriminated outcome of POST /api/auth/login (backlog #100): either the
+ * login finished (`authenticated`, with the token pair) or the account has
+ * TOTP 2FA enabled and the password stage only minted a challenge
+ * (`totp-challenge`) that must be exchanged — with a 6-digit code or a
+ * recovery code — at POST /api/auth/2fa/authenticate.
+ */
+export type LoginOutcome =
+  | ({ kind: 'authenticated' } & LoginResult)
+  | ({ kind: 'totp-challenge' } & TotpChallenge);
+
 /**
  * POST /api/auth/login. Goes through the shared `api` instance
  * (withCredentials), so the httpOnly `refresh_token` cookie from the
@@ -33,14 +50,108 @@ export interface LoginResult {
  * page JavaScript never sees the refresh token. The access token arrives in
  * the JSON body and is kept in memory only (see client.ts).
  *
+ * A 2FA-enabled account answers HTTP 202 with {challenge, expiresAt} and NO
+ * token pair / refresh cookie; the two shapes are told apart by the status
+ * and by the challenge field, so callers switch on `kind`.
+ *
  * Throws the Axios error on failure; the backend wraps failures in the
  * {code,message,data} envelope (e.g. 401 "invalid credentials" — the same
  * message for unknown identifier and wrong password, no enumeration oracle).
  */
-export async function login(payload: LoginPayload): Promise<LoginResult> {
-  const res = await api.post<ApiResponse<AuthResponseBody>>('/auth/login', payload);
+export async function login(payload: LoginPayload): Promise<LoginOutcome> {
+  const res = await api.post<ApiResponse<AuthResponseBody | TotpChallenge>>(
+    '/auth/login',
+    payload,
+  );
+  const body = res.data.data;
+  if (res.status === 202 || (body && 'challenge' in body)) {
+    const challenge = body as TotpChallenge;
+    return { kind: 'totp-challenge', challenge: challenge.challenge, expiresAt: challenge.expiresAt };
+  }
+  const auth = body as AuthResponseBody;
+  return { kind: 'authenticated', user: auth.user, accessToken: auth.accessToken };
+}
+
+export interface AuthenticateTotpPayload {
+  challenge: string;
+  code: string;
+}
+
+/**
+ * POST /api/auth/2fa/authenticate (backlog #100). Exchanges the 202 login
+ * challenge plus a code for the normal token pair (httpOnly refresh cookie
+ * included, exactly like a finished login). The single `code` field accepts
+ * either the current 6-digit TOTP code or one of the one-time recovery
+ * codes issued at enable time — a successful recovery-code exchange
+ * consumes that code. A bad/expired challenge or a wrong code fails with
+ * the identical 401, so callers show one generic message.
+ *
+ * Throws the Axios error on failure (the {code,message,data} envelope).
+ */
+export async function authenticateTotp(
+  payload: AuthenticateTotpPayload,
+): Promise<LoginResult> {
+  const res = await api.post<ApiResponse<AuthResponseBody>>(
+    '/auth/2fa/authenticate',
+    payload,
+  );
   const body = res.data.data;
   return { user: body.user, accessToken: body.accessToken };
+}
+
+export interface TotpSetup {
+  secret: string;
+  otpauthUri: string;
+}
+
+/**
+ * POST /api/auth/2fa/setup (authenticated, backlog #100). Starts TOTP
+ * enrollment: returns the Base32 shared secret and the otpauth:// URI to
+ * enter into an authenticator app (rendered as text — no QR library).
+ * Re-running setup regenerates the secret and resets enrollment.
+ *
+ * Throws the Axios error on failure.
+ */
+export async function setupTotp(): Promise<TotpSetup> {
+  const res = await api.post<ApiResponse<TotpSetup>>('/auth/2fa/setup');
+  const body = res.data.data;
+  return { secret: body.secret, otpauthUri: body.otpauthUri };
+}
+
+export interface EnableTotpPayload {
+  code: string;
+}
+
+export interface EnableTotpResult {
+  recoveryCodes: string[];
+}
+
+/**
+ * POST /api/auth/2fa/enable (authenticated, backlog #100). A valid 6-digit
+ * code (checked against the setup secret) flips 2FA on. The response
+ * carries the account's 10 one-time recovery codes — shown ONCE, only
+ * their hashes are stored server-side — so callers must present them for
+ * saving and never expect to read them back. A wrong code → 400.
+ *
+ * Throws the Axios error on failure (the {code,message,data} envelope).
+ */
+export async function enableTotp(payload: EnableTotpPayload): Promise<EnableTotpResult> {
+  const res = await api.post<ApiResponse<EnableTotpResult>>('/auth/2fa/enable', payload);
+  return { recoveryCodes: res.data.data.recoveryCodes };
+}
+
+/**
+ * GET /api/auth/2fa/recovery-codes/count (authenticated, backlog #100).
+ * Returns how many of the caller's recovery codes remain unused — a count
+ * only; the codes themselves are never readable back after enable.
+ *
+ * Throws the Axios error on failure; callers degrade to no readout.
+ */
+export async function recoveryCodeCount(): Promise<number> {
+  const res = await api.get<ApiResponse<{ remaining: number }>>(
+    '/auth/2fa/recovery-codes/count',
+  );
+  return res.data.data.remaining;
 }
 
 /**

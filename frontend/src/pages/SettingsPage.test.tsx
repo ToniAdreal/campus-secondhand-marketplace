@@ -8,6 +8,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import SettingsPage from './SettingsPage';
 
 const postSpy = vi.spyOn(api, 'post');
+const getSpy = vi.spyOn(api, 'get');
 
 const user: AuthUser = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
 
@@ -49,6 +50,9 @@ describe('SettingsPage', () => {
     // synchronous reset — store logout() now calls the server (would pollute spies)
     useAuthStore.setState({ user });
     setAccessToken('old-credential');
+    // default: the 2FA recovery-code count fails, so the section degrades
+    // to no readout — individual tests override with a resolved count
+    getSpy.mockRejectedValue(new Error('count unavailable'));
   });
 
   afterEach(() => {
@@ -118,6 +122,72 @@ describe('SettingsPage', () => {
 
     expect(screen.getByRole('alert').textContent).toBe('The new passwords do not match.');
     expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows the recovery-code count readout when the count endpoint succeeds (backlog #100)', async () => {
+    getSpy.mockReset();
+    getSpy.mockResolvedValue(envelope({ remaining: 7 }));
+    renderAt('/settings');
+
+    expect(await screen.findByText('7 recovery codes remaining.')).toBeTruthy();
+    expect(getSpy).toHaveBeenCalledWith('/auth/2fa/recovery-codes/count');
+  });
+
+  it('count endpoint failure degrades to no readout, not a crash (backlog #100)', async () => {
+    renderAt('/settings');
+
+    // the two-factor section still renders and offers setup
+    expect(
+      await screen.findByRole('button', { name: 'Set up two-factor authentication' }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/recovery codes remaining\./)).toBeNull();
+    // and the password form is untouched by the failure
+    expect(screen.getByRole('button', { name: 'Change password' })).toBeTruthy();
+  });
+
+  it('enable flow shows secret + otpauth URI as text, then renders the recovery codes exactly once (backlog #100)', async () => {
+    getSpy.mockReset();
+    getSpy.mockResolvedValue(envelope({ remaining: 3 }));
+    const codes = ['AAAA-BBBB-CCCC-DDDD', 'EEEE-FFFF-GGGG-HHHH', 'IIII-JJJJ-KKKK-LLLL'];
+    postSpy.mockResolvedValueOnce(
+      envelope({
+        secret: 'JBSWY3DPEHPK3PXP',
+        otpauthUri: 'otpauth://totp/CampusMarketplace:toni?secret=JBSWY3DPEHPK3PXP',
+      }),
+    );
+    postSpy.mockResolvedValueOnce(envelope({ recoveryCodes: codes }));
+    const first = renderAt('/settings');
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Set up two-factor authentication' }),
+    );
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/setup');
+    // secret + otpauth URI rendered as text (no QR library)
+    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeTruthy();
+    expect(screen.getByText(/otpauth:\/\/totp\//)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Authenticator code'), {
+      target: { value: '123456' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Enable two-factor authentication' }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/2fa/enable', { code: '123456' });
+    // codes + the shown-once warning
+    const warning = await screen.findByText(/shown once/);
+    expect(warning.textContent).toContain('store them safely');
+    for (const code of codes) {
+      expect(screen.getByText(code)).toBeTruthy();
+    }
+
+    // navigating away and back does NOT re-show the codes — they exist
+    // only in the enable response; the remounted page shows the count
+    first.unmount();
+    renderAt('/settings');
+    expect(await screen.findByText('3 recovery codes remaining.')).toBeTruthy();
+    for (const code of codes) {
+      expect(screen.queryByText(code)).toBeNull();
+    }
   });
 
   it('bounces anonymous users to /login without firing any request', () => {

@@ -8,6 +8,10 @@ import {
   revokeSession,
   requestPasswordReset,
   confirmPasswordReset,
+  authenticateTotp,
+  setupTotp,
+  enableTotp,
+  recoveryCodeCount,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -40,6 +44,7 @@ describe('login', () => {
       password: 'secret',
     });
     expect(result).toEqual({
+      kind: 'authenticated',
       accessToken: 'tok-abc',
       user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
     });
@@ -207,6 +212,96 @@ describe('sessions', () => {
     deleteSpy.mockRejectedValueOnce(failure);
 
     await expect(revokeSession('family-foreign')).rejects.toBe(failure);
+  });
+});
+
+describe('two-factor (backlog #100)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('login on a 2FA-enabled account returns the 202 challenge, not a token pair', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-123', expiresAt: '2026-10-09T05:00:00Z' },
+      },
+    } as never);
+
+    const result = await login({ usernameOrEmail: 'toni', password: 'secret' });
+
+    expect(result).toEqual({
+      kind: 'totp-challenge',
+      challenge: 'chal-123',
+      expiresAt: '2026-10-09T05:00:00Z',
+    });
+    expect('accessToken' in result).toBe(false);
+  });
+
+  it('authenticateTotp posts challenge + code (TOTP or recovery) and returns the pair', async () => {
+    postSpy.mockResolvedValueOnce(envelope(authBody));
+
+    const result = await authenticateTotp({ challenge: 'chal-123', code: '123456' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/authenticate', {
+      challenge: 'chal-123',
+      code: '123456',
+    });
+    expect(result).toEqual({
+      accessToken: 'tok-abc',
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    });
+  });
+
+  it('authenticateTotp propagates the identical 401 for a wrong code', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 401,
+        data: { code: 401, message: 'invalid credentials', data: null },
+      },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(authenticateTotp({ challenge: 'chal-123', code: '000000' })).rejects.toBe(
+      failure,
+    );
+  });
+
+  it('setupTotp posts to /auth/2fa/setup and returns secret + otpauth URI', async () => {
+    postSpy.mockResolvedValueOnce(
+      envelope({
+        secret: 'JBSWY3DPEHPK3PXP',
+        otpauthUri: 'otpauth://totp/CampusMarketplace:toni?secret=JBSWY3DPEHPK3PXP',
+      }),
+    );
+
+    const result = await setupTotp();
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/setup');
+    expect(result.secret).toBe('JBSWY3DPEHPK3PXP');
+    expect(result.otpauthUri).toContain('otpauth://totp/');
+  });
+
+  it('enableTotp posts the code and returns the one-time recovery codes', async () => {
+    const codes = ['AAAA-BBBB-CCCC-DDDD', 'EEEE-FFFF-GGGG-HHHH'];
+    postSpy.mockResolvedValueOnce(envelope({ recoveryCodes: codes }));
+
+    const result = await enableTotp({ code: '123456' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/enable', { code: '123456' });
+    expect(result).toEqual({ recoveryCodes: codes });
+  });
+
+  it('recoveryCodeCount GETs the count endpoint and returns the remaining number', async () => {
+    getSpy.mockResolvedValueOnce(envelope({ remaining: 7 }));
+
+    const result = await recoveryCodeCount();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/2fa/recovery-codes/count');
+    expect(result).toBe(7);
   });
 });
 
