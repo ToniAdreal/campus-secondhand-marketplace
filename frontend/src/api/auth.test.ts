@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from './client';
-import { login, me, changePassword } from './auth';
+import { login, me, changePassword, listSessions, revokeSession } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -130,5 +131,73 @@ describe('changePassword', () => {
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(changePassword({ currentPassword: 'old', newPassword: 'x' })).rejects.toBe(failure);
+  });
+});
+
+describe('sessions', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const sessionList = [
+    {
+      id: 'family-current',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0',
+      ipAddress: '203.0.113.7',
+      createdAt: '2026-10-08T01:00:00Z',
+      lastActiveAt: '2026-10-09T01:30:00Z',
+      current: true,
+    },
+    {
+      id: 'family-other',
+      userAgent: null,
+      ipAddress: '198.51.100.23',
+      createdAt: '2026-10-07T12:00:00Z',
+      lastActiveAt: '2026-10-08T12:00:00Z',
+      current: false,
+    },
+  ];
+
+  it('GETs /auth/sessions and returns the session list from the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope(sessionList));
+
+    const result = await listSessions();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/sessions');
+    expect(result).toEqual(sessionList);
+    // the current flag and the null device label (pre-capture session)
+    // pass through untouched — rendering fallbacks live in the page
+    expect(result[0].current).toBe(true);
+    expect(result[1].userAgent).toBeNull();
+  });
+
+  it('propagates the 401 when no session exists', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
+    };
+    getSpy.mockRejectedValueOnce(failure);
+
+    await expect(listSessions()).rejects.toBe(failure);
+  });
+
+  it('DELETEs /auth/sessions/{id} to revoke one session', async () => {
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+
+    await revokeSession('family-other');
+
+    expect(deleteSpy).toHaveBeenCalledWith('/auth/sessions/family-other');
+    // revoking one session never touches the all-sessions logout endpoint
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('propagates the 404 for an unknown or foreign session id (no oracle)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: { status: 404, data: { code: 404, message: 'session not found', data: null } },
+    };
+    deleteSpy.mockRejectedValueOnce(failure);
+
+    await expect(revokeSession('family-foreign')).rejects.toBe(failure);
   });
 });

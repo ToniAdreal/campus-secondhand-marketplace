@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { type FormEvent, useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { changePassword } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -139,6 +139,16 @@ export default function SettingsPage() {
           {pending ? 'Changing…' : 'Change password'}
         </button>
       </form>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Sessions</h2>
+        <p className="text-sm text-neutral-500">
+          See every device signed in as you and revoke individual sessions on the{' '}
+          <Link to="/settings/sessions" className="text-blue-600 hover:underline">
+            My sessions
+          </Link>{' '}
+          page.
+        </p>
+      </div>
     </div>
   );
 }

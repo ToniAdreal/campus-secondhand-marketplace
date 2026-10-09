@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { ApiResponse } from './items';
 
@@ -101,4 +102,87 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<Lo
 export async function me(): Promise<AuthUser> {
   const res = await api.get<ApiResponse<AuthUser>>('/auth/me');
   return res.data.data;
+}
+
+/**
+ * One live refresh-token session, mirroring the backend's SessionDto
+ * (GET /api/auth/sessions, backlog #62). A session is a refresh-token
+ * family: `id` is the family's root jti, stable across rotations, and is
+ * the path id for DELETE /api/auth/sessions/{id}. `userAgent`/`ipAddress`
+ * are the device label and remote address captured at the last
+ * login/refresh — null for sessions that predate the capture or clients
+ * that sent no User-Agent.
+ */
+export interface AuthSession {
+  id: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+  createdAt: string;
+  lastActiveAt: string;
+  /** True for the session whose refresh cookie this browser presented. */
+  current: boolean;
+}
+
+/**
+ * GET /api/auth/sessions. Lists the caller's live sessions, most recently
+ * active first (server-side order). Requires authentication — the shared
+ * client's 401 interceptor silently refreshes once, so a surviving
+ * httpOnly cookie is enough.
+ *
+ * Throws the Axios error on failure (401 when no session exists).
+ */
+export async function listSessions(): Promise<AuthSession[]> {
+  const res = await api.get<ApiResponse<AuthSession[]>>('/auth/sessions');
+  return res.data.data;
+}
+
+/**
+ * DELETE /api/auth/sessions/{id}. Revokes one session (its whole
+ * refresh-token family) without touching the caller's other sessions.
+ * Unknown ids — or ids belonging to another user — fail with 404 (the
+ * backend gives no cross-user oracle). Revoking the caller's own current
+ * session kills this browser's refresh cookie: the next refresh 401s, so
+ * callers must treat it as a sign-out of this tab.
+ *
+ * Throws the Axios error on failure.
+ */
+export async function revokeSession(id: string): Promise<void> {
+  await api.delete(`/auth/sessions/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Query keys for the sessions subtree. Everything hangs off `['sessions']`
+ * so a single prefix invalidation refetches the list after a revoke.
+ */
+export const sessionKeys = {
+  all: ['sessions'] as const,
+  list: () => [...sessionKeys.all, 'list'] as const,
+};
+
+/** GET /api/auth/sessions as a query; disabled for anonymous visitors so no request fires before the login bounce. */
+export function useSessions(enabled = true) {
+  return useQuery({
+    queryKey: sessionKeys.list(),
+    queryFn: () => listSessions(),
+    enabled,
+  });
+}
+
+/**
+ * DELETE /api/auth/sessions/{id} as a mutation. On success the revoked row
+ * is dropped from the cached list immediately and the list is invalidated
+ * so it refetches the server's truth — the page never patches anything
+ * else (other sessions are untouched server-side too).
+ */
+export function useRevokeSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => revokeSession(id),
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<AuthSession[]>(sessionKeys.list(), (old) =>
+        old?.filter((session) => session.id !== id),
+      );
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
 }

@@ -10,6 +10,7 @@ import ItemDetailPage from './pages/ItemDetailPage';
 import LoginPage from './pages/LoginPage';
 import MyOrdersPage from './pages/MyOrdersPage';
 import OrderConfirmationPage from './pages/OrderConfirmationPage';
+import SessionsPage from './pages/SessionsPage';
 import SettingsPage from './pages/SettingsPage';
 import SellerOrdersPage from './pages/SellerOrdersPage';
 import NotFoundPage from './pages/NotFoundPage';
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: 'seller/orders', element: <SellerOrdersPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: 'settings/sessions', element: <SessionsPage /> },
       // catch-all — unknown paths render the 404 inside the app shell
       { path: '*', element: <NotFoundPage /> },
     ],
