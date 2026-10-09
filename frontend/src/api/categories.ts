@@ -10,8 +10,8 @@ export interface Category {
 
 /**
  * GET /api/categories — the seeded listing taxonomy, in insertion order.
- * Powers the category dropdown on the create-listing form (and any future
- * category filter). Requires a signed-in user, like every non-auth API.
+ * Powers the category dropdown on the create-listing form and the category
+ * filter on the browse page. Requires a signed-in user, like every non-auth API.
  */
 export function useCategories() {
   return useQuery({

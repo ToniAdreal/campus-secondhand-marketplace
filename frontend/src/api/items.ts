@@ -28,19 +28,24 @@ export interface ApiResponse<T> {
 
 export const itemKeys = {
   all: ['items'] as const,
-  list: (page: number, q?: string) => [...itemKeys.all, 'list', page, q ?? ''] as const,
+  list: (page: number, q?: string, categoryId?: number | null) =>
+    [...itemKeys.all, 'list', page, q ?? '', categoryId ?? null] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
 };
 
-export function useItems(page = 0, q = '') {
+export function useItems(page = 0, q = '', categoryId?: number | null) {
   return useQuery({
-    queryKey: itemKeys.list(page, q),
+    queryKey: itemKeys.list(page, q, categoryId),
     queryFn: () =>
       api
-        .get<ApiResponse<Page<Item>>>(
-          '/items',
-          { params: { page, size: 20, ...(q.trim() !== '' ? { q: q.trim() } : {}) } },
-        )
+        .get<ApiResponse<Page<Item>>>('/items', {
+          params: {
+            page,
+            size: 20,
+            ...(q.trim() !== '' ? { q: q.trim() } : {}),
+            ...(categoryId != null ? { categoryId } : {}),
+          },
+        })
         .then((res) => res.data.data),
   });
 }

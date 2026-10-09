@@ -1,35 +1,102 @@
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useItems } from '../api/items';
+import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
+
+/**
+ * Parses the `categoryId` URL parameter. Anything that is not a positive
+ * integer (hand-edited links, stale ids) is treated as "no filter" rather
+ * than sent to the backend, where it would 400 on @Positive validation.
+ */
+export function parseCategoryId(raw: string | null): number | null {
+  if (raw === null) {
+    return null;
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 export default function HomePage() {
   const [searchInput, searchQuery, setSearchInput] = useDebouncedSearchParam('q', 300);
-  const { data, isLoading, isError } = useItems(0, searchQuery);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const categoryId = parseCategoryId(searchParams.get('categoryId'));
+  const categoriesQuery = useCategories();
+  const { data, isLoading, isError } = useItems(0, searchQuery, categoryId);
+
+  // The category filter is URL-synced exactly like ?q= (#15): refresh-safe
+  // and shareable, and it composes with the search box — changing one keeps
+  // the other. A select needs no debounce, so this writes immediately.
+  const setCategoryId = (value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value === '') {
+          next.delete('categoryId');
+        } else {
+          next.set('categoryId', value);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
+  const emptyMessage =
+    searchQuery === '' && categoryId === null
+      ? 'No items yet.'
+      : searchQuery !== ''
+        ? `No items match "${searchQuery}".`
+        : 'No items in this category yet.';
 
   return (
     <div>
       <h1 className="mb-4 text-2xl font-bold">Latest listings</h1>
-      <div className="mb-4">
-        <label htmlFor="search" className="sr-only">
-          Search listings
-        </label>
-        <input
-          id="search"
-          type="search"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Search listings…"
-          className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm
-                     focus:border-sky-500 focus:outline-none"
-        />
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+        <div className="flex-1">
+          <label htmlFor="search" className="sr-only">
+            Search listings
+          </label>
+          <input
+            id="search"
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search listings…"
+            className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm
+                       focus:border-sky-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label htmlFor="category-filter" className="sr-only">
+            Filter by category
+          </label>
+          <select
+            id="category-filter"
+            value={categoryId === null ? '' : String(categoryId)}
+            onChange={(e) => setCategoryId(e.target.value)}
+            disabled={categoriesQuery.isLoading || categoriesQuery.isError}
+            className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm
+                       focus:border-sky-500 focus:outline-none sm:w-auto"
+          >
+            <option value="">All categories</option>
+            {(categoriesQuery.data ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {categoriesQuery.isError && (
+            <p className="mt-1 text-sm text-neutral-500">
+              Couldn&apos;t load categories — showing all listings.
+            </p>
+          )}
+        </div>
       </div>
       {isLoading && <p>Loading listings…</p>}
       {isError && <p className="text-red-600">Failed to load listings.</p>}
       {data && (
         <>
-          {data.content.length === 0 && (
-            <p>{searchQuery === '' ? 'No items yet.' : `No items match "${searchQuery}".`}</p>
-          )}
+          {data.content.length === 0 && <p>{emptyMessage}</p>}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.content.map((item) => (
               <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
