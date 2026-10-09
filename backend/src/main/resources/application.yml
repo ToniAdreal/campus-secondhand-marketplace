@@ -127,8 +127,12 @@ app:
     # idempotency-retention: terminal (COMPLETED/FAILED) idempotency_key rows
     #   kept after their last state transition, default 90. IN_PROGRESS rows
     #   are never purged.
+    # password-reset-retention: used-or-expired password_reset_token rows
+    #   kept after creation (brief security-audit evidence), default 30.
+    #   Still-valid unused tokens are never purged.
     refresh-token-retention: 30
     idempotency-retention: 90
+    password-reset-retention: 30
   orders:
     # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
     # minutes server-local). A buyer who creates an order and never pays

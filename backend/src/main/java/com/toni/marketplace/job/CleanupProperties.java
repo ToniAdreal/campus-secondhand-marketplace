@@ -10,7 +10,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 30 days after creation (audit window plus rotation-chain visibility for a
  * concurrent-refresh grace period), terminal {@code idempotency_key} rows
  * are kept 90 days after their last state transition (late client retries
- * still replay the stored order). Override with e.g.
+ * still replay the stored order), and used-or-expired
+ * {@code password_reset_token} rows are kept 30 days after creation
+ * (security-audit evidence, briefly — not forever). Override with e.g.
  * {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -30,6 +32,14 @@ public class CleanupProperties {
    */
   private long idempotencyRetention = 90;
 
+  /**
+   * Days a used-or-expired {@code password_reset_token} row is kept after
+   * its creation before the purge may delete it. Must be &ge; 1. A
+   * still-valid unused token is never purged regardless of age — the purge
+   * must not kill an in-flight reset.
+   */
+  private long passwordResetRetention = 30;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -44,5 +54,13 @@ public class CleanupProperties {
 
   public void setIdempotencyRetention(long idempotencyRetention) {
     this.idempotencyRetention = idempotencyRetention;
+  }
+
+  public long getPasswordResetRetention() {
+    return passwordResetRetention;
+  }
+
+  public void setPasswordResetRetention(long passwordResetRetention) {
+    this.passwordResetRetention = passwordResetRetention;
   }
 }
