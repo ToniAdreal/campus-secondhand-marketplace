@@ -31,6 +31,16 @@ services:
       # message if the operator forgets to export APP_JWT_SECRET first —
       # generate one with: export APP_JWT_SECRET=$(openssl rand -base64 32)
       APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET is required — export it before 'docker compose up' (see docs/smoke-test.md)}
+      # Listing photos are served from app.uploads.dir; pin it to the
+      # uploads-data volume mount below so the path does not depend on the
+      # image's WORKDIR (./uploads would resolve to /app/uploads anyway).
+      APP_UPLOADS_DIR: /app/uploads
+    volumes:
+      # Named volume: uploaded listing photos survive a backend container
+      # recreate / `docker compose down` (they used to live in the
+      # container's writable layer and die with it). `docker compose down -v`
+      # still drops it together with mysql-data — see docs/smoke-test.md.
+      - uploads-data:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
@@ -44,3 +54,4 @@ services:
 
 volumes:
   mysql-data:
+  uploads-data:
