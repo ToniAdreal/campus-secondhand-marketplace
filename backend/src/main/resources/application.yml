@@ -107,6 +107,18 @@ app:
       # getting the identical 401 (no enumeration oracle).
       max-attempts: 5
       lock-duration: 15m
+    totp-lockout:
+      # Per-account second-factor lockout (AuthService.authenticateTotp,
+      # backlog #101): the /api/auth/2fa/authenticate exchange has its own
+      # 5/min-per-IP rate-limit bucket, and after max-attempts consecutive
+      # failed exchanges the EXCHANGE locks for lock-duration (423 +
+      # Retry-After, even for a correct code under a fresh challenge); a
+      # successful exchange resets the counter. Deliberately separate from
+      # the login lockout above (own columns, Flyway V23): while
+      # TOTP-locked, password login still verifies and issues challenges —
+      # a challenge holder cannot lock the owner out of login entirely.
+      max-attempts: 5
+      lock-duration: 15m
   cleanup:
     # Nightly purge of stale auth/order bookkeeping rows
     # (DataRetentionService, @Scheduled 03:00 server-local). Values in days.

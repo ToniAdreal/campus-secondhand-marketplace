@@ -8,7 +8,8 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class,
-    LoginLockoutProperties.class, TotpEncryptionProperties.class, PasswordResetProperties.class})
+    LoginLockoutProperties.class, TotpLockoutProperties.class,
+    TotpEncryptionProperties.class, PasswordResetProperties.class})
 public class AuthConfig {
 
   /**
@@ -81,6 +82,25 @@ public class AuthConfig {
     resetProps.setEnabled(props.isEnabled());
     resetProps.setAttemptsPerMinute(props.getPasswordResetAttemptsPerMinute());
     return new AuthRateLimiter(clock, resetProps);
+  }
+
+  /**
+   * Separate token bucket for the second-factor exchange
+   * {@code POST /api/auth/2fa/authenticate} (backlog #101; default
+   * 5/minute per client IP). The endpoint is an online-guessing surface
+   * (5-minute challenge Bearer <redacted> for a 6-digit code); it must not
+   * share the credential bucket — a burst of failed exchanges must not
+   * starve the same IP's logins, and login traffic must not eat the
+   * exchange budget. The per-account half of #101 (a failure counter
+   * that locks the exchange) lives in {@code AuthService} — see
+   * {@link TotpLockoutProperties}.
+   */
+  @Bean
+  public AuthRateLimiter totpRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties totpProps = new AuthRateLimitProperties();
+    totpProps.setEnabled(props.isEnabled());
+    totpProps.setAttemptsPerMinute(props.getTotpAttemptsPerMinute());
+    return new AuthRateLimiter(clock, totpProps);
   }
 
   /**

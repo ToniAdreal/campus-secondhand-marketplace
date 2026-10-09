@@ -103,4 +103,28 @@ public class AuthRateLimitProperties {
   public void setPasswordResetAttemptsPerMinute(int passwordResetAttemptsPerMinute) {
     this.passwordResetAttemptsPerMinute = passwordResetAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the second-factor exchange {@code POST /api/auth/2fa/authenticate}
+   * (backlog #101). The challenge is a 5-minute Bearer <redacted> for a
+   * 6-digit code, so this endpoint is an online-guessing surface; sized
+   * like the credential bucket (5/min) — a legitimate exchange is a
+   * single attempt, so the ceiling only bites automation. It has its
+   * own bucket: TOTP traffic must neither consume nor be starved by the
+   * credential bucket (and the tests pin that a login from the same IP
+   * still works when this bucket is empty). Unlike the credential
+   * bucket, a successful exchange does NOT reset it — resetting on
+   * success would let anyone holding one valid challenge+code refill a
+   * guesser's budget. Must be &ge; 1.
+   */
+  private int totpAttemptsPerMinute = 5;
+
+  public int getTotpAttemptsPerMinute() {
+    return totpAttemptsPerMinute;
+  }
+
+  public void setTotpAttemptsPerMinute(int totpAttemptsPerMinute) {
+    this.totpAttemptsPerMinute = totpAttemptsPerMinute;
+  }
 }

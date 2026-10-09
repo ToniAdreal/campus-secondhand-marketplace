@@ -32,6 +32,19 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * fourth, per-IP bucket (default 5/minute): the request endpoint is a
  * mail-bombing surface and the confirm endpoint a token-guessing surface.
  *
+ * <p>The second-factor exchange ({@code POST /api/auth/2fa/authenticate},
+ * backlog #101) has a fifth, per-IP bucket (default 5/minute): the
+ * 5-minute challenge is a Bearer <redacted> for a 6-digit code, so the
+ * exchange is an online-guessing surface. It is deliberately separate
+ * from the credential bucket (failed exchanges must not starve logins
+ * from the same IP, nor vice versa) and, like the refresh and reset
+ * buckets, it never resets on success — a completed exchange must not
+ * refill a guesser's budget. The per-account half of #101 (repeated
+ * failures lock the exchange for that account) lives in
+ * {@code AuthService.authenticateTotp}, not here: this filter keys on
+ * IPs and cannot know which account a challenge belongs to without
+ * doing the service's job.
+ *
  * <p>{@code POST /api/messages} has a third, per-<em>user</em> bucket
  * (default 30 sends/minute). Keying on the JWT principal id instead of the
  * IP keeps one spammer from starving everyone behind the same NAT address,
@@ -89,6 +102,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String REFRESH_PATH = "/api/auth/refresh";
   private static final String RESET_PATH = "/api/auth/password-reset";
   private static final String RESET_CONFIRM_PATH = "/api/auth/password-reset/confirm";
+  private static final String TOTP_AUTH_PATH = "/api/auth/2fa/authenticate";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String BEARER_PREFIX = "Bearer ";
 
@@ -96,6 +110,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter refreshLimiter;
   private final AuthRateLimiter messageLimiter;
   private final AuthRateLimiter passwordResetLimiter;
+  private final AuthRateLimiter totpLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
 
@@ -104,12 +119,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("messageRateLimiter") AuthRateLimiter messageLimiter,
                              @Qualifier("passwordResetRateLimiter")
                                  AuthRateLimiter passwordResetLimiter,
+                             @Qualifier("totpRateLimiter") AuthRateLimiter totpLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper) {
     this.credentialLimiter = credentialLimiter;
     this.refreshLimiter = refreshLimiter;
     this.messageLimiter = messageLimiter;
     this.passwordResetLimiter = passwordResetLimiter;
+    this.totpLimiter = totpLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
   }
@@ -125,6 +142,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       return !passwordResetLimiter.isEnabled();
+    }
+    if (TOTP_AUTH_PATH.equals(path)) {
+      return !totpLimiter.isEnabled();
     }
     if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
       return !credentialLimiter.isEnabled();
@@ -153,6 +173,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!passwordResetLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, passwordResetLimiter.retryAfterSeconds(ip));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (TOTP_AUTH_PATH.equals(path)) {
+      // Second-factor exchange (backlog #101): own per-IP bucket, never
+      // reset on success (same rationale as the reset bucket above).
+      String ip = clientIp(request);
+      if (!totpLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, totpLimiter.retryAfterSeconds(ip));
         return;
       }
       chain.doFilter(request, response);

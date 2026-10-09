@@ -118,8 +118,12 @@ public class AuthController {
    * one-time recovery code (backlog #91), which the successful exchange
    * consumes. On success the response is the normal token pair with the
    * httpOnly refresh cookie, exactly like a finished login. Bad/expired
-   * challenge or wrong code → 401.
+   * challenge or wrong code → 401. Brute-force defences (backlog #101):
+   * its own 5/min-per-IP rate-limit bucket (429), and repeated failed
+   * exchanges lock the exchange for the account (423 + Retry-After) —
+   * a lock that never blocks password login itself.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "bad/expired challenge or wrong code — identical for every failure kind (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor exchange locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/2fa/authenticate")
   public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
       @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {

@@ -60,6 +60,23 @@ public class User {
   private Instant lockedUntil;
 
   /**
+   * Per-account TOTP-authenticate lockout (backlog #101, Flyway V23).
+   * Consecutive failed {@code POST /api/auth/2fa/authenticate} exchanges
+   * since the last success; a success resets it to 0. When it reaches
+   * {@code app.auth.totp-lockout.max-attempts}, {@link #totpLockedUntil}
+   * is set {@code lock-duration} into the future and the exchange rejects
+   * attempts with 423 until then. Deliberately separate from the #60
+   * password lockout above: a TOTP lock never blocks password login
+   * (which still issues a fresh challenge), and a password lock never
+   * reads or writes these columns.
+   */
+  @Column(name = "failed_totp_attempts", nullable = false)
+  private int failedTotpAttempts;
+
+  @Column(name = "totp_locked_until")
+  private Instant totpLockedUntil;
+
+  /**
    * TOTP two-factor (backlog #78). RFC 6238 shared secret (160 bits),
    * set by POST /api/auth/2fa/setup; null until then. {@code totpEnabled}
    * flips on only after POST /api/auth/2fa/enable verifies a code against
@@ -129,6 +146,14 @@ public class User {
   }
   public Instant getLockedUntil() { return lockedUntil; }
   public void setLockedUntil(Instant lockedUntil) { this.lockedUntil = lockedUntil; }
+  public int getFailedTotpAttempts() { return failedTotpAttempts; }
+  public void setFailedTotpAttempts(int failedTotpAttempts) {
+    this.failedTotpAttempts = failedTotpAttempts;
+  }
+  public Instant getTotpLockedUntil() { return totpLockedUntil; }
+  public void setTotpLockedUntil(Instant totpLockedUntil) {
+    this.totpLockedUntil = totpLockedUntil;
+  }
   public String getTotpSecret() { return totpSecret; }
   public void setTotpSecret(String totpSecret) { this.totpSecret = totpSecret; }
   public boolean isTotpEnabled() { return totpEnabled; }

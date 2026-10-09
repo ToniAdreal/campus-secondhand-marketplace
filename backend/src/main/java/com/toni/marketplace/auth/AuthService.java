@@ -45,6 +45,7 @@ public class AuthService {
   private final TotpRecoveryCodeRepository recoveryCodes;
   private final Clock clock;
   private final LoginLockoutProperties lockout;
+  private final TotpLockoutProperties totpLockout;
   private final AuthMetrics metrics;
   private final AuditService audit;
 
@@ -52,7 +53,8 @@ public class AuthService {
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
                      TotpService totp, TotpSecretCipher totpCipher,
                      TotpRecoveryCodeRepository recoveryCodes, Clock clock,
-                     LoginLockoutProperties lockout, AuthMetrics metrics, AuditService audit) {
+                     LoginLockoutProperties lockout, TotpLockoutProperties totpLockout,
+                     AuthMetrics metrics, AuditService audit) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -61,6 +63,7 @@ public class AuthService {
     this.recoveryCodes = recoveryCodes;
     this.clock = clock;
     this.lockout = lockout;
+    this.totpLockout = totpLockout;
     this.metrics = metrics;
     this.audit = audit;
   }
@@ -70,7 +73,19 @@ public class AuthService {
                      TotpService totp, Clock clock, LoginLockoutProperties lockout) {
     this(users, passwords, jwt, totp,
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
-        null, clock, lockout, AuthMetrics.noop(), AuditService.noop());
+        null, clock, lockout, new TotpLockoutProperties(),
+        AuthMetrics.noop(), AuditService.noop());
+  }
+
+  /**
+   * TOTP-lockout accessor with a defaults fallback, same rationale as
+   * {@link #metrics()}: Mockito {@code @InjectMocks} in older unit tests
+   * may leave the field null; the documented defaults (enabled, 5
+   * attempts, 15 min) then apply. Production always gets the configured
+   * bean.
+   */
+  private TotpLockoutProperties totpLockout() {
+    return totpLockout != null ? totpLockout : new TotpLockoutProperties();
   }
 
   /**
@@ -421,20 +436,57 @@ public class AuthService {
    * challenge, so there is no enumeration oracle here, but the uniform
    * message keeps the failure mode boring on purpose.
    *
-   * <p>Honest scope: failed TOTP attempts do not feed the per-account login
-   * lockout (#60 counts password failures only), and the authenticate
-   * endpoint has no dedicated rate limit yet — both are declared follow-ups.
+   * <p>Brute-force defences (backlog #101): the endpoint has its own
+   * per-IP token bucket in {@code AuthRateLimitFilter} (429 envelope),
+   * and failed exchanges feed a per-account counter on the user row
+   * (Flyway V23): after {@code app.auth.totp-lockout.max-attempts}
+   * consecutive failures the exchange locks for
+   * {@code app.auth.totp-lockout.lock-duration} and answers {@link
+   * AccountLockedException} (423 + {@code Retry-After}) — even for a
+   * correct code under a fresh challenge. A successful exchange resets
+   * the counter. The lock is deliberately separate from the #60
+   * password lockout (own columns, see {@link TotpLockoutProperties}):
+   * a challenge holder cannot lock the owner out of password login —
+   * {@link #login} still verifies the password and issues challenges
+   * while the exchange is locked; only exchanging them is refused.
+   * Only genuine code-verification failures count: a disabled account,
+   * a missing enrollment, or undecryptable stored secret are account
+   * state, not guessing, and never feed the counter.
+   *
+   * <p>{@code noRollbackFor}: the failure counter must survive the 401 /
+   * 423 it produces — the default rollback-on-RuntimeException would
+   * erase the increment (and the lock) with the transaction, so the
+   * throttle would never engage outside a caller-managed transaction.
+   * The failure paths mutate nothing else (a recovery code is consumed
+   * only on the success path), so committing them is safe.
    *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
    */
-  @Transactional
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
   public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta) {
     long userId = jwt.parseTotpChallenge(challenge);
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String stored = user.getTotpSecret();
     if (user.isDisabled() || !user.isTotpEnabled() || stored == null) {
       throw new InvalidCredentialsException();
+    }
+    TotpLockoutProperties totpLockout = totpLockout();
+    Instant now = clock.instant();
+    if (totpLockout.isEnabled()) {
+      Instant totpLockedUntil = user.getTotpLockedUntil();
+      if (totpLockedUntil != null) {
+        if (now.isBefore(totpLockedUntil)) {
+          // Locked: even a correct code under a fresh challenge is
+          // refused until the window passes. This attempt does not
+          // extend the lock or feed the counter.
+          throw new AccountLockedException(retryAfterSeconds(now, totpLockedUntil));
+        }
+        // Expired lock: the account gets a fresh allowance.
+        user.setTotpLockedUntil(null);
+        user.setFailedTotpAttempts(0);
+      }
     }
     // Backlog #89: resolve the stored secret (decrypt v1:, pass legacy
     // plaintext through). Tampered/undecryptable storage fails closed as
@@ -451,8 +503,25 @@ public class AuthService {
       // unknown code and a wrong TOTP code all land on the identical
       // 401 below, so the response never reveals which kind was tried.
       if (!consumeRecoveryCode(userId, code)) {
+        // Backlog #101: a genuine failed exchange — count it, and lock
+        // the exchange when the consecutive-failure ceiling is reached
+        // (the locking failure itself answers 423, mirroring #60).
+        if (totpLockout.isEnabled()) {
+          int attempts = user.getFailedTotpAttempts() + 1;
+          user.setFailedTotpAttempts(attempts);
+          if (attempts >= totpLockout.getMaxAttempts()) {
+            user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
+            throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
+          }
+        }
         throw new InvalidCredentialsException();
       }
+    }
+    // Success: the failure counter resets (mirrors the #60 login rule).
+    if (totpLockout.isEnabled()
+        && (user.getFailedTotpAttempts() != 0 || user.getTotpLockedUntil() != null)) {
+      user.setFailedTotpAttempts(0);
+      user.setTotpLockedUntil(null);
     }
     if (!cipher().isEncrypted(stored)) {
       // Legacy plaintext row (enabled before #89): re-encrypt in place on
