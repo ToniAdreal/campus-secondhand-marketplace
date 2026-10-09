@@ -45,7 +45,8 @@ class AdminUserController {
    * pre-disable tokens stay dead). Answers the account's new state.
    */
   @PostMapping("/{id}/enable")
-  public ResponseEntity<ApiResponse<AdminUserDto>> enable(@PathVariable Long id) {
-    return ResponseEntity.ok(ApiResponse.ok(AdminUserDto.of(auth.enableUser(id))));
+  public ResponseEntity<ApiResponse<AdminUserDto>> enable(
+      @AuthenticationPrincipal Long actorId, @PathVariable Long id) {
+    return ResponseEntity.ok(ApiResponse.ok(AdminUserDto.of(auth.enableUser(actorId, id))));
   }
 }

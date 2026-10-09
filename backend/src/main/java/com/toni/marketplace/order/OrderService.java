@@ -1,5 +1,8 @@
 package com.toni.marketplace.order;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
@@ -32,24 +35,37 @@ public class OrderService {
    */
   private final OrderCreationService creation;
   private final OrderMetrics metrics;
+  private final AuditService audit;
 
   @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
-                     OrderCreationService creation, OrderMetrics metrics) {
+                     OrderCreationService creation, OrderMetrics metrics,
+                     AuditService audit) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
     this.payments = payments;
     this.creation = creation;
     this.metrics = metrics;
+    this.audit = audit;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
                      OrderCreationService creation) {
-    this(orders, items, idempotency, payments, creation, OrderMetrics.noop());
+    this(orders, items, idempotency, payments, creation, OrderMetrics.noop(),
+        AuditService.noop());
+  }
+
+  /**
+   * Audit accessor with a no-op fallback, mirroring {@link #metrics()}:
+   * direct unit tests that construct this service by hand must never fail
+   * on the trail.
+   */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -506,6 +522,10 @@ public class OrderService {
       // 500.
       orders.flush();
       metrics().completed();
+      // Backlog #98: audit after the flush, inside this transaction — a
+      // version conflict (409) or any later rollback writes no row, and
+      // the idempotent re-complete above returns before this point.
+      audit().record(callerId, AuditAction.ORDER_COMPLETED, AuditTargetType.ORDER, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -584,6 +604,10 @@ public class OrderService {
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
       metrics().refunded();
+      // Backlog #98: audit after the flush, inside this transaction — a
+      // version conflict (409) or any later rollback writes no row, and
+      // the idempotent re-refund above returns before this point.
+      audit().record(callerId, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,

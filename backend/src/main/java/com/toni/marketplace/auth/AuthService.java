@@ -11,6 +11,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.common.AccountLockedException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
@@ -43,12 +46,13 @@ public class AuthService {
   private final Clock clock;
   private final LoginLockoutProperties lockout;
   private final AuthMetrics metrics;
+  private final AuditService audit;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
                      TotpService totp, TotpSecretCipher totpCipher,
                      TotpRecoveryCodeRepository recoveryCodes, Clock clock,
-                     LoginLockoutProperties lockout, AuthMetrics metrics) {
+                     LoginLockoutProperties lockout, AuthMetrics metrics, AuditService audit) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -58,6 +62,7 @@ public class AuthService {
     this.clock = clock;
     this.lockout = lockout;
     this.metrics = metrics;
+    this.audit = audit;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -65,7 +70,16 @@ public class AuthService {
                      TotpService totp, Clock clock, LoginLockoutProperties lockout) {
     this(users, passwords, jwt, totp,
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
-        null, clock, lockout, AuthMetrics.noop());
+        null, clock, lockout, AuthMetrics.noop(), AuditService.noop());
+  }
+
+  /**
+   * Audit accessor with a no-op fallback, same rationale as
+   * {@link #metrics()}: direct unit tests that construct this service
+   * without an AuditService must never fail on the trail.
+   */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -334,6 +348,9 @@ public class AuthService {
       user.setTotpSecret(cipher().encrypt(secret));
     }
     users.save(user);
+    // Backlog #98: the enable is a sensitive transition — append its audit
+    // row inside this transaction (a rollback above leaves no row).
+    audit().record(userId, AuditAction.TOTP_ENABLED, AuditTargetType.USER, userId);
     return issueRecoveryCodes(userId);
   }
 
@@ -516,6 +533,9 @@ public class AuthService {
     users.save(user);
     jwt.revokeAll(userId);
     metrics().passwordChanged();
+    // Backlog #98: append the audit row inside this transaction, so a
+    // change that rolls back (e.g. token issuance failing) leaves no row.
+    audit().record(userId, AuditAction.PASSWORD_CHANGED, AuditTargetType.USER, userId);
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 
@@ -608,6 +628,10 @@ public class AuthService {
     target.setTokenVersion(target.getTokenVersion() + 1);
     users.save(target);
     jwt.revokeAll(targetId);
+    // Backlog #98: the acting ADMIN is the audit actor, the disabled
+    // account the target. The already-disabled no-op above returns before
+    // this point and writes no row.
+    audit().record(actorId, AuditAction.USER_DISABLED, AuditTargetType.USER, targetId);
     return target;
   }
 
@@ -620,7 +644,7 @@ public class AuthService {
    * tokenVersion); the user gets fresh tokens at login.
    */
   @Transactional
-  public User enableUser(long targetId) {
+  public User enableUser(long actorId, long targetId) {
     User target = users.findById(targetId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
     if (!target.isDisabled()) {
@@ -628,6 +652,9 @@ public class AuthService {
     }
     target.setDisabled(false);
     users.save(target);
+    // Backlog #98: actor = the acting ADMIN (mirrors disableUser); the
+    // already-enabled no-op above writes no row.
+    audit().record(actorId, AuditAction.USER_ENABLED, AuditTargetType.USER, targetId);
     return target;
   }
 }
