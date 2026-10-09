@@ -145,8 +145,9 @@ public class AuthController {
    * credential): consumes the token, applies the strength policy to the
    * new password (weak → 400), bumps the user's token version and revokes
    * every refresh family, so all pre-reset sessions die. Unknown, used or
-   * expired tokens → the identical 401. The SPA has no reset pages yet
-   * (documented follow-up); this is the API contract they will use.
+   * expired tokens → the identical 401. The SPA reset pages landed in
+   * backlog #99 (/forgot-password + /reset-password?token=); this is
+   * the API contract they use.
    */
   @PostMapping("/password-reset/confirm")
   public ResponseEntity<ApiResponse<Void>> confirmPasswordReset(

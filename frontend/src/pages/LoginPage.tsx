@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { type FormEvent, useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { login } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -53,9 +53,18 @@ export default function LoginPage() {
     }
   }
 
+  const passwordResetDone =
+    (location.state as { passwordReset?: boolean } | null)?.passwordReset === true;
+
   return (
     <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
       <h1 className="mb-4 text-xl font-bold">Login</h1>
+      {passwordResetDone && (
+        <p role="status" className="mb-4 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+          Password reset complete. You have been signed out everywhere — log in with your
+          new password.
+        </p>
+      )}
       {error && (
         <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -96,6 +105,11 @@ export default function LoginPage() {
           {pending ? 'Logging in…' : 'Login'}
         </button>
       </form>
+      <p className="mt-4 text-sm text-neutral-500">
+        <Link to="/forgot-password" className="text-blue-600 hover:underline">
+          Forgot password?
+        </Link>
+      </p>
     </div>
   );
 }

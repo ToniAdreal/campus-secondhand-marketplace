@@ -39,13 +39,14 @@ function LocationProbe() {
   return null;
 }
 
-function renderLogin(initialEntry: string) {
+function renderLogin(initialEntry: string | { pathname: string; state?: unknown }) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <LocationProbe />
       <Routes>
         <Route path="/" element={<div>home probe</div>} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<div>forgot page stub</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -118,6 +119,21 @@ describe('LoginPage', () => {
     expect(useAuthStore.getState().user).toBeNull();
     expect(getAccessToken()).toBeNull();
     expect(currentPath).toBe('/login');
+  });
+
+  it('links to /forgot-password (backlog #99)', () => {
+    renderLogin('/login');
+
+    const link = screen.getByRole('link', { name: /forgot password/i });
+    expect(link.getAttribute('href')).toBe('/forgot-password');
+  });
+
+  it('shows the signed-out-everywhere note when arriving from a completed reset', () => {
+    renderLogin({ pathname: '/login', state: { passwordReset: true } });
+
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('Password reset complete.');
+    expect(status.textContent).toContain('signed out everywhere');
   });
 
   it('an already-logged-in user never sees the form', () => {

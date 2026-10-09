@@ -88,6 +88,51 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<Lo
   return { user: body.user, accessToken: body.accessToken };
 }
 
+export interface RequestPasswordResetPayload {
+  usernameOrEmail: string;
+}
+
+/**
+ * POST /api/auth/password-reset (backlog #99). Starts a password reset:
+ * the backend ALWAYS answers the identical 200 envelope whether or not
+ * the identifier belongs to an account (no enumeration oracle), so a
+ * resolved promise tells the caller nothing about the account — the UI
+ * must render the same success state for every identifier. The token is
+ * delivered through the backend's mail seam only; it never appears in
+ * this response.
+ *
+ * Throws the Axios error on failure (e.g. 400 on a blank identifier,
+ * 429 when the shared reset bucket is exhausted).
+ */
+export async function requestPasswordReset(
+  payload: RequestPasswordResetPayload,
+): Promise<void> {
+  await api.post('/auth/password-reset', payload);
+}
+
+export interface ConfirmPasswordResetPayload {
+  token: string;
+  newPassword: string;
+}
+
+/**
+ * POST /api/auth/password-reset/confirm (backlog #99). The token IS the
+ * credential: on success the backend consumes it, applies the strength
+ * policy to the new password (weak → 400 with the reason verbatim; the
+ * token is NOT consumed by a 400), bumps token_version and revokes every
+ * refresh family, so all pre-reset sessions die. Unknown, used or
+ * expired tokens all fail with the identical 401 — callers must map
+ * them to one generic message, never distinguishing them.
+ *
+ * Throws the Axios error on failure; the backend wraps failures in the
+ * {code,message,data} envelope.
+ */
+export async function confirmPasswordReset(
+  payload: ConfirmPasswordResetPayload,
+): Promise<void> {
+  await api.post('/auth/password-reset/confirm', payload);
+}
+
 /**
  * GET /api/auth/me. Returns the caller's profile (id/username/email/roles)
  * for session restore on SPA reload. When the in-memory credential is

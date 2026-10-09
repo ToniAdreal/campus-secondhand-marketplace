@@ -15,7 +15,9 @@ import { useAuthStore } from './store/useAuthStore';
 const CreateListingPage = lazy(() => import('./pages/CreateListingPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ItemDetailPage = lazy(() => import('./pages/ItemDetailPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const MyOrdersPage = lazy(() => import('./pages/MyOrdersPage'));
 const OrderConfirmationPage = lazy(() => import('./pages/OrderConfirmationPage'));
 const SessionsPage = lazy(() => import('./pages/SessionsPage'));
@@ -35,6 +37,8 @@ const router = createBrowserRouter([
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'seller/orders', element: <SellerOrdersPage /> },
       { path: 'login', element: <LoginPage /> },
+      { path: 'forgot-password', element: <ForgotPasswordPage /> },
+      { path: 'reset-password', element: <ResetPasswordPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'settings/sessions', element: <SessionsPage /> },
       // catch-all — unknown paths render the 404 inside the app shell
