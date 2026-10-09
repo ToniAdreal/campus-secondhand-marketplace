@@ -5,6 +5,7 @@ import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,15 +31,35 @@ public class OrderService {
    * silently drop the transaction (see {@link OrderCreationService}).
    */
   private final OrderCreationService creation;
+  private final OrderMetrics metrics;
 
+  @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
-                     OrderCreationService creation) {
+                     OrderCreationService creation, OrderMetrics metrics) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
     this.payments = payments;
     this.creation = creation;
+    this.metrics = metrics;
+  }
+
+  /** Legacy constructor for direct unit tests that do not assert on metrics. */
+  public OrderService(OrderRepository orders, ItemRepository items,
+                     IdempotencyKeyService idempotency, PaymentService payments,
+                     OrderCreationService creation) {
+    this(orders, items, idempotency, payments, creation, OrderMetrics.noop());
+  }
+
+  /**
+   * Metrics accessor with a no-op fallback, mirroring AuthService:
+   * Mockito {@code @InjectMocks} in older unit tests constructs this
+   * service without an OrderMetrics mock, leaving the field null —
+   * counting must never break an order transition.
+   */
+  private OrderMetrics metrics() {
+    return metrics != null ? metrics : OrderMetrics.noop();
   }
 
   /**
@@ -78,6 +99,9 @@ public class OrderService {
       // Runs in its own transaction on the OrderCreationService proxy (see
       // its javadoc): the listing flip and the order insert commit together.
       OrderDto created = creation.create(buyerId, itemId);
+      // Count transitions, not calls (#93): only a fresh creation lands
+      // here — a replayed key returned above, a failed creation throws.
+      metrics().created();
       idempotency.complete(record.getId(), created.id());
       return created;
     } catch (DataIntegrityViolationException e) {
@@ -274,6 +298,7 @@ public class OrderService {
       // mapped to 409. Without the flush the version check would happen at
       // commit, outside this try/catch, and the caller would see a 500.
       orders.flush();
+      metrics().cancelled();
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -333,6 +358,7 @@ public class OrderService {
     // the job's per-row try/catch, and the batch would die on the first
     // race instead of skipping the row.
     orders.flush();
+    metrics().expired();
     return true;
   }
 
@@ -411,6 +437,7 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
+      metrics().paid();
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -478,6 +505,7 @@ public class OrderService {
       // happen at commit, outside this try/catch, and the caller would see a
       // 500.
       orders.flush();
+      metrics().completed();
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -555,6 +583,7 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
+      metrics().refunded();
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
