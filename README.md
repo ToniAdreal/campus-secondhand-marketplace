@@ -145,7 +145,11 @@ instance with the in-memory access token and the single-flight 401 refresh queue
 (parallel 401s → one refresh call, then retries); `api/` modules per domain;
 `hooks/useDebouncedSearchParam` syncs search to the URL; `store/useAuthStore`
 is the Zustand auth store; TanStack Query mutations invalidate the shared
-`['items']` query root instead of hand-editing the cache.
+`['items']` query root instead of hand-editing the cache;
+`components/ErrorBoundary` wraps the route outlet in `App` — a crashed route
+renders a "Something went wrong" fallback with a back-to-home reset instead
+of unmounting the tree into a blank page (render errors only, logged via
+`console.error`; no remote error reporting).
 
 ## Feature scope notes
 

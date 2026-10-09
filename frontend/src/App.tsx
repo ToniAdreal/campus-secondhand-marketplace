@@ -1,4 +1,5 @@
 import { Link, Outlet, useNavigate } from 'react-router-dom';
+import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './store/useAuthStore';
 
 function AuthNav() {
@@ -59,7 +60,11 @@ export default function App() {
         </nav>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6">
-        <Outlet />
+        {/* A crashed route renders the boundary's fallback inside the shell
+            instead of unmounting the whole tree into a blank page. */}
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );
