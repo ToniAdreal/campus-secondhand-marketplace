@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,15 +40,25 @@ public class AuthService {
   private final TotpService totp;
   private final Clock clock;
   private final LoginLockoutProperties lockout;
+  private final AuthMetrics metrics;
 
+  @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
-                     TotpService totp, Clock clock, LoginLockoutProperties lockout) {
+                     TotpService totp, Clock clock, LoginLockoutProperties lockout,
+                     AuthMetrics metrics) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
     this.totp = totp;
     this.clock = clock;
     this.lockout = lockout;
+    this.metrics = metrics;
+  }
+
+  /** Legacy constructor for direct unit tests that do not assert on metrics. */
+  public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
+                     TotpService totp, Clock clock, LoginLockoutProperties lockout) {
+    this(users, passwords, jwt, totp, clock, lockout, AuthMetrics.noop());
   }
 
   /** Registered user plus their first token pair. */
@@ -65,6 +76,15 @@ public class AuthService {
     record Pair(AuthResult result) implements LoginResult {}
     /** A 2FA challenge: signed token plus its absolute expiry instant. */
     record Challenge(String challengeToken, Instant expiresAt) implements LoginResult {}
+  }
+
+  /**
+   * Metrics accessor with a no-op fallback: Mockito {@code @InjectMocks}
+   * in older unit tests constructs this service without an AuthMetrics
+   * mock, leaving the field null — counting must never break a login.
+   */
+  private AuthMetrics metrics() {
+    return metrics != null ? metrics : AuthMetrics.noop();
   }
 
   /** Shared secret plus provisioning URI returned by the 2FA setup step. */
@@ -133,7 +153,15 @@ public class AuthService {
     String identifier = canonical(usernameOrEmail);
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
-        .orElseThrow(InvalidCredentialsException::new);
+        .orElseGet(() -> {
+          // Unknown identifier: a login failure, but never lockout-tracked
+          // (no account exists to lock — see the class-level #60 rule).
+          metrics().loginFailure();
+          return null;
+        });
+    if (user == null) {
+      throw new InvalidCredentialsException();
+    }
     Instant now = clock.instant();
     if (lockout.isEnabled()) {
       Instant lockedUntil = user.getLockedUntil();
@@ -147,17 +175,23 @@ public class AuthService {
       }
     }
     if (!passwords.matches(rawPassword, user.getPasswordHash())) {
+      metrics().loginFailure();
       if (lockout.isEnabled()) {
         int attempts = user.getFailedLoginAttempts() + 1;
         user.setFailedLoginAttempts(attempts);
         if (attempts >= lockout.getMaxAttempts()) {
           Instant until = now.plus(lockout.getLockDuration());
           user.setLockedUntil(until);
+          metrics().lockoutTriggered();
           throw new AccountLockedException(lockout.getLockDuration().getSeconds());
         }
       }
       throw new InvalidCredentialsException();
     }
+    // Password verified: the login succeeded at this stage — for a
+    // TOTP-enabled account the challenge issuance below still counts
+    // (see AuthMetrics javadoc).
+    metrics().loginSuccess();
     if (lockout.isEnabled()
         && (user.getFailedLoginAttempts() != 0 || user.getLockedUntil() != null)) {
       user.setFailedLoginAttempts(0);
@@ -304,6 +338,7 @@ public class AuthService {
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);
     jwt.revokeAll(userId);
+    metrics().passwordChanged();
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 

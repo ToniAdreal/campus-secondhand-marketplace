@@ -85,11 +85,13 @@ public class JwtTokenService {
   private final RefreshTokenRepository refreshTokens;
   private final UserRepository users;
   private final Clock clock;
+  private final AuthMetrics metrics;
 
   public JwtTokenService(SecretKey key, Duration accessTtl, Duration refreshTtl,
                          Duration refreshGraceWindow, Duration refreshMaxAge,
                          Duration totpChallengeTtl,
-                         RefreshTokenRepository refreshTokens, UserRepository users, Clock clock) {
+                         RefreshTokenRepository refreshTokens, UserRepository users, Clock clock,
+                         AuthMetrics metrics) {
     this.key = key;
     this.accessTtl = accessTtl;
     this.refreshTtl = refreshTtl;
@@ -99,6 +101,16 @@ public class JwtTokenService {
     this.refreshTokens = refreshTokens;
     this.users = users;
     this.clock = clock;
+    this.metrics = metrics;
+  }
+
+  /** Legacy constructor for direct unit tests that do not assert on metrics. */
+  public JwtTokenService(SecretKey key, Duration accessTtl, Duration refreshTtl,
+                         Duration refreshGraceWindow, Duration refreshMaxAge,
+                         Duration totpChallengeTtl,
+                         RefreshTokenRepository refreshTokens, UserRepository users, Clock clock) {
+    this(key, accessTtl, refreshTtl, refreshGraceWindow, refreshMaxAge, totpChallengeTtl,
+        refreshTokens, users, clock, AuthMetrics.noop());
   }
 
   public Duration getTotpChallengeTtl() {
@@ -281,6 +293,13 @@ public class JwtTokenService {
   private void revokeFamilyOnReuse(long userId) {
     log.warn("Revoked all refresh-token sessions for user id={} after refresh-token reuse",
         userId);
+    // Counted at the same choke point as the WARN (#79), so the
+    // auth.refresh.theft_detected counter and the log line never disagree.
+    // (Null-guarded: counting must never break a revocation, e.g. when a
+    // test constructs this service without a metrics instance.)
+    if (metrics != null) {
+      metrics.refreshTheftDetected();
+    }
     refreshTokens.deleteByUserId(userId);
   }
 

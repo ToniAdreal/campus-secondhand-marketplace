@@ -70,10 +70,11 @@ public class AuthConfig {
   public JwtTokenService jwtTokenService(JwtProperties props,
                                          RefreshTokenRepository refreshTokens,
                                          UserRepository users,
-                                         Clock clock) {
+                                         Clock clock,
+                                         AuthMetrics metrics) {
     SecretKey key = JwtTokenService.keyFromBase64(props.getSecret());
     return new JwtTokenService(key, props.getAccessTtl(), props.getRefreshTtl(),
         props.getRefreshGraceWindow(), props.getRefreshMaxAge(), props.getTotpChallengeTtl(),
-        refreshTokens, users, clock);
+        refreshTokens, users, clock, metrics);
   }
 }
