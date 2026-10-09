@@ -1,5 +1,6 @@
 package com.toni.marketplace.order;
 
+import com.toni.marketplace.common.PaymentDeclinedException;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -12,9 +13,11 @@ import org.springframework.stereotype.Service;
  * They exist to model the PENDING → PAID → REFUNDED order state machine —
  * the exact shape a Stripe/Adyen capture/refund step would take — and to
  * give the pay and refund endpoints a single, testable seam where a real
- * PSP client would later be injected. Captures and refunds are synchronous
- * and always succeed (a declined path is a declared follow-up, see the code
- * comment).
+ * PSP client would later be injected. Captures and refunds are synchronous.
+ * A capture declines deterministically when the caller passes the
+ * documented mock-only test token {@link #DECLINE_TOKEN} (backlog #92) —
+ * the seam a real PSP's decline response would occupy; refunds always
+ * succeed in the mock.
  *
  * <p>Idempotency model (backlog #65): every capture and refund takes an
  * order-scoped idempotency key, exactly the way a real PSP client would
@@ -27,6 +30,16 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class PaymentService {
+
+  /**
+   * Mock-only decline seam (backlog #92): a capture attempted with this
+   * payment token is declined, deterministically, so tests and demos can
+   * exercise the decline path without magic global state. It models the
+   * test-card numbers real PSPs publish (e.g. Stripe's
+   * {@code 4000 0000 0000 0002}); it is not a real payment credential, is
+   * never persisted, and any other token value (or none) succeeds.
+   */
+  public static final String DECLINE_TOKEN = "tok_decline";
 
   /**
    * Result of a (mock) capture: a mock capture id plus the captured amount.
@@ -73,20 +86,38 @@ public class PaymentService {
       new ConcurrentHashMap<>();
 
   /**
+   * Captures the order amount against the (mock) buyer payment method,
+   * using the default succeeding token — see
+   * {@link #capture(Order, String, String)}.
+   */
+  public CaptureResult capture(Order order, String idempotencyKey) {
+    return capture(order, idempotencyKey, null);
+  }
+
+  /**
    * Captures the order amount against the (mock) buyer payment method.
    * Synchronous by design: the caller transitions the order to PAID in the
    * same transaction, so a capture that "succeeds" can never leave the
-   * order unpaid. Declined/failed captures do not exist in the mock — a
-   * declined path (and its 402 mapping) is a declared follow-up if a real
-   * PSP is ever wired in.
+   * order unpaid.
+   *
+   * <p>Decline rule (backlog #92): when {@code paymentToken} is the
+   * literal {@link #DECLINE_TOKEN}, the capture is declined and
+   * {@link PaymentDeclinedException} is thrown <em>before</em> anything is
+   * remembered — the idempotency key is not stored and
+   * {@link #capturesIssued()} does not move, so a retry with a succeeding
+   * token under the same key can still capture (pinned by tests). A null
+   * or blank token, and any other value, succeeds.
    *
    * <p>The key is generated once per order by the caller (see
    * {@link OrderService#pay}) and stored on the order row: repeating a
    * capture with the same key returns the original result without issuing
    * a second logical capture.
    */
-  public CaptureResult capture(Order order, String idempotencyKey) {
+  public CaptureResult capture(Order order, String idempotencyKey, String paymentToken) {
     requireKey(idempotencyKey);
+    if (DECLINE_TOKEN.equals(paymentToken)) {
+      throw new PaymentDeclinedException();
+    }
     return capturesByKey.computeIfAbsent(idempotencyKey, key -> {
       capturesIssued.incrementAndGet();
       return new CaptureResult(

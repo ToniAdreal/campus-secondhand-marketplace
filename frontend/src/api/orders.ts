@@ -116,6 +116,9 @@ export function describeOrderError(error: unknown): string {
     .response;
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
+  if (code === 402 || /declined/i.test(message)) {
+    return 'Your payment was declined — the order is still pending, please try a different payment method.';
+  }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
     return 'Someone just acted on this order — please refresh and try again.';
   }

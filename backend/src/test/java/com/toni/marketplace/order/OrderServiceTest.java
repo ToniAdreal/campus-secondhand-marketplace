@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.toni.marketplace.common.PaymentDeclinedException;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
@@ -285,7 +286,7 @@ class OrderServiceTest {
         .isInstanceOf(ResponseStatusException.class)
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.NOT_FOUND));
-    verify(payments, never()).capture(any(), anyString());
+    verify(payments, never()).capture(any(), anyString(), any());
   }
 
   @Test
@@ -298,7 +299,7 @@ class OrderServiceTest {
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.FORBIDDEN));
     assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
-    verify(payments, never()).capture(any(), anyString());
+    verify(payments, never()).capture(any(), anyString(), any());
     verify(orders, never()).save(any());
   }
 
@@ -310,7 +311,7 @@ class OrderServiceTest {
     OrderDto dto = service.pay(7L, 5L);
 
     assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
-    verify(payments, never()).capture(any(), anyString());
+    verify(payments, never()).capture(any(), anyString(), any());
     verify(orders, never()).save(any());
   }
 
@@ -324,14 +325,27 @@ class OrderServiceTest {
         .isInstanceOf(ResponseStatusException.class)
         .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
             .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
-    verify(payments, never()).capture(any(), anyString());
+    verify(payments, never()).capture(any(), anyString(), any());
+  }
+
+  @Test
+  void pay_declinedCapture_propagatesAndLeavesOrderPending() {
+    Order order = pendingOrder(7L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(payments.capture(eq(order), anyString(), eq(PaymentService.DECLINE_TOKEN)))
+        .thenThrow(new PaymentDeclinedException());
+
+    assertThatThrownBy(() -> service.pay(7L, 5L, PaymentService.DECLINE_TOKEN))
+        .isInstanceOf(PaymentDeclinedException.class);
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    verify(orders, never()).save(any());
   }
 
   @Test
   void pay_pendingOrder_capturesTransitionsAndReservesItem() {
     Order order = pendingOrder(7L);
     when(orders.findById(5L)).thenReturn(Optional.of(order));
-    when(payments.capture(eq(order), anyString()))
+    when(payments.capture(eq(order), anyString(), any()))
         .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
     when(orders.save(order)).thenAnswer(inv -> inv.getArgument(0));
 
@@ -339,14 +353,14 @@ class OrderServiceTest {
 
     assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
     assertThat(order.getItem().getStatus()).isEqualTo(ItemStatus.RESERVED);
-    verify(payments).capture(eq(order), anyString());
+    verify(payments).capture(eq(order), anyString(), any());
   }
 
   @Test
   void pay_versionConflictOnSave_throws409() {
     Order order = pendingOrder(7L);
     when(orders.findById(5L)).thenReturn(Optional.of(order));
-    when(payments.capture(eq(order), anyString()))
+    when(payments.capture(eq(order), anyString(), any()))
         .thenReturn(new PaymentService.CaptureResult("cap_mock_x", 2500L));
     when(orders.save(order)).thenThrow(
         new org.springframework.orm.ObjectOptimisticLockingFailureException(Order.class, 5L));

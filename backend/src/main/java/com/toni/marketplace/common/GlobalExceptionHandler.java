@@ -6,6 +6,7 @@ import com.toni.marketplace.common.DuplicateCategoryException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import com.toni.marketplace.common.InvalidTokenException;
+import com.toni.marketplace.common.PaymentDeclinedException;
 import com.toni.marketplace.common.WeakPasswordException;
 import com.toni.marketplace.common.InvalidImageException;
 import org.springframework.http.HttpStatus;
@@ -81,6 +82,19 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException ex) {
     return ResponseEntity.badRequest()
         .body(ApiResponse.fail(400, "malformed request body"));
+  }
+
+  /**
+   * Mock-PSP capture decline (backlog #92): the buyer's payment was
+   * declined, the order stays PENDING, and a retry with a different token
+   * may succeed — answered {@code 402 Payment Required} in the JSON
+   * envelope, the status real PSP integrations conventionally map a
+   * decline to.
+   */
+  @ExceptionHandler(PaymentDeclinedException.class)
+  public ResponseEntity<ApiResponse<Void>> handlePaymentDeclined(PaymentDeclinedException ex) {
+    return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
+        .body(ApiResponse.fail(HttpStatus.PAYMENT_REQUIRED.value(), ex.getMessage()));
   }
 
   @ExceptionHandler(WeakPasswordException.class)

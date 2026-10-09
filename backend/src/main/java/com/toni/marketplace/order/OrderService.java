@@ -362,10 +362,28 @@ public class OrderService {
    *       result instead of issuing a second logical capture — the mock is
    *       side-effect-free either way, and a real PSP would apply the same
    *       replay. Backlog #65 closed the declared follow-up.</li>
+   *   <li>A declined capture (backlog #92 — the buyer passes the mock's
+   *       documented {@code tok_decline} test token) surfaces as
+   *       {@code PaymentDeclinedException} → 402 in the envelope. The
+   *       exception rolls this transaction back, so the order stays
+   *       PENDING, the listing stays RESERVED, and the capture key the
+   *       PSP seam declined under is neither remembered by the mock nor
+   *       persisted on the row — a retry with a succeeding token captures
+   *       normally.</li>
    * </ul>
    */
   @Transactional
   public OrderDto pay(Long buyerId, Long orderId) {
+    return pay(buyerId, orderId, null);
+  }
+
+  /**
+   * {@link #pay(Long, Long)} with an explicit mock payment token (see
+   * {@link PayRequest}); {@code null} uses the mock's default succeeding
+   * token.
+   */
+  @Transactional
+  public OrderDto pay(Long buyerId, Long orderId, String paymentToken) {
     Order order = orders.findById(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
@@ -382,7 +400,7 @@ public class OrderService {
           "order is " + order.getStatus() + ", payment is not allowed");
     }
     try {
-      payments.capture(order, captureKeyFor(order));
+      payments.capture(order, captureKeyFor(order), paymentToken);
       order.setStatus(OrderStatus.PAID);
       order.getItem().setStatus(ItemStatus.RESERVED);
       OrderDto dto = OrderDto.from(orders.save(order));

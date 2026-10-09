@@ -89,13 +89,18 @@ public class OrderController {
    * Captures payment for an order (mock PSP — see {@code PaymentService}).
    * Only the order's buyer may pay (403 otherwise); paying an already-PAID
    * order is idempotent and returns the order unchanged; a {@code @Version}
-   * conflict on the order row surfaces as 409.
+   * conflict on the order row surfaces as 409. The request body is
+   * optional: {@code {"paymentToken":"tok_decline"}} deterministically
+   * declines the mock capture → 402, the order stays PENDING, and a retry
+   * with any other token (or no body) can still succeed (backlog #92).
    */
   @PostMapping("/{id}/pay")
-  public ApiResponse<OrderDto> pay(@PathVariable Long id) {
+  public ApiResponse<OrderDto> pay(
+      @PathVariable Long id, @RequestBody(required = false) PayRequest request) {
     Long buyerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    return ApiResponse.ok(orderService.pay(buyerId, id));
+    return ApiResponse.ok(orderService.pay(
+        buyerId, id, request == null ? null : request.paymentToken()));
   }
 
   /**
