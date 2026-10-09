@@ -232,3 +232,111 @@ export function useCancelOrder() {
     },
   });
 }
+
+/**
+ * Maps a failed POST /api/orders/{id}/complete to a user-facing message.
+ * The backend speaks the {code,message,data} envelope; a 422 means the
+ * order is not PAID (it is still PENDING, or already terminal) — completing
+ * an already-COMPLETED order is idempotent on the server and never reaches
+ * this mapper.
+ */
+export function describeCompleteError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422 || /completion is not allowed|not in PAID/i.test(message)) {
+    if (/COMPLETED/i.test(message)) {
+      return 'This order was already completed.';
+    }
+    return 'Only a paid order can be completed — this one is not paid yet, or is already finished.';
+  }
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 403) {
+    return 'Only the seller of this listing can complete the order.';
+  }
+  if (code === 401) {
+    return 'Please log in to complete this order.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/complete — the seller (or an ADMIN) confirms the
+ * handoff: PAID → COMPLETED, and the listing flips RESERVED → SOLD in the
+ * same transaction. Completing an already-COMPLETED order is idempotent
+ * server-side, so a double-click is safe. On success both subtrees are
+ * invalidated: the seller-orders subtree hangs off `orderKeys.all`, and
+ * the listing subtree must refetch so the SOLD badge shows.
+ */
+export function useCompleteOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api.post<ApiResponse<Order>>(`/orders/${orderId}/complete`, {}).then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/orders/{id}/refund to a user-facing message. The
+ * backend speaks the {code,message,data} envelope; a 422 means the order
+ * is not PAID — refunding an already-REFUNDED order is idempotent on the
+ * server (no second refund call) and never reaches this mapper.
+ */
+export function describeRefundError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422 || /refund is not allowed|not in PAID/i.test(message)) {
+    if (/REFUNDED/i.test(message)) {
+      return 'This order was already refunded.';
+    }
+    if (/COMPLETED/i.test(message)) {
+      return 'This order was already completed — it can no longer be refunded.';
+    }
+    return 'Only a paid order can be refunded — this one is not paid yet, or is already finished.';
+  }
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 403) {
+    return 'Only the seller of this listing can refund the order.';
+  }
+  if (code === 401) {
+    return 'Please log in to refund this order.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/refund — the seller (or an ADMIN) refunds a PAID
+ * order through the mock PSP: PAID → REFUNDED, and the listing flips
+ * RESERVED → AVAILABLE in the same transaction, so both subtrees are
+ * invalidated on success (the seller-orders subtree hangs off
+ * `orderKeys.all`). The buyer cannot self-refund — that is a deliberate
+ * backend design decision, so this hook only belongs on seller surfaces.
+ */
+export function useRefundOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api.post<ApiResponse<Order>>(`/orders/${orderId}/refund`, {}).then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}

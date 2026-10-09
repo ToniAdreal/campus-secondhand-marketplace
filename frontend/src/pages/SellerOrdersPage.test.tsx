@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import SellerOrdersPage from './SellerOrdersPage';
 
 const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
 
 const seller: AuthUser = { id: 2, username: 'seller', email: 'seller@example.com', roles: ['USER'] };
 
@@ -139,6 +140,114 @@ describe('SellerOrdersPage', () => {
 
     // last page reached -> no more button
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('PAID rows show Complete/Refund buttons; PENDING rows show neither', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    // exactly one PAID row (order #10) — one pair of buttons, none for the
+    // PENDING order #9
+    expect(screen.getAllByRole('button', { name: 'Complete order' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Refund order' })).toHaveLength(1);
+  });
+
+  it('Complete fires POST /orders/{id}/complete and refetches the seller list', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    postSpy.mockResolvedValue({
+      data: { code: 0, message: 'ok', data: { ...order2, status: 'COMPLETED' } },
+    } as never);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Complete order' }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/complete', {}),
+    );
+    // success invalidates the orders subtree — the seller list refetches
+    await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it('Refund asks for confirmation first, then fires POST /orders/{id}/refund', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    postSpy.mockResolvedValue({
+      data: { code: 0, message: 'ok', data: { ...order2, status: 'REFUNDED' } },
+    } as never);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {}));
+    confirmSpy.mockRestore();
+  });
+
+  it('declining the refund confirmation fires no request', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('a logged-in buyer (no listings of their own) sees no orders and no action buttons', async () => {
+    // the backend scopes /seller/orders to orders on the caller's own
+    // listings — a pure buyer gets an empty page, so there is nothing to
+    // complete or refund and no button can render
+    const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('No orders on your listings yet.')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Complete order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refund order' })).toBeNull();
+  });
+
+  it('a 422 from complete maps to the friendly "already completed" copy', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    postSpy.mockRejectedValue(
+      axiosFailure(422, 'order is COMPLETED, completion is not allowed'),
+    );
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Complete order' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe('This order was already completed.');
+  });
+
+  it('a 422 from refund maps to the friendly "already completed" copy', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    postSpy.mockRejectedValue(axiosFailure(422, 'order is COMPLETED, refund is not allowed'));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe(
+      'This order was already completed — it can no longer be refunded.',
+    );
+    confirmSpy.mockRestore();
   });
 
   it('a non-401 list failure shows the friendly error mapping', async () => {
