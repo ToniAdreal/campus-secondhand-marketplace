@@ -5,6 +5,8 @@ import com.toni.marketplace.common.DuplicateCategoryException;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,7 +33,17 @@ class CategoryService {
     this.items = items;
   }
 
-  List<CategoryDto> listAll() {
+  /**
+   * Lists the whole taxonomy in seed order. Cached (backlog #87): the
+   * browse page and the create-listing form read this on every render,
+   * while writes are rare and ADMIN-only. The returned list is
+   * unmodifiable ({@code Stream.toList()}), so sharing the cached
+   * instance with every caller is safe. Eviction lives on the two write
+   * methods below — a write that fails (duplicate, in-use) throws before
+   * evicting, so a rejected ADMIN call never flushes a warm cache.
+   */
+  @Cacheable(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, key = "'all'")
+  public List<CategoryDto> listAll() {
     return categories.findAllByOrderByIdAsc().stream().map(CategoryDto::from).toList();
   }
 
@@ -42,6 +54,7 @@ class CategoryService {
    * (see {@link Category#canonical}, #47's rule).
    */
   @Transactional
+  @CacheEvict(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, allEntries = true)
   public CategoryDto createCategory(String name, String slug) {
     String displayName = name.trim();
     if (categories.existsByNameLower(Category.canonical(displayName))) {
@@ -67,6 +80,7 @@ class CategoryService {
    * product rule enforced here, not a DB cascade).
    */
   @Transactional
+  @CacheEvict(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, allEntries = true)
   public void deleteCategory(Long id) {
     Category category = categories.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
