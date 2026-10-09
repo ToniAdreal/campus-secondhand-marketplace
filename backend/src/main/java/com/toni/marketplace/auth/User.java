@@ -72,6 +72,15 @@ public class User {
   @Column(name = "totp_enabled", nullable = false)
   private boolean totpEnabled;
 
+  /**
+   * ADMIN disable flag (backlog #88, Flyway V18). A disabled account cannot
+   * log in, its Bearer tokens are rejected by {@link JwtAuthenticationFilter},
+   * and disabling revokes all of its refresh-token families. Starts false
+   * for every row (V18 backfills).
+   */
+  @Column(name = "disabled", nullable = false)
+  private boolean disabled;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -117,6 +126,8 @@ public class User {
   public void setTotpSecret(String totpSecret) { this.totpSecret = totpSecret; }
   public boolean isTotpEnabled() { return totpEnabled; }
   public void setTotpEnabled(boolean totpEnabled) { this.totpEnabled = totpEnabled; }
+  public boolean isDisabled() { return disabled; }
+  public void setDisabled(boolean disabled) { this.disabled = disabled; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

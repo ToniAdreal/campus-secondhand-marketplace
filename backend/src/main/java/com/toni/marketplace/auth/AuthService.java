@@ -140,6 +140,10 @@ public class AuthService {
    * expired lock resets the counter on the next attempt. Unknown identifiers
    * are never tracked — they keep getting the identical 401.
    *
+   * <p>ADMIN-disabled accounts (backlog #88) get the identical 401, checked
+   * before the password so the response leaks nothing about the account's
+   * state or its password.
+   *
    * <p>TOTP two-factor (backlog #78): when the password is correct but the
    * account has 2FA enabled, no token pair is issued — the result is a
    * {@link LoginResult.Challenge} the client exchanges for the pair at
@@ -160,6 +164,14 @@ public class AuthService {
           return null;
         });
     if (user == null) {
+      throw new InvalidCredentialsException();
+    }
+    if (user.isDisabled()) {
+      // ADMIN-disabled account (backlog #88): the identical 401 as a bad
+      // password, checked before the password so a disabled account gives
+      // no signal about its password's validity either. Not lockout-tracked
+      // — the account is already fully off.
+      metrics().loginFailure();
       throw new InvalidCredentialsException();
     }
     Instant now = clock.instant();
@@ -264,7 +276,8 @@ public class AuthService {
     long userId = jwt.parseTotpChallenge(challenge);
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String secret = user.getTotpSecret();
-    if (!user.isTotpEnabled() || secret == null || !totp.verify(secret, code)) {
+    if (user.isDisabled() || !user.isTotpEnabled() || secret == null
+        || !totp.verify(secret, code)) {
       throw new InvalidCredentialsException();
     }
     return new AuthResult(user, jwt.createTokenPair(user, meta));
@@ -397,5 +410,60 @@ public class AuthService {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "session not found");
     }
     jwt.revokeFamily(familyJti);
+  }
+
+  /**
+   * ADMIN user management (backlog #88): disables an account. The flag is
+   * enforced at login (identical 401) and on every authenticated request
+   * ({@link JwtAuthenticationFilter}); disabling also revokes every
+   * refresh-token family of the account and bumps its tokenVersion, so all
+   * sessions die immediately and pre-disable Bearer tokens stay dead even
+   * after a later re-enable (the user logs in fresh).
+   *
+   * <p>Guards, both answered 403: an admin cannot disable themselves (an
+   * account must never be able to lock out its own operator mid-incident),
+   * and an admin cannot disable another ADMIN (admin accounts are managed
+   * out-of-band, never through this endpoint — a compromised admin session
+   * must not be able to wipe out the other operators). Unknown id → 404.
+   * Re-disabling an already-disabled account is an idempotent no-op.
+   */
+  @Transactional
+  public User disableUser(long actorId, long targetId) {
+    User target = users.findById(targetId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+    if (actorId == targetId) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "cannot disable yourself");
+    }
+    if (target.getRoles().contains(Role.ADMIN)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "cannot disable an admin user");
+    }
+    if (target.isDisabled()) {
+      return target;
+    }
+    target.setDisabled(true);
+    target.setTokenVersion(target.getTokenVersion() + 1);
+    users.save(target);
+    jwt.revokeAll(targetId);
+    return target;
+  }
+
+  /**
+   * Re-enables a disabled account (backlog #88): clears the flag so the
+   * user can log in again. No guard on the target's role — enabling is
+   * restorative, and a disabled admin cannot authenticate to abuse it.
+   * Unknown id → 404. Re-enabling an enabled account is an idempotent
+   * no-op. Pre-disable tokens are NOT resurrected (disable bumped
+   * tokenVersion); the user gets fresh tokens at login.
+   */
+  @Transactional
+  public User enableUser(long targetId) {
+    User target = users.findById(targetId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+    if (!target.isDisabled()) {
+      return target;
+    }
+    target.setDisabled(false);
+    users.save(target);
+    return target;
   }
 }

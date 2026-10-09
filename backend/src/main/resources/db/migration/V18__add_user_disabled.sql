@@ -1,0 +1,12 @@
+-- V18: disabled flag on app_user — ADMIN user management (backlog #88).
+--
+-- A disabled account cannot log in (AuthService answers the identical 401
+-- as a bad password — no enumeration oracle), its already-issued Bearer
+-- tokens are rejected by JwtAuthenticationFilter on every request, and
+-- disabling revokes all of its refresh-token families (the rows are
+-- deleted, exactly like logout). Re-enabling clears the flag but does NOT
+-- resurrect pre-disable tokens: disable also bumps token_version, so the
+-- user must log in fresh.
+--
+-- Existing rows are enabled via the DEFAULT.
+ALTER TABLE app_user ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT FALSE;

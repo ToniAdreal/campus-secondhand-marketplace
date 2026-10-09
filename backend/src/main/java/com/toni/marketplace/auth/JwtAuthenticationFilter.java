@@ -26,6 +26,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       issued) → unauthenticated, same 401. The row lookup costs one extra
  *       query per authenticated request; that is the price of server-side
  *       bearer revocation without a token denylist.</li>
+ *   <li>Disabled account (backlog #88) → the user's {@code disabled} flag
+ *       is set by an ADMIN → unauthenticated, same 401, whatever the token
+ *       claims. (Disable also bumps {@code token_version}, so the token
+ *       stays dead even if the account is later re-enabled.)</li>
  *   <li>Token for a user row that no longer exists → unauthenticated.</li>
  *   <li>Roles from the token are mapped to {@code ROLE_<name>} authorities so
  *       that method-level {@code @PreAuthorize("hasRole('ADMIN')")} works.</li>
@@ -81,7 +85,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
   private boolean isStale(JwtTokenService.AccessClaims claims) {
     return users.findById(claims.userId())
-        .map(user -> user.getTokenVersion() != claims.tokenVersion())
+        .map(user -> user.isDisabled()
+            || user.getTokenVersion() != claims.tokenVersion())
         .orElse(true);
   }
 }
