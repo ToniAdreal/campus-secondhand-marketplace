@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -79,18 +82,30 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * Only POSTs to the throttled paths are inspected; everything else passes
  * through untouched.
  *
- * <p>Honest trade-offs, both documented here so they stay deliberate:
- * <ul>
- *   <li>The access token on a message send is parsed twice (once here to
- *       recover the principal id, once by the JWT authentication filter).
- *       This filter enforces nothing — it only throttles; all auth
- *       decisions stay downstream.</li>
- *   <li>Client identity is {@code request.getRemoteAddr()}. Behind the
- *       docker-compose nginx proxy that is the proxy's address, not the end
- *       user's — honoring {@code X-Forwarded-For} from trusted proxies is a
- *       documented follow-up, not done here (trusting the header blindly
- *       would let attackers spoof their bucket key).</li>
- * </ul>
+ * <p>Client identity (backlog #104): by default it is exactly
+ * {@code request.getRemoteAddr()} and {@code X-Forwarded-For} is ignored.
+ * When the immediate peer is listed in
+ * {@code app.security.trusted-proxies} (see
+ * {@link TrustedProxiesProperties}), the header is honored by walking the
+ * forwarded chain from the nearest hop outwards and taking the first
+ * <em>untrusted</em> hop — so a client cannot pick its own bucket key by
+ * prepending a spoofed address (the proxy-appended real address is the
+ * first untrusted hop; anything the client prepended sits beyond it and
+ * is never reached). With an empty trusted list (the default) the old
+ * behaviour is unchanged: behind the docker-compose nginx proxy every
+ * user would share the proxy's bucket unless the operator lists the
+ * proxy's address — trusting the header blindly would let attackers
+ * spoof their bucket key, so trust is opt-in and exact-match only.
+ * The resolved identity feeds every per-IP bucket in this filter
+ * (credential, refresh, password-reset and TOTP) and the message
+ * bucket's per-IP fallback; the message bucket's per-user key is
+ * unaffected.
+ *
+ * <p>Honest trade-off, documented here so it stays deliberate: the
+ * access token on a message send is parsed twice (once here to recover
+ * the principal id, once by the JWT authentication filter). This filter
+ * enforces nothing — it only throttles; all auth decisions stay
+ * downstream.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1) // RequestIdFilter (HIGHEST_PRECEDENCE) attaches first
@@ -113,6 +128,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter totpLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
+  private final Set<String> trustedProxies;
 
   public AuthRateLimitFilter(@Qualifier("credentialRateLimiter") AuthRateLimiter credentialLimiter,
                              @Qualifier("refreshRateLimiter") AuthRateLimiter refreshLimiter,
@@ -121,7 +137,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter passwordResetLimiter,
                              @Qualifier("totpRateLimiter") AuthRateLimiter totpLimiter,
                              JwtTokenService jwt,
-                             ObjectMapper mapper) {
+                             ObjectMapper mapper,
+                             TrustedProxiesProperties trustedProxies) {
     this.credentialLimiter = credentialLimiter;
     this.refreshLimiter = refreshLimiter;
     this.messageLimiter = messageLimiter;
@@ -129,6 +146,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.totpLimiter = totpLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
+    this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
   }
 
   @Override
@@ -246,9 +264,60 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return path;
   }
 
-  private static String clientIp(HttpServletRequest request) {
-    String ip = request.getRemoteAddr();
-    return (ip == null || ip.isBlank()) ? "unknown" : ip;
+  private String clientIp(HttpServletRequest request) {
+    return resolveClientIp(request.getRemoteAddr(),
+        request.getHeader("X-Forwarded-For"), trustedProxies);
+  }
+
+  /**
+   * Resolves the bucket identity for a request (backlog #104).
+   *
+   * <ul>
+   *   <li>No/blank remote address → {@code "unknown"} (the limiter's
+   *       shared fallback bucket).</li>
+   *   <li>Remote address not in {@code trustedProxies} (or the list is
+   *       empty) → the remote address itself; the header is ignored
+   *       entirely, so an untrusted peer cannot spoof its key.</li>
+   *   <li>Remote address trusted but no usable header → the remote
+   *       address.</li>
+   *   <li>Remote address trusted with a header → walk the parsed chain
+   *       from the last (nearest) hop outwards and return the first
+   *       hop that is not itself a trusted proxy. A client-supplied
+   *       spoofed prefix sits beyond the proxy-appended real address
+   *       and is therefore never selected. If every hop is trusted,
+   *       the first (leftmost) hop is the original client as forwarded
+   *       by trusted proxies only, so it is returned.</li>
+   * </ul>
+   */
+  static String resolveClientIp(String remoteAddr, String xForwardedFor,
+                                Set<String> trustedProxies) {
+    if (remoteAddr == null || remoteAddr.isBlank()) {
+      return "unknown";
+    }
+    String remote = remoteAddr.trim();
+    if (trustedProxies == null || trustedProxies.isEmpty()
+        || !trustedProxies.contains(remote)) {
+      return remote;
+    }
+    if (xForwardedFor == null || xForwardedFor.isBlank()) {
+      return remote;
+    }
+    List<String> chain = new ArrayList<>();
+    for (String hop : xForwardedFor.split(",")) {
+      String trimmed = hop.trim();
+      if (!trimmed.isEmpty()) {
+        chain.add(trimmed);
+      }
+    }
+    if (chain.isEmpty()) {
+      return remote;
+    }
+    for (int i = chain.size() - 1; i >= 0; i--) {
+      if (!trustedProxies.contains(chain.get(i))) {
+        return chain.get(i);
+      }
+    }
+    return chain.get(0);
   }
 
   /**

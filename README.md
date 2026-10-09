@@ -82,7 +82,10 @@ auth/        AuthController  /api/auth/register, /login, /refresh, /logout
              AuthRateLimitFilter — token bucket per client IP: 5 attempts/min on
              /api/auth/login and /api/auth/register (a successful login
              resets the bucket), 30/min on /api/auth/refresh (JVM-local,
-             not distributed).
+             not distributed). Client IP is the raw remote address unless
+             that address is listed in `app.security.trusted-proxies`
+             (backlog #104, empty by default), in which case
+             X-Forwarded-For is honored via its first untrusted hop.
       ▼
 item/        ItemController  CRUD + ?q= search + ?categoryId= filter, pagination
              ItemService / ItemRepository — JPQL DTO projections for list/detail
@@ -260,4 +263,5 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Seller username on listing DTOs — ad-hoc JPQL join on the raw `sellerId` FK in the list/detail projections (single SELECT, no N+1; the detail page renders "Sold by <username>"; usernames are visible to anyone who can read a listing, as on any marketplace)
 - [x] Category-list cache — `GET /api/categories` served from a JVM-local ConcurrentMap cache (spring-context built-in, no new dependency), evicted on ADMIN category create/delete; a rejected write does not flush the cache; no TTL and not shared across instances (single-JVM demo scope)
 - [x] ADMIN disable/enable user — POST /api/admin/users/{id}/disable (+ /enable); disabled accounts get the identical login 401, live Bearer tokens are rejected, and all refresh families are revoked; self-disable and ADMIN-on-ADMIN are 403, unknown id 404; re-enable restores login but never resurrects pre-disable tokens
+- [x] Trusted-proxy client-IP resolution for the rate-limit buckets (backlog #104 — `app.security.trusted-proxies`, empty by default; X-Forwarded-For honored only from a listed immediate peer, first untrusted hop wins, so a spoofed prefix cannot pick the bucket key; the resolved identity feeds the credential/refresh/reset/TOTP buckets and the message per-IP fallback)
 - [x] Price-range filter + sort on the browse page — GET /api/items accepts inclusive `minPriceCents`/`maxPriceCents` (@PositiveOrZero; min>max → 400 envelope) and an allowlisted `sort` (newest / price-asc / price-desc; unknown → 400, resolved to a fixed ORDER BY, never raw input) on both the LIKE and MySQL-fulltext paths; HomePage adds min/max ¥ inputs + a sort select, all URL-synced (`?minPrice=`/`?maxPrice=`/`?sort=`) and combinable with search + category

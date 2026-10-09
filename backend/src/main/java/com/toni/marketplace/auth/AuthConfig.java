@@ -9,7 +9,8 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class,
     LoginLockoutProperties.class, TotpLockoutProperties.class,
-    TotpEncryptionProperties.class, PasswordResetProperties.class})
+    TotpEncryptionProperties.class, PasswordResetProperties.class,
+    TrustedProxiesProperties.class})
 public class AuthConfig {
 
   /**

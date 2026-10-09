@@ -56,6 +56,17 @@ app:
     # origin, e.g. app.cors.allowed-origins=https://app.example.com.
     # allowed-origins: http://localhost:5173,http://localhost
   security:
+    # Trusted reverse proxies for rate-limit client-IP resolution
+    # (AuthRateLimitFilter, backlog #104): X-Forwarded-For is honored ONLY
+    # when the immediate remote address is listed here (exact match, no
+    # CIDR/wildcards), taking the first untrusted hop of the chain. Empty
+    # by default = the header is always ignored and identity is the raw
+    # remote address. A deployment behind the docker-compose nginx proxy
+    # lists that proxy's address here, e.g.
+    # app.security.trusted-proxies=172.18.0.5 — never list an address an
+    # end user can connect from directly, or they can spoof their bucket
+    # key.
+    # trusted-proxies:
     headers:
       # Security response headers (SecurityConfig, backlog #64). Every
       # response carries X-Content-Type-Options: nosniff, X-Frame-Options:
