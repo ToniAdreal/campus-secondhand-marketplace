@@ -53,6 +53,9 @@ export default function ItemDetailPage() {
       <span className="mt-4 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
         {data.status}
       </span>
+      {data.sellerUsername && (
+        <p className="mt-2 text-sm text-neutral-600">Sold by {data.sellerUsername}</p>
+      )}
 
       <div className="mt-6">
         {canBuy && (

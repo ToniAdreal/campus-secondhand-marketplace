@@ -13,6 +13,11 @@ public interface ItemMapper {
 
   @Mapping(target = "categoryId", source = "category.id")
   @Mapping(target = "categoryName", source = "category.name")
+  // The entity carries only the raw sellerId FK — there is no user data to
+  // map from. Read views that expose sellerUsername (list/detail) build
+  // their DTOs through the ItemRepository projections instead; DTOs mapped
+  // here (mutation responses) carry a null sellerUsername.
+  @Mapping(target = "sellerUsername", ignore = true)
   ItemDto toDto(Item item);
 
   /**

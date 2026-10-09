@@ -16,6 +16,17 @@ public record ItemDto(
     Long priceCents,
     ItemStatus status,
     Long sellerId,
+    /**
+     * The seller's username, resolved by the read projections via an ad-hoc
+     * JPQL join on the raw {@code sellerId} FK (the item has no JPA
+     * association to the user row). Null on DTOs built from the entity alone
+     * (mutation responses — the mapper has no user data) and when the seller
+     * row no longer exists. Deliberate trade-off: the seller's username is
+     * visible to anyone who can read the listing, like on any marketplace;
+     * registration already confirms username existence via its 409
+     * duplicate check.
+     */
+    String sellerUsername,
     Long categoryId,
     String categoryName,
     /** Public URL path of the listing photo ("/uploads/<uuid>.<ext>"), or null. */
@@ -31,10 +42,9 @@ public record ItemDto(
     List<ItemPhotoDto> photos) {
 
   /**
-   * Constructor projection compatibility: the JPQL list-view projections in
-   * {@link ItemRepository} cannot express a nested collection, so they call
-   * this 11-arg form (photos = empty) and the service merges the real
-   * galleries in one batch query afterwards.
+   * Legacy 11-arg form without the seller username, kept for callers that
+   * build DTOs without a user join (photos = empty, sellerUsername = null).
+   * The JPQL read projections use the 12-arg form below.
    */
   public ItemDto(
       Long id,
@@ -48,7 +58,29 @@ public record ItemDto(
       String photoUrl,
       Instant createdAt,
       Instant updatedAt) {
-    this(id, title, description, priceCents, status, sellerId, categoryId,
+    this(id, title, description, priceCents, status, sellerId, null, categoryId,
         categoryName, photoUrl, createdAt, updatedAt, List.of());
+  }
+
+  /**
+   * Projection constructor carrying the seller username: the JPQL read
+   * projections in {@link ItemRepository} call this 12-arg form (photos =
+   * empty, merged in afterwards by the service where a view needs them).
+   */
+  public ItemDto(
+      Long id,
+      String title,
+      String description,
+      Long priceCents,
+      ItemStatus status,
+      Long sellerId,
+      String sellerUsername,
+      Long categoryId,
+      String categoryName,
+      String photoUrl,
+      Instant createdAt,
+      Instant updatedAt) {
+    this(id, title, description, priceCents, status, sellerId, sellerUsername,
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of());
   }
 }

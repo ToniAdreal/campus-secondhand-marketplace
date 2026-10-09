@@ -225,3 +225,4 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Auth security counters (login success/failure, lockout triggered, refresh theft detected, password changed) on /actuator/prometheus
 - [x] Content-Security-Policy header (opt-in via `app.security.headers.csp-enabled`; strict `'self'`-only policy, no `'unsafe-inline'`)
 - [x] Uploads persist across compose recreates (`uploads-data` named volume at /app/uploads)
+- [x] Seller username on listing DTOs — ad-hoc JPQL join on the raw `sellerId` FK in the list/detail projections (single SELECT, no N+1; the detail page renders "Sold by <username>"; usernames are visible to anyone who can read a listing, as on any marketplace)

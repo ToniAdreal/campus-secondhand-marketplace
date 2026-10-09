@@ -12,6 +12,7 @@ const fakeItem: Item = {
   priceCents: 12000,
   status: 'AVAILABLE',
   sellerId: 3,
+  sellerUsername: 'seller',
   categoryId: null,
   categoryName: null,
   photoUrl: null,

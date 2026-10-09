@@ -22,13 +22,17 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    * {@code item.getCategory().getName()}; the projection fetches everything
    * the list view renders in a single query. The explicit LEFT JOIN (not an
    * implicit path navigation) keeps uncategorized rows in the page.
-   * {@code countQuery} drives {@link Page#getTotalElements()}.
+   * {@code countQuery} drives {@link Page#getTotalElements()}. The seller's
+   * username rides along via an ad-hoc join on the raw {@code sellerId} FK
+   * (there is no JPA association from item to user), still in the same
+   * single SELECT — no per-row user lookup.
    */
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
-          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
           + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
-          + "from Item i left join i.category c",
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId",
       countQuery = "select count(i) from Item i")
   Page<ItemDto> findListView(Pageable pageable);
 
@@ -39,9 +43,10 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
-          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
           + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
-          + "from Item i left join i.category c where i.category.id = :categoryId",
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId where i.category.id = :categoryId",
       countQuery = "select count(i) from Item i where i.category.id = :categoryId")
   Page<ItemDto> findListViewByCategoryId(@Param("categoryId") Long categoryId, Pageable pageable);
 
@@ -56,9 +61,10 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
-          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, "
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
           + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
           + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
           + "where (:categoryId is null or i.category.id = :categoryId) "
           + "and (:keyword is null "
           + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
@@ -82,6 +88,34 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query("select distinct i from Item i left join fetch i.category "
       + "left join fetch i.photos where i.id = :id")
   Optional<Item> findDetailById(@Param("id") Long id);
+
+  /**
+   * Detail view as a constructor DTO projection: the same ad-hoc seller
+   * join as the list view, in a single SELECT. The gallery cannot be
+   * expressed in a constructor projection, so the service merges it with
+   * one batch query afterwards (bounded — never per-item).
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId where i.id = :id")
+  Optional<ItemDto> findDetailViewById(@Param("id") Long id);
+
+  /**
+   * Batch variant of the list-view projection for a known id set — used by
+   * the MySQL full-text path, whose entity hydration cannot reach the
+   * seller username (no item→user association exists to fetch-join). One
+   * SELECT for the whole page; the caller re-applies its own ordering.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId where i.id in :ids")
+  List<ItemDto> findListViewsByIds(@Param("ids") List<Long> ids);
 
   /**
    * MySQL-only full-text search, natural-language mode, served by the
@@ -111,14 +145,4 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                @Param("keyword") String keyword,
                                Pageable pageable);
 
-  /**
-   * Hydrates full-text hits: one SELECT with the optional category
-   * fetch-joined, so mapping to DTOs fires no lazy queries. The relevance
-   * order from {@link #findIdsByFulltext} is re-applied by the caller — SQL
-   * {@code IN} does not preserve it. The gallery is fetch-joined in the
-   * same SELECT so {@link ItemDto#photos()} needs no lazy round-trip.
-   */
-  @Query("select distinct i from Item i left join fetch i.category "
-      + "left join fetch i.photos where i.id in :ids")
-  List<Item> findDetailsByIds(@Param("ids") List<Long> ids);
 }

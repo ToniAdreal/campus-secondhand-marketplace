@@ -120,19 +120,15 @@ class ItemServiceTest {
   void listItems_mysql_usesFulltextPathWithRelevanceOrder() throws Exception {
     stubDatabaseProduct("MySQL");
     Pageable pageable = PageRequest.of(0, 20);
-    Item best = listing(5L);
-    ReflectionTestUtils.setField(best, "id", 2L);
-    Item weaker = listing(5L);
-    ReflectionTestUtils.setField(weaker, "id", 1L);
-    // Repository returns ids in relevance order; hydration returns entities
-    // in arbitrary (IN-clause) order — the service must re-apply relevance.
+    // Repository returns ids in relevance order; the projection hydration
+    // returns DTOs in arbitrary (IN-clause) order — the service must
+    // re-apply relevance. The projected DTOs carry the seller username.
     when(items.findIdsByFulltext(eq(7L), eq("bike"), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(2L, 1L), PageRequest.of(0, 20), 2));
-    when(items.findDetailsByIds(List.of(2L, 1L))).thenReturn(List.of(weaker, best));
     ItemDto bestDto = dto(2L, "Vintage road bike");
     ItemDto weakerDto = dto(1L, "Desk lamp");
-    when(mapper.toDto(best)).thenReturn(bestDto);
-    when(mapper.toDto(weaker)).thenReturn(weakerDto);
+    when(items.findListViewsByIds(List.of(2L, 1L))).thenReturn(List.of(weakerDto, bestDto));
+    when(itemPhotos.findByItemIdInOrderByPositionAsc(List.of(2L, 1L))).thenReturn(List.of());
 
     Page<ItemDto> result = service.listItems(pageable, 7L, "  bike  ");
 
@@ -174,18 +170,22 @@ class ItemServiceTest {
 
   @Test
   void getItem_returnsDtoWhenFound() {
-    Item item = listing(5L);
+    // The detail projection carries the seller username; the gallery merge
+    // (empty here) must preserve it.
     ItemDto dto = new ItemDto(3L, "Desk lamp", "a used desk lamp", 2500L, ItemStatus.AVAILABLE,
-        5L, null, null, null, null, null);
-    when(items.findDetailById(3L)).thenReturn(Optional.of(item));
-    when(mapper.toDto(item)).thenReturn(dto);
+        5L, "seller-five", null, null, null, null, null);
+    when(items.findDetailViewById(3L)).thenReturn(Optional.of(dto));
+    when(itemPhotos.findByItemIdInOrderByPositionAsc(List.of(3L))).thenReturn(List.of());
 
-    assertThat(service.getItem(3L)).isSameAs(dto);
+    ItemDto result = service.getItem(3L);
+
+    assertThat(result.sellerUsername()).isEqualTo("seller-five");
+    assertThat(result.photos()).isEmpty();
   }
 
   @Test
   void getItem_missing_throws404() {
-    when(items.findDetailById(9L)).thenReturn(Optional.empty());
+    when(items.findDetailViewById(9L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.getItem(9L))
         .isInstanceOf(ResponseStatusException.class)

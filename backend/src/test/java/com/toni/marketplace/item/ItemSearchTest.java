@@ -67,6 +67,24 @@ class ItemSearchTest {
   }
 
   @Test
+  void listAndDetailExposeSellerUsername() throws Exception {
+    createItem("Used ThinkPad T480", "laptop", null);
+
+    String listBody = mockMvc.perform(get("/api/items")
+            .header("Authorization", "Bearer " + userToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.content[0].sellerUsername").value("seller-search"))
+        .andReturn().getResponse().getContentAsString();
+    Number itemId = com.jayway.jsonpath.JsonPath.read(listBody, "$.data.content[0].id");
+
+    mockMvc.perform(get("/api/items/" + itemId)
+            .header("Authorization", "Bearer " + userToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.sellerUsername").value("seller-search"))
+        .andExpect(jsonPath("$.data.title").value("Used ThinkPad T480"));
+  }
+
+  @Test
   void keywordMatchesTitleCaseInsensitively() throws Exception {
     createItem("Used ThinkPad T480", "laptop", null);
     createItem("USB-C cable", "charger", null);

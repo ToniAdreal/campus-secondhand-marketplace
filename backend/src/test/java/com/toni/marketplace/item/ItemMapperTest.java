@@ -28,6 +28,9 @@ class ItemMapperTest {
     assertThat(dto.priceCents()).isEqualTo(129900L);
     assertThat(dto.status()).isEqualTo(ItemStatus.RESERVED);
     assertThat(dto.sellerId()).isEqualTo(7L);
+    // The entity has no user data to map from — sellerUsername is resolved
+    // by the repository read projections, never by the mapper.
+    assertThat(dto.sellerUsername()).isNull();
   }
 
   @Test

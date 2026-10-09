@@ -8,6 +8,9 @@ export interface Item {
   priceCents: number;
   status: 'AVAILABLE' | 'RESERVED' | 'SOLD';
   sellerId: number;
+  /** Resolved by the backend's read projections (join on the sellerId FK);
+   * null when the seller row no longer exists. */
+  sellerUsername: string | null;
   categoryId: number | null;
   categoryName: string | null;
   photoUrl: string | null;

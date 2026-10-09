@@ -2,6 +2,7 @@ package com.toni.marketplace.item;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.toni.marketplace.auth.User;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ class ItemListViewQueryTest {
   private Statistics stats;
   private Long laptopId;
   private Long electronicsId;
+  private Long sellerId;
 
   @BeforeEach
   void seed() {
@@ -44,13 +46,19 @@ class ItemListViewQueryTest {
         .unwrap(SessionFactory.class).getStatistics();
     stats.setStatisticsEnabled(true);
 
+    // A real seller row: the projections resolve sellerUsername through an
+    // ad-hoc join on the raw sellerId FK.
+    User seller = em.persist(new User("seller-seven", "seller-seven@example.com", "hash"));
+    em.flush();
+    sellerId = seller.getId();
+
     Category electronics = categories.findBySlug("electronics")
         .orElseThrow(() -> new IllegalStateException("Flyway V3 did not seed categories"));
-    Item laptop = new Item("Used ThinkPad", "T480, good battery", 129900L, 7L);
+    Item laptop = new Item("Used ThinkPad", "T480, good battery", 129900L, sellerId);
     laptop.setCategory(electronics);
-    Item cable = new Item("USB-C cable", "spare", 500L, 7L);
+    Item cable = new Item("USB-C cable", "spare", 500L, sellerId);
     cable.setCategory(electronics);
-    Item mug = new Item("Free mug", "pickup only", 100L, 7L); // uncategorized
+    Item mug = new Item("Free mug", "pickup only", 100L, sellerId); // uncategorized
     items.save(laptop);
     items.save(cable);
     items.save(mug);
@@ -80,8 +88,28 @@ class ItemListViewQueryTest {
         .filteredOn(dto -> dto.categoryName() == null)
         .hasSize(1)
         .allSatisfy(dto -> assertThat(dto.categoryId()).isNull());
+    // the seller username arrives inside the same projection — reading it
+    // for every row must not query either
+    assertThat(page.getContent())
+        .allSatisfy(dto -> {
+          assertThat(dto.sellerId()).isEqualTo(sellerId);
+          assertThat(dto.sellerUsername()).isEqualTo("seller-seven");
+        });
     // exactly one SELECT: no count query (3 rows < page size 20) and,
     // crucially, no lazy per-item category SELECTs
+    assertThat(stats.getPrepareStatementCount()).isEqualTo(1);
+  }
+
+  @Test
+  void detailViewProjectionCarriesSellerUsernameInASingleQuery() {
+    stats.clear();
+
+    ItemDto dto = items.findDetailViewById(laptopId).orElseThrow();
+
+    assertThat(dto.title()).isEqualTo("Used ThinkPad");
+    assertThat(dto.categoryName()).isEqualTo("Electronics");
+    assertThat(dto.sellerId()).isEqualTo(sellerId);
+    assertThat(dto.sellerUsername()).isEqualTo("seller-seven");
     assertThat(stats.getPrepareStatementCount()).isEqualTo(1);
   }
 

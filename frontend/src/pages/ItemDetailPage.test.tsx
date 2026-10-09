@@ -25,6 +25,7 @@ const fakeItem: Item = {
   priceCents: 12000,
   status: 'AVAILABLE',
   sellerId: 3,
+  sellerUsername: 'seller',
   categoryId: null,
   categoryName: null,
   photoUrl: null,
@@ -102,7 +103,17 @@ describe('ItemDetailPage buy-now', () => {
     await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
     expect(screen.queryByRole('button', { name: /buy now/i })).toBeNull();
     expect(screen.getByRole('link', { name: 'Log in' }).getAttribute('href')).toBe('/login');
+    // The detail DTO's sellerUsername is rendered as the seller identity.
+    expect(screen.getByText('Sold by seller')).toBeTruthy();
     expect(getSpy).toHaveBeenCalledWith('/items/7');
+  });
+
+  it('a listing whose seller row is gone shows no Sold-by line', async () => {
+    getSpy.mockResolvedValueOnce(envelope({ ...fakeItem, sellerUsername: null }));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByText(/Sold by/)).toBeNull();
   });
 
   it('the seller does not see a Buy button on their own listing', async () => {

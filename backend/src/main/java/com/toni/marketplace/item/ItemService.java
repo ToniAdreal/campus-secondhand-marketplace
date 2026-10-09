@@ -108,8 +108,8 @@ public class ItemService {
     return dtos.stream()
         .map(d -> new ItemDto(
             d.id(), d.title(), d.description(), d.priceCents(), d.status(),
-            d.sellerId(), d.categoryId(), d.categoryName(), d.photoUrl(),
-            d.createdAt(), d.updatedAt(),
+            d.sellerId(), d.sellerUsername(), d.categoryId(), d.categoryName(),
+            d.photoUrl(), d.createdAt(), d.updatedAt(),
             byItem.getOrDefault(d.id(), List.of())))
         .toList();
   }
@@ -143,10 +143,10 @@ public class ItemService {
 
   /**
    * MySQL full-text search: fetch the relevance-ordered id page first, then
-   * hydrate the rows (category fetch-joined) in one SELECT and re-apply the
-   * relevance order in memory — SQL {@code IN} does not preserve it. The
-   * unescaped keyword is passed to {@code MATCH}: unlike LIKE,
-   * natural-language mode has no wildcard characters to escape.
+   * hydrate the rows through the list-view projection in one SELECT and
+   * re-apply the relevance order in memory — SQL {@code IN} does not
+   * preserve it. The unescaped keyword is passed to {@code MATCH}: unlike
+   * LIKE, natural-language mode has no wildcard characters to escape.
    */
   private Page<ItemDto> searchFulltext(Pageable pageable, Long categoryId, String keyword) {
     Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
@@ -154,14 +154,18 @@ public class ItemService {
     if (ids.isEmpty()) {
       return new PageImpl<>(List.of(), pageable, ids.getTotalElements());
     }
-    Map<Long, Item> byId = items.findDetailsByIds(ids.getContent()).stream()
-        .collect(Collectors.toMap(Item::getId, Function.identity()));
+    // Hydrate through the list-view projection (not entity mapping) so the
+    // seller username rides along — the entity has no user association the
+    // mapper could read. One batch SELECT for the page, relevance order
+    // re-applied in memory, galleries merged by withPhotos as on the LIKE
+    // path.
+    Map<Long, ItemDto> byId = items.findListViewsByIds(ids.getContent()).stream()
+        .collect(Collectors.toMap(ItemDto::id, Function.identity()));
     List<ItemDto> dtos = ids.getContent().stream()
         .map(byId::get)
         .filter(Objects::nonNull)
-        .map(mapper::toDto)
         .toList();
-    return new PageImpl<>(dtos, pageable, ids.getTotalElements());
+    return new PageImpl<>(withPhotos(dtos), pageable, ids.getTotalElements());
   }
 
   /**
@@ -176,11 +180,17 @@ public class ItemService {
     return raw.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
   }
 
+  /**
+   * Detail view: the projection SELECT carries the category and the seller
+   * username (ad-hoc join on the raw sellerId FK); the gallery is merged
+   * with the same single batch query the list view uses — two bounded
+   * SELECTs total, never a per-item lookup.
+   */
   @Transactional(readOnly = true)
   public ItemDto getItem(Long id) {
-    return items.findDetailById(id)
-        .map(mapper::toDto)
+    ItemDto dto = items.findDetailViewById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    return withPhotos(List.of(dto)).get(0);
   }
 
   /**

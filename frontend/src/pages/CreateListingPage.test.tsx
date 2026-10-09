@@ -36,6 +36,7 @@ function createdItemPayload() {
     priceCents: 1250,
     status: 'AVAILABLE',
     sellerId: 5,
+    sellerUsername: 'me',
     categoryId: 1,
     categoryName: 'Electronics',
     photoUrl: null,
