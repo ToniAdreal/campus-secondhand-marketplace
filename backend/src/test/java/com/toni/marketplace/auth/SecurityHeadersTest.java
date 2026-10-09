@@ -2,6 +2,7 @@ package com.toni.marketplace.auth;
 
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,6 +97,20 @@ class SecurityHeadersTest {
         .andExpect(status().isOk())
         .andExpect(header().doesNotExist("Strict-Transport-Security"));
   }
+
+  @Test
+  void cspIsOffByDefault() throws Exception {
+    // CSP is opt-in via app.security.headers.csp-enabled (backlog #80,
+    // off by default like HSTS): the default configuration must not send
+    // a Content-Security-Policy header on public or authenticated
+    // endpoints.
+    mockMvc.perform(get("/actuator/health"))
+        .andExpect(status().isOk())
+        .andExpect(header().doesNotExist("Content-Security-Policy"));
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessToken))
+        .andExpect(status().isOk())
+        .andExpect(header().doesNotExist("Content-Security-Policy"));
+  }
 }
 
 /**
@@ -131,5 +146,69 @@ class SecurityHeadersHstsEnabledTest {
         .andExpect(header().string("X-Content-Type-Options", "nosniff"))
         .andExpect(header().string("X-Frame-Options", "DENY"))
         .andExpect(header().string("Referrer-Policy", "no-referrer"));
+  }
+}
+
+/**
+ * CSP opt-in half of backlog #80: with
+ * {@code app.security.headers.csp-enabled=true} every response carries the
+ * strict policy from {@code SecurityConfig} — {@code 'self'} everywhere,
+ * {@code data:} only for images, {@code ws:} only for Vite HMR, and no
+ * {@code 'unsafe-inline'} (verified unnecessary against the real Vite
+ * build output: external bundles only). The other #64 headers stay
+ * untouched. Separate class because @TestPropertySource spins a new
+ * context.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@Transactional
+@TestPropertySource(properties = "app.security.headers.csp-enabled=true")
+class SecurityHeadersCspEnabledTest {
+
+  @Autowired
+  private MockMvc mockMvc;
+
+  @Autowired
+  private UserRepository users;
+
+  @Autowired
+  private PasswordService passwords;
+
+  @Autowired
+  private JwtTokenService jwt;
+
+  private String accessToken;
+
+  @BeforeEach
+  void createUserAndTokens() {
+    User user = users.save(new User("csp-user", "csp-user@example.com",
+        passwords.encode("s3cret-password")));
+    accessToken = jwt.createTokenPair(user).accessToken();
+  }
+
+  @Test
+  void cspEnabledSendsStrictPolicyOnPublicEndpoint() throws Exception {
+    mockMvc.perform(get("/actuator/health"))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Content-Security-Policy",
+            SecurityConfig.CONTENT_SECURITY_POLICY))
+        .andExpect(header().string("Content-Security-Policy", allOf(
+            containsString("default-src 'self'"),
+            containsString("script-src 'self'"),
+            containsString("img-src 'self' data:"),
+            containsString("connect-src 'self' ws:"),
+            not(containsString("unsafe-inline")),
+            not(containsString("unsafe-eval")))))
+        .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+        .andExpect(header().string("X-Frame-Options", "DENY"))
+        .andExpect(header().string("Referrer-Policy", "no-referrer"));
+  }
+
+  @Test
+  void cspEnabledSendsStrictPolicyOnAuthenticatedEndpoint() throws Exception {
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessToken))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Content-Security-Policy",
+            SecurityConfig.CONTENT_SECURITY_POLICY));
   }
 }

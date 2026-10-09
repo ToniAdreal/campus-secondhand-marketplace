@@ -21,9 +21,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * docker-compose nginx profile with TLS, or any reverse proxy terminating
  * TLS) turns it on with {@code app.security.headers.hsts-enabled=true}.
  *
- * <p>Honest scope: headers only. There is no Content-Security-Policy yet —
- * a strict CSP that doesn't break the SPA's inline scripts is a separate
- * round (declared follow-up).
+ * <p>Content-Security-Policy (backlog #80, the follow-up #64 declared) is
+ * likewise opt-in via {@code app.security.headers.csp-enabled}: off by
+ * default so an operator enables it deliberately, on with the strict
+ * policy declared in {@code SecurityConfig} ({@code default-src 'self'}
+ * with no {@code 'unsafe-inline'} anywhere — verified against the real
+ * Vite build output: {@code dist/index.html} references only external
+ * {@code /assets/*.js} / {@code *.css} files, and the SPA source uses no
+ * inline {@code style} props, {@code eval} or inline event handlers, so
+ * the bundled app needs no inline allowance).
  */
 @ConfigurationProperties(prefix = "app.security.headers")
 public class SecurityHeadersProperties {
@@ -41,5 +47,23 @@ public class SecurityHeadersProperties {
 
   public void setHstsEnabled(boolean hstsEnabled) {
     this.hstsEnabled = hstsEnabled;
+  }
+
+  /**
+   * Send {@code Content-Security-Policy} (the policy string lives in
+   * {@code SecurityConfig}) on responses. Default {@code false}, mirroring
+   * the HSTS switch: the header is only meaningful for the browser-served
+   * SPA, and enabling it is an operator decision — turn it on
+   * ({@code app.security.headers.csp-enabled=true}) for any deployment
+   * that serves the built frontend.
+   */
+  private boolean cspEnabled = false;
+
+  public boolean isCspEnabled() {
+    return cspEnabled;
+  }
+
+  public void setCspEnabled(boolean cspEnabled) {
+    this.cspEnabled = cspEnabled;
   }
 }

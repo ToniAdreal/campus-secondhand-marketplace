@@ -53,7 +53,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       {@code X-Frame-Options: DENY} and {@code Referrer-Policy:
  *       no-referrer}; {@code Strict-Transport-Security} is opt-in via
  *       {@code app.security.headers.hsts-enabled} for HTTPS deployments
- *       (off by default for local plain-HTTP dev). No CSP yet.</li>
+ *       (off by default for local plain-HTTP dev).
+ *       {@code Content-Security-Policy} is likewise opt-in via
+ *       {@code app.security.headers.csp-enabled} (off by default); when on,
+ *       the strict policy in {@link #CONTENT_SECURITY_POLICY} is sent —
+ *       {@code 'self'} everywhere, no {@code 'unsafe-inline'}.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
  *       project's {@code {code,message,data}} envelope, never a redirect or
  *       the Spring default HTML error page.</li>
@@ -66,6 +70,36 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @EnableMethodSecurity // enables @PreAuthorize on controller methods
 @EnableConfigurationProperties({CorsProperties.class, SecurityHeadersProperties.class})
 public class SecurityConfig {
+
+  /**
+   * Content-Security-Policy sent when {@code app.security.headers.csp-enabled}
+   * is on (backlog #80).
+   *
+   * <ul>
+   *   <li>{@code default-src 'self'} — the fallback for every fetch
+   *       directive not listed (styles and fonts included: the built SPA
+   *       loads one external stylesheet, no webfonts, no inline styles).</li>
+   *   <li>{@code script-src 'self'} — external bundles only. Verified
+   *       against the real Vite build: {@code dist/index.html} references
+   *       only {@code /assets/*.js}; the source has no {@code eval},
+   *       inline handlers or inline {@code <script>} blocks, so no
+   *       {@code 'unsafe-inline'} / {@code 'unsafe-eval'} is needed.</li>
+   *   <li>{@code img-src 'self' data:} — {@code 'self'} covers listing
+   *       photos under {@code /uploads/**}; {@code data:} covers any
+   *       data-URI image.</li>
+   *   <li>{@code connect-src 'self' ws:} — API calls stay same-origin;
+   *       {@code ws:} exists only for the Vite dev server's HMR socket
+   *       and is inert in the production build (the bundled app opens no
+   *       WebSocket — messaging is offline REST, no live channel).</li>
+   * </ul>
+   *
+   * <p>Honest scope: this is an API response header — in the compose
+   * stack nginx serves the SPA itself, so a deployment that wants the
+   * policy on HTML documents must mirror it at the proxy; the flag here
+   * covers everything the backend serves (API + {@code /uploads/**}).
+   */
+  static final String CONTENT_SECURITY_POLICY =
+      "default-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self' ws:";
 
   @Bean
   public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
@@ -109,25 +143,33 @@ public class SecurityConfig {
     http
         .cors(cors -> cors.configurationSource(corsConfigurationSource))
         .csrf(AbstractHttpConfigurer::disable)
-        .headers(headers -> headers
-            // Security response headers (backlog #64). Spring Security's
-            // defaults are kept where they match the intent: nosniff and
-            // DENY framing; Referrer-Policy is not in the defaults so it is
-            // declared explicitly. HSTS is opt-in via
-            // app.security.headers.hsts-enabled — it stays off on local
-            // plain-HTTP dev and is enabled for HTTPS deployments.
-            // No Content-Security-Policy yet: a strict CSP that doesn't
-            // break the SPA's inline scripts is a declared follow-up.
-            .contentTypeOptions(Customizer.withDefaults())
-            .frameOptions(frame -> frame.deny())
-            .referrerPolicy(ref -> ref.policy(ReferrerPolicy.NO_REFERRER))
-            .httpStrictTransportSecurity(hsts -> {
-              if (securityHeaders.isHstsEnabled()) {
-                hsts.maxAgeInSeconds(31536000).includeSubDomains(true);
-              } else {
-                hsts.disable();
-              }
-            }))
+        .headers(headers -> {
+          headers
+              // Security response headers (backlog #64). Spring Security's
+              // defaults are kept where they match the intent: nosniff and
+              // DENY framing; Referrer-Policy is not in the defaults so it is
+              // declared explicitly. HSTS is opt-in via
+              // app.security.headers.hsts-enabled — it stays off on local
+              // plain-HTTP dev and is enabled for HTTPS deployments.
+              .contentTypeOptions(Customizer.withDefaults())
+              .frameOptions(frame -> frame.deny())
+              .referrerPolicy(ref -> ref.policy(ReferrerPolicy.NO_REFERRER))
+              .httpStrictTransportSecurity(hsts -> {
+                if (securityHeaders.isHstsEnabled()) {
+                  hsts.maxAgeInSeconds(31536000).includeSubDomains(true);
+                } else {
+                  hsts.disable();
+                }
+              });
+          // Content-Security-Policy (backlog #80): opt-in via
+          // app.security.headers.csp-enabled, off by default like HSTS.
+          // The CSP configurer has no disable() switch, so it is only
+          // configured when the flag is on — an unconfigured chain sends
+          // no CSP header at all.
+          if (securityHeaders.isCspEnabled()) {
+            headers.contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY));
+          }
+        })
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
             // Logout, password change, session restore, per-session

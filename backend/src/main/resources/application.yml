@@ -53,9 +53,13 @@ app:
       # DENY and Referrer-Policy: no-referrer. HSTS
       # (Strict-Transport-Security) is opt-in: leave OFF for local
       # plain-HTTP dev, turn ON (app.security.headers.hsts-enabled=true)
-      # on any HTTPS-served deployment. Honest scope: headers only, no CSP
-      # yet (a strict CSP for the SPA is a declared follow-up).
+      # on any HTTPS-served deployment. Content-Security-Policy
+      # (backlog #80) is opt-in the same way: OFF by default, turn ON
+      # (app.security.headers.csp-enabled=true) on deployments serving
+      # the built SPA — the policy is 'self'-only with no
+      # 'unsafe-inline' (verified against the Vite build output).
       # hsts-enabled: false
+      # csp-enabled: false
   uploads:
     # Local directory for listing photos (served publicly under /uploads/**).
     # Override with the APP_UPLOADS_DIR environment variable in production.
