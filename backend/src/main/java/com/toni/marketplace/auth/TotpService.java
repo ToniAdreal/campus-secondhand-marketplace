@@ -43,6 +43,19 @@ public class TotpService {
   /** 160-bit secrets, the RFC 4226 recommendation. */
   private static final int SECRET_BYTES = 20;
 
+  /** How many one-time recovery codes an enable issues (backlog #91). */
+  public static final int RECOVERY_CODE_COUNT = 10;
+
+  /**
+   * Recovery-code alphabet (backlog #91): 32 unambiguous characters —
+   * no 0/O, 1/I/L or other look-alikes a user might misread off paper.
+   * 16 characters at 5 bits each give an 80-bit code.
+   */
+  private static final String RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+  /** Characters per recovery code, displayed grouped 4-4-4-4. */
+  private static final int RECOVERY_CODE_CHARS = 16;
+
   private static final String BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
   private static final int[] BASE32_DECODE = new int[128];
 
@@ -84,6 +97,53 @@ public class TotpService {
         + "?secret=" + base32Secret
         + "&issuer=" + encodeLabel(issuer)
         + "&algorithm=SHA1&digits=6&period=30";
+  }
+
+  /**
+   * Generates one recovery code (backlog #91) in display form:
+   * 16 alphabet characters grouped {@code XXXX-XXXX-XXXX-XXXX}. The
+   * caller stores only the SHA-256 of {@link #normalizeRecoveryCode};
+   * the display form is shown to the user exactly once.
+   */
+  public String generateRecoveryCode() {
+    StringBuilder raw = new StringBuilder(RECOVERY_CODE_CHARS);
+    for (int i = 0; i < RECOVERY_CODE_CHARS; i++) {
+      raw.append(RECOVERY_ALPHABET.charAt(random.nextInt(RECOVERY_ALPHABET.length())));
+    }
+    StringBuilder display = new StringBuilder(RECOVERY_CODE_CHARS + 3);
+    for (int i = 0; i < RECOVERY_CODE_CHARS; i++) {
+      if (i > 0 && i % 4 == 0) {
+        display.append('-');
+      }
+      display.append(raw.charAt(i));
+    }
+    return display.toString();
+  }
+
+  /**
+   * Canonical form for lookup and hashing: separators and whitespace
+   * removed, uppercased — a user who types the code back without the
+   * hyphens, or in lowercase, still matches. Returns null for input
+   * that contains characters outside the recovery alphabet (it can
+   * never be a recovery code, TOTP digits included only when the
+   * caller routes them here deliberately).
+   */
+  public static String normalizeRecoveryCode(String presented) {
+    if (presented == null) {
+      return null;
+    }
+    StringBuilder out = new StringBuilder(presented.length());
+    for (int i = 0; i < presented.length(); i++) {
+      char c = Character.toUpperCase(presented.charAt(i));
+      if (c == '-' || c == ' ' || c == '\t') {
+        continue;
+      }
+      if (RECOVERY_ALPHABET.indexOf(c) < 0) {
+        return null;
+      }
+      out.append(c);
+    }
+    return out.length() == RECOVERY_CODE_CHARS ? out.toString() : null;
   }
 
   /** Verifies a 6-digit code against the secret at the current instant. */

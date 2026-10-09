@@ -39,19 +39,22 @@ public class AuthService {
   private final JwtTokenService jwt;
   private final TotpService totp;
   private final TotpSecretCipher totpCipher;
+  private final TotpRecoveryCodeRepository recoveryCodes;
   private final Clock clock;
   private final LoginLockoutProperties lockout;
   private final AuthMetrics metrics;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
-                     TotpService totp, TotpSecretCipher totpCipher, Clock clock,
+                     TotpService totp, TotpSecretCipher totpCipher,
+                     TotpRecoveryCodeRepository recoveryCodes, Clock clock,
                      LoginLockoutProperties lockout, AuthMetrics metrics) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
     this.totp = totp;
     this.totpCipher = totpCipher;
+    this.recoveryCodes = recoveryCodes;
     this.clock = clock;
     this.lockout = lockout;
     this.metrics = metrics;
@@ -62,7 +65,18 @@ public class AuthService {
                      TotpService totp, Clock clock, LoginLockoutProperties lockout) {
     this(users, passwords, jwt, totp,
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
-        clock, lockout, AuthMetrics.noop());
+        null, clock, lockout, AuthMetrics.noop());
+  }
+
+  /**
+   * Recovery-code persistence with the same null-fallback rationale as
+   * {@link #metrics()}: the legacy constructor (direct unit tests) has no
+   * repository, so recovery codes are simply unavailable there — enable
+   * still returns the generated codes, authenticate finds none, and the
+   * count reads 0. Production always gets the JPA bean.
+   */
+  private boolean recoveryCodesAvailable() {
+    return recoveryCodes != null;
   }
 
   /** Registered user plus their first token pair. */
@@ -269,6 +283,13 @@ public class AuthService {
     user.setTotpSecret(cipher().encrypt(secret));
     user.setTotpEnabled(false);
     users.save(user);
+    // Backlog #91: the previous enrollment's recovery codes belong to
+    // the secret just replaced — retire the whole set now, so a code
+    // printed for the old enrollment can never authenticate against
+    // the new one (enable issues a fresh set).
+    if (recoveryCodesAvailable()) {
+      recoveryCodes.deleteByUserId(userId);
+    }
     return new TotpSetup(secret, totp.otpauthUri("CampusMarketplace", user.getUsername(), secret));
   }
 
@@ -282,9 +303,17 @@ public class AuthService {
    * TotpSecretCipher#decryptOrLegacy} — a tampered stored value fails
    * closed as the same 400 as a wrong code, and a legacy plaintext secret
    * (written before #89) is re-encrypted in place on success.
+   *
+   * <p>Backlog #91: enabling also issues {@link TotpService#RECOVERY_CODE_COUNT}
+   * one-time recovery codes and returns them in display form — the only
+   * moment they exist in plaintext anywhere. Only their SHA-256 hashes
+   * are stored; any previous set is deleted first, so re-enrollment
+   * invalidates the old codes.
+   *
+   * @return the freshly issued recovery codes, display form, shown once
    */
   @Transactional
-  public void enableTotp(long userId, String code) {
+  public List<String> enableTotp(long userId, String code) {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String stored = user.getTotpSecret();
     if (stored == null) {
@@ -305,10 +334,71 @@ public class AuthService {
       user.setTotpSecret(cipher().encrypt(secret));
     }
     users.save(user);
+    return issueRecoveryCodes(userId);
   }
 
   /**
-   * Exchanges a 2FA challenge (plus a valid 6-digit code) for the real token
+   * Replaces the user's recovery-code set with a fresh one and returns
+   * the display forms (backlog #91). Generation retries on the
+   * (astronomically unlikely) hash collision with another user's code
+   * so the unique constraint never surfaces as a 500.
+   */
+  private List<String> issueRecoveryCodes(long userId) {
+    java.util.List<String> issued = new java.util.ArrayList<>();
+    if (!recoveryCodesAvailable()) {
+      for (int i = 0; i < TotpService.RECOVERY_CODE_COUNT; i++) {
+        issued.add(totp.generateRecoveryCode());
+      }
+      return issued;
+    }
+    recoveryCodes.deleteByUserId(userId);
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    while (issued.size() < TotpService.RECOVERY_CODE_COUNT) {
+      String code = totp.generateRecoveryCode();
+      String hash = JwtTokenService.sha256Hex(TotpService.normalizeRecoveryCode(code));
+      if (!seen.add(hash) || recoveryCodes.existsByCodeHash(hash)) {
+        continue; // duplicate within the set, or a one-in-2^80 hash clash
+      }
+      recoveryCodes.save(new TotpRecoveryCode(userId, hash));
+      issued.add(code);
+    }
+    return issued;
+  }
+
+  /**
+   * Consumes one recovery code for the user (backlog #91): the presented
+   * code is normalized (separators/case-insensitive) and hashed; a live
+   * row is stamped used and the code can never authenticate again. Any
+   * other outcome — malformed input, unknown code, already used — is
+   * {@code false}, and the caller folds it into the identical 401 it
+   * returns for a wrong TOTP code.
+   */
+  private boolean consumeRecoveryCode(long userId, String presented) {
+    String normalized = TotpService.normalizeRecoveryCode(presented);
+    if (normalized == null || !recoveryCodesAvailable()) {
+      return false;
+    }
+    return recoveryCodes
+        .findByUserIdAndCodeHashAndUsedAtIsNull(userId, JwtTokenService.sha256Hex(normalized))
+        .map(row -> {
+          row.setUsedAt(clock.instant());
+          recoveryCodes.save(row);
+          return true;
+        })
+        .orElse(false);
+  }
+
+  /** How many of the user's recovery codes remain unused (backlog #91). */
+  @Transactional(readOnly = true)
+  public long recoveryCodeCount(long userId) {
+    return recoveryCodesAvailable()
+        ? recoveryCodes.countByUserIdAndUsedAtIsNull(userId)
+        : 0;
+  }
+
+  /**
+   * Exchanges a 2FA challenge (plus a valid 6-digit code — or, backlog
+   * #91, a one-time recovery code, consumed by the exchange) for the real token
    * pair. A bad/expired challenge or a wrong code → 401 with the identical
    * message — the caller already proved the password to obtain the
    * challenge, so there is no enumeration oracle here, but the uniform
@@ -339,7 +429,13 @@ public class AuthService {
       throw new InvalidCredentialsException();
     }
     if (!totp.verify(secret, code)) {
-      throw new InvalidCredentialsException();
+      // Backlog #91: not a TOTP code — try it as a one-time recovery
+      // code. A live code is consumed by this exchange; a replay, an
+      // unknown code and a wrong TOTP code all land on the identical
+      // 401 below, so the response never reveals which kind was tried.
+      if (!consumeRecoveryCode(userId, code)) {
+        throw new InvalidCredentialsException();
+      }
     }
     if (!cipher().isEncrypted(stored)) {
       // Legacy plaintext row (enabled before #89): re-encrypt in place on

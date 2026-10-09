@@ -86,21 +86,36 @@ public class AuthController {
   /**
    * Completes TOTP enrollment: a valid 6-digit code (checked against the
    * stored secret) flips 2FA on for the caller. Wrong code → 400; no setup
-   * yet → 400.
+   * yet → 400. The response carries the account's 10 one-time recovery
+   * codes (backlog #91) — shown once, only their hashes are stored — for
+   * the user to save against losing their authenticator device.
    */
   @PostMapping("/2fa/enable")
-  public ResponseEntity<ApiResponse<Void>> enableTotp(
+  public ResponseEntity<ApiResponse<TotpEnableResponse>> enableTotp(
       @AuthenticationPrincipal Long userId, @Valid @RequestBody TotpCodeRequest request) {
-    auth.enableTotp(userId, request.code());
-    return ResponseEntity.ok(ApiResponse.ok(null));
+    return ResponseEntity.ok(
+        ApiResponse.ok(new TotpEnableResponse(auth.enableTotp(userId, request.code()))));
+  }
+
+  /**
+   * How many of the caller's recovery codes remain unused (backlog #91,
+   * authenticated). A count only — the codes themselves are never
+   * readable back after the enable response.
+   */
+  @GetMapping("/2fa/recovery-codes/count")
+  public ResponseEntity<ApiResponse<TotpRecoveryCodeCountResponse>> recoveryCodeCount(
+      @AuthenticationPrincipal Long userId) {
+    return ResponseEntity.ok(
+        ApiResponse.ok(new TotpRecoveryCodeCountResponse(auth.recoveryCodeCount(userId))));
   }
 
   /**
    * The second-factor exchange (public — the caller is not authenticated
-   * yet): the 202 challenge plus the current 6-digit code. On success the
-   * response is the normal token pair with the httpOnly refresh cookie,
-   * exactly like a finished login. Bad/expired challenge or wrong code →
-   * 401.
+   * yet): the 202 challenge plus the current 6-digit code — or a
+   * one-time recovery code (backlog #91), which the successful exchange
+   * consumes. On success the response is the normal token pair with the
+   * httpOnly refresh cookie, exactly like a finished login. Bad/expired
+   * challenge or wrong code → 401.
    */
   @PostMapping("/2fa/authenticate")
   public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
