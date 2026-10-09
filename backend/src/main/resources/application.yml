@@ -66,6 +66,17 @@ app:
     dir: ${APP_UPLOADS_DIR:./uploads}
     max-size: 5MB
   auth:
+    password-reset:
+      # Password-reset token lifetime (PasswordResetService, backlog #90):
+      # a reset token is a bearer credential for a full password change, so
+      # it is single-use and short-lived (30 min) — nothing like the 7 d
+      # refresh token. Tokens are 32 random bytes; only the SHA-256 hash is
+      # stored (V20), and the raw token leaves the server only through the
+      # PasswordResetMailSender seam (the default bean logs, token redacted,
+      # and delivers nothing — this project has no mail server). Both reset
+      # endpoints are rate-limited per IP (5/min, own bucket in
+      # AuthRateLimitFilter).
+      token-ttl: 30m
     totp:
       # TOTP secret encryption at rest (TotpSecretCipher, backlog #89):
       # Base64-encoded 256-bit AES key encrypting the TOTP shared secret

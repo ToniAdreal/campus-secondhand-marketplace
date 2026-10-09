@@ -31,10 +31,13 @@ public class AuthController {
   private static final String REFRESH_COOKIE = "refresh_token";
 
   private final AuthService auth;
+  private final PasswordResetService passwordReset;
   private final JwtProperties jwtProps;
 
-  public AuthController(AuthService auth, JwtProperties jwtProps) {
+  public AuthController(AuthService auth, PasswordResetService passwordReset,
+                        JwtProperties jwtProps) {
     this.auth = auth;
+    this.passwordReset = passwordReset;
     this.jwtProps = jwtProps;
   }
 
@@ -103,6 +106,35 @@ public class AuthController {
   public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
       @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {
     return ok(auth.authenticateTotp(request.challenge(), request.code(), SessionMeta.of(http)));
+  }
+
+  /**
+   * Starts a password reset (backlog #90, public like login): the answer
+   * is ALWAYS this identical 200 envelope, whether or not the identifier
+   * belongs to an account — no enumeration oracle. When the account
+   * exists, a single-use token (30 min, hash-only storage) is delivered
+   * through the mail seam; it never appears in any response.
+   */
+  @PostMapping("/password-reset")
+  public ResponseEntity<ApiResponse<Void>> requestPasswordReset(
+      @Valid @RequestBody PasswordResetRequest request) {
+    passwordReset.requestReset(request.usernameOrEmail());
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * Completes a password reset (backlog #90, public — the token IS the
+   * credential): consumes the token, applies the strength policy to the
+   * new password (weak → 400), bumps the user's token version and revokes
+   * every refresh family, so all pre-reset sessions die. Unknown, used or
+   * expired tokens → the identical 401. The SPA has no reset pages yet
+   * (documented follow-up); this is the API contract they will use.
+   */
+  @PostMapping("/password-reset/confirm")
+  public ResponseEntity<ApiResponse<Void>> confirmPasswordReset(
+      @Valid @RequestBody PasswordResetConfirmRequest request) {
+    passwordReset.confirmReset(request.token(), request.newPassword());
+    return ResponseEntity.ok(ApiResponse.ok(null));
   }
 
   @PostMapping("/refresh")

@@ -27,6 +27,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * credential bucket (legitimate multi-tab clients refresh routinely) nor
  * consume it.
  *
+ * <p>The password-reset endpoints ({@code POST /api/auth/password-reset}
+ * and {@code POST /api/auth/password-reset/confirm}, backlog #90) share a
+ * fourth, per-IP bucket (default 5/minute): the request endpoint is a
+ * mail-bombing surface and the confirm endpoint a token-guessing surface.
+ *
  * <p>{@code POST /api/messages} has a third, per-<em>user</em> bucket
  * (default 30 sends/minute). Keying on the JWT principal id instead of the
  * IP keeps one spammer from starving everyone behind the same NAT address,
@@ -58,7 +63,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <p>Runs just after {@link com.toni.marketplace.common.RequestIdFilter}
  * ({@code HIGHEST_PRECEDENCE + 1}) so a throttled {@code 429} still carries
  * the {@code X-Request-ID} echo, and still before any security processing.
- * Only POSTs to the four paths are inspected; everything else passes
+ * Only POSTs to the throttled paths are inspected; everything else passes
  * through untouched.
  *
  * <p>Honest trade-offs, both documented here so they stay deliberate:
@@ -82,23 +87,29 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String LOGIN_PATH = "/api/auth/login";
   private static final String REGISTER_PATH = "/api/auth/register";
   private static final String REFRESH_PATH = "/api/auth/refresh";
+  private static final String RESET_PATH = "/api/auth/password-reset";
+  private static final String RESET_CONFIRM_PATH = "/api/auth/password-reset/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
   private final AuthRateLimiter refreshLimiter;
   private final AuthRateLimiter messageLimiter;
+  private final AuthRateLimiter passwordResetLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
 
   public AuthRateLimitFilter(@Qualifier("credentialRateLimiter") AuthRateLimiter credentialLimiter,
                              @Qualifier("refreshRateLimiter") AuthRateLimiter refreshLimiter,
                              @Qualifier("messageRateLimiter") AuthRateLimiter messageLimiter,
+                             @Qualifier("passwordResetRateLimiter")
+                                 AuthRateLimiter passwordResetLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper) {
     this.credentialLimiter = credentialLimiter;
     this.refreshLimiter = refreshLimiter;
     this.messageLimiter = messageLimiter;
+    this.passwordResetLimiter = passwordResetLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
   }
@@ -111,6 +122,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     String path = pathOf(request);
     if (MESSAGE_PATH.equals(path)) {
       return !messageLimiter.isEnabled();
+    }
+    if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
+      return !passwordResetLimiter.isEnabled();
     }
     if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
       return !credentialLimiter.isEnabled();
@@ -126,6 +140,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {
         writeTooManyRequests(response, messageLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
+      // Password reset (backlog #90): both endpoints share one per-IP
+      // bucket — the request endpoint is a mail-bombing surface, the
+      // confirm endpoint a token-guessing surface. Never reset on
+      // success: a completed reset must not refill a guesser's budget.
+      String ip = clientIp(request);
+      if (!passwordResetLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, passwordResetLimiter.retryAfterSeconds(ip));
         return;
       }
       chain.doFilter(request, response);

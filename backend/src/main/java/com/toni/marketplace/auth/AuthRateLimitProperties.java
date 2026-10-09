@@ -84,4 +84,23 @@ public class AuthRateLimitProperties {
   public void setMessageAttemptsPerMinute(int messageAttemptsPerMinute) {
     this.messageAttemptsPerMinute = messageAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the password-reset endpoints (backlog #90):
+   * {@code POST /api/auth/password-reset} (a mail-bombing surface) and
+   * {@code POST /api/auth/password-reset/confirm} (a token-guessing
+   * surface) share this one bucket. Sized like the credential bucket
+   * (5/min): a legitimate user requests one reset and confirms once, so
+   * the ceiling only bites automation. Must be &ge; 1.
+   */
+  private int passwordResetAttemptsPerMinute = 5;
+
+  public int getPasswordResetAttemptsPerMinute() {
+    return passwordResetAttemptsPerMinute;
+  }
+
+  public void setPasswordResetAttemptsPerMinute(int passwordResetAttemptsPerMinute) {
+    this.passwordResetAttemptsPerMinute = passwordResetAttemptsPerMinute;
+  }
 }

@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class,
-    LoginLockoutProperties.class, TotpEncryptionProperties.class})
+    LoginLockoutProperties.class, TotpEncryptionProperties.class, PasswordResetProperties.class})
 public class AuthConfig {
 
   /**
@@ -64,6 +64,23 @@ public class AuthConfig {
     messageProps.setEnabled(props.isEnabled());
     messageProps.setAttemptsPerMinute(props.getMessageAttemptsPerMinute());
     return new AuthRateLimiter(clock, messageProps);
+  }
+
+  /**
+   * Separate token bucket for the password-reset endpoints (backlog #90):
+   * {@code POST /api/auth/password-reset} and
+   * {@code POST /api/auth/password-reset/confirm} share it (default
+   * 5/minute per client IP). The request endpoint is a mail-bombing
+   * surface and the confirm endpoint a token-guessing surface; neither
+   * may consume the credential bucket, and reset traffic must not be
+   * able to starve logins either.
+   */
+  @Bean
+  public AuthRateLimiter passwordResetRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties resetProps = new AuthRateLimitProperties();
+    resetProps.setEnabled(props.isEnabled());
+    resetProps.setAttemptsPerMinute(props.getPasswordResetAttemptsPerMinute());
+    return new AuthRateLimiter(clock, resetProps);
   }
 
   /**
