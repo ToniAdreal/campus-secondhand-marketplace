@@ -1,21 +1,27 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
+import React, { lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
-import CreateListingPage from './pages/CreateListingPage';
-import HomePage from './pages/HomePage';
-import ItemDetailPage from './pages/ItemDetailPage';
-import LoginPage from './pages/LoginPage';
-import MyOrdersPage from './pages/MyOrdersPage';
-import OrderConfirmationPage from './pages/OrderConfirmationPage';
-import SessionsPage from './pages/SessionsPage';
-import SettingsPage from './pages/SettingsPage';
-import SellerOrdersPage from './pages/SellerOrdersPage';
-import NotFoundPage from './pages/NotFoundPage';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
+
+// Route-level code splitting: every page is its own chunk, loaded on
+// first navigation to it. App, the query client and the auth store stay
+// eager — session restore (hydrate below) must not wait on a chunk.
+// App renders the single Suspense fallback around its outlet while a
+// page chunk resolves.
+const CreateListingPage = lazy(() => import('./pages/CreateListingPage'));
+const HomePage = lazy(() => import('./pages/HomePage'));
+const ItemDetailPage = lazy(() => import('./pages/ItemDetailPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const MyOrdersPage = lazy(() => import('./pages/MyOrdersPage'));
+const OrderConfirmationPage = lazy(() => import('./pages/OrderConfirmationPage'));
+const SessionsPage = lazy(() => import('./pages/SessionsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const SellerOrdersPage = lazy(() => import('./pages/SellerOrdersPage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 const router = createBrowserRouter([
   {

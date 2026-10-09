@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './store/useAuthStore';
@@ -61,9 +62,19 @@ export default function App() {
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6">
         {/* A crashed route renders the boundary's fallback inside the shell
-            instead of unmounting the whole tree into a blank page. */}
+            instead of unmounting the whole tree into a blank page. Routes
+            are lazy (see main.tsx), so the Suspense fallback covers the
+            brief window while a page chunk loads. */}
         <ErrorBoundary>
-          <Outlet />
+          <Suspense
+            fallback={
+              <p role="status" className="text-sm text-neutral-500">
+                Loading…
+              </p>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </ErrorBoundary>
       </main>
     </div>
