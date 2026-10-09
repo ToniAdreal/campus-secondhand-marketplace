@@ -11,6 +11,14 @@ import org.springframework.data.repository.query.Param;
 public interface ItemRepository extends JpaRepository<Item, Long> {
   List<Item> findByStatus(ItemStatus status);
 
+  /**
+   * Every non-null primary photo URL across all listings — the reference
+   * set the orphan-upload sweeper (backlog #103) checks disk files
+   * against. A plain column projection: no entities are materialized.
+   */
+  @Query("select i.photoUrl from Item i where i.photoUrl is not null")
+  List<String> findAllPhotoUrls();
+
   /** True when at least one listing references the category (via the item.category association). */
   boolean existsByCategoryId(Long categoryId);
 

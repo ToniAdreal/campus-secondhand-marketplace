@@ -4,8 +4,17 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 public interface ItemPhotoRepository extends JpaRepository<ItemPhoto, Long> {
+
+  /**
+   * Every gallery photo URL across all listings — the reference set the
+   * orphan-upload sweeper (backlog #103) checks disk files against. A
+   * plain column projection: no entities are materialized.
+   */
+  @Query("select p.url from ItemPhoto p")
+  List<String> findAllUrls();
 
   /** Gallery of one listing, display order (lowest position first). */
   List<ItemPhoto> findByItemIdOrderByPositionAsc(Long itemId);

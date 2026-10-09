@@ -122,7 +122,10 @@ common/      ApiResponse<T> {code, message, data} envelope,
 job/         DataRetentionService — the nightly @Scheduled sweep (retention
              via app.cleanup.*) that purges stale refresh_token, terminal
              idempotency_key and used-or-expired password_reset_token
-             rows. The only cross-domain package: it
+             rows; OrphanUploadSweeper — the nightly sweep that deletes
+             upload files no item/item_photo row references once they
+             outlive app.uploads.orphan-grace (default 24 h). The only
+             cross-domain package: it
              legitimately touches auth/ and order/ stores.
 audit/       AuditService — append-only trail (Flyway V22 audit_log:
              actor_user_id, action, target_type, target_id, created_at; no
@@ -238,6 +241,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Username/email case normalization (register + login)
 - [x] MySQL-profile fail-fast on the committed dev JWT secret
 - [x] Nightly purge of stale refresh tokens / terminal idempotency rows / used-or-expired password-reset tokens
+- [x] Nightly orphan-upload sweep (rollback orphans deleted after a 24 h grace window)
 - [x] Mock payment capture + full order lifecycle: cancel (buyer), complete (seller/ADMIN), refund (seller/ADMIN), PENDING-order expiry
 - [x] Buyer order reads + my-orders page; seller order reads (backend)
 - [x] Cancel-order + mark-SOLD buttons; buy-now + "Pay now (demo)" button

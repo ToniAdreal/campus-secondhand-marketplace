@@ -74,6 +74,11 @@ app:
     # Override with the APP_UPLOADS_DIR environment variable in production.
     dir: ${APP_UPLOADS_DIR:./uploads}
     max-size: 5MB
+    # Grace period for the nightly orphan-upload sweep (OrphanUploadSweeper,
+    # backlog #103): a file unreferenced by any item/photo row is deleted
+    # only once its mtime is older than this, so a just-written pre-commit
+    # file (stored before its transaction commits) is never swept.
+    orphan-grace: 24h
   auth:
     password-reset:
       # Password-reset token lifetime (PasswordResetService, backlog #90):

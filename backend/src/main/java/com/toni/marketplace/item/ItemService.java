@@ -399,9 +399,10 @@ public class ItemService {
    * removed after the URL has been replaced.
    *
    * <p>Note: the file is written to disk before the transaction commits, so
-   * a rollback after a successful write can leave an orphan file — accepted
-   * at this scale (a periodic cleanup keyed on DB rows would be the
-   * production follow-up).
+   * a rollback after a successful write can leave an orphan file — the
+   * nightly {@code OrphanUploadSweeper} (backlog #103) deletes files no
+   * row references once they outlive the {@code app.uploads.orphan-grace}
+   * window.
    */
   @Transactional
   public ItemDto attachPhoto(Long itemId, MultipartFile file) {
