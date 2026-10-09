@@ -66,6 +66,17 @@ app:
     dir: ${APP_UPLOADS_DIR:./uploads}
     max-size: 5MB
   auth:
+    totp:
+      # TOTP secret encryption at rest (TotpSecretCipher, backlog #89):
+      # Base64-encoded 256-bit AES key encrypting the TOTP shared secret
+      # before it is stored on app_user (v1:<iv>:<ciphertext> form).
+      # Dev-only placeholder for local H2 runs. On the `mysql` profile the
+      # app REFUSES to boot with this placeholder —
+      # TotpEncryptionKeyStartupCheck fails fast unless the
+      # APP_TOTP_ENCRYPTION_KEY environment variable is set. Rotating the
+      # key makes previously stored secrets undecryptable (users
+      # re-enroll in 2FA) — there is no key-version fallback by design.
+      encryption-key: ${APP_TOTP_ENCRYPTION_KEY:dPMyJmneAVMf3iVLfGxDnvt3/UU9XI6hjfNNpracjOM=}
     login-lockout:
       # Per-account login lockout (AuthService, backlog #60): the per-IP token
       # bucket stops single-source hammering, but not a distributed slow

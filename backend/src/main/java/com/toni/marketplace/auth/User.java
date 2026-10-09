@@ -60,13 +60,20 @@ public class User {
   private Instant lockedUntil;
 
   /**
-   * TOTP two-factor (backlog #78). Base32-encoded RFC 6238 shared secret
-   * (160 bits), set by POST /api/auth/2fa/setup; null until then.
-   * {@code totpEnabled} flips on only after POST /api/auth/2fa/enable
-   * verifies a code against the secret. Honest scope: the secret is stored
-   * as-is — encryption at rest is a declared follow-up.
+   * TOTP two-factor (backlog #78). RFC 6238 shared secret (160 bits),
+   * set by POST /api/auth/2fa/setup; null until then. {@code totpEnabled}
+   * flips on only after POST /api/auth/2fa/enable verifies a code against
+   * the secret.
+   *
+   * <p>Encryption at rest (backlog #89): the column holds the {@link
+   * TotpSecretCipher} {@code v1:} form (AES-256-GCM, random IV per row) —
+   * never the plaintext Base32 secret. Rows written before #89 may still
+   * hold plaintext Base32; {@code AuthService} resolves both forms and
+   * re-encrypts legacy rows on the next enable/authenticate. The column
+   * was widened 64 → 255 by Flyway V19 because the {@code v1:} form of a
+   * 32-char secret is 84 chars.
    */
-  @Column(name = "totp_secret", length = 64)
+  @Column(name = "totp_secret", length = 255)
   private String totpSecret;
 
   @Column(name = "totp_enabled", nullable = false)

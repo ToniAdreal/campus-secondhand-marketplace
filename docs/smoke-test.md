@@ -20,6 +20,17 @@ you forget):
 export APP_JWT_SECRET=$(openssl rand -base64 32)
 ```
 
+The same fail-fast applies to the TOTP secret encryption key (backlog #89):
+the backend will not boot on the `mysql` profile with the committed dev
+placeholder for `app.auth.totp.encryption-key` — `TotpEncryptionKeyStartupCheck`
+fails fast so TOTP secrets are never encrypted under a public key. Export a
+second, independent random key the same way (the compose file errors out early
+with a reminder if you forget):
+
+```bash
+export APP_TOTP_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
+
 ## Prerequisites
 
 - Docker Engine + Compose v2 (`docker compose`)

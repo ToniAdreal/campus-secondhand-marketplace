@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties({JwtProperties.class, AuthRateLimitProperties.class,
-    LoginLockoutProperties.class})
+    LoginLockoutProperties.class, TotpEncryptionProperties.class})
 public class AuthConfig {
 
   /**
@@ -64,6 +64,18 @@ public class AuthConfig {
     messageProps.setEnabled(props.isEnabled());
     messageProps.setAttemptsPerMinute(props.getMessageAttemptsPerMinute());
     return new AuthRateLimiter(clock, messageProps);
+  }
+
+  /**
+   * AES-256-GCM cipher for TOTP secrets at rest (backlog #89). Constructing
+   * it validates the configured key (Base64, exactly 32 bytes), so a
+   * malformed {@code APP_TOTP_ENCRYPTION_KEY} fails the boot on every
+   * profile; the committed dev placeholder is rejected on the mysql
+   * profile by {@link TotpEncryptionKeyStartupCheck}.
+   */
+  @Bean
+  public TotpSecretCipher totpSecretCipher(TotpEncryptionProperties props) {
+    return new TotpSecretCipher(props.getEncryptionKey());
   }
 
   @Bean

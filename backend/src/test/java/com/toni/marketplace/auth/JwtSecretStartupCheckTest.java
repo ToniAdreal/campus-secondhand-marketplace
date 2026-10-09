@@ -103,7 +103,11 @@ class JwtSecretStartupCheckTest {
     try (ConfigurableApplicationContext context =
         new SpringApplicationBuilder(MarketplaceApplication.class)
             .profiles("mysql")
-            .run(bootArgs("--app.jwt.secret=" + randomSecret()))) {
+            // A real TOTP encryption key too (backlog #89): the mysql
+            // profile also carries TotpEncryptionKeyStartupCheck, which
+            // would otherwise fail this boot on its placeholder.
+            .run(bootArgs("--app.jwt.secret=" + randomSecret(),
+                "--app.auth.totp.encryption-key=" + randomSecret()))) {
       assertThat(context.getBeansOfType(JwtSecretStartupCheck.class)).hasSize(1);
     }
   }

@@ -38,18 +38,20 @@ public class AuthService {
   private final PasswordService passwords;
   private final JwtTokenService jwt;
   private final TotpService totp;
+  private final TotpSecretCipher totpCipher;
   private final Clock clock;
   private final LoginLockoutProperties lockout;
   private final AuthMetrics metrics;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
-                     TotpService totp, Clock clock, LoginLockoutProperties lockout,
-                     AuthMetrics metrics) {
+                     TotpService totp, TotpSecretCipher totpCipher, Clock clock,
+                     LoginLockoutProperties lockout, AuthMetrics metrics) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
     this.totp = totp;
+    this.totpCipher = totpCipher;
     this.clock = clock;
     this.lockout = lockout;
     this.metrics = metrics;
@@ -58,7 +60,9 @@ public class AuthService {
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
                      TotpService totp, Clock clock, LoginLockoutProperties lockout) {
-    this(users, passwords, jwt, totp, clock, lockout, AuthMetrics.noop());
+    this(users, passwords, jwt, totp,
+        new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
+        clock, lockout, AuthMetrics.noop());
   }
 
   /** Registered user plus their first token pair. */
@@ -85,6 +89,32 @@ public class AuthService {
    */
   private AuthMetrics metrics() {
     return metrics != null ? metrics : AuthMetrics.noop();
+  }
+
+  /**
+   * Cipher accessor with a dev-placeholder fallback, same rationale as
+   * {@link #metrics()}: Mockito {@code @InjectMocks} in older unit tests
+   * may leave the field null (or a mock whose {@code encrypt} returns
+   * null). Falling back to the committed dev placeholder keeps those
+   * tests' TOTP paths functional; production always gets the configured
+   * cipher bean, and the mysql profile refuses the placeholder at
+   * startup (see {@link TotpEncryptionKeyStartupCheck}).
+   */
+  private TotpSecretCipher cipher() {
+    return totpCipher != null
+        ? totpCipher
+        : new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY);
+  }
+
+  /**
+   * Resolves a stored TOTP secret to its plaintext Base32 form (backlog
+   * #89): decrypts the {@code v1:} form, passes a legacy pre-#89 plaintext
+   * secret through. A tampered or undecryptable stored value is translated
+   * by the caller into the same failure as a wrong code — the decryption
+   * error itself never leaks into an API response.
+   */
+  private String resolveTotpSecret(String stored) {
+    return cipher().decryptOrLegacy(stored);
   }
 
   /** Shared secret plus provisioning URI returned by the 2FA setup step. */
@@ -226,12 +256,17 @@ public class AuthService {
    * the previous authenticator stops working until /enable is completed
    * again. The endpoint requires authentication (SecurityConfig), so only
    * the account holder (or someone holding their session) can enroll.
+   *
+   * <p>Encryption at rest (backlog #89): only the {@link TotpSecretCipher}
+   * {@code v1:} form reaches the database; the plaintext secret exists
+   * solely in this response (the one moment the user provisions their
+   * authenticator app).
    */
   @Transactional
   public TotpSetup setupTotp(long userId) {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String secret = totp.generateSecret();
-    user.setTotpSecret(secret);
+    user.setTotpSecret(cipher().encrypt(secret));
     user.setTotpEnabled(false);
     users.save(user);
     return new TotpSetup(secret, totp.otpauthUri("CampusMarketplace", user.getUsername(), secret));
@@ -242,18 +277,33 @@ public class AuthService {
    * stored secret, ±1 step of clock skew) flips {@code totpEnabled} on.
    * A wrong code → 400 {@link InvalidTotpCodeException}; no setup yet →
    * 400 as well (the message says which).
+   *
+   * <p>Backlog #89: the stored secret is resolved through {@link
+   * TotpSecretCipher#decryptOrLegacy} — a tampered stored value fails
+   * closed as the same 400 as a wrong code, and a legacy plaintext secret
+   * (written before #89) is re-encrypted in place on success.
    */
   @Transactional
   public void enableTotp(long userId, String code) {
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
-    String secret = user.getTotpSecret();
-    if (secret == null) {
+    String stored = user.getTotpSecret();
+    if (stored == null) {
       throw new InvalidTotpCodeException("run the 2fa setup step first");
+    }
+    final String secret;
+    try {
+      secret = resolveTotpSecret(stored);
+    } catch (TotpSecretCipher.DecryptionException e) {
+      throw new InvalidTotpCodeException("invalid two-factor code");
     }
     if (!totp.verify(secret, code)) {
       throw new InvalidTotpCodeException("invalid two-factor code");
     }
     user.setTotpEnabled(true);
+    if (!cipher().isEncrypted(stored)) {
+      // Legacy plaintext row: upgrade it to the encrypted form now.
+      user.setTotpSecret(cipher().encrypt(secret));
+    }
     users.save(user);
   }
 
@@ -275,10 +325,28 @@ public class AuthService {
   public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta) {
     long userId = jwt.parseTotpChallenge(challenge);
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
-    String secret = user.getTotpSecret();
-    if (user.isDisabled() || !user.isTotpEnabled() || secret == null
-        || !totp.verify(secret, code)) {
+    String stored = user.getTotpSecret();
+    if (user.isDisabled() || !user.isTotpEnabled() || stored == null) {
       throw new InvalidCredentialsException();
+    }
+    // Backlog #89: resolve the stored secret (decrypt v1:, pass legacy
+    // plaintext through). Tampered/undecryptable storage fails closed as
+    // the identical 401 — never an exception leak.
+    final String secret;
+    try {
+      secret = resolveTotpSecret(stored);
+    } catch (TotpSecretCipher.DecryptionException e) {
+      throw new InvalidCredentialsException();
+    }
+    if (!totp.verify(secret, code)) {
+      throw new InvalidCredentialsException();
+    }
+    if (!cipher().isEncrypted(stored)) {
+      // Legacy plaintext row (enabled before #89): re-encrypt in place on
+      // this successful authenticate, so plaintext secrets drain out of
+      // the table without waiting for a re-enrollment.
+      user.setTotpSecret(cipher().encrypt(secret));
+      users.save(user);
     }
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }

@@ -1,0 +1,16 @@
+-- V19 (MySQL): widen app_user.totp_secret 64 -> 255 (backlog #89).
+--
+-- Backlog #89 encrypts the TOTP shared secret at rest (AES-256-GCM via
+-- TotpSecretCipher, stored as v1:<base64 IV>:<base64 ciphertext+tag>).
+-- That form is 84 chars for the current 32-char Base32 secret, so V17's
+-- VARCHAR(64) is too short.
+--
+-- Vendor split: widening a column has no portable syntax — MySQL needs
+-- MODIFY COLUMN, H2 needs ALTER COLUMN — so this migration lives once
+-- per vendor under db/vendor/<id>/ (siblings of db/migration/, selected
+-- via the {vendor} placeholder in spring.flyway.locations, the same
+-- arrangement as V15's MySQL FULLTEXT index). Existing values are
+-- untouched: pre-#89 rows hold plain Base32 (<= 64 chars, still valid in
+-- the wider column) and are re-encrypted by the application on the next
+-- 2FA enable/authenticate.
+ALTER TABLE app_user MODIFY COLUMN totp_secret VARCHAR(255);

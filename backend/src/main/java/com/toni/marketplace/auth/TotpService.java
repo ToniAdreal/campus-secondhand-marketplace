@@ -16,10 +16,14 @@ import org.springframework.stereotype.Service;
  * (backlog #78). Pure JDK: HMAC-SHA1 from {@code javax.crypto}, Base32
  * (RFC 4648) implemented by hand so no new dependency is needed.
  *
- * <p>The shared secret is a 160-bit random value, stored Base32-encoded on
- * the {@code app_user} row (see V17 — encryption at rest is a declared
- * follow-up). Verification accepts the current 30 s window plus one step of
- * clock skew on either side; anything else fails closed.
+ * <p>The shared secret is a 160-bit random value, Base32-encoded for the
+ * otpauth URI and for verification here. At rest on the {@code app_user}
+ * row it is stored only in {@link TotpSecretCipher}'s AES-256-GCM {@code
+ * v1:} form (backlog #89; V19 widened the column) — this class always
+ * works on the plaintext form, which {@code AuthService} resolves from
+ * storage before calling {@link #verify}. Verification accepts the
+ * current 30 s window plus one step of clock skew on either side;
+ * anything else fails closed.
  *
  * <p>Code comparisons use {@link MessageDigest#isEqual} (constant time) so a
  * wrong code leaks nothing about how close it was.

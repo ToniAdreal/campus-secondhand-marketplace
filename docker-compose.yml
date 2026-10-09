@@ -31,6 +31,11 @@ services:
       # message if the operator forgets to export APP_JWT_SECRET first —
       # generate one with: export APP_JWT_SECRET=$(openssl rand -base64 32)
       APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET is required — export it before 'docker compose up' (see docs/smoke-test.md)}
+      # Same fail-fast pattern for the TOTP secret encryption key
+      # (TotpEncryptionKeyStartupCheck, backlog #89): the backend refuses
+      # to boot on the mysql profile with the committed dev placeholder —
+      # generate one with: export APP_TOTP_ENCRYPTION_KEY=$(openssl rand -base64 32)
+      APP_TOTP_ENCRYPTION_KEY: ${APP_TOTP_ENCRYPTION_KEY:?APP_TOTP_ENCRYPTION_KEY is required — export it before 'docker compose up' (see docs/smoke-test.md)}
       # Listing photos are served from app.uploads.dir; pin it to the
       # uploads-data volume mount below so the path does not depend on the
       # image's WORKDIR (./uploads would resolve to /app/uploads anyway).
