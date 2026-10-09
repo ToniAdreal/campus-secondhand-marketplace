@@ -9,6 +9,7 @@ import com.toni.marketplace.common.InvalidTokenException;
 import com.toni.marketplace.common.PaymentDeclinedException;
 import com.toni.marketplace.common.WeakPasswordException;
 import com.toni.marketplace.common.InvalidImageException;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -29,6 +30,22 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
     String msg = ex.getBindingResult().getFieldErrors().stream()
         .map(e -> e.getField() + ": " + e.getDefaultMessage())
+        .findFirst().orElse("validation failed");
+    return ResponseEntity.badRequest().body(ApiResponse.fail(400, msg));
+  }
+
+  /**
+   * Bean-validation failures on controller parameters (e.g.
+   * {@code @PositiveOrZero} on a query param, enforced via
+   * {@code @Validated}) surface as {@link ConstraintViolationException},
+   * not {@link MethodArgumentNotValidException} — answer the same 400
+   * envelope so query-param validation never leaks the default page.
+   */
+  @ExceptionHandler(ConstraintViolationException.class)
+  public ResponseEntity<ApiResponse<Void>> handleConstraintViolation(
+      ConstraintViolationException ex) {
+    String msg = ex.getConstraintViolations().stream()
+        .map(v -> v.getPropertyPath() + ": " + v.getMessage())
         .findFirst().orElse("validation failed");
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, msg));
   }

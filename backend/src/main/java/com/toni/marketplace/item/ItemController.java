@@ -2,6 +2,7 @@ package com.toni.marketplace.item;
 
 import com.toni.marketplace.common.ApiResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -17,8 +18,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.multipart.MultipartFile;
 
+@Validated
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(name = "items", description = "Listings")
 @RequestMapping("/api/items")
@@ -30,12 +33,23 @@ public class ItemController {
     this.itemService = itemService;
   }
 
+  /**
+   * Browse listings. Filters compose (category + keyword + inclusive
+   * price range in cents); {@code sort} is an allowlist — newest
+   * (default), price-asc, price-desc — anything else is 400, as are
+   * negative price bounds (@PositiveOrZero) and min &gt; max (checked in
+   * the service), all in the {code,message,data} envelope.
+   */
   @GetMapping
   public ApiResponse<Page<ItemDto>> list(
       @RequestParam(required = false) Long categoryId,
       @RequestParam(name = "q", required = false) String keyword,
+      @RequestParam(required = false) @PositiveOrZero Long minPriceCents,
+      @RequestParam(required = false) @PositiveOrZero Long maxPriceCents,
+      @RequestParam(required = false) String sort,
       @PageableDefault(size = 20) Pageable pageable) {
-    return ApiResponse.ok(itemService.listItems(pageable, categoryId, keyword));
+    return ApiResponse.ok(itemService.listItems(
+        pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort));
   }
 
   @GetMapping("/{id}")

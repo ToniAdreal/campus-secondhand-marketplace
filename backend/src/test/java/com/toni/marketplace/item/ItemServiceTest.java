@@ -78,7 +78,7 @@ class ItemServiceTest {
   void listItems_normalizesKeywordBeforeQuerying() {
     Pageable pageable = PageRequest.of(0, 20);
     Page<ItemDto> page = new PageImpl<>(java.util.List.of());
-    when(items.findListViewFiltered(eq(7L), eq("100\\%"), eq(pageable))).thenReturn(page);
+    when(items.findListViewFiltered(eq(7L), eq("100\\%"), eq(null), eq(null), any(Pageable.class))).thenReturn(page);
 
     Page<ItemDto> result = service.listItems(pageable, 7L, "  100% ");
 
@@ -86,19 +86,19 @@ class ItemServiceTest {
     // query for a non-empty page); an empty page keeps its content untouched.
     assertThat(result.getContent()).isEqualTo(page.getContent());
     assertThat(result.getTotalElements()).isEqualTo(page.getTotalElements());
-    verify(items).findListViewFiltered(7L, "100\\%", pageable);
+    verify(items).findListViewFiltered(eq(7L), eq("100\\%"), eq(null), eq(null), any(Pageable.class));
     verifyNoInteractions(itemPhotos);
   }
 
   @Test
   void listItems_blankKeyword_passesNull() {
     Pageable pageable = PageRequest.of(0, 20);
-    when(items.findListViewFiltered(null, null, pageable))
+    when(items.findListViewFiltered(eq(null), eq(null), eq(null), eq(null), any(Pageable.class)))
         .thenReturn(new PageImpl<>(java.util.List.of()));
 
     service.listItems(pageable, null, "   ");
 
-    verify(items).findListViewFiltered(null, null, pageable);
+    verify(items).findListViewFiltered(eq(null), eq(null), eq(null), eq(null), any(Pageable.class));
   }
 
   // --- listItems: MySQL full-text path (backlog #68) ---
@@ -123,7 +123,7 @@ class ItemServiceTest {
     // Repository returns ids in relevance order; the projection hydration
     // returns DTOs in arbitrary (IN-clause) order — the service must
     // re-apply relevance. The projected DTOs carry the seller username.
-    when(items.findIdsByFulltext(eq(7L), eq("bike"), any(Pageable.class)))
+    when(items.findIdsByFulltext(eq(7L), eq("bike"), eq(null), eq(null), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(2L, 1L), PageRequest.of(0, 20), 2));
     ItemDto bestDto = dto(2L, "Vintage road bike");
     ItemDto weakerDto = dto(1L, "Desk lamp");
@@ -134,8 +134,8 @@ class ItemServiceTest {
 
     // Unescaped, trimmed keyword goes to MATCH (natural-language mode has no
     // LIKE wildcards to escape); relevance order is preserved end to end.
-    verify(items).findIdsByFulltext(eq(7L), eq("bike"), any(Pageable.class));
-    verify(items, never()).findListViewFiltered(any(), any(), any());
+    verify(items).findIdsByFulltext(eq(7L), eq("bike"), eq(null), eq(null), any(Pageable.class));
+    verify(items, never()).findListViewFiltered(any(), any(), any(), any(), any());
     assertThat(result.getContent()).containsExactly(bestDto, weakerDto);
     assertThat(result.getTotalElements()).isEqualTo(2);
   }
@@ -144,13 +144,13 @@ class ItemServiceTest {
   void listItems_mysql_blankKeyword_staysOnLikePath() throws Exception {
     stubDatabaseProduct("MySQL");
     Pageable pageable = PageRequest.of(0, 20);
-    when(items.findListViewFiltered(null, null, pageable))
+    when(items.findListViewFiltered(eq(null), eq(null), eq(null), eq(null), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of()));
 
     service.listItems(pageable, null, "   ");
 
-    verify(items).findListViewFiltered(null, null, pageable);
-    verify(items, never()).findIdsByFulltext(any(), any(), any());
+    verify(items).findListViewFiltered(eq(null), eq(null), eq(null), eq(null), any(Pageable.class));
+    verify(items, never()).findIdsByFulltext(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -158,12 +158,71 @@ class ItemServiceTest {
     when(dataSource.getConnection()).thenThrow(new SQLException("pool down"));
     Pageable pageable = PageRequest.of(0, 20);
     Page<ItemDto> page = new PageImpl<>(List.of());
-    when(items.findListViewFiltered(eq(7L), eq("bike"), eq(pageable))).thenReturn(page);
+    when(items.findListViewFiltered(eq(7L), eq("bike"), eq(null), eq(null), any(Pageable.class))).thenReturn(page);
 
     assertThat(service.listItems(pageable, 7L, "bike").getContent())
         .isEqualTo(page.getContent());
-    verify(items, never()).findIdsByFulltext(any(), any(), any());
+    verify(items, never()).findIdsByFulltext(any(), any(), any(), any(), any());
     verifyNoInteractions(itemPhotos);
+  }
+
+
+  // --- listItems: price range + sort (backlog #96) ---
+
+  @Test
+  void listItems_mysql_fulltextReceivesPricePredicate() throws Exception {
+    stubDatabaseProduct("MySQL");
+    Pageable pageable = PageRequest.of(0, 20);
+    when(items.findIdsByFulltext(eq(null), eq("bike"), eq(500L), eq(5000L), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+    service.listItems(pageable, null, "bike", 500L, 5000L, null);
+
+    verify(items).findIdsByFulltext(eq(null), eq("bike"), eq(500L), eq(5000L),
+        any(Pageable.class));
+  }
+
+  @Test
+  void listItems_mysql_priceAscUsesPriceOrderedFulltextQuery() throws Exception {
+    stubDatabaseProduct("MySQL");
+    Pageable pageable = PageRequest.of(0, 20);
+    when(items.findIdsByFulltextPriceAsc(eq(null), eq("bike"), eq(null), eq(null),
+        any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+    service.listItems(pageable, null, "bike", null, null, "price-asc");
+
+    verify(items).findIdsByFulltextPriceAsc(eq(null), eq("bike"), eq(null), eq(null),
+        any(Pageable.class));
+    verify(items, never()).findIdsByFulltext(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void listItems_minAboveMax_rejectedBeforeQuerying() {
+    assertThatThrownBy(() -> service.listItems(PageRequest.of(0, 20), null, null,
+        5000L, 500L, null))
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(ex -> ((ResponseStatusException) ex).getStatusCode().value())
+        .isEqualTo(400);
+    verifyNoInteractions(items);
+  }
+
+  @Test
+  void listItems_unknownSort_rejectedBeforeQuerying() {
+    assertThatThrownBy(() -> service.listItems(PageRequest.of(0, 20), null, null,
+        null, null, "priceCents;drop"))
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(ex -> ((ResponseStatusException) ex).getStatusCode().value())
+        .isEqualTo(400);
+    verifyNoInteractions(items);
+  }
+
+  @Test
+  void validatePriceRangeAndSort_canonicalizes() {
+    assertThat(ItemService.validatePriceRangeAndSort(null, null, null)).isEqualTo("newest");
+    assertThat(ItemService.validatePriceRangeAndSort(0L, 0L, "price-asc")).isEqualTo("price-asc");
+    assertThat(ItemService.sortFor("price-asc").toString()).contains("priceCents");
+    assertThat(ItemService.sortFor("newest").toString()).contains("createdAt");
   }
 
   // --- getItem ---

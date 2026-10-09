@@ -69,6 +69,29 @@ describe('useItems request params', () => {
     expect(getSpy).toHaveBeenCalledWith('/items', { params: { page: 0, size: 20 } });
   });
 
+  it('sends price bounds and a non-default sort, omitting the default sort', async () => {
+    getSpy.mockResolvedValue(envelopePage());
+
+    const { result } = renderHook(
+      () => useItems(0, '', null, { minPriceCents: 500, maxPriceCents: 5000, sort: 'price-asc' }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/items', {
+      params: { page: 0, size: 20, minPriceCents: 500, maxPriceCents: 5000, sort: 'price-asc' },
+    });
+  });
+
+  it('omits sort=newest (the backend default) from the request', async () => {
+    getSpy.mockResolvedValue(envelopePage());
+
+    const { result } = renderHook(() => useItems(0, '', null, { sort: 'newest' }), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/items', { params: { page: 0, size: 20 } });
+  });
+
   it('keys the cache by category so filtered and unfiltered lists never collide', () => {
     expect(itemKeys.list(0, '')).not.toEqual(itemKeys.list(0, '', 2));
     expect(itemKeys.list(0, 'bike', 2)).not.toEqual(itemKeys.list(0, 'bike'));

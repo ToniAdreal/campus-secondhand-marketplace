@@ -29,16 +29,37 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+export interface ItemListFilters {
+  minPriceCents?: number | null;
+  maxPriceCents?: number | null;
+  /** Allowlisted backend sort: 'newest' | 'price-asc' | 'price-desc'. */
+  sort?: string | null;
+}
+
 export const itemKeys = {
   all: ['items'] as const,
-  list: (page: number, q?: string, categoryId?: number | null) =>
-    [...itemKeys.all, 'list', page, q ?? '', categoryId ?? null] as const,
+  list: (page: number, q?: string, categoryId?: number | null, filters?: ItemListFilters) =>
+    [
+      ...itemKeys.all,
+      'list',
+      page,
+      q ?? '',
+      categoryId ?? null,
+      filters?.minPriceCents ?? null,
+      filters?.maxPriceCents ?? null,
+      filters?.sort ?? null,
+    ] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
 };
 
-export function useItems(page = 0, q = '', categoryId?: number | null) {
+export function useItems(
+  page = 0,
+  q = '',
+  categoryId?: number | null,
+  filters?: ItemListFilters,
+) {
   return useQuery({
-    queryKey: itemKeys.list(page, q, categoryId),
+    queryKey: itemKeys.list(page, q, categoryId, filters),
     queryFn: () =>
       api
         .get<ApiResponse<Page<Item>>>('/items', {
@@ -47,6 +68,15 @@ export function useItems(page = 0, q = '', categoryId?: number | null) {
             size: 20,
             ...(q.trim() !== '' ? { q: q.trim() } : {}),
             ...(categoryId != null ? { categoryId } : {}),
+            ...(filters?.minPriceCents != null
+              ? { minPriceCents: filters.minPriceCents }
+              : {}),
+            ...(filters?.maxPriceCents != null
+              ? { maxPriceCents: filters.maxPriceCents }
+              : {}),
+            ...(filters?.sort != null && filters.sort !== '' && filters.sort !== 'newest'
+              ? { sort: filters.sort }
+              : {}),
           },
         })
         .then((res) => res.data.data),

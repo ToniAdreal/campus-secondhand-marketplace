@@ -4,11 +4,21 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import HomePage from './HomePage';
 import type { Page, Item } from '../api/items';
 
-const calls: Array<{ page: number; q: string; categoryId: number | null }> = [];
+const calls: Array<{
+  page: number;
+  q: string;
+  categoryId: number | null;
+  filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null };
+}> = [];
 
 vi.mock('../api/items', () => ({
-  useItems: (page: number, q = '', categoryId: number | null = null) => {
-    calls.push({ page, q, categoryId });
+  useItems: (
+    page: number,
+    q = '',
+    categoryId: number | null = null,
+    filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null },
+  ) => {
+    calls.push({ page, q, categoryId, filters });
     const emptyPage: Page<Item> = { content: [], totalElements: 0, totalPages: 0, number: page };
     return { data: emptyPage, isLoading: false, isError: false };
   },
@@ -181,5 +191,75 @@ describe('HomePage category filter', () => {
 
     expect(currentSearch).toBe('?q=lamp&categoryId=2');
     expect(calls[calls.length - 1]).toMatchObject({ q: 'lamp', categoryId: 2 });
+  });
+});
+
+describe('HomePage price range + sort', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls.length = 0;
+    currentSearch = '';
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('hydrates price bounds and sort from the URL (refresh-safe, shareable)', () => {
+    renderHome('/?minPrice=10&maxPrice=50&sort=price-asc');
+
+    expect((screen.getByLabelText(/minimum price/i) as HTMLInputElement).value).toBe('10');
+    expect((screen.getByLabelText(/maximum price/i) as HTMLInputElement).value).toBe('50');
+    expect((screen.getByLabelText(/sort listings/i) as HTMLSelectElement).value).toBe('price-asc');
+    expect(calls[calls.length - 1].filters).toMatchObject({
+      minPriceCents: 1000,
+      maxPriceCents: 5000,
+      sort: 'price-asc',
+    });
+  });
+
+  it('debounces typed prices into the URL as yuan and the request as cents', () => {
+    renderHome('/');
+    fireEvent.change(screen.getByLabelText(/minimum price/i), { target: { value: '25' } });
+
+    expect(currentSearch).toBe('');
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(currentSearch).toBe('?minPrice=25');
+    expect(calls[calls.length - 1].filters).toMatchObject({ minPriceCents: 2500 });
+  });
+
+  it('selecting a sort syncs the URL immediately; newest clears the param', () => {
+    renderHome('/');
+    const select = screen.getByLabelText(/sort listings/i);
+
+    fireEvent.change(select, { target: { value: 'price-desc' } });
+    expect(currentSearch).toBe('?sort=price-desc');
+    expect(calls[calls.length - 1].filters).toMatchObject({ sort: 'price-desc' });
+
+    fireEvent.change(select, { target: { value: '' } });
+    expect(currentSearch).toBe('');
+    expect(calls[calls.length - 1].filters).toMatchObject({ sort: 'newest' });
+  });
+
+  it('combines q + category + price + sort in URL and request', () => {
+    renderHome('/?q=bike&categoryId=2&minPrice=10&sort=price-asc');
+
+    expect(currentSearch).toBe('?q=bike&categoryId=2&minPrice=10&sort=price-asc');
+    expect(calls[calls.length - 1]).toMatchObject({ q: 'bike', categoryId: 2 });
+    expect(calls[calls.length - 1].filters).toMatchObject({
+      minPriceCents: 1000,
+      sort: 'price-asc',
+    });
+  });
+
+  it('treats a non-numeric price in the URL as no bound instead of sending NaN', () => {
+    renderHome('/?minPrice=abc');
+
+    expect(calls[calls.length - 1].filters).toMatchObject({ minPriceCents: null });
   });
 });

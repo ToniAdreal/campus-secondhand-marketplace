@@ -51,7 +51,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   Page<ItemDto> findListViewByCategoryId(@Param("categoryId") Long categoryId, Pageable pageable);
 
   /**
-   * Combined category + keyword list view, same constructor projection as
+   * Combined category + keyword + price-range list view, same constructor projection as
    * {@link #findListView} (single SELECT, no N+1). Both parameters are
    * optional: a null {@code categoryId} matches every category and a null
    * {@code keyword} disables the text filter. The keyword is matched
@@ -66,16 +66,22 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId "
           + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
           + "and (:keyword is null "
           + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
           + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')",
       countQuery = "select count(i) from Item i "
           + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
           + "and (:keyword is null "
           + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
           + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')")
   Page<ItemDto> findListViewFiltered(@Param("categoryId") Long categoryId,
                                     @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
                                     Pageable pageable);
 
   /**
@@ -134,15 +140,65 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select i.id from item i "
           + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
           + "and match(i.title, i.description) against (:keyword in natural language mode) "
           + "order by match(i.title, i.description) against (:keyword in natural language mode) desc, "
           + "i.id desc",
       countQuery = "select count(*) from item i "
           + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
           + "and match(i.title, i.description) against (:keyword in natural language mode)",
       nativeQuery = true)
   Page<Long> findIdsByFulltext(@Param("categoryId") Long categoryId,
                                @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
+                               Pageable pageable);
+
+  /**
+   * Price-ascending variant of {@link #findIdsByFulltext}: an explicit
+   * price sort replaces relevance ordering (the caller asked for cheapest
+   * first, not best match first); the price-range predicate is identical.
+   */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by i.price_cents asc, i.id asc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltextPriceAsc(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
+                               Pageable pageable);
+
+  /** Price-descending variant of {@link #findIdsByFulltext}. */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by i.price_cents desc, i.id desc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltextPriceDesc(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
                                Pageable pageable);
 
 }

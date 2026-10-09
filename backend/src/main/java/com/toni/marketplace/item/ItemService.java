@@ -18,6 +18,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,12 +81,70 @@ public class ItemService {
    */
   @Transactional(readOnly = true)
   public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword) {
+    return listItems(pageable, categoryId, keyword, null, null, null);
+  }
+
+  /**
+   * List view with price-range filtering and an allowlisted sort
+   * (backlog #96). {@code minPriceCents}/{@code maxPriceCents} are
+   * inclusive bounds (null = unbounded); a negative bound, a min above
+   * the max, or a sort outside {newest, price-asc, price-desc} is 400 in
+   * the envelope — the sort is resolved to a fixed {@link Sort} here,
+   * never passed through as a raw property name, so a caller cannot
+   * inject an arbitrary ORDER BY. On the MySQL full-text path the price
+   * predicate joins the native query and an explicit price sort replaces
+   * relevance ordering; the default (newest) keeps relevance ordering
+   * there, as before.
+   */
+  @Transactional(readOnly = true)
+  public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort) {
+    String canonicalSort = validatePriceRangeAndSort(minPriceCents, maxPriceCents, sort);
     if (isMySql() && keyword != null && !keyword.isBlank()) {
-      return searchFulltext(pageable, categoryId, keyword.trim());
+      return searchFulltext(pageable, categoryId, keyword.trim(),
+          minPriceCents, maxPriceCents, canonicalSort);
     }
-    Page<ItemDto> page =
-        items.findListViewFiltered(categoryId, normalizeKeyword(keyword), pageable);
-    return new PageImpl<>(withPhotos(page.getContent()), pageable, page.getTotalElements());
+    Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+        sortFor(canonicalSort));
+    Page<ItemDto> page = items.findListViewFiltered(categoryId, normalizeKeyword(keyword),
+        minPriceCents, maxPriceCents, sorted);
+    return new PageImpl<>(withPhotos(page.getContent()), sorted, page.getTotalElements());
+  }
+
+  /**
+   * Validates the price range and resolves the sort allowlist, returning
+   * the canonical sort name. Shared by both search paths so validation
+   * behaves identically on H2 and MySQL.
+   */
+  static String validatePriceRangeAndSort(Long minPriceCents, Long maxPriceCents, String sort) {
+    if (minPriceCents != null && minPriceCents < 0) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "minPriceCents must be >= 0");
+    }
+    if (maxPriceCents != null && maxPriceCents < 0) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "maxPriceCents must be >= 0");
+    }
+    if (minPriceCents != null && maxPriceCents != null && minPriceCents > maxPriceCents) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "minPriceCents must not exceed maxPriceCents");
+    }
+    if (sort == null || sort.isBlank() || sort.equals("newest")) {
+      return "newest";
+    }
+    if (sort.equals("price-asc") || sort.equals("price-desc")) {
+      return sort;
+    }
+    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown sort: " + sort);
+  }
+
+  /** Maps a canonical sort name to a fixed {@link Sort} (never user input). */
+  static Sort sortFor(String canonicalSort) {
+    return switch (canonicalSort) {
+      case "price-asc" -> Sort.by(Sort.Order.asc("priceCents"), Sort.Order.asc("id"));
+      case "price-desc" -> Sort.by(Sort.Order.desc("priceCents"), Sort.Order.desc("id"));
+      default -> Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+    };
   }
 
   /**
@@ -148,9 +207,18 @@ public class ItemService {
    * preserve it. The unescaped keyword is passed to {@code MATCH}: unlike
    * LIKE, natural-language mode has no wildcard characters to escape.
    */
-  private Page<ItemDto> searchFulltext(Pageable pageable, Long categoryId, String keyword) {
+  private Page<ItemDto> searchFulltext(Pageable pageable, Long categoryId, String keyword,
+                                       Long minPriceCents, Long maxPriceCents,
+                                       String canonicalSort) {
     Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
-    Page<Long> ids = items.findIdsByFulltext(categoryId, keyword, unsorted);
+    Page<Long> ids = switch (canonicalSort) {
+      case "price-asc" -> items.findIdsByFulltextPriceAsc(
+          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+      case "price-desc" -> items.findIdsByFulltextPriceDesc(
+          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+      default -> items.findIdsByFulltext(
+          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+    };
     if (ids.isEmpty()) {
       return new PageImpl<>(List.of(), pageable, ids.getTotalElements());
     }
