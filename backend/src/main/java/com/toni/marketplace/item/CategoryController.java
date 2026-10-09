@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  * seller's dropdown, so they are not a self-service operation.
  */
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name = "categories", description = "Listing categories")
 @RequestMapping("/api/categories")
 class CategoryController {
 

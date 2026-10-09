@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name = "orders", description = "Buyer orders and the mock-PSP payment lifecycle")
 @RequestMapping("/api/orders")
 public class OrderController {
 
@@ -63,6 +64,7 @@ public class OrderController {
    * different item is rejected 422. A missing header is answered 400 by
    * {@code GlobalExceptionHandler#handleMissingHeader}.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "missing Idempotency-Key header or validation failure (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "the item already has an active order, or a version conflict (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "the Idempotency-Key was already used with a different item (envelope)")})
   @PostMapping
   public ApiResponse<OrderDto> create(
       @RequestHeader("Idempotency-Key") String idempotencyKey,
@@ -78,6 +80,7 @@ public class OrderController {
    * cancel (403 otherwise); already-PAID or otherwise terminal orders are
    * rejected 422 (a re-cancel of an already-CANCELLED order is idempotent).
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PENDING (envelope)")})
   @PostMapping("/{id}/cancel")
   public ApiResponse<OrderDto> cancel(@PathVariable Long id) {
     Long buyerId =
@@ -94,6 +97,7 @@ public class OrderController {
    * declines the mock capture → 402, the order stays PENDING, and a retry
    * with any other token (or no body) can still succeed (backlog #92).
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "402", description = "mock PSP declined the capture — order stays PENDING, retry may succeed (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)")})
   @PostMapping("/{id}/pay")
   public ApiResponse<OrderDto> pay(
       @PathVariable Long id, @RequestBody(required = false) PayRequest request) {
@@ -111,6 +115,7 @@ public class OrderController {
    * flips RESERVED → SOLD in the same transaction, and a {@code @Version}
    * conflict surfaces as 409.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
   @PostMapping("/{id}/complete")
   public ApiResponse<OrderDto> complete(@PathVariable Long id) {
     Authentication authentication =
@@ -130,6 +135,7 @@ public class OrderController {
    * RESERVED → AVAILABLE in the same transaction, and a {@code @Version}
    * conflict surfaces as 409.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
   @PostMapping("/{id}/refund")
   public ApiResponse<OrderDto> refund(@PathVariable Long id) {
     Authentication authentication =

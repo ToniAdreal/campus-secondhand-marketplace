@@ -1,3 +1,12 @@
+springdoc:
+  # OpenAPI contract (backlog #95): /v3/api-docs (JSON) + /swagger-ui.html.
+  # Both are behind Bearer authentication in SecurityConfig — the route map
+  # is not public information for this demo's threat model.
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
 spring:
   datasource:
     # Local dev default: in-memory H2 (MySQL compatibility mode), migrated by Flyway.

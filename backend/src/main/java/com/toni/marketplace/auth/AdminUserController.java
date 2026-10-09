@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  * {@link AuthService#disableUser}.
  */
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name = "admin", description = "ADMIN user administration")
 @RequestMapping("/api/admin/users")
 @PreAuthorize("hasRole('ADMIN')")
 class AdminUserController {

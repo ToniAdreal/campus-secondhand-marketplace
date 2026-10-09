@@ -192,6 +192,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - `cd backend && mvn verify -Pintegration` — Testcontainers integration tests against real
   MySQL 8. Requires Docker; runs in GitHub Actions on every push.
 - `cd frontend && npm test` — Vitest + React Testing Library.
+- API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
+  `/swagger-ui.html` — both require a Bearer access token (same rule as
+  `/actuator/metrics`; the route map is not public in this demo's threat
+  model). Honest scope: the contract is generated from the controllers by
+  springdoc; response codes springdoc cannot infer (402/409/422/423/202)
+  are annotated by hand and pinned by `OpenApiContractTest`.
 
 ## Roadmap (from the original project)
 
@@ -226,6 +232,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] My-sessions page (/settings/sessions — per-session device list + revoke-one; revoking the current session confirms first, then signs this tab out)
 - [x] Seller complete/refund buttons on the seller orders page (PAID rows only; refund confirms first; 422 → friendly copy)
 - [x] X-Request-ID correlation filter (echo + MDC, JVM-local)
+- [x] OpenAPI contract via springdoc — `/v3/api-docs` + Swagger UI (both behind Bearer auth, like `/actuator/metrics`; the {code,message,data} envelope and the non-inferrable codes — login 202/423, pay 402/409, transitions 422 — are annotated on the controllers)
 - [x] Prometheus metrics export on /actuator/prometheus (behind auth)
 - [x] Auth security counters (login success/failure, lockout triggered, refresh theft detected, password changed) on /actuator/prometheus
 - [x] Order/payment counters (created, paid, cancelled, completed, refunded, expired — transitions only, idempotent replays excluded) on /actuator/prometheus

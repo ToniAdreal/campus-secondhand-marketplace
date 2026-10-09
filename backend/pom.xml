@@ -22,6 +22,7 @@
     <jjwt.version>0.12.6</jjwt.version>
     <mapstruct.version>1.5.5.Final</mapstruct.version>
     <testcontainers.version>1.19.7</testcontainers.version>
+    <springdoc.version>2.5.0</springdoc.version>
     <jacoco.version>0.8.12</jacoco.version>
   </properties>
 
@@ -51,6 +52,13 @@
            Version comes from the spring-boot-starter-parent BOM. -->
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <dependency>
+      <!-- OpenAPI contract (backlog #95): generates /v3/api-docs + Swagger UI
+           from the controllers. Version pinned for Spring Boot 3.2.5. -->
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>${springdoc.version}</version>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>
@@ -176,6 +184,7 @@
                 <exclude>com/toni/marketplace/auth/AuthConfig.class</exclude>
                 <exclude>com/toni/marketplace/auth/SecurityConfig.class</exclude>
                 <exclude>com/toni/marketplace/common/UploadWebConfig.class</exclude>
+                    <exclude>com/toni/marketplace/common/OpenApiConfig.class</exclude>
               </excludes>
             </configuration>
           </execution>
@@ -195,6 +204,7 @@
                     <exclude>com.toni.marketplace.auth.AuthConfig</exclude>
                     <exclude>com.toni.marketplace.auth.SecurityConfig</exclude>
                     <exclude>com.toni.marketplace.common.UploadWebConfig</exclude>
+                    <exclude>com.toni.marketplace.common.OpenApiConfig</exclude>
                   </excludes>
                   <limits>
                     <limit>

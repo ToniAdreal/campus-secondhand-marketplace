@@ -191,6 +191,10 @@ public class SecurityConfig {
             // health/info matchers come first.
             .requestMatchers("/actuator/health", "/actuator/info").permitAll()
             .requestMatchers("/actuator/**").authenticated()
+            // OpenAPI docs (backlog #95): same rule as actuator metrics —
+            // authenticated, not public; the route map is not public
+            // information for this demo's threat model.
+            .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").authenticated()
             .anyRequest().authenticated())
         .exceptionHandling(eh -> eh
             .authenticationEntryPoint(entryPoint)

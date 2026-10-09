@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * {@link OrderService#getSellerOrderFor} / {@link OrderService#listSellerOrders}.
  */
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name = "seller-orders", description = "Orders on the caller's listings")
 @RequestMapping("/api/seller/orders")
 public class SellerOrderController {
 

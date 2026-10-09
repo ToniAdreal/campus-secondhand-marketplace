@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  * JavaScript cannot exfiltrate it; the access token goes to the SPA in memory.
  */
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name = "auth", description = "Authentication, sessions and 2FA")
 @RequestMapping("/api/auth")
 public class AuthController {
 
@@ -41,6 +42,7 @@ public class AuthController {
     this.jwtProps = jwtProps;
   }
 
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure or weak password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username or email already taken (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/register")
   public ResponseEntity<ApiResponse<AuthResponse>> register(
       @Valid @RequestBody RegisterRequest request, HttpServletRequest http) {
@@ -55,6 +57,7 @@ public class AuthController {
    * exchanges — with the 6-digit code — at {@code POST
    * /api/auth/2fa/authenticate}.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "TOTP enabled: exchange the signed challenge at /api/auth/2fa/authenticate"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/login")
   public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest http) {
