@@ -369,6 +369,10 @@ public class OrderService {
       // commit, outside this try/catch, and the caller would see a 500.
       orders.flush();
       metrics().cancelled();
+      // Backlog #122: audit after the flush, inside this transaction — a
+      // version conflict (409) or any later rollback writes no row, and
+      // the idempotent re-cancel above returns before this point.
+      audit().record(buyerId, AuditAction.ORDER_CANCELLED, AuditTargetType.ORDER, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -400,6 +404,11 @@ public class OrderService {
    *       catches per row and treats as "the concurrent transition won" —
    *       skipped, no retry, no crash loop.</li>
    * </ul>
+   *
+   * <p>Deliberately NO audit row (backlog #122): expiry is a system
+   * transition with no actor, and stamping the buyer as the actor of an
+   * {@code ORDER_CANCELLED} row would falsify the trail. Buyer cancels via
+   * {@link #cancel(Long, Long)} are audited; expiries are not.
    *
    * @return {@code true} when the order was expired by this call,
    *         {@code false} when it was already non-PENDING or not stale.
@@ -517,6 +526,11 @@ public class OrderService {
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
       metrics().paid();
+      // Backlog #122: audit after the flush, inside this transaction — a
+      // version conflict (409) or any later rollback writes no row, the
+      // idempotent re-pay above returns before this point, and a declined
+      // capture throws before reaching it (and rolls back besides).
+      audit().record(buyerId, AuditAction.ORDER_PAID, AuditTargetType.ORDER, orderId);
       return dto;
     } catch (PaymentDeclinedException e) {
       // Backlog #115: count the decline at exactly this point. The

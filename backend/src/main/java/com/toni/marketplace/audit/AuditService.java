@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code TOTP_ENABLED} and {@code TOTP_DISABLED} (backlog #121) from
  * {@code AuthService}, {@code USER_DISABLED}
  * / {@code USER_ENABLED} from the ADMIN endpoints (#88), and
+ * {@code ORDER_PAID} / {@code ORDER_CANCELLED} (backlog #122) and
  * {@code ORDER_COMPLETED} / {@code ORDER_REFUNDED} from
  * {@code OrderService}, and {@code PASSWORD_RESET_COMPLETED} from
  * {@code PasswordResetService} (backlog #110 — attribution decision:
@@ -24,6 +25,12 @@ import org.springframework.transaction.annotation.Transactional;
  * reset path, distinct from the authenticated {@code PASSWORD_CHANGED}).
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}.
+ *
+ * <p>Deliberately NOT covered (backlog #122): stale-order expiry
+ * ({@code OrderService.expireStaleOrder}). Expiry is a system transition
+ * with no actor — stamping the buyer as the actor of an
+ * {@code ORDER_CANCELLED} row for an expiry would falsify the trail, so
+ * expiries write no row at all.
  *
  * <p>Transaction contract: {@link #record} carries no {@code @Transactional}
  * of its own, so the repository save joins the caller's transaction — an
