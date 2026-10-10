@@ -24,6 +24,16 @@ function readAuth(config: any): string | undefined {
   return typeof h?.get === 'function' ? h.get('Authorization') : h?.Authorization;
 }
 
+function readRequestId(config: any): string | undefined {
+  const h = config.headers;
+  return typeof h?.get === 'function'
+    ? h.get('X-Request-ID')
+    : h?.['X-Request-ID'] ?? h?.['x-request-id'];
+}
+
+const UUID_SHAPE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 describe('api client', () => {
   beforeEach(() => {
     setAccessToken(null);
@@ -130,6 +140,69 @@ describe('api client', () => {
     await expect(api.get('/items')).rejects.toThrow('forbidden');
     expect(refreshCalls).toBe(0);
     expect(getAccessToken()).toBe('tok-123'); // token left alone
+  });
+
+  it('stamps a UUID-shaped X-Request-ID on a plain request (backlog #126)', async () => {
+    let seen: string | undefined;
+    installAdapter(async (config) => {
+      seen = readRequestId(config);
+      return ok(config);
+    });
+
+    await api.get('/items');
+    expect(seen).toMatch(UUID_SHAPE);
+  });
+
+  it('gives two separate calls distinct X-Request-IDs (backlog #126)', async () => {
+    const seen: (string | undefined)[] = [];
+    installAdapter(async (config) => {
+      seen.push(readRequestId(config));
+      return ok(config);
+    });
+
+    await api.get('/items');
+    await api.get('/items');
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatch(UUID_SHAPE);
+    expect(seen[1]).toMatch(UUID_SHAPE);
+    expect(seen[0]).not.toBe(seen[1]);
+  });
+
+  it('reuses the same X-Request-ID on the 401-refresh retry (backlog #126)', async () => {
+    setAccessToken('expired-token');
+    const itemRequestIds: (string | undefined)[] = [];
+    installAdapter(async (config) => {
+      if (config.url?.includes('/auth/refresh')) {
+        return ok(config, { data: { accessToken: 'fresh-456' } });
+      }
+      itemRequestIds.push(readRequestId(config));
+      if (readAuth(config) !== 'Bearer fresh-456') {
+        throw httpError(config, 401, 'unauthorized');
+      }
+      return ok(config, { ok: true });
+    });
+
+    const res = await api.get('/items');
+
+    expect(res.data.ok).toBe(true);
+    // First attempt + retry: same logical request, same correlation id.
+    expect(itemRequestIds).toHaveLength(2);
+    expect(itemRequestIds[0]).toMatch(UUID_SHAPE);
+    expect(itemRequestIds[1]).toBe(itemRequestIds[0]);
+  });
+
+  it('never overwrites a caller-supplied X-Request-ID (backlog #126)', async () => {
+    let seen: string | undefined;
+    installAdapter(async (config) => {
+      seen = readRequestId(config);
+      return ok(config);
+    });
+
+    await api.get('/items', {
+      headers: { 'X-Request-ID': 'caller-supplied-123' },
+    });
+    expect(seen).toBe('caller-supplied-123');
   });
 
   it('rejects without a second refresh when the retried request also 401s', async () => {
