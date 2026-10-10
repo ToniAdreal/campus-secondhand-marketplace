@@ -92,6 +92,14 @@ class OrderReadTest {
     return items.save(new Item("Film camera", "Canon AE-1", 88000L, seller.getId()));
   }
 
+  /** Directly moves an order to a status so list filtering can be pinned
+   *  without driving the whole pay/cancel lifecycle for each row. */
+  private void setStatus(long orderId, OrderStatus status) {
+    Order order = orders.findById(orderId).orElseThrow();
+    order.setStatus(status);
+    orders.save(order);
+  }
+
   private long createOrder(User buyer, Item item) throws Exception {
     String body = mockMvc.perform(post("/api/orders")
             .header("Authorization", "Bearer " + token(buyer))
@@ -170,6 +178,103 @@ class OrderReadTest {
             .header("Authorization", "Bearer " + token(buyer)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.number").value(2))
+        .andExpect(jsonPath("$.data.content.length()").value(1))
+        .andExpect(jsonPath("$.data.last").value(true));
+  }
+
+  @Test
+  void list_statusFilter_returnsOnlyThatStatus() throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    long pending = createOrder(buyer, newItem(seller));
+    long paid = createOrder(buyer, newItem(seller));
+    long cancelled = createOrder(buyer, newItem(seller));
+    setStatus(paid, OrderStatus.PAID);
+    setStatus(cancelled, OrderStatus.CANCELLED);
+
+    String body = mockMvc.perform(get("/api/orders")
+            .param("status", "PAID")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.totalElements").value(1))
+        .andExpect(jsonPath("$.data.content.length()").value(1))
+        .andExpect(jsonPath("$.data.content[0].status").value("PAID"))
+        .andReturn().getResponse().getContentAsString();
+    List<Number> ids = JsonPath.read(body, "$.data.content[*].id");
+    assertThat(ids.stream().map(Number::longValue)).containsExactly(paid);
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "PENDING")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.totalElements").value(1))
+        .andExpect(jsonPath("$.data.content[0].id").value(pending));
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "CANCELLED")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.totalElements").value(1))
+        .andExpect(jsonPath("$.data.content[0].id").value(cancelled));
+
+    // Omitting the filter keeps the unfiltered behaviour.
+    mockMvc.perform(get("/api/orders")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.totalElements").value(3));
+  }
+
+  @Test
+  void list_statusFilter_noOrdersInStatus_isEmptyPageNotError() throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    createOrder(buyer, newItem(seller));
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "COMPLETED")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0))
+        .andExpect(jsonPath("$.data.totalElements").value(0))
+        .andExpect(jsonPath("$.data.content.length()").value(0));
+  }
+
+  @Test
+  void list_statusFilter_invalidStatus_is400() throws Exception {
+    User buyer = newUser("buyer", false);
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "BOGUS")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+  }
+
+  @Test
+  void list_statusFilter_paginationTotalsReflectFilteredSet() throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    for (int i = 0; i < 3; i++) {
+      setStatus(createOrder(buyer, newItem(seller)), OrderStatus.PAID);
+    }
+    createOrder(buyer, newItem(seller));
+    createOrder(buyer, newItem(seller));
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "PAID")
+            .param("size", "2")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.totalElements").value(3))
+        .andExpect(jsonPath("$.data.totalPages").value(2))
+        .andExpect(jsonPath("$.data.content.length()").value(2));
+
+    mockMvc.perform(get("/api/orders")
+            .param("status", "PAID")
+            .param("size", "2")
+            .param("page", "1")
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.content.length()").value(1))
         .andExpect(jsonPath("$.data.last").value(true));
   }

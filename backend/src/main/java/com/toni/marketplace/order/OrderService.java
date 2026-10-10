@@ -171,7 +171,23 @@ public class OrderService {
    */
   @Transactional(readOnly = true)
   public Page<OrderDto> listOrders(Long buyerId, Pageable pageable) {
-    return orders.findByBuyerId(buyerId, pageable).map(OrderDto::from);
+    return listOrders(buyerId, null, pageable);
+  }
+
+  /**
+   * Status-filtered variant of {@link #listOrders(Long, Pageable)}
+   * (backlog #123): a {@code null} status keeps the unfiltered behaviour;
+   * a non-null status is one of the allowlisted {@link OrderStatus} values
+   * (the controller binds the query parameter to the enum, so anything
+   * else is rejected 400 before reaching here). Pagination totals reflect
+   * the filtered set because the predicate lives in the repository query.
+   */
+  @Transactional(readOnly = true)
+  public Page<OrderDto> listOrders(Long buyerId, OrderStatus status, Pageable pageable) {
+    if (status == null) {
+      return orders.findByBuyerId(buyerId, pageable).map(OrderDto::from);
+    }
+    return orders.findByBuyerIdAndStatus(buyerId, status, pageable).map(OrderDto::from);
   }
 
   /**
@@ -185,7 +201,23 @@ public class OrderService {
    */
   @Transactional(readOnly = true)
   public Page<OrderDto> listSellerOrders(Long sellerId, Pageable pageable) {
-    return orders.findByItem_SellerId(sellerId, pageable).map(OrderDto::from);
+    return listSellerOrders(sellerId, null, pageable);
+  }
+
+  /**
+   * Status-filtered variant of {@link #listSellerOrders(Long, Pageable)}
+   * (backlog #123) — same scoping rules (own listings only, no ADMIN
+   * bypass), plus the optional status predicate; {@code null} keeps the
+   * unfiltered behaviour.
+   */
+  @Transactional(readOnly = true)
+  public Page<OrderDto> listSellerOrders(Long sellerId, OrderStatus status,
+                                         Pageable pageable) {
+    if (status == null) {
+      return orders.findByItem_SellerId(sellerId, pageable).map(OrderDto::from);
+    }
+    return orders.findByItem_SellerIdAndStatus(sellerId, status, pageable)
+        .map(OrderDto::from);
   }
 
   /** The {@code [from, to)} instant window of one calendar month. */

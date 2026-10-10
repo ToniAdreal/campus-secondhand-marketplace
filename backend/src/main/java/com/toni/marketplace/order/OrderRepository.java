@@ -17,12 +17,26 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
   Page<Order> findByBuyerId(Long buyerId, Pageable pageable);
 
   /**
+   * Status-filtered variant of the buyer's order list (backlog #123).
+   * The status is bound to the {@link OrderStatus} enum at the controller,
+   * so only allowlisted values ever reach this query.
+   */
+  Page<Order> findByBuyerIdAndStatus(Long buyerId, OrderStatus status, Pageable pageable);
+
+  /**
    * Paginated orders placed on one seller's listings — the seller side of
    * the marketplace read model. Spring Data derives the join on
    * {@code order.item.sellerId}; the page sort is applied by the caller
    * (newest first by default).
    */
   Page<Order> findByItem_SellerId(Long sellerId, Pageable pageable);
+
+  /**
+   * Status-filtered variant of the seller's order list (backlog #123) —
+   * same scoping as {@link #findByItem_SellerId}, plus the status predicate.
+   */
+  Page<Order> findByItem_SellerIdAndStatus(Long sellerId, OrderStatus status,
+                                           Pageable pageable);
 
   /**
    * One row of a per-status sales aggregate: how many orders sit in the

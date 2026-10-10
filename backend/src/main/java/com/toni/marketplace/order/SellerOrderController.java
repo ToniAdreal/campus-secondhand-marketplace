@@ -10,6 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -41,14 +42,19 @@ public class SellerOrderController {
    * size 20, sorted by {@code createdAt} desc with {@code id} desc as the
    * tie-break; the client may override with {@code ?page=&size=&sort=}.
    * Strictly scoped to the caller's {@code sellerId} — no ADMIN bypass.
+   *
+   * <p>Optional {@code ?status=} filter (backlog #123), mirroring the buyer
+   * list: bound to the {@link OrderStatus} enum (anything else → 400 via
+   * the type-mismatch handler); omitting it keeps the unfiltered list.
    */
   @GetMapping
   public ApiResponse<Page<OrderDto>> list(
+      @RequestParam(name = "status", required = false) OrderStatus status,
       @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
       Pageable pageable) {
     Long sellerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    return ApiResponse.ok(orderService.listSellerOrders(sellerId, pageable));
+    return ApiResponse.ok(orderService.listSellerOrders(sellerId, status, pageable));
   }
 
   /**

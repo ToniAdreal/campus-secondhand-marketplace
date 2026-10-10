@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -32,14 +33,20 @@ public class OrderController {
    * sorted by {@code createdAt} desc with {@code id} desc as the tie-break
    * (two orders can share a createdAt instant); the client may override
    * with {@code ?page=&size=&sort=} like on the items list view.
+   *
+   * <p>Optional {@code ?status=} filter (backlog #123): bound to the
+   * {@link OrderStatus} enum, so only allowlisted values reach the query
+   * and anything else is answered 400 by the type-mismatch handler.
+   * Omitting it keeps the unfiltered list.
    */
   @GetMapping
   public ApiResponse<Page<OrderDto>> list(
+      @RequestParam(name = "status", required = false) OrderStatus status,
       @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
       Pageable pageable) {
     Long buyerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    return ApiResponse.ok(orderService.listOrders(buyerId, pageable));
+    return ApiResponse.ok(orderService.listOrders(buyerId, status, pageable));
   }
 
   /**
