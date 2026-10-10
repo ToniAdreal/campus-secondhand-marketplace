@@ -89,6 +89,110 @@ export function useEnableAdminUser() {
   });
 }
 
+/**
+ * One row of the ADMIN audit-log read view, mirroring the backend's
+ * AuditLogDto (GET /api/admin/audit-log, backlog #109). Enum fields are
+ * their constant names — the same allowlisted values the read endpoint's
+ * filters accept.
+ */
+export interface AuditLogEntry {
+  id: number;
+  actorUserId: number;
+  action: string;
+  targetType: string;
+  targetId: number;
+  createdAt: string;
+}
+
+/** Allowlisted AuditAction values (backend enum, source of truth). */
+export const AUDIT_ACTIONS = [
+  'PASSWORD_CHANGED',
+  'PASSWORD_RESET_COMPLETED',
+  'TOTP_ENABLED',
+  'ORDER_COMPLETED',
+  'ORDER_REFUNDED',
+  'USER_DISABLED',
+  'USER_ENABLED',
+] as const;
+
+/** Allowlisted AuditTargetType values (backend enum, source of truth). */
+export const AUDIT_TARGET_TYPES = ['USER', 'ORDER'] as const;
+
+export interface AuditLogFilters {
+  actorUserId?: number | null;
+  action?: string;
+  targetType?: string;
+  targetId?: number | null;
+}
+
+/**
+ * Query keys for the ADMIN audit-log subtree, sibling to the users
+ * subtree under ['admin', …] so invalidating one never refetches the other.
+ */
+export const adminAuditLogKeys = {
+  all: ['admin', 'audit-log'] as const,
+  list: (page: number, filters: AuditLogFilters) =>
+    [
+      ...adminAuditLogKeys.all,
+      'list',
+      page,
+      filters.actorUserId ?? null,
+      filters.action ?? '',
+      filters.targetType ?? '',
+      filters.targetId ?? null,
+    ] as const,
+};
+
+/**
+ * GET /api/admin/audit-log — ADMIN-only (backend @PreAuthorize is the
+ * real gate). Paginated, newest first; every filter is optional and is
+ * omitted entirely when unset, so the unfiltered request stays
+ * byte-identical to a plain paginated list. Callers must only pass
+ * allowlisted action/targetType values — anything else is a backend 400.
+ */
+export function useAdminAuditLog(
+  page = 0,
+  filters: AuditLogFilters = {},
+  enabled = true,
+  size = 20,
+) {
+  return useQuery({
+    queryKey: adminAuditLogKeys.list(page, filters),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<AuditLogEntry>>>('/admin/audit-log', {
+          params: {
+            page,
+            size,
+            ...(filters.actorUserId != null ? { actorUserId: filters.actorUserId } : {}),
+            ...(filters.action ? { action: filters.action } : {}),
+            ...(filters.targetType ? { targetType: filters.targetType } : {}),
+            ...(filters.targetId != null ? { targetId: filters.targetId } : {}),
+          },
+        })
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed audit-log call to user-facing copy. */
+export function describeAuditLogError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view the audit log.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view the audit log.';
+  }
+  if (code === 400) {
+    return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
 /** True when the failure is the backend's 403 for a non-ADMIN caller. */
 export function isForbidden(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 403;
