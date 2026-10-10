@@ -118,3 +118,36 @@ describe('App nav unread-message badge (backlog #106)', () => {
     expect(screen.queryByLabelText(/unread messages/)).toBeNull();
   });
 });
+
+describe('App nav admin users entry (backlog #111)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  it('shows the Admin users nav entry to ADMIN sessions only', async () => {
+    useAuthStore.getState().login(
+      { id: 1, username: 'adminboss', email: 'admin@example.com', roles: ['ADMIN', 'USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(0));
+    renderApp();
+
+    const link = await screen.findByRole('link', { name: 'Admin users' });
+    expect(link.getAttribute('href')).toBe('/admin/users');
+  });
+
+  it('hides the Admin users nav entry from non-admin sessions', async () => {
+    useAuthStore.getState().login(
+      { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(0));
+    renderApp();
+
+    await waitFor(() => expect(screen.getByText('buyer')).toBeTruthy());
+    expect(screen.queryByRole('link', { name: 'Admin users' })).toBeNull();
+  });
+});

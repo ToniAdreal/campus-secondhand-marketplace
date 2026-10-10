@@ -34,6 +34,11 @@ function AuthNav() {
       <Link to="/settings" className="text-sm text-blue-600 hover:underline">
         Settings
       </Link>
+      {user.roles.includes('ADMIN') && (
+        <Link to="/admin/users" className="text-sm text-blue-600 hover:underline">
+          Admin users
+        </Link>
+      )}
       {unreadCount !== undefined && unreadCount > 0 && (
         <span
           aria-label={`${unreadCount} unread messages`}
