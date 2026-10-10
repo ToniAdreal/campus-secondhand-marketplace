@@ -11,6 +11,13 @@ export interface Order {
   status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
   amountCents: number;
   createdAt: string;
+  // Mock PSP references (backend backlog #114): `null` until the pay /
+  // refund transition has happened, then `cap_mock_…` / `rfd_mock_…`.
+  // Demo references a support/reconciliation flow would quote — never a
+  // real processor receipt. The internal PSP idempotency keys are never
+  // exposed by the backend and are not part of this shape.
+  captureId: string | null;
+  refundId: string | null;
 }
 
 /**

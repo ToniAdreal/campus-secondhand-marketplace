@@ -21,10 +21,22 @@ const pendingOrder: Order = {
   status: 'PENDING',
   amountCents: 12000,
   createdAt: '2026-10-06T17:00:00Z',
+  captureId: null,
+  refundId: null,
 };
 
 const paidOrder: Order = { ...pendingOrder, status: 'PAID' };
 const cancelledOrder: Order = { ...pendingOrder, status: 'CANCELLED' };
+const paidWithCaptureOrder: Order = {
+  ...pendingOrder,
+  status: 'PAID',
+  captureId: 'cap_mock_0123456789abcdef',
+};
+const refundedOrder: Order = {
+  ...paidWithCaptureOrder,
+  status: 'REFUNDED',
+  refundId: 'rfd_mock_0123456789abcdef',
+};
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -283,5 +295,79 @@ describe('OrderConfirmationPage cancel-order', () => {
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Cancel order' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pay now (demo)' })).toBeNull();
+  });
+});
+
+describe('OrderConfirmationPage PSP references (backlog #119)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('a PAID order renders its capture id as a demo payment reference, and no refund line', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(paidWithCaptureOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() =>
+      expect(
+        screen.getByText('Payment reference (demo): cap_mock_0123456789abcdef'),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText(/Refund reference/)).toBeNull();
+  });
+
+  it('a REFUNDED order renders both the capture and the refund reference', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(refundedOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() =>
+      expect(
+        screen.getByText('Payment reference (demo): cap_mock_0123456789abcdef'),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText('Refund reference (demo): rfd_mock_0123456789abcdef')).toBeTruthy();
+  });
+
+  it('a PENDING order renders neither reference line', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByText(/Payment reference/)).toBeNull();
+    expect(screen.queryByText(/Refund reference/)).toBeNull();
+  });
+
+  it('paying flows the capture id through the mutation invalidation — it renders after the refetch, with no extra fetch', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    // initial read -> PENDING (no references); the invalidated refetch after
+    // the capture -> PAID carrying the capture id
+    getSpy
+      .mockResolvedValueOnce(envelope(pendingOrder))
+      .mockResolvedValue(envelope(paidWithCaptureOrder));
+    postSpy.mockResolvedValueOnce(envelope(paidWithCaptureOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByText(/Payment reference/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pay now (demo)' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Payment reference (demo): cap_mock_0123456789abcdef'),
+      ).toBeTruthy(),
+    );
+    // exactly the initial read + the one invalidation refetch — the ids ride
+    // the existing order payloads, no dedicated references request exists
+    expect(getSpy).toHaveBeenCalledTimes(2);
+    expect(postSpy).toHaveBeenCalledTimes(1);
   });
 });

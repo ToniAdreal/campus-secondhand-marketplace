@@ -19,11 +19,26 @@ const order1: Order = {
   status: 'PENDING',
   amountCents: 12000,
   createdAt: '2026-10-06T17:00:00Z',
+  captureId: null,
+  refundId: null,
 };
 
-const order2: Order = { ...order1, id: 10, status: 'PAID', amountCents: 4500 };
+const order2: Order = {
+  ...order1,
+  id: 10,
+  status: 'PAID',
+  amountCents: 4500,
+  captureId: 'cap_mock_aaaaaaaaaaaaaaaa',
+};
 
-const order3: Order = { ...order1, id: 11, status: 'REFUNDED', amountCents: 999 };
+const order3: Order = {
+  ...order1,
+  id: 11,
+  status: 'REFUNDED',
+  amountCents: 999,
+  captureId: 'cap_mock_bbbbbbbbbbbbbbbb',
+  refundId: 'rfd_mock_bbbbbbbbbbbbbbbb',
+};
 
 function pageEnvelope(content: Order[], number: number, totalPages: number) {
   return {
@@ -91,6 +106,22 @@ describe('MyOrdersPage', () => {
 
     // newest-first read from the server, single page requested
     expect(getSpy).toHaveBeenCalledWith('/orders', { params: { page: 0, size: 20 } });
+  });
+
+  it('rows render mock PSP references only when non-null (backlog #119)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2, order3], 0, 1));
+
+    renderAt('/orders');
+    await waitFor(() => expect(screen.getByText('Order #11')).toBeTruthy());
+
+    // PAID row: capture reference only; REFUNDED row: both references;
+    // PENDING row (order #9, both ids null): neither line
+    expect(screen.getByText('Payment reference (demo): cap_mock_aaaaaaaaaaaaaaaa')).toBeTruthy();
+    expect(screen.getByText('Payment reference (demo): cap_mock_bbbbbbbbbbbbbbbb')).toBeTruthy();
+    expect(screen.getByText('Refund reference (demo): rfd_mock_bbbbbbbbbbbbbbbb')).toBeTruthy();
+    expect(screen.getAllByText(/Payment reference \(demo\):/)).toHaveLength(2);
+    expect(screen.getAllByText(/Refund reference \(demo\):/)).toHaveLength(1);
   });
 
   it('anonymous visitors bounce to /login', async () => {

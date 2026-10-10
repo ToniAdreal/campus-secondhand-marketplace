@@ -1,13 +1,18 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { describeCancelError, describePayError, useCancelOrder, useOrder, usePayOrder } from '../api/orders';
+import OrderPspReferences from '../components/OrderPspReferences';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
  * Order confirmation — shown right after a successful buy-now. Reads the
  * order through the buyer order-reads endpoint (GET /api/orders/{id}) and
  * wires the mock capture endpoint (POST /api/orders/{id}/pay) behind an
- * honest "Pay now (demo)" button — no real money moves.
+ * honest "Pay now (demo)" button — no real money moves. Once paid, the
+ * order's mock PSP references render under the amount/status block
+ * (OrderPspReferences, backlog #119) — the pay mutation invalidates the
+ * orders subtree, so the capture id arrives on the refetch with no extra
+ * wiring here.
  */
 export default function OrderConfirmationPage() {
   const { id } = useParams();
@@ -71,6 +76,9 @@ export default function OrderConfirmationPage() {
           <dd>{data.status}</dd>
         </div>
       </dl>
+      <div className="mt-2">
+        <OrderPspReferences order={data} />
+      </div>
       {canPay && (
         <div className="mt-4">
           <button

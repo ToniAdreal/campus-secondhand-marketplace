@@ -38,6 +38,8 @@ const fakeOrder: Order = {
   status: 'PENDING',
   amountCents: 12000,
   createdAt: '2026-10-06T17:00:00Z',
+  captureId: null,
+  refundId: null,
 };
 
 function envelope(data: unknown) {

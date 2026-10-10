@@ -38,6 +38,8 @@ const fakeOrder: Order = {
   status: 'PAID',
   amountCents: 12000,
   createdAt: '2026-10-09T08:00:00Z',
+  captureId: 'cap_mock_0123456789abcdef',
+  refundId: null,
 };
 
 function makeClient() {
@@ -172,6 +174,31 @@ describe('order mutation invalidation', () => {
     expect(postSpy).toHaveBeenCalledWith('/orders/9/pay', {});
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['orders'] });
+  });
+
+  it('pay/refund mutation results carry the PSP references through unchanged (backlog #119)', async () => {
+    const queryClient = makeClient();
+    // fakeOrder is PAID with a capture id and no refund id yet
+    postSpy.mockResolvedValueOnce(envelope(fakeOrder));
+
+    const { result } = renderHook(() => usePayOrder(), { wrapper: wrapperFor(queryClient) });
+    const paid = await result.current.mutateAsync(9);
+
+    expect(paid.captureId).toBe('cap_mock_0123456789abcdef');
+    expect(paid.refundId).toBeNull();
+
+    const refundedOrder: Order = { ...fakeOrder, status: 'REFUNDED', refundId: 'rfd_mock_0123456789abcdef' };
+    postSpy.mockResolvedValueOnce(envelope(refundedOrder));
+
+    const { result: refundResult } = renderHook(() => useRefundOrder(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const refunded = await refundResult.current.mutateAsync(9);
+
+    // a REFUNDED order keeps its capture id and gains the refund id — both
+    // ride the mutation payload, no extra fetch is needed to display them
+    expect(refunded.captureId).toBe('cap_mock_0123456789abcdef');
+    expect(refunded.refundId).toBe('rfd_mock_0123456789abcdef');
   });
 
   it('useCancelOrder posts to /cancel and invalidates orders + items', async () => {

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { describeOrderError, useOrdersInfinite } from '../api/orders';
+import OrderPspReferences from '../components/OrderPspReferences';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -8,7 +9,10 @@ import { useAuthStore } from '../store/useAuthStore';
  * My orders — the buyer's own order history (GET /api/orders, newest first)
  * as a "load more" infinite list. Each row carries a status chip and links
  * to the order confirmation page for that order's lifecycle actions (pay,
- * cancel); the page itself is read-only.
+ * cancel); the page itself is read-only. Rows that carry mock PSP
+ * references (paid / refunded orders, backlog #119) render them under the
+ * amount line via the shared OrderPspReferences component, labelled as
+ * demo references.
  *
  * Auth: anonymous visitors bounce to /login like the other buyer pages. A
  * 401 mid-session means the credential and the httpOnly cookie both died,
@@ -71,6 +75,7 @@ export default function MyOrdersPage() {
                   <span>¥{(order.amountCents / 100).toFixed(2)}</span>
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
+                <OrderPspReferences order={order} />
               </li>
             ))}
           </ul>

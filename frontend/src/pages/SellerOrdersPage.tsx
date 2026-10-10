@@ -10,6 +10,7 @@ import {
   useSellerOrdersInfinite,
   useSellerSalesSummary,
 } from '../api/orders';
+import OrderPspReferences from '../components/OrderPspReferences';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -28,6 +29,11 @@ import { useAuthStore } from '../store/useAuthStore';
  * backend scopes strictly to the caller's sellerId — a logged-in user with
  * no listings gets the empty state, not a 403, so this page is visible to
  * every logged-in user, not just "sellers".
+ *
+ * Mock PSP references (backlog #119): rows whose order carries a capture /
+ * refund id render them under the amount line via OrderPspReferences,
+ * labelled as demo references — after a refund the refetch shows both ids
+ * on the REFUNDED row with no extra wiring.
  *
  * Lifecycle actions: each PAID row carries the seller-side transitions —
  * "Complete order" (POST /api/orders/{id}/complete, the seller confirms
@@ -155,6 +161,7 @@ export default function SellerOrdersPage() {
                   <span>¥{(order.amountCents / 100).toFixed(2)}</span>
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
+                <OrderPspReferences order={order} />
                 {order.status === 'PAID' && (
                   <div className="mt-3 flex gap-2">
                     <button

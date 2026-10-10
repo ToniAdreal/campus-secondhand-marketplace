@@ -20,9 +20,18 @@ const order1: Order = {
   status: 'PENDING',
   amountCents: 12000,
   createdAt: '2026-10-06T17:00:00Z',
+  captureId: null,
+  refundId: null,
 };
 
-const order2: Order = { ...order1, id: 10, buyerId: 8, status: 'PAID', amountCents: 4500 };
+const order2: Order = {
+  ...order1,
+  id: 10,
+  buyerId: 8,
+  status: 'PAID',
+  amountCents: 4500,
+  captureId: 'cap_mock_cccccccccccccccc',
+};
 
 function pageEnvelope(content: Order[], number: number, totalPages: number) {
   return {
@@ -153,6 +162,59 @@ describe('SellerOrdersPage', () => {
     // PENDING order #9
     expect(screen.getAllByRole('button', { name: 'Complete order' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: 'Refund order' })).toHaveLength(1);
+  });
+
+  it('PAID rows render the capture reference; PENDING rows render none (backlog #119)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    // exactly one reference line — the PAID order #10's capture id; the
+    // PENDING order #9 carries no ids and no refund has happened yet
+    expect(screen.getByText('Payment reference (demo): cap_mock_cccccccccccccccc')).toBeTruthy();
+    expect(screen.getAllByText(/Payment reference \(demo\):/)).toHaveLength(1);
+    expect(screen.queryByText(/Refund reference/)).toBeNull();
+  });
+
+  it('a refund flows both PSP references through the refetched row (backlog #119)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const refundedOrder: Order = {
+      ...order2,
+      status: 'REFUNDED',
+      refundId: 'rfd_mock_cccccccccccccccc',
+    };
+    let refunded = false;
+    getSpy.mockImplementation(((path: string) => {
+      if (path === '/seller/orders') {
+        return Promise.resolve(pageEnvelope([refunded ? refundedOrder : order2], 0, 1));
+      }
+      // the summary query gets a page-shaped payload -> header stays hidden
+      return Promise.resolve(pageEnvelope([], 0, 1));
+    }) as never);
+    postSpy.mockImplementation((() => {
+      refunded = true;
+      return Promise.resolve({
+        data: { code: 0, message: 'ok', data: refundedOrder },
+      });
+    }) as never);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    expect(screen.queryByText(/Refund reference/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+
+    // the mutation result carries the refund id; the invalidated list
+    // refetch renders both references on the REFUNDED row
+    await waitFor(() =>
+      expect(screen.getByText('Refund reference (demo): rfd_mock_cccccccccccccccc')).toBeTruthy(),
+    );
+    expect(screen.getByText('Payment reference (demo): cap_mock_cccccccccccccccc')).toBeTruthy();
+    expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {});
+    confirmSpy.mockRestore();
   });
 
   it('Complete fires POST /orders/{id}/complete and refetches the seller list', async () => {
