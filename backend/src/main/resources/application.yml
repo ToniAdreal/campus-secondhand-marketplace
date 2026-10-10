@@ -164,6 +164,22 @@ app:
     # with this placeholder — JwtSecretStartupCheck fails fast unless the
     # APP_JWT_SECRET environment variable is set. Access 15 min / refresh 7 days.
     secret: ${APP_JWT_SECRET:74xcpYqCpoJStMnkqprFiMYwsQIZD/zPa3LgyU83nbE=}
+    # Signing-key rotation (JwtTokenService, backlog #113): every token is
+    # signed with the current key only and stamped with this key id in its
+    # `kid` header. While rotating, set APP_JWT_PREVIOUS_SECRET to the
+    # outgoing key (Base64, same format as APP_JWT_SECRET) and
+    # APP_JWT_PREVIOUS_ACCEPT_UNTIL to the end of the rotation window
+    # (ISO-8601 instant, sized to outlive the 7 d refresh TTL, e.g.
+    # 2026-10-17T00:00:00Z): tokens carrying the previous kid verify ONLY
+    # until that instant and the previous key never signs. A previous
+    # secret without a deadline is never accepted (fail-closed), and on
+    # the `mysql` profile the previous secret is refused when it equals
+    # the committed dev placeholder (JwtSecretStartupCheck). Leave the
+    # previous-secret unset when not rotating.
+    current-kid: ${APP_JWT_CURRENT_KID:current}
+    previous-secret: ${APP_JWT_PREVIOUS_SECRET:}
+    previous-kid: ${APP_JWT_PREVIOUS_KID:previous}
+    previous-accept-until: ${APP_JWT_PREVIOUS_ACCEPT_UNTIL:}
     access-ttl: 15m
     refresh-ttl: 7d
     # How long a just-rotated refresh token is still accepted once more

@@ -71,6 +71,34 @@ class JwtSecretStartupCheckTest {
   }
 
   @Test
+  void placeholderPreviousSecretThrowsWithActionableMessage() {
+    // Backlog #113: rotating the placeholder INTO the previous slot would
+    // keep every token forged with the public dev key valid for the whole
+    // rotation window — refused like the placeholder in the current slot.
+    JwtProperties props = new JwtProperties();
+    props.setSecret(randomSecret());
+    props.setPreviousSecret(JwtSecretStartupCheck.DEV_PLACEHOLDER_SECRET);
+
+    Throwable thrown =
+        catchThrowable(() -> new JwtSecretStartupCheck(props).onApplicationEvent(null));
+
+    assertThat(thrown).isInstanceOf(IllegalStateException.class);
+    assertThat(thrown.getMessage()).contains("APP_JWT_PREVIOUS_SECRET");
+  }
+
+  @Test
+  void realPreviousSecretPassesTheCheck() {
+    JwtProperties props = new JwtProperties();
+    props.setSecret(randomSecret());
+    props.setPreviousSecret(randomSecret());
+
+    Throwable thrown =
+        catchThrowable(() -> new JwtSecretStartupCheck(props).onApplicationEvent(null));
+
+    assertThat(thrown).as("a real previous secret must not trip the startup check").isNull();
+  }
+
+  @Test
   void realSecretPassesTheCheck() {
     JwtProperties props = new JwtProperties();
     props.setSecret(randomSecret());

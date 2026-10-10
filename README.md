@@ -76,7 +76,14 @@ auth/        AuthController  /api/auth/register, /login, /refresh, /logout
              a refresh-token family also has an absolute lifetime —
              30 d from the original login (`app.jwt.refresh-max-age`), after
              which refresh 401s and revokes the family (even for an unexpired
-             token); /logout revokes the caller's whole refresh-token family
+             token); signing-key rotation (backlog #113): tokens are signed
+             with the current key only, stamped with its `kid`
+             (`app.jwt.current-kid`); during a rotation the previous key
+             (`app.jwt.previous-secret` / `previous-kid`) verifies ONLY
+             until `app.jwt.previous-accept-until` and never signs — an
+             unknown `kid` gets the same 401 as a bad signature, and an
+             in-window old-key refresh rotates onto the new key, migrating
+             the session; /logout revokes the caller's whole refresh-token family
              server-side and clears the cookie with an expired Set-Cookie.
              BCrypt(cost 12) password hashing. Tables: app_user, refresh_token.
              AuthRateLimitFilter — token bucket per client IP: 5 attempts/min on
@@ -248,6 +255,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] GET /api/auth/me — session restore on SPA reload
 - [x] Username/email case normalization (register + login)
 - [x] MySQL-profile fail-fast on the committed dev JWT secret
+- [x] JWT signing-key rotation (backlog #113 — `kid`-stamped signings with the current key only; previous key verifies inside a configurable window only, never signs; unknown `kid` = the same 401 as a bad signature; the mysql-profile placeholder refusal covers the previous-secret slot too)
 - [x] Nightly purge of stale refresh tokens / terminal idempotency rows / used-or-expired password-reset tokens
 - [x] Nightly orphan-upload sweep (rollback orphans deleted after a 24 h grace window)
 - [x] Mock payment capture + full order lifecycle: cancel (buyer), complete (seller/ADMIN), refund (seller/ADMIN), PENDING-order expiry

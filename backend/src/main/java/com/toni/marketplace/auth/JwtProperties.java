@@ -13,6 +13,35 @@ public class JwtProperties {
    */
   private String secret;
 
+  /**
+   * Key id ({@code kid} header) stamped on every token this deployment
+   * signs (backlog #113). Verification accepts this kid with
+   * {@link #secret}; signings never use any other key or kid.
+   */
+  private String currentKid = "current";
+
+  /**
+   * Previous signing secret (Base64, ≥ 256 bits), set only while rotating
+   * keys (backlog #113). It is used for VERIFICATION ONLY, and only for
+   * tokens whose {@code kid} header equals {@link #previousKid} and only
+   * until {@link #previousAcceptUntil}. It never signs. Null/blank = no
+   * rotation in progress.
+   */
+  private String previousSecret;
+
+  /** Key id that names {@link #previousSecret} in token headers. */
+  private String previousKid = "previous";
+
+  /**
+   * End of the key-rotation window (backlog #113): previous-key tokens
+   * verify only while the server clock is strictly before this instant.
+   * Operators set it when rotating — sized to outlive the longest token
+   * minted under the old key (the 7-day refresh TTL) — after which the
+   * old key is fully dead and {@link #previousSecret} can be removed.
+   * A previous secret without a deadline is never accepted (fail-closed).
+   */
+  private java.time.Instant previousAcceptUntil;
+
   private Duration accessTtl = Duration.ofMinutes(15);
 
   private Duration refreshTtl = Duration.ofDays(7);
@@ -47,6 +76,16 @@ public class JwtProperties {
 
   public String getSecret() { return secret; }
   public void setSecret(String secret) { this.secret = secret; }
+  public String getCurrentKid() { return currentKid; }
+  public void setCurrentKid(String currentKid) { this.currentKid = currentKid; }
+  public String getPreviousSecret() { return previousSecret; }
+  public void setPreviousSecret(String previousSecret) { this.previousSecret = previousSecret; }
+  public String getPreviousKid() { return previousKid; }
+  public void setPreviousKid(String previousKid) { this.previousKid = previousKid; }
+  public java.time.Instant getPreviousAcceptUntil() { return previousAcceptUntil; }
+  public void setPreviousAcceptUntil(java.time.Instant previousAcceptUntil) {
+    this.previousAcceptUntil = previousAcceptUntil;
+  }
   public Duration getAccessTtl() { return accessTtl; }
   public void setAccessTtl(Duration accessTtl) { this.accessTtl = accessTtl; }
   public Duration getRefreshTtl() { return refreshTtl; }

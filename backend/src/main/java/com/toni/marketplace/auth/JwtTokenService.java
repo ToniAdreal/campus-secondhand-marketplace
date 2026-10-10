@@ -1,10 +1,13 @@
 package com.toni.marketplace.auth;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwsHeader;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.Locator;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
+import java.security.Key;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
@@ -63,6 +66,30 @@ import org.slf4j.LoggerFactory;
  *       ({@code totp-challenge}) minted at login for TOTP-enabled accounts
  *       and exchanged — with a valid 6-digit code — for the real pair. It
  *       carries no privileges and is accepted by exactly one endpoint.</li>
+ *   <li>Signing-key rotation (backlog #113): every token is signed with
+ *       the current key only, stamped with a {@code kid} header naming it
+ *       ({@code app.jwt.current-kid}). During a rotation the previous key
+ *       ({@code app.jwt.previous-secret} / {@code previous-kid}) is accepted
+ *       for VERIFICATION ONLY, and only while the clock is strictly before
+ *       {@code app.jwt.previous-accept-until}; it can never sign (a token
+ *       that carries the current kid but was signed with the previous key
+ *       fails signature verification like any forgery). An unknown
+ *       {@code kid} resolves to no key and fails with the same
+ *       {@link InvalidTokenException} → 401 as a bad signature — the kid
+ *       is a routing hint, never an oracle. Tokens with no {@code kid}
+ *       (minted before #113) are tried against the current key only.
+ *       Scope of the window: it covers every signed JWT this service
+ *       verifies — access, refresh, and the TOTP challenge — because all
+ *       three share {@code parse}. Refresh tokens additionally carry
+ *       DB-backed semantics (the stored SHA-256 of the token string,
+ *       family revocation, rotation grace, the absolute family cap);
+ *       NONE of those depend on the signing key — the stored hash is of
+ *       the token text, not of a key — so an old-key refresh token inside
+ *       the window rotates normally, and the fresh pair it receives is
+ *       signed with the current key, migrating the session off the old
+ *       key. After the window, old-key tokens of every kind get the
+ *       plain 401 (the refresh family is not revoked by a signature
+ *       failure; the session simply can no longer authenticate).</li>
  * </ul>
  *
  * Pure-Java except for the repository — constructed directly in unit tests.
@@ -76,7 +103,16 @@ public class JwtTokenService {
   private static final String TYPE_TOTP_CHALLENGE = "totp-challenge";
   private static final String CLAIM_TOKEN_VERSION = "tver";
 
+  /** Default {@code kid} for the signing key when none is configured. */
+  public static final String DEFAULT_CURRENT_KID = "current";
+  /** Default {@code kid} naming the previous (verification-only) key. */
+  public static final String DEFAULT_PREVIOUS_KID = "previous";
+
   private final SecretKey key;
+  private final String currentKid;
+  private final SecretKey previousKey;
+  private final String previousKid;
+  private final Instant previousAcceptUntil;
   private final Duration accessTtl;
   private final Duration refreshTtl;
   private final Duration refreshGraceWindow;
@@ -92,7 +128,30 @@ public class JwtTokenService {
                          Duration totpChallengeTtl,
                          RefreshTokenRepository refreshTokens, UserRepository users, Clock clock,
                          AuthMetrics metrics) {
+    this(key, DEFAULT_CURRENT_KID, null, DEFAULT_PREVIOUS_KID, null,
+        accessTtl, refreshTtl, refreshGraceWindow, refreshMaxAge, totpChallengeTtl,
+        refreshTokens, users, clock, metrics);
+  }
+
+  /**
+   * Full constructor with key-rotation configuration (backlog #113):
+   * {@code previousKey} (nullable) verifies tokens whose {@code kid} equals
+   * {@code previousKid} only while the clock is strictly before
+   * {@code previousAcceptUntil}; it is never used for signing.
+   */
+  public JwtTokenService(SecretKey key, String currentKid,
+                         SecretKey previousKey, String previousKid, Instant previousAcceptUntil,
+                         Duration accessTtl, Duration refreshTtl,
+                         Duration refreshGraceWindow, Duration refreshMaxAge,
+                         Duration totpChallengeTtl,
+                         RefreshTokenRepository refreshTokens, UserRepository users, Clock clock,
+                         AuthMetrics metrics) {
     this.key = key;
+    this.currentKid = currentKid == null || currentKid.isBlank() ? DEFAULT_CURRENT_KID : currentKid;
+    this.previousKey = previousKey;
+    this.previousKid = previousKid == null || previousKid.isBlank()
+        ? DEFAULT_PREVIOUS_KID : previousKid;
+    this.previousAcceptUntil = previousAcceptUntil;
     this.accessTtl = accessTtl;
     this.refreshTtl = refreshTtl;
     this.refreshGraceWindow = refreshGraceWindow;
@@ -102,6 +161,21 @@ public class JwtTokenService {
     this.users = users;
     this.clock = clock;
     this.metrics = metrics;
+    // Assigned here, not in a field initializer: the locator reads the
+    // final key/kid/clock fields above, which a field initializer would
+    // capture before the constructor assigns them (compile error).
+    this.keyLocator = header -> {
+      String kid = header instanceof JwsHeader jws ? jws.getKeyId() : null;
+      if (kid == null || kid.equals(this.currentKid)) {
+        return this.key;
+      }
+      if (this.previousKey != null && kid.equals(this.previousKid)
+          && this.previousAcceptUntil != null
+          && this.clock.instant().isBefore(this.previousAcceptUntil)) {
+        return this.previousKey;
+      }
+      return null;
+    };
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -134,7 +208,7 @@ public class JwtTokenService {
         .id(UUID.randomUUID().toString())
         .issuedAt(Date.from(now))
         .expiration(Date.from(now.plus(totpChallengeTtl)))
-        .signWith(key)
+        .header().keyId(currentKid).and().signWith(key)
         .compact();
   }
 
@@ -180,7 +254,7 @@ public class JwtTokenService {
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))
-        .signWith(key)
+        .header().keyId(currentKid).and().signWith(key)
         .compact();
 
     String jti = UUID.randomUUID().toString();
@@ -190,7 +264,7 @@ public class JwtTokenService {
         .id(jti)
         .issuedAt(Date.from(now))
         .expiration(Date.from(refreshExp))
-        .signWith(key)
+        .header().keyId(currentKid).and().signWith(key)
         .compact();
 
     // The issued token founds a new family: its root is this token itself.
@@ -359,7 +433,7 @@ public class JwtTokenService {
         .id(newJti)
         .issuedAt(Date.from(now))
         .expiration(Date.from(refreshExp))
-        .signWith(key)
+        .header().keyId(currentKid).and().signWith(key)
         .compact();
 
     live.setRevoked(true);
@@ -387,7 +461,7 @@ public class JwtTokenService {
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))
-        .signWith(key)
+        .header().keyId(currentKid).and().signWith(key)
         .compact();
 
     return new TokenPair(newAccessToken, newRefreshToken, accessExp, refreshExp);
@@ -432,10 +506,21 @@ public class JwtTokenService {
     refreshTokens.deleteByFamilyJti(familyJti);
   }
 
+  /**
+   * Key routing for verification (backlog #113): the token's {@code kid}
+   * header picks the key — the current kid gets the signing key; the
+   * previous kid gets the previous key only inside the rotation window
+   * (strictly before {@code previousAcceptUntil}); a missing kid falls
+   * back to the current key (pre-#113 tokens). Anything else resolves to
+   * no key, and jjwt's failure surfaces as the same
+   * {@link InvalidTokenException} → 401 as a bad signature.
+   */
+  private final Locator<Key> keyLocator;
+
   private Claims parse(String token) {
     try {
       return Jwts.parser()
-          .verifyWith(key)
+          .keyLocator(keyLocator)
           .clock(() -> Date.from(clock.instant()))
           .build()
           .parseSignedClaims(token)

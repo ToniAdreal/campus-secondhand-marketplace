@@ -24,8 +24,14 @@ import org.springframework.stereotype.Component;
  * <p>Honest scope: this guards the <em>known placeholder</em>, not secret
  * strength in general — an operator-supplied short-but-non-placeholder value
  * still boots (jjwt will reject keys that are cryptographically too short for
- * HS256, which is a separate backstop). Key rotation after a leak is a
- * declared follow-up.
+ * HS256, which is a separate backstop).
+ *
+ * <p>Key rotation (backlog #113): while rotating, the operator also sets
+ * {@code APP_JWT_PREVIOUS_SECRET} (the outgoing key, verification-only until
+ * {@code app.jwt.previous-accept-until}). The same placeholder rule applies
+ * to it — a rotation that "retires" the placeholder by moving it into the
+ * previous slot would keep every forged-with-the-public-key token valid
+ * for the whole window, so this check refuses that too.
  */
 @Component
 @Profile("mysql")
@@ -56,6 +62,15 @@ public class JwtSecretStartupCheck implements ApplicationListener<ApplicationRea
               + "APP_JWT_SECRET environment variable to a random 256-bit (or "
               + "larger) Base64 secret, e.g. generated with "
               + "'openssl rand -base64 32'.");
+    }
+    if (DEV_PLACEHOLDER_SECRET.equals(jwtProperties.getPreviousSecret())) {
+      throw new IllegalStateException(
+          "Refusing to boot on the 'mysql' profile with the committed dev JWT "
+              + "secret in the previous-secret slot — tokens forged with that "
+              + "public key would keep verifying for the whole rotation "
+              + "window. Set the APP_JWT_PREVIOUS_SECRET environment variable "
+              + "to the actual outgoing secret (or leave it unset when not "
+              + "rotating).");
     }
   }
 }

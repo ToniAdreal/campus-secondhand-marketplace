@@ -123,7 +123,14 @@ public class AuthConfig {
                                          Clock clock,
                                          AuthMetrics metrics) {
     SecretKey key = JwtTokenService.keyFromBase64(props.getSecret());
-    return new JwtTokenService(key, props.getAccessTtl(), props.getRefreshTtl(),
+    // Key rotation (backlog #113): a blank/absent previous secret means no
+    // rotation is in progress — the previous key stays unset and old-kid
+    // tokens get the plain 401.
+    SecretKey previousKey = props.getPreviousSecret() == null || props.getPreviousSecret().isBlank()
+        ? null : JwtTokenService.keyFromBase64(props.getPreviousSecret());
+    return new JwtTokenService(key, props.getCurrentKid(), previousKey, props.getPreviousKid(),
+        props.getPreviousAcceptUntil(),
+        props.getAccessTtl(), props.getRefreshTtl(),
         props.getRefreshGraceWindow(), props.getRefreshMaxAge(), props.getTotpChallengeTtl(),
         refreshTokens, users, clock, metrics);
   }
