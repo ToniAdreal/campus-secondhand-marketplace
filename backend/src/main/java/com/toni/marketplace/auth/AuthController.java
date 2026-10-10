@@ -155,6 +155,7 @@ public class AuthController {
    * exists, a single-use token (30 min, hash-only storage) is delivered
    * through the mail seam; it never appears in any response.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "always this identical envelope, account or not — no enumeration oracle"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/password-reset")
   public ResponseEntity<ApiResponse<Void>> requestPasswordReset(
       @Valid @RequestBody PasswordResetRequest request) {
@@ -171,6 +172,7 @@ public class AuthController {
    * backlog #99 (/forgot-password + /reset-password?token=); this is
    * the API contract they use.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "password reset; every pre-reset session is revoked (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "weak new password — the token stays usable (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unknown, used or expired token — identical for every token failure (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/password-reset/confirm")
   public ResponseEntity<ApiResponse<Void>> confirmPasswordReset(
       @Valid @RequestBody PasswordResetConfirmRequest request) {
@@ -178,6 +180,7 @@ public class AuthController {
     return ResponseEntity.ok(ApiResponse.ok(null));
   }
 
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "rotated token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "missing, invalid, revoked or replayed refresh token (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/refresh")
   public ResponseEntity<ApiResponse<AuthResponse>> refresh(
       @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,

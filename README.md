@@ -235,8 +235,10 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
   model). Honest scope: the contract is generated from the controllers by
-  springdoc; response codes springdoc cannot infer (402/409/422/423/202)
-  are annotated by hand and pinned by `OpenApiContractTest`.
+  springdoc; response codes springdoc cannot infer (402/409/422/423/202/429)
+  are annotated by hand, and `OpenApiContractTest` pins the exact controller
+  path set (38 paths — a new endpoint fails the test until the contract is
+  extended deliberately) plus those codes (402 on pay only).
 
 ## Roadmap (from the original project)
 
