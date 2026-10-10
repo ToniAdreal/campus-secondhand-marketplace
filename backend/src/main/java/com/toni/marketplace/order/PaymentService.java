@@ -27,6 +27,16 @@ import org.springframework.stereotype.Service;
  * call and the order-row commit can never produce a second logical capture
  * or refund. Capture keys and refund keys live in separate namespaces, so
  * a capture key can never collide with a refund key.
+ *
+ * <p>Replay-memory bound (backlog #124): the replay maps are NOT a
+ * permanent ledger. They only need to bridge the window between the PSP
+ * call and the order-row commit inside one process: once the caller has
+ * flushed the transition, the durable capture/refund id lives on the
+ * order row (backlog #114) and every later replay returns from that row
+ * before ever reaching this seam. The caller therefore calls
+ * {@link #forgetCapture(String)} / {@link #forgetRefund(String)} after a
+ * successful flush, so a long-lived JVM does not accumulate one map entry
+ * per paid/refunded order for the process lifetime.
  */
 @Service
 public class PaymentService {
@@ -145,6 +155,42 @@ public class PaymentService {
           "rfd_mock_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16),
           order.getAmountCents());
     });
+  }
+
+  /**
+   * Drops the remembered capture result for {@code idempotencyKey}
+   * (backlog #124). Called by {@code OrderService.pay} after its
+   * deliberate in-transaction flush succeeds: from that point the
+   * capture id is durable on the order row, an idempotent re-pay returns
+   * from the row's PAID status before reaching this seam, and the replay
+   * entry has no remaining job. Keyed and idempotent — forgetting an
+   * absent key is a no-op — so a duplicate call can never disturb another
+   * order's entry.
+   */
+  public void forgetCapture(String idempotencyKey) {
+    requireKey(idempotencyKey);
+    capturesByKey.remove(idempotencyKey);
+  }
+
+  /** Refund mirror of {@link #forgetCapture(String)} (backlog #124). */
+  public void forgetRefund(String idempotencyKey) {
+    requireKey(idempotencyKey);
+    refundsByKey.remove(idempotencyKey);
+  }
+
+  /**
+   * Test-only views of the replay maps' current sizes (backlog #124),
+   * mirroring {@link #capturesIssued()}: they let tests prove a
+   * successful pay/refund leaves no entry behind while a pre-commit
+   * replay still finds its entry. Package-private on purpose — a real PSP
+   * client would not expose its idempotency store either.
+   */
+  int capturesRemembered() {
+    return capturesByKey.size();
+  }
+
+  int refundsRemembered() {
+    return refundsByKey.size();
   }
 
   private static void requireKey(String idempotencyKey) {

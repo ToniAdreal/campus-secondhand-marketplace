@@ -544,8 +544,9 @@ public class OrderService {
       // before this assignment (and rolls the transaction back), so it
       // stores nothing; an idempotent re-pay returned above, before any
       // fresh capture, so the stored id is never replaced.
+      String captureKey = captureKeyFor(order);
       PaymentService.CaptureResult capture =
-          payments.capture(order, captureKeyFor(order), paymentToken);
+          payments.capture(order, captureKey, paymentToken);
       order.setCaptureId(capture.captureId());
       order.setStatus(OrderStatus.PAID);
       order.getItem().setStatus(ItemStatus.RESERVED);
@@ -557,6 +558,15 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
+      // Backlog #124: the capture id is now durable on the flushed row,
+      // so the mock PSP's replay entry for this key has done its job —
+      // forget it instead of leaking one map entry per paid order for
+      // the process lifetime. Placement AFTER the flush is the safety
+      // property: a 409 race loser throws at its own flush above and
+      // never reaches this line, so it cannot forget the winner's entry
+      // while the winner may still need to replay it; the winner forgets
+      // only its own key, and forgetting is keyed/idempotent.
+      payments.forgetCapture(captureKey);
       metrics().paid();
       // Backlog #122: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, the
@@ -708,8 +718,9 @@ public class OrderService {
       // transaction as the transition, mirroring pay()'s capture id. An
       // idempotent re-refund returned above, before any fresh refund
       // call, so the stored id is never replaced.
+      String refundKey = refundKeyFor(order);
       PaymentService.RefundResult refund =
-          payments.refund(order, refundKeyFor(order));
+          payments.refund(order, refundKey);
       order.setRefundId(refund.refundId());
       order.setStatus(OrderStatus.REFUNDED);
       Item item = items.findById(order.getItem().getId())
@@ -727,6 +738,11 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
+      // Backlog #124: refund mirror of pay()'s forget — the refund id is
+      // durable on the flushed row, so drop the PSP replay entry; a 409
+      // race loser threw at the flush above and never reaches this line,
+      // so it cannot forget the winner's entry.
+      payments.forgetRefund(refundKey);
       metrics().refunded();
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and

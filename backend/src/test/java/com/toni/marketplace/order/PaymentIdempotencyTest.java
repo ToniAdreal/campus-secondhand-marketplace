@@ -34,6 +34,12 @@ import org.springframework.test.web.servlet.MockMvc;
  * reuses the stored key, and the mock replays the stored result instead of
  * issuing a second logical capture/refund.
  *
+ * <p>Backlog #124 bounds that replay memory: once pay/refund has flushed
+ * the transition, {@code OrderService} forgets the key's entry — the tests
+ * below pin that a successful endpoint call leaves no entry behind, a
+ * pre-commit same-key replay still replays, and the decline-then-retry
+ * path still captures.
+ *
  * <p>Deliberately NOT {@code @Transactional}, mirroring
  * {@link OrderRefundTest}: each test owns its data via unique users and
  * wipes the touched tables in {@code cleanUp()}.
@@ -222,6 +228,115 @@ class PaymentIdempotencyTest {
 
     assertThat(payments.capturesIssued() - capturesBefore).isEqualTo(1);
     assertThat(payments.refundsIssued() - refundsBefore).isEqualTo(1);
+  }
+
+  /**
+   * Backlog #124: a successful pay forgets the PSP replay entry once the
+   * transition has flushed — the capture map gains no permanent entry
+   * for the order's key, while {@code capturesIssued} still proves
+   * exactly one logical capture happened. (Sizes are asserted as deltas:
+   * the mock is a shared singleton across the suite.)
+   */
+  @Test
+  void successfulPay_forgetsCaptureEntryButCaptureStillCounted() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    Item item = newItem(seller, ItemStatus.AVAILABLE);
+    long orderId = createOrder(buyer, item);
+
+    long issuedBefore = payments.capturesIssued();
+    int rememberedBefore = payments.capturesRemembered();
+    pay(buyer, orderId);
+
+    assertThat(payments.capturesIssued() - issuedBefore).isEqualTo(1);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore);
+    // And the durable reference survived the forget: it lives on the row.
+    assertThat(orders.findById(orderId))
+        .hasValueSatisfying(o -> assertThat(o.getCaptureId()).startsWith("cap_mock_"));
+  }
+
+  /**
+   * Backlog #124: BEFORE the commit point the replay entry must still be
+   * there — a same-key retry replays the stored result and issues no
+   * second capture. Only the caller's explicit forget (after its flush)
+   * drops the entry; a capture after the forget is a genuinely new one.
+   */
+  @Test
+  void preCommitReplay_stillReplaysUntilForgotten() {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    Item item = newItem(seller, ItemStatus.AVAILABLE);
+    Order order = orders.save(new Order(item, buyer.getId(), 88000L));
+    String key = "cap-" + UUID.randomUUID();
+
+    long issuedBefore = payments.capturesIssued();
+    int rememberedBefore = payments.capturesRemembered();
+    PaymentService.CaptureResult first = payments.capture(order, key);
+    PaymentService.CaptureResult replay = payments.capture(order, key);
+
+    assertThat(replay.captureId()).isEqualTo(first.captureId());
+    assertThat(payments.capturesIssued() - issuedBefore).isEqualTo(1);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore + 1);
+
+    payments.forgetCapture(key);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore);
+    // Forgetting is idempotent: a second forget is a no-op, not an error.
+    payments.forgetCapture(key);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore);
+  }
+
+  /**
+   * Backlog #124: the refund seam mirrors capture — a successful refund
+   * via the endpoint leaves no replay entry behind, and exactly one
+   * logical refund was issued.
+   */
+  @Test
+  void successfulRefund_forgetsRefundEntryButRefundStillCounted() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    Item item = newItem(seller, ItemStatus.AVAILABLE);
+    long orderId = createOrder(buyer, item);
+    pay(buyer, orderId);
+
+    long issuedBefore = payments.refundsIssued();
+    int rememberedBefore = payments.refundsRemembered();
+    mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("REFUNDED"));
+
+    assertThat(payments.refundsIssued() - issuedBefore).isEqualTo(1);
+    assertThat(payments.refundsRemembered()).isEqualTo(rememberedBefore);
+    assertThat(orders.findById(orderId))
+        .hasValueSatisfying(o -> assertThat(o.getRefundId()).startsWith("rfd_mock_"));
+  }
+
+  /**
+   * Backlog #124 + #92: a declined capture stores nothing (nothing to
+   * forget, the issued counter does not move), and the decline-then-retry
+   * path still captures under the order's key — ending, like every
+   * successful pay, with no replay entry left behind.
+   */
+  @Test
+  void declineThenRetry_stillCapturesAndLeavesNoEntry() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    Item item = newItem(seller, ItemStatus.AVAILABLE);
+    long orderId = createOrder(buyer, item);
+
+    long issuedBefore = payments.capturesIssued();
+    int rememberedBefore = payments.capturesRemembered();
+    mockMvc.perform(post("/api/orders/{id}/pay", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"paymentToken\":\"tok_decline\"}"))
+        .andExpect(status().isPaymentRequired());
+    assertThat(payments.capturesIssued()).isEqualTo(issuedBefore);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore);
+
+    pay(buyer, orderId);
+    assertThat(payments.capturesIssued() - issuedBefore).isEqualTo(1);
+    assertThat(payments.capturesRemembered()).isEqualTo(rememberedBefore);
   }
 
   /**
