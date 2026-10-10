@@ -84,6 +84,28 @@ public class Order {
   private String refundIdempotencyKey;
 
   /**
+   * The mock PSP's capture reference for this order (backlog #114): the
+   * {@code cap_mock_*} id {@code PaymentService.capture} returned, stored
+   * by {@code OrderService.pay} in the same transaction as the
+   * PENDING → PAID transition, so a paid order can always name the PSP
+   * reference a reconciliation would look it up by. Distinct from
+   * {@code captureIdempotencyKey} — that is the key the caller sent,
+   * this is the id the PSP minted. Nullable until the order is paid; a
+   * declined capture stores nothing.
+   */
+  @Column(name = "capture_id", length = 64)
+  private String captureId;
+
+  /**
+   * The mock PSP's refund reference for this order (backlog #114): the
+   * {@code rfd_mock_*} id {@code PaymentService.refund} returned, stored
+   * by {@code OrderService.refund} in the same transaction as the
+   * PAID → REFUNDED transition. Nullable until the order is refunded.
+   */
+  @Column(name = "refund_id", length = 64)
+  private String refundId;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
    * the order is active (PENDING/PAID), NULL once terminal. insertable and
@@ -133,6 +155,10 @@ public class Order {
   public void setRefundIdempotencyKey(String refundIdempotencyKey) {
     this.refundIdempotencyKey = refundIdempotencyKey;
   }
+  public String getCaptureId() { return captureId; }
+  public void setCaptureId(String captureId) { this.captureId = captureId; }
+  public String getRefundId() { return refundId; }
+  public void setRefundId(String refundId) { this.refundId = refundId; }
   public Long getActiveItemId() { return activeItemId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }

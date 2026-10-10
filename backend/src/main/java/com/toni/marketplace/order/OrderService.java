@@ -495,7 +495,15 @@ public class OrderService {
           "order is " + order.getStatus() + ", payment is not allowed");
     }
     try {
-      payments.capture(order, captureKeyFor(order), paymentToken);
+      // Backlog #114: persist the PSP capture reference in the same
+      // transaction as the transition, so a paid order always names the
+      // reference it would be reconciled by. A declined capture throws
+      // before this assignment (and rolls the transaction back), so it
+      // stores nothing; an idempotent re-pay returned above, before any
+      // fresh capture, so the stored id is never replaced.
+      PaymentService.CaptureResult capture =
+          payments.capture(order, captureKeyFor(order), paymentToken);
+      order.setCaptureId(capture.captureId());
       order.setStatus(OrderStatus.PAID);
       order.getItem().setStatus(ItemStatus.RESERVED);
       OrderDto dto = OrderDto.from(orders.save(order));
@@ -639,7 +647,13 @@ public class OrderService {
           "order is " + order.getStatus() + ", refund is not allowed");
     }
     try {
-      payments.refund(order, refundKeyFor(order));
+      // Backlog #114: persist the PSP refund reference in the same
+      // transaction as the transition, mirroring pay()'s capture id. An
+      // idempotent re-refund returned above, before any fresh refund
+      // call, so the stored id is never replaced.
+      PaymentService.RefundResult refund =
+          payments.refund(order, refundKeyFor(order));
+      order.setRefundId(refund.refundId());
       order.setStatus(OrderStatus.REFUNDED);
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,

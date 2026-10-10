@@ -207,7 +207,7 @@ class OrderServiceTest {
     var reservation = created(42L);
     when(idempotency.reserve(7L, "key-1", 3L)).thenReturn(reservation);
 
-    OrderDto dto = new OrderDto(11L, 3L, 7L, OrderStatus.PENDING, 2500L, Instant.now());
+    OrderDto dto = new OrderDto(11L, 3L, 7L, OrderStatus.PENDING, 2500L, Instant.now(), null, null);
     when(creationMock.create(7L, 3L)).thenReturn(dto);
 
     OrderDto result = service.createOrder(7L, 3L, "key-1");
