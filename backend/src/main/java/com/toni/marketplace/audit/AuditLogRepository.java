@@ -1,5 +1,6 @@
 package com.toni.marketplace.audit;
 
+import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -34,4 +35,15 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
 
   /** How many rows exist for one action (trail-size assertions in tests). */
   long countByAction(AuditAction action);
+
+  /**
+   * Ids of rows created before {@code createdBefore} — the retention
+   * cut-off computed by the nightly purge job (backlog #118). The
+   * predicate is {@code created_at} only: never action, never actor, so
+   * the purge cannot selectively erase specific events. Ordered by id so
+   * the batch loop can always re-read the first page without skipping
+   * rows.
+   */
+  @Query("select a.id from AuditLog a where a.createdAt < :createdBefore order by a.id")
+  List<Long> findPurgeableIds(Instant createdBefore, Pageable page);
 }

@@ -30,6 +30,13 @@ import org.hibernate.type.SqlTypes;
  *   <li>No setters — rows are immutable once written; the service exposes
  *       no update or delete path.</li>
  * </ul>
+ *
+ * <p>Append-only holds <em>within the retention window</em>: the nightly
+ * purge (backlog #118, {@code app.cleanup.audit-log-retention}, default
+ * 365 days) deletes rows by {@code created_at} only — never by action or
+ * actor — so history cannot be selectively rewritten, only aged out.
+ * Operators who need evidence beyond the window export the trail before
+ * it lapses.
  */
 @Entity
 @Table(name = "audit_log")

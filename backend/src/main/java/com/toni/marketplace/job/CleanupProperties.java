@@ -12,7 +12,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * are kept 90 days after their last state transition (late client retries
  * still replay the stored order), and used-or-expired
  * {@code password_reset_token} rows are kept 30 days after creation
- * (security-audit evidence, briefly — not forever). Override with e.g.
+ * (security-audit evidence, briefly — not forever), and {@code audit_log}
+ * rows are kept 365 days after creation (backlog #118 — the audit trail
+ * is the security record, so its window is materially longer than the
+ * token windows). Override with e.g.
  * {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -40,6 +43,15 @@ public class CleanupProperties {
    */
   private long passwordResetRetention = 30;
 
+  /**
+   * Days an {@code audit_log} row is kept after its creation before the
+   * purge may delete it. Must be &ge; 1. Deletion is by {@code created_at}
+   * only — never filtered by action or actor, so no specific event can be
+   * selectively erased; within the window the trail stays append-only
+   * (backlog #118).
+   */
+  private long auditLogRetention = 365;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -62,5 +74,13 @@ public class CleanupProperties {
 
   public void setPasswordResetRetention(long passwordResetRetention) {
     this.passwordResetRetention = passwordResetRetention;
+  }
+
+  public long getAuditLogRetention() {
+    return auditLogRetention;
+  }
+
+  public void setAuditLogRetention(long auditLogRetention) {
+    this.auditLogRetention = auditLogRetention;
   }
 }

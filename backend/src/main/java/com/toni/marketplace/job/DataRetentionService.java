@@ -1,5 +1,6 @@
 package com.toni.marketplace.job;
 
+import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
@@ -34,7 +35,10 @@ import org.springframework.transaction.annotation.Transactional;
  *   a confirm only ever deletes the user's <em>unused</em> rows, so used rows
  *   and expired-never-used rows of users who never re-request would otherwise
  *   accumulate forever. They are brief security-audit evidence, not a
- *   permanent archive (backlog #102).</li>
+ *   permanent archive (backlog #102);</li>
+ *   <li>{@code audit_log} rows past the retention window (backlog #118) —
+ *   the trail is the security record, so its window (365 days by default)
+ *   is materially longer than the token windows above.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
@@ -43,8 +47,16 @@ import org.springframework.transaction.annotation.Transactional;
  * password-reset token is never touched either: a purge must not kill an
  * in-flight reset.
  *
+ * <p>"Append-only" vs retention: the audit trail is append-only
+ * <em>within</em> its retention window — no code path updates or deletes a
+ * row inside it, and the purge deletes by {@code created_at} only, never
+ * by action or actor, so no specific event can be selectively erased.
+ * Operators who must keep evidence longer export the trail before the
+ * window lapses; that export is the documented escape hatch, not a reason
+ * to grow the table forever.
+ *
  * <p>Honest scope: the schedule fires in the JVM's default time zone (the
- * cron is fixed, not zone-pinned), and both purges run inside one
+ * cron is fixed, not zone-pinned), and all purges run inside one
  * transaction — a failure mid-purge rolls back and retries the next night.
  * The {@code @Transactional} lives on the scheduled method itself, not on a
  * self-invoked helper, so the proxy actually applies it.
@@ -63,24 +75,27 @@ public class DataRetentionService {
   private final RefreshTokenRepository refreshTokens;
   private final IdempotencyKeyRepository idempotencyKeys;
   private final PasswordResetTokenRepository passwordResetTokens;
+  private final AuditLogRepository auditLog;
   private final CleanupProperties props;
   private final Clock clock;
 
   public DataRetentionService(RefreshTokenRepository refreshTokens,
                               IdempotencyKeyRepository idempotencyKeys,
                               PasswordResetTokenRepository passwordResetTokens,
+                              AuditLogRepository auditLog,
                               CleanupProperties props,
                               Clock clock) {
     this.refreshTokens = refreshTokens;
     this.idempotencyKeys = idempotencyKeys;
     this.passwordResetTokens = passwordResetTokens;
+    this.auditLog = auditLog;
     this.props = props;
     this.clock = clock;
   }
 
   /** How many rows of each kind one purge run removed. */
   public record PurgeCounts(int refreshTokens, int idempotencyKeys,
-                            int passwordResetTokens) {}
+                            int passwordResetTokens, int auditLogRows) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -93,9 +108,10 @@ public class DataRetentionService {
     int tokens = purgeRefreshTokens(now);
     int keys = purgeIdempotencyKeys(now);
     int resets = purgePasswordResetTokens(now);
-    log.info("stale-data purge removed {} refresh_token, {} idempotency_key "
-        + "and {} password_reset_token rows", tokens, keys, resets);
-    return new PurgeCounts(tokens, keys, resets);
+    int audit = purgeAuditLog(now);
+    log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
+        + "{} password_reset_token and {} audit_log rows", tokens, keys, resets, audit);
+    return new PurgeCounts(tokens, keys, resets, audit);
   }
 
   private int purgeRefreshTokens(Instant now) {
@@ -150,6 +166,24 @@ public class DataRetentionService {
           PageRequest.of(0, BATCH_SIZE));
       if (!ids.isEmpty()) {
         passwordResetTokens.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeAuditLog(Instant now) {
+    // The audit trail is judged by age alone: created_at past the
+    // retention window. There is deliberately no action/actor predicate —
+    // the purge must never become a way to erase one specific event while
+    // keeping its neighbours (see the class javadoc on "append-only").
+    Instant createdBefore = now.minus(Duration.ofDays(props.getAuditLogRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = auditLog.findPurgeableIds(createdBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        auditLog.deleteAllByIdInBatch(ids);
         deleted += ids.size();
       }
     } while (ids.size() == BATCH_SIZE);

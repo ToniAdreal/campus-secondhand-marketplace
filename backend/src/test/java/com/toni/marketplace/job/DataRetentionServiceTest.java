@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.auth.MutableClock;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
@@ -45,6 +46,9 @@ class DataRetentionServiceTest {
   @Mock
   private PasswordResetTokenRepository passwordResetTokens;
 
+  @Mock
+  private AuditLogRepository auditLog;
+
   private MutableClock clock;
   private CleanupProperties props;
   private DataRetentionService purge;
@@ -56,7 +60,7 @@ class DataRetentionServiceTest {
     clock = new MutableClock(Instant.EPOCH);
     props = new CleanupProperties();
     purge = new DataRetentionService(refreshTokens, idempotencyKeys,
-        passwordResetTokens, props, clock);
+        passwordResetTokens, auditLog, props, clock);
   }
 
   @Test
@@ -64,6 +68,9 @@ class DataRetentionServiceTest {
     assertThat(props.getRefreshTokenRetention()).isEqualTo(30);
     assertThat(props.getIdempotencyRetention()).isEqualTo(90);
     assertThat(props.getPasswordResetRetention()).isEqualTo(30);
+    // The audit trail is the security record: its window is materially
+    // longer than every token window (backlog #118).
+    assertThat(props.getAuditLogRetention()).isEqualTo(365);
   }
 
   @Test
@@ -77,7 +84,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(2, 0, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(2, 0, 0, 0));
     verify(refreshTokens, times(1)).deleteAllByIdInBatch(List.of(1L, 2L));
 
     ArgumentCaptor<Instant> nowCaptor = ArgumentCaptor.forClass(Instant.class);
@@ -116,7 +123,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(91));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 700, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 700, 0, 0));
     verify(idempotencyKeys, times(2)).deleteAllByIdInBatch(any());
     verify(idempotencyKeys).deleteAllByIdInBatch(fullBatch);
     verify(idempotencyKeys).deleteAllByIdInBatch(partialBatch);
@@ -137,10 +144,11 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(365));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0));
     verify(refreshTokens, never()).deleteAllByIdInBatch(any());
     verify(idempotencyKeys, never()).deleteAllByIdInBatch(any());
     verify(passwordResetTokens, never()).deleteAllByIdInBatch(any());
+    verify(auditLog, never()).deleteAllByIdInBatch(any());
   }
 
   @Test
@@ -150,6 +158,7 @@ class DataRetentionServiceTest {
     props.setRefreshTokenRetention(7);
     props.setIdempotencyRetention(14);
     props.setPasswordResetRetention(5);
+    props.setAuditLogRetention(9);
 
     clock.advance(Duration.ofDays(10));
     purge.purgeStaleData();
@@ -169,6 +178,10 @@ class DataRetentionServiceTest {
     verify(passwordResetTokens).findPurgeableIds(any(), resetCutoff.capture(),
         any(Pageable.class));
     assertThat(resetCutoff.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(5)));
+
+    ArgumentCaptor<Instant> auditCutoff = ArgumentCaptor.forClass(Instant.class);
+    verify(auditLog).findPurgeableIds(auditCutoff.capture(), any(Pageable.class));
+    assertThat(auditCutoff.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(1)));
   }
 
   @Test
@@ -184,7 +197,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 2));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 2, 0));
     assertThat(counts.passwordResetTokens()).isEqualTo(2);
     verify(passwordResetTokens, times(1)).deleteAllByIdInBatch(List.of(7L, 8L));
 
@@ -235,9 +248,74 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 600));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 600, 0));
     verify(passwordResetTokens, times(2)).deleteAllByIdInBatch(any());
     verify(passwordResetTokens).deleteAllByIdInBatch(fullBatch);
     verify(passwordResetTokens).deleteAllByIdInBatch(partialBatch);
+  }
+
+  @Test
+  void purgeDeletesAuditRowsPastRetentionWindow() {
+    // The repository query selects by created_at alone; here it hands
+    // back the two rows that predate the retention cut-off. Rows inside
+    // the window fail the predicate, so they are never handed back and
+    // never deleted — the service deletes exactly what the query selects.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of(11L, 12L));
+
+    clock.advance(Duration.ofDays(366));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 2));
+    assertThat(counts.auditLogRows()).isEqualTo(2);
+    verify(auditLog, times(1)).deleteAllByIdInBatch(List.of(11L, 12L));
+
+    // now = EPOCH + 366 d; the 365-day default retention puts the
+    // creation cut-off at EPOCH + 1 d — anything created later is still
+    // inside the append-only window and must survive.
+    ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(auditLog, times(1)).findPurgeableIds(cutoffCaptor.capture(), any(Pageable.class));
+    assertThat(cutoffCaptor.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(1)));
+  }
+
+  @Test
+  void purgeKeepsAuditRowsInsideRetentionWindow() {
+    // 364 days elapsed < 365-day retention: the query still runs (the
+    // repository decides by created_at), but its cut-off predates every
+    // row's creation, so nothing is selected and nothing is deleted.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+
+    clock.advance(Duration.ofDays(364));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts.auditLogRows()).isEqualTo(0);
+    verify(auditLog, never()).deleteAllByIdInBatch(any());
+    ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(auditLog).findPurgeableIds(cutoffCaptor.capture(), any(Pageable.class));
+    assertThat(cutoffCaptor.getValue()).isEqualTo(Instant.EPOCH.minus(Duration.ofDays(1)));
+  }
+
+  @Test
+  void purgeDeletesAuditRowsInBatches() {
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    List<Long> fullBatch = LongStream.range(0, DataRetentionService.BATCH_SIZE)
+        .boxed().toList();
+    List<Long> partialBatch = LongStream.range(3000, 3100).boxed().toList();
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(fullBatch, partialBatch);
+
+    clock.advance(Duration.ofDays(366));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 600));
+    verify(auditLog, times(2)).deleteAllByIdInBatch(any());
+    verify(auditLog).deleteAllByIdInBatch(fullBatch);
+    verify(auditLog).deleteAllByIdInBatch(partialBatch);
   }
 }

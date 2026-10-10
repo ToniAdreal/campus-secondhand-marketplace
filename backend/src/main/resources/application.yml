@@ -146,9 +146,15 @@ app:
     # password-reset-retention: used-or-expired password_reset_token rows
     #   kept after creation (brief security-audit evidence), default 30.
     #   Still-valid unused tokens are never purged.
+    # audit-log-retention: audit_log rows kept after creation, default 365
+    #   (backlog #118) — the trail is the security record, so its window is
+    #   materially longer than the token windows. Deletion is by created_at
+    #   only (never by action/actor); the trail is append-only within the
+    #   window, and operators export before purge for longer evidence.
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30
+    audit-log-retention: 365
   orders:
     # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
     # minutes server-local). A buyer who creates an order and never pays
