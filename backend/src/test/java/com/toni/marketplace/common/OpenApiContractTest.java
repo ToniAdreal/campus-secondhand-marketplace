@@ -56,6 +56,7 @@ class OpenApiContractTest {
       "/api/auth/2fa/disable",
       "/api/auth/2fa/enable",
       "/api/auth/2fa/recovery-codes/count",
+      "/api/auth/2fa/recovery-codes/regenerate",
       "/api/auth/2fa/setup",
       "/api/auth/login",
       "/api/auth/logout",
@@ -184,6 +185,10 @@ class OpenApiContractTest {
         .contains("423", "429");
     // TOTP disable (#121) pins its not-enabled 422 and lockout 423.
     assertThat(responseCodes(docs, "/api/auth/2fa/disable", "post"))
+        .contains("422", "423");
+    // Recovery-code regeneration (#127) shares disable's proof bar, so
+    // it pins the same not-enabled 422 and lockout 423.
+    assertThat(responseCodes(docs, "/api/auth/2fa/recovery-codes/regenerate", "post"))
         .contains("422", "423");
   }
 }

@@ -131,6 +131,29 @@ public class AuthController {
   }
 
   /**
+   * Regenerates the caller's recovery-code set without re-enrolling
+   * (backlog #127, authenticated) — the light-weight answer to "I used
+   * or lost most of my codes": the TOTP secret and the authenticator
+   * enrollment stay untouched (re-running setup/enable would rotate
+   * them). Because a fresh set is itself a credential, the request must
+   * prove both factors, exactly like {@code /2fa/disable}: the current
+   * password AND a valid TOTP code or an unused recovery code (consumed
+   * by the regeneration — the whole old set is deleted on success).
+   * Wrong password or wrong code → the identical 401; failed code
+   * attempts feed the shared TOTP lockout (an active lock answers 423);
+   * 2FA not enabled → 422. The response carries the 10 new codes —
+   * shown once, only their hashes are stored.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "fresh recovery-code set issued — shown once, only hashes stored (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong password or wrong code — identical for both (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "two-factor authentication is not enabled (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor attempts locked after repeated failures — see Retry-After (envelope)")})
+  @PostMapping("/2fa/recovery-codes/regenerate")
+  public ResponseEntity<ApiResponse<TotpEnableResponse>> regenerateRecoveryCodes(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody TotpRecoveryCodeRegenerateRequest request) {
+    return ResponseEntity.ok(ApiResponse.ok(new TotpEnableResponse(
+        auth.regenerateRecoveryCodes(userId, request.currentPassword(), request.code()))));
+  }
+
+  /**
    * The second-factor exchange (public — the caller is not authenticated
    * yet): the 202 challenge plus the current 6-digit code — or a
    * one-time recovery code (backlog #91), which the successful exchange

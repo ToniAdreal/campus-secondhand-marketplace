@@ -419,26 +419,71 @@ public class AuthService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "two-factor authentication is not enabled");
     }
-    TotpLockoutProperties totpLockout = totpLockout();
-    Instant now = clock.instant();
-    if (totpLockout.isEnabled()) {
-      Instant totpLockedUntil = user.getTotpLockedUntil();
-      if (totpLockedUntil != null) {
-        if (now.isBefore(totpLockedUntil)) {
-          // Locked (#101): even correct proofs are refused until the
-          // window passes — otherwise this endpoint would bypass the
-          // authenticate exchange's lock entirely. This attempt does
-          // not extend the lock or feed the counter.
-          throw new AccountLockedException(retryAfterSeconds(now, totpLockedUntil));
-        }
-        // Expired lock: the account gets a fresh allowance.
-        user.setTotpLockedUntil(null);
-        user.setFailedTotpAttempts(0);
-      }
-    }
+    requireTotpUnlocked(user);
     if (!passwords.matches(currentPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();
     }
+    verifySecondFactor(user, code);
+    user.setTotpEnabled(false);
+    user.setTotpSecret(null);
+    users.save(user);
+    if (recoveryCodesAvailable()) {
+      recoveryCodes.deleteByUserId(userId);
+    }
+    // The disable is a sensitive transition — append its audit row
+    // inside this transaction (a rollback leaves 2FA on and no row).
+    audit().record(userId, AuditAction.TOTP_DISABLED, AuditTargetType.USER, userId);
+  }
+
+  /**
+   * The #101 lock gate shared by the proof-demanding TOTP management
+   * endpoints ({@link #disableTotp}, {@link #regenerateRecoveryCodes}):
+   * an active per-account TOTP lock refuses the attempt outright (423,
+   * even for correct proofs) — otherwise a management endpoint would
+   * bypass the authenticate exchange's lock entirely. The refused
+   * attempt does not extend the lock or feed the counter. An expired
+   * lock resets the counter, giving the account a fresh allowance.
+   * Callers run inside a {@code noRollbackFor} transaction so the reset
+   * survives the 401/423 the attempt may go on to produce.
+   */
+  private void requireTotpUnlocked(User user) {
+    TotpLockoutProperties totpLockout = totpLockout();
+    if (!totpLockout.isEnabled()) {
+      return;
+    }
+    Instant lockedUntil = user.getTotpLockedUntil();
+    if (lockedUntil == null) {
+      return;
+    }
+    Instant now = clock.instant();
+    if (now.isBefore(lockedUntil)) {
+      throw new AccountLockedException(retryAfterSeconds(now, lockedUntil));
+    }
+    // Expired lock: the account gets a fresh allowance.
+    user.setTotpLockedUntil(null);
+    user.setFailedTotpAttempts(0);
+  }
+
+  /**
+   * The second-factor proof shared by {@link #disableTotp} and {@link
+   * #regenerateRecoveryCodes} (factored in backlog #127 so the two
+   * endpoints can never drift): the presented value must be a valid
+   * 6-digit TOTP code for the stored secret or an unused recovery code
+   * (consumed by the success). The caller has already verified the
+   * current password, so a wrong-password attempt never reaches this
+   * method and can never burn a one-time code.
+   *
+   * <p>Failures: every failure is the identical 401 ({@link
+   * InvalidCredentialsException}) — no oracle reveals which form was
+   * expected. Only a genuine code-verification failure feeds the shared
+   * #101 counter, and reaching its ceiling locks the exchange and both
+   * management endpoints alike (the locking failure itself answers 423,
+   * mirroring {@link #authenticateTotp}); an undecryptable stored secret
+   * or a missing secret is account state, not guessing, and never feeds
+   * it. On success the TOTP lockout counters reset.
+   */
+  private void verifySecondFactor(User user, String code) {
+    long userId = user.getId();
     String stored = user.getTotpSecret();
     if (stored == null) {
       // Enabled flag without a secret is corrupt account state, not a
@@ -455,17 +500,19 @@ public class AuthService {
     }
     if (!totp.verify(secret, code)) {
       // Not a TOTP code — try it as a one-time recovery code (#91). A
-      // live code is consumed by this disable; a replay, an unknown
-      // code and a wrong TOTP code all land on the identical 401 below.
+      // live code is consumed by this proof; a replay, an unknown code
+      // and a wrong TOTP code all land on the identical 401 below.
       if (!consumeRecoveryCode(userId, code)) {
         // A genuine second-factor failure — count it on the shared
         // #101 counter, and lock when the ceiling is reached (the
         // locking failure itself answers 423, mirroring authenticate).
+        TotpLockoutProperties totpLockout = totpLockout();
         if (totpLockout.isEnabled()) {
           int attempts = user.getFailedTotpAttempts() + 1;
           user.setFailedTotpAttempts(attempts);
           if (attempts >= totpLockout.getMaxAttempts()) {
-            user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
+            user.setTotpLockedUntil(
+                clock.instant().plus(totpLockout.getLockDuration()));
             users.save(user);
             throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
           }
@@ -473,17 +520,67 @@ public class AuthService {
         throw new InvalidCredentialsException();
       }
     }
-    user.setTotpEnabled(false);
-    user.setTotpSecret(null);
+    // Success: the shared failure counter resets (mirrors the success
+    // resets on authenticateTotp and on the old inline disable flow).
     user.setFailedTotpAttempts(0);
     user.setTotpLockedUntil(null);
-    users.save(user);
-    if (recoveryCodesAvailable()) {
-      recoveryCodes.deleteByUserId(userId);
+  }
+
+  /**
+   * Regenerates the caller's TOTP recovery-code set without
+   * re-enrolling (backlog #127) — the light-weight answer to "I used or
+   * lost most of my codes". Until now the only way to get a fresh set
+   * was re-running setup + enable (#91), which also rotates the TOTP
+   * secret and forces re-enrollment in the authenticator app.
+   *
+   * <p>The proof bar is exactly {@link #disableTotp}'s, through the
+   * shared seam ({@link #requireTotpUnlocked} + {@link
+   * #verifySecondFactor}), so the two endpoints cannot drift: the
+   * current password AND a valid TOTP code or an unused recovery code
+   * (the password is checked first, so a wrong-password attempt never
+   * burns a one-time code; a recovery code used as the proof is
+   * consumed — moot, since the whole old set is deleted on success).
+   * Wrong password and wrong code both produce the identical 401; 2FA
+   * not enabled is a state conflict, answered 422; failed code proofs
+   * feed the shared #101 lockout and an active lock answers 423.
+   *
+   * <p>On success, in this one transaction: the old set is deleted, 10
+   * fresh codes are issued (returned in display form exactly once —
+   * only their SHA-256 hashes are stored, the V21 table as-is), and a
+   * {@code RECOVERY_CODES_REGENERATED} audit row is appended (actor =
+   * target = the account holder). The TOTP secret and the enabled flag
+   * are deliberately untouched — the authenticator app keeps working —
+   * and the current session survives, mirroring enable/disable.
+   *
+   * <p>{@code noRollbackFor}: same rationale as {@link #disableTotp} —
+   * the shared lockout counter increment must survive the 401 / 423 it
+   * produces; the failure paths mutate nothing else, so committing them
+   * is safe.
+   *
+   * @return the freshly issued recovery codes, display form, shown once
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public List<String> regenerateRecoveryCodes(long userId, String currentPassword,
+                                              String code) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (!user.isTotpEnabled()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "two-factor authentication is not enabled");
     }
-    // The disable is a sensitive transition — append its audit row
-    // inside this transaction (a rollback leaves 2FA on and no row).
-    audit().record(userId, AuditAction.TOTP_DISABLED, AuditTargetType.USER, userId);
+    requireTotpUnlocked(user);
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    verifySecondFactor(user, code);
+    users.save(user);
+    List<String> issued = issueRecoveryCodes(userId);
+    // The regeneration is a sensitive transition — append its audit
+    // row inside this transaction (a rollback keeps the old set valid
+    // and writes no row).
+    audit().record(userId, AuditAction.RECOVERY_CODES_REGENERATED,
+        AuditTargetType.USER, userId);
+    return issued;
   }
 
   /**

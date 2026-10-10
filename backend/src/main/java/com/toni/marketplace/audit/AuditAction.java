@@ -32,6 +32,16 @@ public enum AuditAction {
    */
   TOTP_DISABLED,
   /**
+   * The account holder regenerated their TOTP recovery-code set
+   * ({@code AuthService.regenerateRecoveryCodes}, backlog #127). Actor
+   * and target are both the account holder, mirroring
+   * {@link #TOTP_ENABLED}: regeneration required the current password
+   * plus a valid TOTP or recovery code, deleted the whole previous set
+   * and issued a fresh one in the same transaction — the TOTP secret
+   * and the enabled flag are untouched (no re-enrollment).
+   */
+  RECOVERY_CODES_REGENERATED,
+  /**
    * The buyer paid a PENDING order ({@code OrderService.pay}, backlog
    * #122). Actor is the buyer — the money-moving transition PENDING → PAID.
    * An idempotent re-pay writes no second row, and a declined capture
