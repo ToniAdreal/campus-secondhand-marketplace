@@ -237,6 +237,13 @@ management:
       # endpoints disclose only UP/DOWN component status.
       probes:
         enabled: true
+      # Component NAMES + their UP/DOWN status are shown even though
+      # show-details stays never: Boot's separate show-components knob
+      # (default follows show-details, which would reduce every health
+      # response to a bare {"status":"UP"} and make the groups
+      # indistinguishable). Component details (db vendor, disk paths)
+      # remain hidden — only statuses are disclosed.
+      show-components: always
       group:
         liveness:
           include: livenessState
