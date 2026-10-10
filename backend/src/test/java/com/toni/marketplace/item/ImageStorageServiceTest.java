@@ -43,9 +43,18 @@ class ImageStorageServiceTest {
     }
   }
 
+  private static final byte[] PNG_BYTES = {
+      (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01};
+  private static final byte[] JPEG_BYTES = {
+      (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10};
+  private static final byte[] GIF87_BYTES = "GIF87a..".getBytes();
+  private static final byte[] GIF89_BYTES = "GIF89a..".getBytes();
+  private static final byte[] WEBP_BYTES = {
+      'R', 'I', 'F', 'F', 0x10, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V'};
+
   @Test
   void storesFileWithUuidNameAndContentTypeExtension() {
-    byte[] bytes = {(byte) 0x89, 0x50, 0x4E, 0x47};
+    byte[] bytes = PNG_BYTES;
     MockMultipartFile file =
         new MockMultipartFile("file", "../../etc/evil.jsp", "image/png", bytes);
 
@@ -92,9 +101,65 @@ class ImageStorageServiceTest {
   }
 
   @Test
+  void honestBytesForEachAllowlistedTypePass() {
+    assertThat(storage.store(new MockMultipartFile(
+        "file", "a.png", "image/png", PNG_BYTES))).endsWith(".png");
+    assertThat(storage.store(new MockMultipartFile(
+        "file", "a.jpg", "image/jpeg", JPEG_BYTES))).endsWith(".jpg");
+    assertThat(storage.store(new MockMultipartFile(
+        "file", "a.gif", "image/gif", GIF87_BYTES))).endsWith(".gif");
+    assertThat(storage.store(new MockMultipartFile(
+        "file", "a.gif", "image/gif", GIF89_BYTES))).endsWith(".gif");
+    assertThat(storage.store(new MockMultipartFile(
+        "file", "a.webp", "image/webp", WEBP_BYTES))).endsWith(".webp");
+  }
+
+  @Test
+  void spoofedBytesForDeclaredTypeAreRejectedAndLeaveNoFile() throws IOException {
+    // Non-image payload labelled as an image.
+    assertSpoofRejected("image/png", "hello world!".getBytes());
+    // Honest bytes, wrong declared type, in every direction.
+    assertSpoofRejected("image/jpeg", PNG_BYTES);
+    assertSpoofRejected("image/png", JPEG_BYTES);
+    assertSpoofRejected("image/gif", PNG_BYTES);
+    assertSpoofRejected("image/webp", GIF89_BYTES);
+    // RIFF container that is not WebP (e.g. a WAV header).
+    assertSpoofRejected("image/webp",
+        new byte[]{'R', 'I', 'F', 'F', 0x10, 0, 0, 0, 'W', 'A', 'V', 'E'});
+    // A GIF version that never existed.
+    assertSpoofRejected("image/gif", "GIF88a..".getBytes());
+
+    try (var stream = Files.list(uploadDir)) {
+      assertThat(stream).isEmpty();
+    }
+  }
+
+  @Test
+  void truncatedHeadersAreRejectedAndLeaveNoFile() throws IOException {
+    // Only the first half of the PNG signature.
+    assertSpoofRejected("image/png",
+        new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47});
+    assertSpoofRejected("image/jpeg", new byte[]{(byte) 0xFF, (byte) 0xD8});
+    // RIFF present, WEBP marker cut off.
+    assertSpoofRejected("image/webp",
+        new byte[]{'R', 'I', 'F', 'F', 0x10, 0, 0, 0, 'W', 'E'});
+
+    try (var stream = Files.list(uploadDir)) {
+      assertThat(stream).isEmpty();
+    }
+  }
+
+  private void assertSpoofRejected(String contentType, byte[] bytes) {
+    MockMultipartFile file = new MockMultipartFile("file", "x", contentType, bytes);
+    assertThatThrownBy(() -> storage.store(file))
+        .isInstanceOf(InvalidImageException.class)
+        .hasMessageContaining("does not match declared type");
+  }
+
+  @Test
   void delete_removesPreviouslyStoredFile() throws IOException {
     MockMultipartFile file =
-        new MockMultipartFile("file", "lamp.png", "image/png", new byte[]{1, 2, 3});
+        new MockMultipartFile("file", "lamp.png", "image/png", PNG_BYTES);
     String url = storage.store(file);
 
     assertThat(storage.delete(url)).isTrue();

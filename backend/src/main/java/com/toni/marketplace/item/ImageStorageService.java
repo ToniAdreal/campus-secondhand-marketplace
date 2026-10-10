@@ -22,12 +22,21 @@ import com.toni.marketplace.common.InvalidImageException;
  *       never trusted and never reaches the served directory, so it cannot
  *       carry path traversal ({@code ../../}) or executable extensions
  *       ({@code .jsp}, {@code .html}) into it. This is a portfolio-scale
- *       tradeoff, not production hardening: content-type sniffing (magic
- *       bytes), AV scanning, and object storage (S3/OSS) would be next.</li>
+ *       tradeoff, not production hardening: AV scanning and object
+ *       storage (S3/OSS) would be next.</li>
  *   <li><b>Validation:</b> allowlisted image content types only
- *       (png/jpeg/webp/gif) and a configurable size cap
- *       ({@code app.uploads.max-size}, default 5 MB). Spring's servlet
- *       multipart limits act as a backstop and surface as 413.</li>
+ *       (png/jpeg/webp/gif), a configurable size cap
+ *       ({@code app.uploads.max-size}, default 5 MB), and a magic-byte
+ *       check: the leading bytes must match the declared type (PNG
+ *       8-byte signature, JPEG {@code FFD8FF}, GIF87a/GIF89a, WebP
+ *       {@code RIFF....WEBP}) before anything reaches disk, so a
+ *       non-image payload labelled {@code image/png} is rejected with
+ *       the same 400 envelope as other bad uploads and leaves no file
+ *       behind. The check inspects only the signature, not the full
+ *       image structure — a payload with an honest header and garbage
+ *       after it still passes (full decoding would be the next step).
+ *       Spring's servlet multipart limits act as a backstop and surface
+ *       as 413.</li>
  *   <li><b>Serving:</b> files are served statically under
  *       {@code /uploads/**} by {@link
  *       com.toni.marketplace.common.UploadWebConfig}; the returned path is
@@ -89,12 +98,63 @@ public class ImageStorageService {
       // an operator may have wiped it while the app was running.
       Files.createDirectories(dir);
       try (InputStream in = file.getInputStream()) {
-        Files.copy(in, target);
+        // Magic-byte gate BEFORE the file is created: read the signature
+        // header first and verify it against the declared type, so a
+        // spoofed or truncated upload never leaves a file behind.
+        byte[] header = in.readNBytes(HEADER_BYTES);
+        if (!matchesDeclaredType(file.getContentType(), header)) {
+          throw new InvalidImageException(
+              "image content does not match declared type: " + file.getContentType());
+        }
+        try (var out = Files.newOutputStream(target)) {
+          out.write(header);
+          in.transferTo(out);
+        }
       }
     } catch (IOException e) {
       throw new InvalidImageException("could not store image");
     }
     return PUBLIC_PREFIX + filename;
+  }
+
+  /** Longest signature inspected (WebP needs bytes 0–11). */
+  private static final int HEADER_BYTES = 12;
+
+  private static final byte[] PNG_SIGNATURE = {
+      (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+
+  /**
+   * Pure byte checks against the declared type's magic bytes. A header
+   * shorter than the signature (truncated upload) never matches.
+   */
+  static boolean matchesDeclaredType(String contentType, byte[] header) {
+    if (contentType == null || header == null) {
+      return false;
+    }
+    return switch (contentType) {
+      case "image/png" -> startsWith(header, PNG_SIGNATURE);
+      case "image/jpeg" -> header.length >= 3
+          && header[0] == (byte) 0xFF && header[1] == (byte) 0xD8 && header[2] == (byte) 0xFF;
+      case "image/gif" -> header.length >= 6
+          && header[0] == 'G' && header[1] == 'I' && header[2] == 'F'
+          && header[3] == '8' && (header[4] == '7' || header[4] == '9') && header[5] == 'a';
+      case "image/webp" -> header.length >= 12
+          && header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F'
+          && header[8] == 'W' && header[9] == 'E' && header[10] == 'B' && header[11] == 'P';
+      default -> false;
+    };
+  }
+
+  private static boolean startsWith(byte[] header, byte[] signature) {
+    if (header.length < signature.length) {
+      return false;
+    }
+    for (int i = 0; i < signature.length; i++) {
+      if (header[i] != signature[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
