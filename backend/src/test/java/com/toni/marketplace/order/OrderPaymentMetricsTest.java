@@ -205,6 +205,57 @@ class OrderPaymentMetricsTest {
     assertThat(count("orders.cancelled")).isEqualTo(cancelledBefore);
   }
 
+  private void payExpectingDecline(User buyer, long orderId) throws Exception {
+    mockMvc.perform(post("/api/orders/{id}/pay", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"paymentToken\":\"tok_decline\"}"))
+        .andExpect(status().is(402));
+  }
+
+  @Test
+  void declinedCounter_declineMovesOnlyDeclined_retryMovesPaidNotDeclined() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    long orderId = createOrder(buyer, newItem(seller));
+    double declinedBefore = count("payments.declined");
+    double paidBefore = count("orders.paid");
+
+    // Backlog #115: a declined capture (#92) counts on payments.declined
+    // only — the order stays PENDING, so orders.paid must not move.
+    payExpectingDecline(buyer, orderId);
+    assertThat(count("payments.declined")).isEqualTo(declinedBefore + 1);
+    assertThat(count("orders.paid")).isEqualTo(paidBefore);
+
+    // A successful retry after the decline counts as paid, and must not
+    // count as a second decline.
+    act(buyer, orderId, "pay");
+    assertThat(count("orders.paid")).isEqualTo(paidBefore + 1);
+    assertThat(count("payments.declined")).isEqualTo(declinedBefore + 1);
+
+    // An idempotent re-pay of the now-PAID order attempts no capture at
+    // all: neither counter moves.
+    act(buyer, orderId, "pay");
+    assertThat(count("orders.paid")).isEqualTo(paidBefore + 1);
+    assertThat(count("payments.declined")).isEqualTo(declinedBefore + 1);
+  }
+
+  @Test
+  void declinedCounter_eachDeclinedAttemptCounts() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    long orderId = createOrder(buyer, newItem(seller));
+    double declinedBefore = count("payments.declined");
+
+    // Two separate declined attempts are two payment events (unlike the
+    // transition counters, a decline is an attempt outcome, and a wave
+    // of them is exactly the signal #115 exists to surface).
+    payExpectingDecline(buyer, orderId);
+    payExpectingDecline(buyer, orderId);
+
+    assertThat(count("payments.declined")).isEqualTo(declinedBefore + 2);
+  }
+
   @Test
   void countersAreScrapeableViaPrometheusBehindAuth() throws Exception {
     User seller = newUser("seller");

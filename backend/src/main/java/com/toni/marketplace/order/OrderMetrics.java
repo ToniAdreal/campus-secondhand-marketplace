@@ -28,6 +28,16 @@ import org.springframework.stereotype.Component;
  *       {@link OrderService#expireStaleOrder}). Counted here, not as
  *       {@code orders.cancelled}: expiry is a system transition, not a
  *       buyer action, and the two must stay distinguishable.</li>
+ *   <li>{@code payments.declined} — the mock PSP declined a capture
+ *       (#115, extending #92). This is deliberately not an
+ *       {@code orders.*} counter: a decline is not an order transition
+ *       (the order stays PENDING), it is a payment-attempt outcome, and
+ *       without it a wave of declines would be invisible on
+ *       {@code /actuator/prometheus} while {@code orders.paid} simply
+ *       flatlines. Counted at exactly the decline point in
+ *       {@link OrderService#pay(Long, Long, String)} — never on a 409
+ *       race loss, a validation 400, or an idempotent re-pay (which
+ *       returns before any capture is attempted).</li>
  * </ul>
  *
  * <p>Counters increment at exactly the transition points in
@@ -49,6 +59,7 @@ public class OrderMetrics {
   private final Counter completed;
   private final Counter refunded;
   private final Counter expired;
+  private final Counter paymentsDeclined;
 
   public OrderMetrics(MeterRegistry registry) {
     MeterRegistry reg = registry != null ? registry : new SimpleMeterRegistry();
@@ -69,6 +80,9 @@ public class OrderMetrics {
         .register(reg);
     this.expired = Counter.builder("orders.expired")
         .description("Stale PENDING orders expired by the scheduled job")
+        .register(reg);
+    this.paymentsDeclined = Counter.builder("payments.declined")
+        .description("Mock PSP capture declines (order stays PENDING)")
         .register(reg);
   }
 
@@ -103,5 +117,9 @@ public class OrderMetrics {
 
   public void expired() {
     expired.increment();
+  }
+
+  public void paymentsDeclined() {
+    paymentsDeclined.increment();
   }
 }

@@ -1,6 +1,7 @@
 package com.toni.marketplace.order;
 
 import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.common.PaymentDeclinedException;
 import com.toni.marketplace.audit.AuditService;
 import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
@@ -464,7 +465,8 @@ public class OrderService {
    *       PENDING, the listing stays RESERVED, and the capture key the
    *       PSP seam declined under is neither remembered by the mock nor
    *       persisted on the row — a retry with a succeeding token captures
-   *       normally.</li>
+   *       normally. The decline itself is counted on
+   *       {@code payments.declined} (#115, see {@link OrderMetrics}).</li>
    * </ul>
    */
   @Transactional
@@ -516,6 +518,15 @@ public class OrderService {
       orders.flush();
       metrics().paid();
       return dto;
+    } catch (PaymentDeclinedException e) {
+      // Backlog #115: count the decline at exactly this point. The
+      // exception rolls the transaction back (order stays PENDING), but
+      // a Micrometer counter is not transactional — the increment
+      // survives the rollback, which is the point: the decline happened
+      // even though no state transition did. A 409 race loss lands in
+      // the catch below and is never counted as a decline.
+      metrics().paymentsDeclined();
+      throw e;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
