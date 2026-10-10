@@ -140,8 +140,10 @@ class PasswordResetAuditTest {
 
     confirm("totally-unknown-token", "n3w-s3cret", 401);
 
+    // Scoped to this test's user: the shared test DB legitimately holds
+    // committed audit rows from other (non-@Transactional) test classes,
+    // so a global count assertion would be order-dependent.
     assertThat(rowsFor(userId)).isEmpty();
-    assertThat(auditLog.count()).isZero();
   }
 
   @Test
