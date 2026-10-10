@@ -21,7 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
  * stack; every other actuator endpoint ({@code /actuator/**}, currently
  * {@code /actuator/metrics} and {@code /actuator/prometheus}) sits behind the
  * same Bearer auth as the API. {@code /actuator/prometheus} is the
- * Micrometer Prometheus registry export (backlog #57).
+ * Micrometer Prometheus registry export (backlog #57). The liveness /
+ * readiness health groups (backlog #128) are public on the same terms:
+ * liveness carries livenessState only (never db — a DB outage must not
+ * restart-loop the app), readiness carries readinessState + db.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -61,6 +64,28 @@ class ActuatorSecurityTest {
     mockMvc.perform(get("/actuator/health"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("UP"));
+  }
+
+  @Test
+  void livenessGroupIsPublicAndCarriesOnlyLivenessState() throws Exception {
+    mockMvc.perform(get("/actuator/health/liveness"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("UP"))
+        .andExpect(jsonPath("$.components.livenessState.status").value("UP"))
+        // The whole point of the group split: no db (or any other)
+        // component may leak into liveness.
+        .andExpect(jsonPath("$.components.db").doesNotExist())
+        .andExpect(jsonPath("$.components.readinessState").doesNotExist());
+  }
+
+  @Test
+  void readinessGroupIsPublicAndCarriesReadinessStateAndDb() throws Exception {
+    mockMvc.perform(get("/actuator/health/readiness"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("UP"))
+        .andExpect(jsonPath("$.components.readinessState.status").value("UP"))
+        .andExpect(jsonPath("$.components.db.status").value("UP"))
+        .andExpect(jsonPath("$.components.livenessState").doesNotExist());
   }
 
   @Test

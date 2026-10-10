@@ -77,6 +77,7 @@ curl -s -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
 ```
 
 Everything except `/api/auth/**`, `/uploads/**`, `/actuator/health`,
+`/actuator/health/liveness`, `/actuator/health/readiness`,
 `/actuator/info`, and `/error` requires a Bearer token —
 an unauthenticated `curl http://localhost/api/items` must return the JSON 401 envelope,
 which itself proves the proxy → security filter chain path works.
@@ -86,8 +87,16 @@ which itself proves the proxy → security filter chain path works.
 The backend exposes Spring Boot Actuator:
 
 - `curl http://localhost:8080/actuator/health` → `{"status":"UP"}` — public,
-  unauthenticated; this is the liveness probe for the compose stack (CI curls
-  it after the backend is up — see the `docker-compose-smoke` job).
+  unauthenticated (CI curls it after the backend is up — see the
+  `docker-compose-smoke` job).
+- Liveness probe: `curl http://localhost:8080/actuator/health/liveness` →
+  `{"status":"UP"}` — public, unauthenticated; reports `livenessState` only
+  (never the database, so a DB outage cannot restart-loop the app). Point
+  the orchestrator's liveness probe here.
+- Readiness probe: `curl http://localhost:8080/actuator/health/readiness` →
+  `{"status":"UP"}` — public, unauthenticated; reports `readinessState` +
+  `db`, so it goes DOWN while the database is unreachable. Point the
+  orchestrator's / load balancer's readiness probe here.
 - `curl http://localhost:8080/actuator/info` — public, app name/version.
 - `/actuator/metrics` (and anything else under `/actuator/**`) — requires a
   valid Bearer token like any API endpoint.

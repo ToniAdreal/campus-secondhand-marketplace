@@ -37,7 +37,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       session(s).</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
  *       viewable by any visitor.</li>
- *   <li>{@code /actuator/health} and {@code /actuator/info} are public —
+ *   <li>{@code /actuator/health}, its {@code liveness} / {@code readiness}
+ *       groups (backlog #128) and {@code /actuator/info} are public —
  *       unauthenticated liveness/readiness probes for the compose stack; every
  *       other actuator endpoint ({@code /actuator/**}, currently
  *       {@code /actuator/metrics} and {@code /actuator/prometheus}) needs a
@@ -191,7 +192,8 @@ public class SecurityConfig {
             // Actuator: public liveness/readiness probes, everything else
             // authenticated. Matcher order matters — the more specific
             // health/info matchers come first.
-            .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+            .requestMatchers("/actuator/health", "/actuator/health/liveness",
+                "/actuator/health/readiness", "/actuator/info").permitAll()
             .requestMatchers("/actuator/**").authenticated()
             // OpenAPI docs (backlog #95): same rule as actuator metrics —
             // authenticated, not public; the route map is not public

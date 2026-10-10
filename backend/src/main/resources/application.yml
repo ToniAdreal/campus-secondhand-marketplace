@@ -213,6 +213,23 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{requestId}] %logger{36} - %msg%n"
 
 management:
+  endpoint:
+    health:
+      # Liveness / readiness probe groups (backlog #128): an orchestrator
+      # polls the two groups separately. Liveness is livenessState ONLY —
+      # never the database: a DB outage must fail readiness (stop routing
+      # traffic) without restart-looping the app. Readiness is
+      # readinessState + db. Probes are enabled explicitly so the groups
+      # exist outside Kubernetes too (Boot otherwise only auto-creates
+      # them on k8s). show-details stays at its default (never): the group
+      # endpoints disclose only UP/DOWN component status.
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
   info:
     # Exposes info.* application properties on /actuator/info (the env info
     # contributor is opt-in since Spring Boot 3.2 — it defaults to off).
@@ -223,10 +240,11 @@ management:
       exposure:
         # health + info are public (permitAll in SecurityConfig) so the
         # compose stack / a load balancer has a liveness probe without
-        # credentials; metrics and prometheus are exposed for operators but
-        # stay behind auth (same SecurityConfig rule). Nothing else is
-        # registered for the web; /actuator/** matches are authenticated
-        # regardless.
+        # credentials; the liveness/readiness health groups (#128) are
+        # public on the same terms. Metrics and prometheus are exposed
+        # for operators but stay behind auth (same SecurityConfig rule).
+        # Nothing else is registered for the web; /actuator/** matches
+        # are authenticated regardless.
         include: health,info,metrics,prometheus
 
 info:
