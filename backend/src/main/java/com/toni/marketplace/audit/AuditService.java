@@ -12,8 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
  * this, a password change, a TOTP enable, an order complete/refund or an
  * ADMIN disable/enable left no trace beyond application logs.
  *
- * <p>Covered in v1 (the seams that exist today): {@code PASSWORD_CHANGED}
- * and {@code TOTP_ENABLED} from {@code AuthService}, {@code USER_DISABLED}
+ * <p>Covered in v1 (the seams that exist today): {@code PASSWORD_CHANGED},
+ * {@code TOTP_ENABLED} and {@code TOTP_DISABLED} (backlog #121) from
+ * {@code AuthService}, {@code USER_DISABLED}
  * / {@code USER_ENABLED} from the ADMIN endpoints (#88), and
  * {@code ORDER_COMPLETED} / {@code ORDER_REFUNDED} from
  * {@code OrderService}, and {@code PASSWORD_RESET_COMPLETED} from

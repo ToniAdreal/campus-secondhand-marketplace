@@ -22,6 +22,14 @@ public enum AuditAction {
   PASSWORD_RESET_COMPLETED,
   /** The account holder completed TOTP enrollment ({@code AuthService.enableTotp}). */
   TOTP_ENABLED,
+  /**
+   * The account holder turned TOTP 2FA off ({@code AuthService.disableTotp},
+   * backlog #121). Actor and target are both the account holder, mirroring
+   * {@link #TOTP_ENABLED}: disabling required the current password plus a
+   * valid TOTP or recovery code, cleared the secret and deleted the whole
+   * recovery-code set in the same transaction.
+   */
+  TOTP_DISABLED,
   /** A seller (or ADMIN) completed a PAID order ({@code OrderService.complete}). */
   ORDER_COMPLETED,
   /** A seller (or ADMIN) refunded a PAID order ({@code OrderService.refund}). */

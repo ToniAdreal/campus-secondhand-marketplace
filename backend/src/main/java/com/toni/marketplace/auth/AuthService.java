@@ -372,6 +372,121 @@ public class AuthService {
   }
 
   /**
+   * Turns TOTP 2FA off for the caller (backlog #121) — the reverse of
+   * {@link #enableTotp}, which until now had no counterpart: an account
+   * that enabled 2FA could never turn it off short of an ADMIN disabling
+   * the whole account. Disabling is itself a sensitive transition, so it
+   * demands proof of both factors the account has: the current password
+   * (knowledge) AND a valid second factor — the current 6-digit TOTP code
+   * or an unused recovery code, verified through the same seam as
+   * {@link #authenticateTotp} (a recovery code used here is consumed).
+   * The password is checked BEFORE the second factor is touched, so a
+   * wrong-password attempt can never burn a one-time recovery code.
+   *
+   * <p>Failures: a wrong password and a wrong code both produce the
+   * identical 401 ({@link InvalidCredentialsException}) — no oracle
+   * reveals which proof failed. Disabling when 2FA is not enabled is a
+   * state conflict, answered 422. Brute-force defence mirrors
+   * {@code authenticateTotp} (#101) so this endpoint is not a fresh
+   * guessing oracle: an active TOTP lock refuses the attempt outright
+   * (423, even for correct proofs), and a genuine second-factor failure
+   * feeds the same per-account counter — reaching the ceiling locks the
+   * exchange and this endpoint alike. A wrong PASSWORD does not feed the
+   * TOTP counter (it is not a second-factor guess, mirroring {@link
+   * #changePassword}, whose password proof feeds no counter either), and
+   * an undecryptable stored secret is account state, not guessing, and
+   * likewise never feeds it.
+   *
+   * <p>On success, in this one transaction: {@code totpEnabled=false},
+   * the secret is cleared, every recovery code is deleted, the TOTP
+   * lockout counters are reset, and a {@code TOTP_DISABLED} audit row is
+   * appended (actor = target = the account holder, mirroring {@code
+   * TOTP_ENABLED}). The current session deliberately survives — no
+   * tokenVersion bump, no refresh-family revocation — mirroring enable,
+   * which also leaves sessions alone.
+   *
+   * <p>{@code noRollbackFor}: the lockout counter increment must survive
+   * the 401 / 423 it produces, exactly as on {@code authenticateTotp} —
+   * the default rollback would erase it and the throttle would never
+   * engage. The failure paths mutate nothing else (a recovery code is
+   * consumed only on the success path), so committing them is safe.
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public void disableTotp(long userId, String currentPassword, String code) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (!user.isTotpEnabled()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "two-factor authentication is not enabled");
+    }
+    TotpLockoutProperties totpLockout = totpLockout();
+    Instant now = clock.instant();
+    if (totpLockout.isEnabled()) {
+      Instant totpLockedUntil = user.getTotpLockedUntil();
+      if (totpLockedUntil != null) {
+        if (now.isBefore(totpLockedUntil)) {
+          // Locked (#101): even correct proofs are refused until the
+          // window passes — otherwise this endpoint would bypass the
+          // authenticate exchange's lock entirely. This attempt does
+          // not extend the lock or feed the counter.
+          throw new AccountLockedException(retryAfterSeconds(now, totpLockedUntil));
+        }
+        // Expired lock: the account gets a fresh allowance.
+        user.setTotpLockedUntil(null);
+        user.setFailedTotpAttempts(0);
+      }
+    }
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    String stored = user.getTotpSecret();
+    if (stored == null) {
+      // Enabled flag without a secret is corrupt account state, not a
+      // guessing attempt — the identical 401, never lockout-counted.
+      throw new InvalidCredentialsException();
+    }
+    final String secret;
+    try {
+      secret = resolveTotpSecret(stored);
+    } catch (TotpSecretCipher.DecryptionException e) {
+      // Tampered/undecryptable storage fails closed as the identical
+      // 401 — never an exception leak, never lockout-counted.
+      throw new InvalidCredentialsException();
+    }
+    if (!totp.verify(secret, code)) {
+      // Not a TOTP code — try it as a one-time recovery code (#91). A
+      // live code is consumed by this disable; a replay, an unknown
+      // code and a wrong TOTP code all land on the identical 401 below.
+      if (!consumeRecoveryCode(userId, code)) {
+        // A genuine second-factor failure — count it on the shared
+        // #101 counter, and lock when the ceiling is reached (the
+        // locking failure itself answers 423, mirroring authenticate).
+        if (totpLockout.isEnabled()) {
+          int attempts = user.getFailedTotpAttempts() + 1;
+          user.setFailedTotpAttempts(attempts);
+          if (attempts >= totpLockout.getMaxAttempts()) {
+            user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
+            users.save(user);
+            throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
+          }
+        }
+        throw new InvalidCredentialsException();
+      }
+    }
+    user.setTotpEnabled(false);
+    user.setTotpSecret(null);
+    user.setFailedTotpAttempts(0);
+    user.setTotpLockedUntil(null);
+    users.save(user);
+    if (recoveryCodesAvailable()) {
+      recoveryCodes.deleteByUserId(userId);
+    }
+    // The disable is a sensitive transition — append its audit row
+    // inside this transaction (a rollback leaves 2FA on and no row).
+    audit().record(userId, AuditAction.TOTP_DISABLED, AuditTargetType.USER, userId);
+  }
+
+  /**
    * Replaces the user's recovery-code set with a fresh one and returns
    * the display forms (backlog #91). Generation retries on the
    * (astronomically unlikely) hash collision with another user's code

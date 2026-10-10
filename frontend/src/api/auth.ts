@@ -140,6 +140,31 @@ export async function enableTotp(payload: EnableTotpPayload): Promise<EnableTotp
   return { recoveryCodes: res.data.data.recoveryCodes };
 }
 
+export interface DisableTotpPayload {
+  currentPassword: string;
+  code: string;
+}
+
+/**
+ * POST /api/auth/2fa/disable (authenticated, backlog #121). Turns 2FA off
+ * for the caller — the reverse of enable. Because disabling strips a
+ * security factor, the payload must prove both factors: the current
+ * password AND a second factor in the single `code` field — either the
+ * current 6-digit TOTP code or one of the unused recovery codes (a
+ * recovery code used here is consumed; the whole set is deleted with the
+ * enrollment anyway). On success the backend clears the secret and the
+ * recovery set, and the current session survives untouched.
+ *
+ * A wrong password and a wrong code fail with the identical 401 (no
+ * oracle); disabling when 2FA is not enabled fails with 422; repeated
+ * failed second-factor attempts feed the shared #101 lockout (423).
+ *
+ * Throws the Axios error on failure (the {code,message,data} envelope).
+ */
+export async function disableTotp(payload: DisableTotpPayload): Promise<void> {
+  await api.post('/auth/2fa/disable', payload);
+}
+
 /**
  * GET /api/auth/2fa/recovery-codes/count (authenticated, backlog #100).
  * Returns how many of the caller's recovery codes remain unused — a count

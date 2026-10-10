@@ -184,6 +184,7 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/enable").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/2fa/disable").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/2fa/recovery-codes/count").authenticated()
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             // Actuator: public liveness/readiness probes, everything else

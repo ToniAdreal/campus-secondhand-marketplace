@@ -101,6 +101,24 @@ public class AuthController {
   }
 
   /**
+   * Turns TOTP 2FA off for the caller (backlog #121, authenticated) — the
+   * reverse of {@code /2fa/enable}. Because disabling strips a security
+   * factor, the request must prove both factors: the current password AND
+   * a valid 6-digit TOTP code or an unused recovery code (consumed by the
+   * disable). Wrong password or wrong code → the identical 401; failed
+   * second-factor attempts feed the #101 lockout (an active lock answers
+   * 423); 2FA not enabled → 422. On success the secret is cleared, every
+   * recovery code is deleted, and the current session survives.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "two-factor authentication turned off (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong password or wrong code — identical for both (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "two-factor authentication is not enabled (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor attempts locked after repeated failures — see Retry-After (envelope)")})
+  @PostMapping("/2fa/disable")
+  public ResponseEntity<ApiResponse<Void>> disableTotp(
+      @AuthenticationPrincipal Long userId, @Valid @RequestBody TotpDisableRequest request) {
+    auth.disableTotp(userId, request.currentPassword(), request.code());
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
    * How many of the caller's recovery codes remain unused (backlog #91,
    * authenticated). A count only — the codes themselves are never
    * readable back after the enable response.

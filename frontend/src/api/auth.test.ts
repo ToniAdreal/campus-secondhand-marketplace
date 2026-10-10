@@ -12,6 +12,7 @@ import {
   setupTotp,
   enableTotp,
   recoveryCodeCount,
+  disableTotp,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -302,6 +303,17 @@ describe('two-factor (backlog #100)', () => {
 
     expect(getSpy).toHaveBeenCalledWith('/auth/2fa/recovery-codes/count');
     expect(result).toBe(7);
+  });
+
+  it('disableTotp posts the password + code proof to /auth/2fa/disable (backlog #121)', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+
+    await disableTotp({ currentPassword: 's3cret-pass', code: '123456' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/disable', {
+      currentPassword: 's3cret-pass',
+      code: '123456',
+    });
   });
 });
 

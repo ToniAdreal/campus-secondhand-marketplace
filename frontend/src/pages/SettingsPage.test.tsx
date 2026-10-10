@@ -190,6 +190,83 @@ describe('SettingsPage', () => {
     }
   });
 
+  it('disable flow: confirm step first, then posts password + code and shows the off note (backlog #121)', async () => {
+    getSpy.mockReset();
+    getSpy.mockResolvedValue(envelope({ remaining: 7 }));
+    postSpy.mockResolvedValueOnce(envelope(null));
+    renderAt('/settings');
+
+    // the control appears because the count says 2FA is on with codes left
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Turn off two-factor authentication' }),
+    );
+    // the confirm step renders first — nothing has been posted yet
+    expect(postSpy).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Confirm current password'), {
+      target: { value: 's3cret-pass' },
+    });
+    fireEvent.change(screen.getByLabelText('Authenticator or recovery code'), {
+      target: { value: '123456' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm: turn off two-factor authentication' }),
+    );
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/disable', {
+      currentPassword: 's3cret-pass',
+      code: '123456',
+    });
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe(
+      'Two-factor authentication is off. Your password alone now signs you in.',
+    );
+    // the control is gone and enrollment is offered again
+    expect(screen.queryByRole('button', { name: 'Turn off two-factor authentication' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Set up two-factor authentication' }),
+    ).toBeTruthy();
+    expect(screen.getByText('0 recovery codes remaining.')).toBeTruthy();
+  });
+
+  it('disable 401 maps to the shared "password or code" copy and keeps the form (backlog #121)', async () => {
+    getSpy.mockReset();
+    getSpy.mockResolvedValue(envelope({ remaining: 4 }));
+    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    renderAt('/settings');
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Turn off two-factor authentication' }),
+    );
+    fireEvent.change(screen.getByLabelText('Confirm current password'), {
+      target: { value: 'wr0ng-pass' },
+    });
+    fireEvent.change(screen.getByLabelText('Authenticator or recovery code'), {
+      target: { value: '123456' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm: turn off two-factor authentication' }),
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Current password or code is incorrect.');
+    // still on: the confirm form stays open for another attempt
+    expect(
+      screen.getByRole('button', { name: 'Confirm: turn off two-factor authentication' }),
+    ).toBeTruthy();
+  });
+
+  it('no disable control when the count says no codes remain (backlog #121)', async () => {
+    getSpy.mockReset();
+    getSpy.mockResolvedValue(envelope({ remaining: 0 }));
+    renderAt('/settings');
+
+    expect(
+      await screen.findByRole('button', { name: 'Set up two-factor authentication' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Turn off two-factor authentication' })).toBeNull();
+  });
+
   it('bounces anonymous users to /login without firing any request', () => {
     useAuthStore.setState({ user: null });
     renderAt('/settings');

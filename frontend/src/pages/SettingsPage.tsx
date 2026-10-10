@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
   changePassword,
+  disableTotp,
   enableTotp,
   recoveryCodeCount,
   setupTotp,
@@ -25,6 +26,22 @@ function describePasswordChangeError(err: unknown): string {
     if (!err.response) return 'Network error — is the backend running?';
   }
   return 'Password change failed';
+}
+
+/**
+ * Maps a failed disable-2FA call to UI copy (backlog #121). A wrong
+ * password and a wrong code share the backend's identical 401, so the
+ * copy names both and neither (no oracle); every other failure shows
+ * the backend's envelope message verbatim (e.g. the 422 "not enabled").
+ */
+function describeDisableTotpError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.response?.status === 401) return 'Current password or code is incorrect.';
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Turning off two-factor authentication failed';
 }
 
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
@@ -66,12 +83,28 @@ export default function SettingsPage() {
   const [totpError, setTotpError] = useState<string | null>(null);
   const [totpPending, setTotpPending] = useState(false);
 
+  // Two-factor disable (backlog #121). The page has no dedicated "is 2FA
+  // on" readout: it treats 2FA as on when the count endpoint reports
+  // codes remaining or this session just enabled it. The disable control
+  // stays hidden otherwise; a stale guess would surface the backend's
+  // honest 422, never a fake success.
+  const [totpOn, setTotpOn] = useState(false);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disablePassword, setDisablePassword] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [disableError, setDisableError] = useState<string | null>(null);
+  const [disableDone, setDisableDone] = useState(false);
+  const [disablePending, setDisablePending] = useState(false);
+
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     recoveryCodeCount()
       .then((remaining) => {
-        if (!cancelled) setRemainingCodes(remaining);
+        if (!cancelled) {
+          setRemainingCodes(remaining);
+          if (remaining > 0) setTotpOn(true);
+        }
       })
       .catch(() => {
         // Degrade to no readout — a failed count must never crash or
@@ -147,12 +180,41 @@ export default function SettingsPage() {
       // never from a re-fetch of the codes (there is none).
       setRecoveryCodes(result.recoveryCodes);
       setRemainingCodes(result.recoveryCodes.length);
+      setTotpOn(true);
+      setDisableDone(false);
       setTotpSetup(null);
       setTotpCode('');
     } catch (err) {
       setTotpError(describeTotpError(err));
     } finally {
       setTotpPending(false);
+    }
+  }
+
+  async function onDisableTotp(e: FormEvent) {
+    e.preventDefault();
+    if (disablePassword === '' || disableCode.trim() === '') {
+      setDisableError('Enter your current password and a code to confirm.');
+      return;
+    }
+    setDisablePending(true);
+    setDisableError(null);
+    try {
+      await disableTotp({ currentPassword: disablePassword, code: disableCode.trim() });
+      // 2FA is off server-side: the secret and every recovery code are
+      // gone, so the local readouts reset to match — and this session
+      // deliberately keeps working (the backend revokes nothing here).
+      setTotpOn(false);
+      setRecoveryCodes(null);
+      setRemainingCodes(0);
+      setDisablePassword('');
+      setDisableCode('');
+      setDisableOpen(false);
+      setDisableDone(true);
+    } catch (err) {
+      setDisableError(describeDisableTotpError(err));
+    } finally {
+      setDisablePending(false);
     }
   }
 
@@ -292,6 +354,94 @@ export default function SettingsPage() {
           >
             {totpPending ? 'Setting up…' : 'Set up two-factor authentication'}
           </button>
+        )}
+        {disableDone && (
+          <p role="status" className="mt-3 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+            Two-factor authentication is off. Your password alone now signs you in.
+          </p>
+        )}
+        {totpOn && !totpSetup && (
+          <div className="mt-4 border-t border-neutral-200 pt-3">
+            {disableError && (
+              <p role="alert" className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+                {disableError}
+              </p>
+            )}
+            {disableOpen ? (
+              <form onSubmit={onDisableTotp} className="space-y-3">
+                <p className="text-sm text-neutral-600">
+                  Turning this off removes the second step at login. To confirm it is
+                  you, enter your current password and a current authenticator code —
+                  or one of your unused recovery codes (using one here consumes it).
+                </p>
+                <div>
+                  <label
+                    htmlFor="settings-disable-password"
+                    className="mb-1 block text-sm font-medium"
+                  >
+                    Confirm current password
+                  </label>
+                  <input
+                    id="settings-disable-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                    className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="settings-disable-code"
+                    className="mb-1 block text-sm font-medium"
+                  >
+                    Authenticator or recovery code
+                  </label>
+                  <input
+                    id="settings-disable-code"
+                    type="text"
+                    autoComplete="one-time-code"
+                    value={disableCode}
+                    onChange={(e) => setDisableCode(e.target.value)}
+                    className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={disablePending}
+                  className="w-full rounded bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {disablePending
+                    ? 'Turning off…'
+                    : 'Confirm: turn off two-factor authentication'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDisableOpen(false);
+                    setDisableError(null);
+                    setDisablePassword('');
+                    setDisableCode('');
+                  }}
+                  className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  Keep two-factor authentication
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setDisableOpen(true);
+                  setDisableDone(false);
+                  setDisableError(null);
+                }}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              >
+                Turn off two-factor authentication
+              </button>
+            )}
+          </div>
         )}
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
