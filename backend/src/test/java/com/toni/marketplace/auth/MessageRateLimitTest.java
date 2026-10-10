@@ -94,7 +94,12 @@ class MessageRateLimitTest {
     sender = users.save(new User(tag, tag + "@example.com", passwords.encode("password")));
     String tag2 = "msgreceiver-" + SEQ.incrementAndGet() + "-" + UUID.randomUUID().toString().substring(0, 8);
     receiver = users.save(new User(tag2, tag2 + "@example.com", passwords.encode("password")));
-    item = items.save(new Item("Desk lamp", "IKEA Tertial", 12000L, sender.getId()));
+    // The receiver owns the listing: since backlog #112 a send must be a
+    // buyer → seller message (or a seller reply inside an existing
+    // thread), so the burst below is a buyer messaging the seller, and
+    // the receiver's "reply" in otherUserIsUnaffectedByASpammer is a
+    // seller reply inside the thread the burst opened.
+    item = items.save(new Item("Desk lamp", "IKEA Tertial", 12000L, receiver.getId()));
     ip = "10.202.0." + IP_SEQ.getAndIncrement();
   }
 

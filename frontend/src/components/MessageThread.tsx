@@ -19,10 +19,17 @@ function isForbidden(error: unknown): boolean {
  * a privacy note instead of an empty list — that is the backend's rule,
  * mirrored here.
  *
- * Scope notes: the send box always addresses the seller (buyer → seller),
- * so the seller sees the thread read-only — per-recipient replies are a
- * follow-up. The thread renders newest-first pages (backend page 0 is the
- * newest page); "Load earlier messages" fetches older pages and prepends
+ * Addressing (backlog #112): a buyer always writes to the seller; the
+ * seller replies per buyer. The seller's thread query returns every
+ * conversation on the listing (the seller participates in all of
+ * them), so the component groups those messages per buyer — the other
+ * participant of each message, derived from the thread itself, never a
+ * free-form id — and renders one buyer thread at a time with a picker
+ * when several buyers wrote. The reply box addresses the selected
+ * buyer, which is exactly the pair the backend send guard accepts
+ * (seller → buyer requires an existing thread on this listing).
+ * The thread renders newest-first pages (backend page 0 is the newest
+ * page); "Load earlier messages" fetches older pages and prepends
  * them, so the newest page stays anchored at the bottom.
  */
 export default function MessageThread({ itemId, sellerId }: MessageThreadProps) {
@@ -39,20 +46,47 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
   const sendMessage = useSendMessage();
   const [draft, setDraft] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  const [pickedBuyerId, setPickedBuyerId] = useState<number | null>(null);
 
   if (user === null) return null;
 
   const isSeller = user.id === sellerId;
   const hiddenByPrivacy = isError && isForbidden(error);
-  const messages = stitchThreadPages(data?.pages ?? []);
+  const allMessages = stitchThreadPages(data?.pages ?? []);
+
+  // Per-buyer grouping for the seller: the counterpart of a message is
+  // its non-seller participant. Buyer ids appear in first-contact
+  // (chronological) order.
+  const buyerIds: number[] = [];
+  for (const m of allMessages) {
+    const counterpart = m.senderId === sellerId ? m.receiverId : m.senderId;
+    if (counterpart !== sellerId && !buyerIds.includes(counterpart)) {
+      buyerIds.push(counterpart);
+    }
+  }
+  const selectedBuyerId = isSeller
+    ? pickedBuyerId !== null && buyerIds.includes(pickedBuyerId)
+      ? pickedBuyerId
+      : (buyerIds[0] ?? null)
+    : null;
+  const messages = isSeller
+    ? allMessages.filter(
+        (m) =>
+          selectedBuyerId !== null &&
+          (m.senderId === selectedBuyerId || m.receiverId === selectedBuyerId),
+      )
+    : allMessages;
+
+  const receiverId = isSeller ? selectedBuyerId : sellerId;
+  const sendLabel = isSeller ? `Reply to User #${selectedBuyerId}` : 'Message the seller';
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     const body = draft.trim();
-    if (body === '') return;
+    if (body === '' || receiverId === null) return;
     setSendError(null);
     sendMessage.mutate(
-      { itemId, receiverId: sellerId, body },
+      { itemId, receiverId, body },
       {
         onSuccess: () => setDraft(''),
         onError: (err) => setSendError(describeMessageError(err)),
@@ -76,6 +110,26 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
         <p role="alert" className="mt-2 text-sm text-red-600">
           Couldn't load messages. Please try again.
         </p>
+      )}
+
+      {isSeller && buyerIds.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-2" aria-label="Buyer threads">
+          {buyerIds.map((buyerId) => (
+            <button
+              key={buyerId}
+              type="button"
+              aria-pressed={buyerId === selectedBuyerId}
+              onClick={() => setPickedBuyerId(buyerId)}
+              className={`rounded px-3 py-1 text-sm font-medium ${
+                buyerId === selectedBuyerId
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-neutral-100 text-neutral-800 hover:bg-neutral-200'
+              }`}
+            >
+              {`User #${buyerId}`}
+            </button>
+          ))}
+        </div>
       )}
 
       {messages.length > 0 && (
@@ -112,10 +166,10 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
         </>
       )}
 
-      {!isSeller && (
+      {receiverId !== null && (
         <form onSubmit={handleSend} className="mt-4">
           <label htmlFor="message-draft" className="mb-1 block text-sm font-medium">
-            Message the seller
+            {sendLabel}
           </label>
           <textarea
             id="message-draft"

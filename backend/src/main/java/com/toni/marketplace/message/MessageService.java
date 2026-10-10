@@ -24,6 +24,16 @@ import org.springframework.web.server.ResponseStatusException;
  *   <li>422 — messaging yourself: a conversation is between two distinct
  *       users, and "self-talk" rows would leak into the thread query in
  *       confusing ways.</li>
+ *   <li>403 — the pair is not a conversation for this listing (backlog
+ *       #112, the seller-reply item): a send is only allowed buyer →
+ *       seller (any non-seller may open a thread with the listing's
+ *       seller) or seller → buyer where that buyer already has a thread
+ *       on this listing. Before #112 the send checked only existence +
+ *       not-self, so anyone could message anyone about someone else's
+ *       listing — a spam/impersonation hole the thread read's 403 rule
+ *       never had on the write side. A seller cold-messaging a user who
+ *       never wrote about the listing is rejected for the same reason:
+ *       replies are derived from an existing thread, never free-form.</li>
  * </ul>
  * The sender is the JWT principal, never a request field.
  *
@@ -54,15 +64,28 @@ public class MessageService {
 
   @Transactional
   public MessageDto send(Long senderId, Long itemId, Long receiverId, String body) {
-    if (!items.existsById(itemId)) {
-      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
-    }
+    var item = items.findById(itemId).orElseThrow(() ->
+        new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
     if (!users.existsById(receiverId)) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "receiver not found");
     }
     if (senderId.equals(receiverId)) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "cannot send a message to yourself");
+    }
+    // Participant guard (backlog #112): the only legitimate pairs on a
+    // listing are buyer → its seller, and the seller replying inside a
+    // thread a buyer already opened on this listing. Everything else —
+    // messaging a stranger about someone else's listing, or a seller
+    // cold-messaging a user with no thread here — is 403, mirroring the
+    // thread read's "not a participant" answer.
+    Long sellerId = item.getSellerId();
+    boolean buyerToSeller = receiverId.equals(sellerId) && !senderId.equals(sellerId);
+    boolean sellerReply = senderId.equals(sellerId)
+        && messages.existsThreadBetween(itemId, senderId, receiverId);
+    if (!buyerToSeller && !sellerReply) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "not a participant in this conversation");
     }
     Message saved = messages.save(new Message(itemId, senderId, receiverId, body));
     return MessageDto.from(saved);

@@ -126,6 +126,9 @@ export function describeMessageError(error: unknown): string {
   if (code === 400 || /blank|too long/i.test(message)) {
     return 'Your message is empty or too long (2000 characters max).';
   }
+  if (code === 403) {
+    return 'You can only message the seller, or reply inside an existing conversation.';
+  }
   if (code === 404) {
     return 'This listing no longer exists.';
   }

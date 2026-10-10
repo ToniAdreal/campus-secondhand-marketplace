@@ -142,15 +142,93 @@ describe('MessageThread', () => {
     expect(screen.getByLabelText(/message the seller/i)).toBeTruthy();
   });
 
-  it('the seller sees the thread but gets no send box (no self-messaging)', async () => {
+  it('the seller replies to the buyer who wrote (backlog #112)', async () => {
     useAuthStore.getState().login(seller, 'tok');
-    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
+    const reply: Message = {
+      id: 3,
+      itemId: 7,
+      senderId: 3,
+      receiverId: 5,
+      body: 'Yes — pickup this weekend works.',
+      createdAt: '2026-10-07T03:00:00Z',
+      readAt: null,
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1])); // initial thread load
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, reply])); // refetch after send
+    postSpy.mockResolvedValueOnce(envelope(reply));
     renderThread();
 
     await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+    // No self-addressed box: the reply box names the buyer from the thread.
     expect(screen.queryByLabelText(/message the seller/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /send/i })).toBeNull();
-    expect(postSpy).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/reply to user #5/i)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/reply to user #5/i), {
+      target: { value: 'Yes — pickup this weekend works.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/messages', {
+      itemId: 7,
+      receiverId: 5,
+      body: 'Yes — pickup this weekend works.',
+    });
+    await waitFor(() =>
+      expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy(),
+    );
+    expect(
+      (screen.getByLabelText(/reply to user #5/i) as HTMLTextAreaElement).value,
+    ).toBe('');
+  });
+
+  it('the seller picks which buyer thread to answer when several buyers wrote', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const otherBuyerMsg: Message = {
+      id: 4,
+      itemId: 7,
+      senderId: 9,
+      receiverId: 3,
+      body: 'Would you take 100?',
+      createdAt: '2026-10-07T04:00:00Z',
+      readAt: null,
+    };
+    const replyToNine: Message = {
+      id: 5,
+      itemId: 7,
+      senderId: 3,
+      receiverId: 9,
+      body: '110 is my floor.',
+      createdAt: '2026-10-07T05:00:00Z',
+      readAt: null,
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg]));
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg, replyToNine]));
+    postSpy.mockResolvedValueOnce(envelope(replyToNine));
+    renderThread();
+
+    // Default view is the first buyer's thread only — no merged mega-thread.
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+    expect(screen.queryByText('Would you take 100?')).toBeNull();
+    expect(screen.getByLabelText(/reply to user #5/i)).toBeTruthy();
+
+    // Switch to the second buyer's thread.
+    fireEvent.click(screen.getByRole('button', { name: 'User #9' }));
+    await waitFor(() => expect(screen.getByText('Would you take 100?')).toBeTruthy());
+    expect(screen.queryByText('Is this still available?')).toBeNull();
+    expect(screen.getByLabelText(/reply to user #9/i)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/reply to user #9/i), {
+      target: { value: '110 is my floor.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/messages', {
+      itemId: 7,
+      receiverId: 9,
+      body: '110 is my floor.',
+    });
   });
 
   it('a failed send shows a friendly error and keeps the draft', async () => {

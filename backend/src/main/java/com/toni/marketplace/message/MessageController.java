@@ -26,7 +26,9 @@ public class MessageController {
    * Sends one message about a listing. The sender is the JWT principal;
    * {@code itemId}, {@code receiverId} and the text {@code body} come from
    * the request. Jakarta validation turns blank/overlong bodies into the
-   * 400 {@code {code,message,data}} envelope.
+   * 400 {@code {code,message,data}} envelope. Pairing rule (backlog
+   * #112): buyer → seller opens a thread; seller → buyer is a reply and
+   * needs an existing thread on the listing; any other pairing is 403.
    */
   @PostMapping
   public ApiResponse<MessageDto> send(@Valid @RequestBody MessageCreateRequest request) {

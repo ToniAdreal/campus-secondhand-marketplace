@@ -258,6 +258,11 @@ describe('describeMessageError', () => {
       'Your message is empty or too long (2000 characters max).',
     ],
     ['unknown listing', envelopeError(404, 'item not found'), 'This listing no longer exists.'],
+    [
+      'send-guard 403 (backlog #112)',
+      envelopeError(403, 'not a participant in this conversation'),
+      'You can only message the seller, or reply inside an existing conversation.',
+    ],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
     ['empty object', {}, 'Something went wrong. Please try again.'],

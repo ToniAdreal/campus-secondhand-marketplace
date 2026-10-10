@@ -36,4 +36,18 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
   /** The caller's total unread across all listings (backlog #106). */
   long countByReceiverIdAndReadAtIsNull(Long receiverId);
+
+  /**
+   * Whether any message already exists on this listing between the two
+   * users, in either direction — the thread-existence check behind the
+   * seller-reply send guard (backlog #112): a seller may only write to a
+   * buyer who has already opened a thread on that listing.
+   */
+  @Query("SELECT COUNT(m) > 0 FROM Message m WHERE m.itemId = :itemId "
+      + "AND ((m.senderId = :userA AND m.receiverId = :userB) "
+      + "OR (m.senderId = :userB AND m.receiverId = :userA))")
+  boolean existsThreadBetween(
+      @Param("itemId") Long itemId,
+      @Param("userA") Long userA,
+      @Param("userB") Long userB);
 }
