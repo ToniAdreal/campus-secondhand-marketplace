@@ -1,5 +1,8 @@
 package com.toni.marketplace.auth;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -36,7 +39,16 @@ import org.springframework.transaction.annotation.Transactional;
  *       and Bearer tokens die immediately — and any login lockout (#60) is
  *       cleared: regaining the mailbox is a stronger identity proof than
  *       the lockout is defending against, and leaving the lock in place
- *       would keep the very user this flow exists for locked out.</li>
+ *       would keep the very user this flow exists for locked out. A
+ *       successful confirm also appends a {@code PASSWORD_RESET_COMPLETED}
+ *       audit row (backlog #110): the caller is a token holder, not an
+ *       authenticated principal, but the token resolves to exactly one
+ *       account, so actor and target are both that account — the row is
+ *       evidence the account's credential changed via the reset path,
+ *       distinct from {@code PASSWORD_CHANGED}'s authenticated change.
+ *       Failed confirms (unknown/used/expired token, weak password)
+ *       write no row, mirroring the audit trail's no-op-writes-none
+ *       contract.</li>
  *   <li>Both endpoints are rate-limited per client IP in
  *       {@link AuthRateLimitFilter} (own bucket, default 5/min): the
  *       request endpoint is a mail-bombing surface and the confirm
@@ -62,12 +74,13 @@ public class PasswordResetService {
   private final PasswordResetMailSender mailSender;
   private final PasswordResetProperties props;
   private final Clock clock;
+  private final AuditService audit;
   private final SecureRandom random = new SecureRandom();
 
   public PasswordResetService(UserRepository users, PasswordResetTokenRepository resetTokens,
                               PasswordService passwords, JwtTokenService jwt,
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
-                              Clock clock) {
+                              Clock clock, AuditService audit) {
     this.users = users;
     this.resetTokens = resetTokens;
     this.passwords = passwords;
@@ -75,6 +88,16 @@ public class PasswordResetService {
     this.mailSender = mailSender;
     this.props = props;
     this.clock = clock;
+    this.audit = audit;
+  }
+
+  /**
+   * Audit accessor with a no-op fallback, mirroring {@code AuthService}:
+   * a hand-built instance without an AuditService must never fail on the
+   * trail. Production always gets the Spring bean.
+   */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -133,5 +156,12 @@ public class PasswordResetService {
     row.setUsedAt(now);
     resetTokens.save(row);
     resetTokens.deleteByUserIdAndUsedAtIsNull(user.getId());
+    // Backlog #110: append the audit row inside this transaction, so a
+    // rolled-back confirm leaves none. Actor = target = the account whose
+    // password was reset (see the class javadoc for the attribution
+    // decision); every failure path above returns/throws before this line
+    // and writes no row.
+    audit().record(user.getId(), AuditAction.PASSWORD_RESET_COMPLETED,
+        AuditTargetType.USER, user.getId());
   }
 }

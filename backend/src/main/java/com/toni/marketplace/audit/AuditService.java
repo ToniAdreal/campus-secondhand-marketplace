@@ -16,10 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
  * and {@code TOTP_ENABLED} from {@code AuthService}, {@code USER_DISABLED}
  * / {@code USER_ENABLED} from the ADMIN endpoints (#88), and
  * {@code ORDER_COMPLETED} / {@code ORDER_REFUNDED} from
- * {@code OrderService}. One declared follow-up remains deliberately
- * out of scope: password-reset confirm (its actor is a token holder,
- * not an authenticated principal — attribution needs its own decision,
- * backlog #110). The read side landed in backlog #109:
+ * {@code OrderService}, and {@code PASSWORD_RESET_COMPLETED} from
+ * {@code PasswordResetService} (backlog #110 — attribution decision:
+ * the reset token resolves to exactly one account, so actor and target
+ * are both that account; the row evidences a credential change via the
+ * reset path, distinct from the authenticated {@code PASSWORD_CHANGED}).
+ * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}.
  *
  * <p>Transaction contract: {@link #record} carries no {@code @Transactional}

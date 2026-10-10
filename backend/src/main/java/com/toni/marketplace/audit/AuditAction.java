@@ -10,6 +10,16 @@ package com.toni.marketplace.audit;
 public enum AuditAction {
   /** The account holder changed their password ({@code AuthService.changePassword}). */
   PASSWORD_CHANGED,
+  /**
+   * A password reset was completed via the emailed-token flow
+   * ({@code PasswordResetService.confirmReset}, backlog #110). Actor and
+   * target are both the account whose password was reset: the caller is a
+   * token holder, not an authenticated principal, but the token resolves
+   * to exactly one account, and the row is evidence that that account's
+   * credential changed through the reset path — kept distinct from
+   * {@link #PASSWORD_CHANGED}'s authenticated change.
+   */
+  PASSWORD_RESET_COMPLETED,
   /** The account holder completed TOTP enrollment ({@code AuthService.enableTotp}). */
   TOTP_ENABLED,
   /** A seller (or ADMIN) completed a PAID order ({@code OrderService.complete}). */
