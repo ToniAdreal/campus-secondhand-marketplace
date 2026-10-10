@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
@@ -88,6 +89,20 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleTooLarge(MaxUploadSizeExceededException ex) {
     return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
         .body(ApiResponse.fail(HttpStatus.PAYLOAD_TOO_LARGE.value(), "image too large"));
+  }
+
+  /**
+   * A query/path parameter that cannot convert to its declared type —
+   * e.g. an enum-typed filter carrying a value outside the allowlist
+   * (backlog #109's audit-log {@code action}/{@code targetType}) — would
+   * otherwise surface as a 500 through the generic handler; it is a
+   * client error, so answer 400 in the JSON envelope.
+   */
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(
+      MethodArgumentTypeMismatchException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, "invalid value for parameter: " + ex.getName()));
   }
 
   /**

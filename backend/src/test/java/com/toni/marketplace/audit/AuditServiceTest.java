@@ -44,6 +44,40 @@ class AuditServiceTest {
   }
 
   @Test
+  void listAuditLogDelegatesFiltersAndMapsRowsToDto() {
+    AuditLog row = new AuditLog(7L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, 42L, NOW);
+    org.springframework.test.util.ReflectionTestUtils.setField(row, "id", 99L);
+    org.springframework.data.domain.Pageable pageable =
+        org.springframework.data.domain.PageRequest.of(0, 20);
+    org.mockito.Mockito.when(auditLog.searchAuditLog(7L, AuditAction.ORDER_REFUNDED,
+            AuditTargetType.ORDER, 42L, pageable))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(row)));
+    AuditService service = new AuditService(auditLog, Clock.fixed(NOW, ZoneOffset.UTC));
+
+    org.springframework.data.domain.Page<AuditLogDto> page = service.listAuditLog(
+        7L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, 42L, pageable);
+
+    assertThat(page.getTotalElements()).isEqualTo(1);
+    assertThat(page.getContent().get(0).id()).isEqualTo(99L);
+    assertThat(page.getContent().get(0).actorUserId()).isEqualTo(7L);
+    assertThat(page.getContent().get(0).action()).isEqualTo(AuditAction.ORDER_REFUNDED);
+    assertThat(page.getContent().get(0).targetType()).isEqualTo(AuditTargetType.ORDER);
+    assertThat(page.getContent().get(0).targetId()).isEqualTo(42L);
+    assertThat(page.getContent().get(0).createdAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void noopListAuditLogReturnsEmptyPage() {
+    AuditService noop = AuditService.noop();
+
+    org.springframework.data.domain.Page<AuditLogDto> page = noop.listAuditLog(
+        null, null, null, null, org.springframework.data.domain.PageRequest.of(0, 20));
+
+    assertThat(page.getTotalElements()).isZero();
+    assertThat(page.getContent()).isEmpty();
+  }
+
+  @Test
   void noopRecordsNothingAndNeverThrows() {
     AuditService noop = AuditService.noop();
 

@@ -2,7 +2,10 @@ package com.toni.marketplace.audit;
 
 import java.time.Clock;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Append-only audit trail for sensitive transitions (backlog #98). Before
@@ -13,11 +16,11 @@ import org.springframework.stereotype.Service;
  * and {@code TOTP_ENABLED} from {@code AuthService}, {@code USER_DISABLED}
  * / {@code USER_ENABLED} from the ADMIN endpoints (#88), and
  * {@code ORDER_COMPLETED} / {@code ORDER_REFUNDED} from
- * {@code OrderService}. Declared follow-ups, deliberately not in v1:
- * password-reset confirm (its actor is a token holder, not an
- * authenticated principal — attribution needs its own decision) and a
- * read endpoint (the trail is write-only for now; operators read it via
- * SQL).
+ * {@code OrderService}. One declared follow-up remains deliberately
+ * out of scope: password-reset confirm (its actor is a token holder,
+ * not an authenticated principal — attribution needs its own decision,
+ * backlog #110). The read side landed in backlog #109:
+ * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}.
  *
  * <p>Transaction contract: {@link #record} carries no {@code @Transactional}
  * of its own, so the repository save joins the caller's transaction — an
@@ -50,6 +53,27 @@ public class AuditService {
    */
   public static AuditService noop() {
     return new AuditService();
+  }
+
+  /**
+   * ADMIN audit-log read (backlog #109): paginated, newest first (the
+   * controller's {@code @PageableDefault} supplies createdAt/id DESC;
+   * the global max-page-size cap from #75 clamps oversized {@code size}).
+   * Every filter is an optional exact match; enum filters bind to
+   * {@link AuditAction} / {@link AuditTargetType}, so only allowlisted
+   * values can reach the query. Rows map to {@link AuditLogDto} — never
+   * the entity. The {@code noop()} instance has no repository and
+   * answers an empty page, mirroring {@link #record}'s no-op contract.
+   */
+  @Transactional(readOnly = true)
+  public Page<AuditLogDto> listAuditLog(Long actorUserId, AuditAction action,
+                                        AuditTargetType targetType, Long targetId,
+                                        Pageable pageable) {
+    if (auditLog == null) {
+      return Page.empty(pageable); // noop() instance — see above
+    }
+    return auditLog.searchAuditLog(actorUserId, action, targetType, targetId, pageable)
+        .map(AuditLogDto::of);
   }
 
   /** Appends one row: {@code actorUserId} performed {@code action} on the target. */
