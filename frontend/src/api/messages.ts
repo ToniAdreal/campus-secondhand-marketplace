@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { ApiResponse, Page } from './items';
 
@@ -9,11 +9,14 @@ export interface Message {
   receiverId: number;
   body: string;
   createdAt: string;
+  /** When the receiver opened the thread; null while unread (#106). */
+  readAt: string | null;
 }
 
 export const messageKeys = {
   all: ['messages'] as const,
   thread: (itemId: number) => [...messageKeys.all, 'thread', itemId] as const,
+  unreadCount: ['messages', 'unread-count'] as const,
 };
 
 /**
@@ -27,6 +30,7 @@ export const messageKeys = {
  * 403 as a privacy note, never the thread.
  */
 export function useMessageThread(itemId: number) {
+  const queryClient = useQueryClient();
   return useInfiniteQuery({
     queryKey: messageKeys.thread(itemId),
     queryFn: ({ pageParam = 0 }) =>
@@ -35,6 +39,27 @@ export function useMessageThread(itemId: number) {
         .then((res) => res.data.data),
     getNextPageParam: (lastPage) =>
       lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
+    // Opening a thread marks the caller's received rows read on the
+    // backend (#106), so the nav unread badge must refetch its count.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: messageKeys.unreadCount });
+    },
+  });
+}
+
+/**
+ * GET /api/messages/unread-count — the caller's total unread messages
+ * across all listings, for the nav badge (#106). A bare count: the
+ * endpoint exposes no message bodies or sender data.
+ */
+export function useUnreadMessageCount(enabled = true) {
+  return useQuery({
+    queryKey: messageKeys.unreadCount,
+    queryFn: () =>
+      api
+        .get<ApiResponse<number>>('/messages/unread-count')
+        .then((res) => res.data.data),
+    enabled,
   });
 }
 
@@ -79,6 +104,9 @@ export function useSendMessage() {
         .then((res) => res.data.data),
     onSuccess: (_message, input) => {
       void queryClient.invalidateQueries({ queryKey: messageKeys.thread(input.itemId) });
+      // A send can be the caller's first step into a thread whose
+      // received rows the refetch marks read — refresh the badge (#106).
+      void queryClient.invalidateQueries({ queryKey: messageKeys.unreadCount });
     },
   });
 }

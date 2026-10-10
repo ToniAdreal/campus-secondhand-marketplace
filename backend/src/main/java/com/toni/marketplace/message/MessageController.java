@@ -52,4 +52,17 @@ public class MessageController {
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(messageService.thread(userId, itemId, page, size));
   }
+
+  /**
+   * The caller's total unread messages across all listings (backlog
+   * #106): a bare count for the nav badge — no message bodies, senders
+   * or listing ids are exposed. Authenticated only (anonymous → 401
+   * envelope, like every other {@code /api/messages} route).
+   */
+  @GetMapping("/unread-count")
+  public ApiResponse<Long> unreadCount() {
+    Long userId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(messageService.unreadCount(userId));
+  }
 }

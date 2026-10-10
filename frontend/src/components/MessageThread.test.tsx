@@ -20,6 +20,7 @@ const msg1: Message = {
   receiverId: 3,
   body: 'Is this still available?',
   createdAt: '2026-10-07T01:00:00Z',
+  readAt: null,
 };
 const msg2: Message = {
   id: 2,
@@ -28,6 +29,7 @@ const msg2: Message = {
   receiverId: 5,
   body: 'Yes — pickup this weekend works.',
   createdAt: '2026-10-07T02:00:00Z',
+  readAt: null,
 };
 
 function envelope(data: unknown) {
@@ -94,6 +96,7 @@ describe('MessageThread', () => {
       receiverId: 3,
       body: 'Great, see you then!',
       createdAt: '2026-10-07T03:00:00Z',
+      readAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2, msg3])); // refetch after send
@@ -207,6 +210,7 @@ describe('MessageThread', () => {
       receiverId: 3,
       body: 'Great, see you then!',
       createdAt: '2026-10-07T03:00:00Z',
+      readAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg2], 0, 2)); // initial newest page
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1], 1, 2)); // load earlier

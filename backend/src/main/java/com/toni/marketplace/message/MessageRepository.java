@@ -1,5 +1,6 @@
 package com.toni.marketplace.message;
 
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -21,4 +22,18 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
       + "AND (m.senderId = :userId OR m.receiverId = :userId)")
   Page<Message> findThreadPageByItemAndParticipant(
       @Param("itemId") Long itemId, @Param("userId") Long userId, Pageable pageable);
+
+  /**
+   * Every still-unread row on one listing addressed to one receiver —
+   * the set a thread view stamps read (backlog #106). Loaded as managed
+   * entities (not a bulk update) so the page being returned in the same
+   * transaction already carries the fresh {@code readAt} in its DTOs.
+   */
+  @Query("SELECT m FROM Message m WHERE m.itemId = :itemId "
+      + "AND m.receiverId = :receiverId AND m.readAt IS NULL")
+  List<Message> findUnreadByItemAndReceiver(
+      @Param("itemId") Long itemId, @Param("receiverId") Long receiverId);
+
+  /** The caller's total unread across all listings (backlog #106). */
+  long countByReceiverIdAndReadAtIsNull(Long receiverId);
 }

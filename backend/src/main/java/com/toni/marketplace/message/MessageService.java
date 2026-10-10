@@ -2,6 +2,7 @@ package com.toni.marketplace.message;
 
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.ItemRepository;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -78,8 +79,16 @@ public class MessageService {
    *
    * <p>The sort is deliberately not client-overridable: thread order is a
    * product contract, not a query preference.
+   *
+   * <p>Read state (backlog #106): a successful thread view stamps every
+   * still-unread row on this listing addressed to the caller, in this
+   * same transaction — the caller's own sent rows are never stamped by
+   * their view, and the 403 path stamps nothing (the participant check
+   * runs first). The stamp happens before DTO mapping, and the unread
+   * rows are loaded as managed entities, so the returned page already
+   * shows the fresh {@code readAt}.
    */
-  @Transactional(readOnly = true)
+  @Transactional
   public Page<MessageDto> thread(Long userId, Long itemId, int page, int size) {
     if (!items.existsById(itemId)) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
@@ -98,9 +107,22 @@ public class MessageService {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "not a participant in this conversation");
     }
+    Instant now = Instant.now();
+    for (Message unread : messages.findUnreadByItemAndReceiver(itemId, userId)) {
+      unread.markRead(now);
+    }
     List<MessageDto> chronological = new ArrayList<>(
         fetched.stream().map(MessageDto::from).toList());
     Collections.reverse(chronological);
     return new PageImpl<>(chronological, pageable, fetched.getTotalElements());
+  }
+
+  /**
+   * The caller's total unread messages across all listings (backlog
+   * #106) — a count only; no message body or sender data is exposed.
+   */
+  @Transactional(readOnly = true)
+  public long unreadCount(Long userId) {
+    return messages.countByReceiverIdAndReadAtIsNull(userId);
   }
 }

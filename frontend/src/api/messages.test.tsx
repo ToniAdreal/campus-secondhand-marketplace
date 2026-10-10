@@ -10,6 +10,7 @@ import {
   stitchThreadPages,
   useMessageThread,
   useSendMessage,
+  useUnreadMessageCount,
   type Message,
 } from './messages';
 
@@ -28,6 +29,7 @@ function msg(id: number, body = `message ${id}`): Message {
     receiverId: 3,
     body,
     createdAt: '2026-10-09T08:00:00Z',
+    readAt: null,
   };
 }
 
@@ -183,6 +185,57 @@ describe('useSendMessage', () => {
     ).rejects.toThrow('network down');
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('useUnreadMessageCount', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches the count endpoint and unwraps the envelope number', async () => {
+    getSpy.mockResolvedValueOnce(envelope(3));
+
+    const { result } = renderHook(() => useUnreadMessageCount(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/messages/unread-count');
+    expect(result.current.data).toBe(3);
+  });
+
+  it('does not fetch while disabled (signed out)', async () => {
+    const { result } = renderHook(() => useUnreadMessageCount(false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('a thread view invalidates the unread-count query (viewing marks read)', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    getSpy.mockResolvedValueOnce(envelope(page([msg(1)], 0, 1)));
+
+    const { result } = renderHook(() => useMessageThread(42), {
+      wrapper: wrapperFor(queryClient),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.unreadCount });
+  });
+
+  it('a send also invalidates the unread-count query', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope(msg(9)));
+
+    const { result } = renderHook(() => useSendMessage(), { wrapper: wrapperFor(queryClient) });
+    await result.current.mutateAsync({ itemId: 42, receiverId: 3, body: 'hi' });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.unreadCount });
   });
 });
 

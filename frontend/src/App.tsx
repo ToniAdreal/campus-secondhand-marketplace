@@ -1,12 +1,16 @@
 import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
+import { useUnreadMessageCount } from './api/messages';
 import { useAuthStore } from './store/useAuthStore';
 
 function AuthNav() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  // Unread-message badge (#106): the count query only runs signed in;
+  // the badge itself renders only above zero.
+  const { data: unreadCount } = useUnreadMessageCount(user !== null);
 
   if (!user) {
     return (
@@ -30,6 +34,14 @@ function AuthNav() {
       <Link to="/settings" className="text-sm text-blue-600 hover:underline">
         Settings
       </Link>
+      {unreadCount !== undefined && unreadCount > 0 && (
+        <span
+          aria-label={`${unreadCount} unread messages`}
+          className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white"
+        >
+          {unreadCount} unread
+        </span>
+      )}
       <span className="text-sm text-neutral-600">{user.username}</span>
       <button
         type="button"

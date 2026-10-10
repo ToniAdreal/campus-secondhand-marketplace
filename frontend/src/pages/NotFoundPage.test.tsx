@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from '../App';
 import NotFoundPage from './NotFoundPage';
 
@@ -11,16 +12,23 @@ function LocationProbe() {
 }
 
 function renderUnknownPath() {
+  // App's shell now runs the unread-count query (#106), so — like
+  // main.tsx — the test tree provides a QueryClient.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={['/nope-here']}>
-      <LocationProbe />
-      <Routes>
-        <Route path="/" element={<App />}>
-          <Route path="/" element={<div>home probe</div>} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/nope-here']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/" element={<App />}>
+            <Route path="/" element={<div>home probe</div>} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

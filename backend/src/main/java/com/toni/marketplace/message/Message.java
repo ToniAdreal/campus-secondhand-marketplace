@@ -49,6 +49,15 @@ public class Message {
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
+  /**
+   * When the receiver first opened the thread containing this message
+   * (Flyway V24, backlog #106); {@code null} while unread. Only the
+   * receiver's thread view stamps it — a sender viewing their own sent
+   * rows never marks them read.
+   */
+  @Column(name = "read_at")
+  private Instant readAt;
+
   protected Message() {}
 
   public Message(Long itemId, Long senderId, Long receiverId, String body) {
@@ -69,4 +78,12 @@ public class Message {
   public Long getReceiverId() { return receiverId; }
   public String getBody() { return body; }
   public Instant getCreatedAt() { return createdAt; }
+  public Instant getReadAt() { return readAt; }
+
+  /** Stamps the read marker once; a second view keeps the first stamp. */
+  public void markRead(Instant when) {
+    if (this.readAt == null) {
+      this.readAt = when;
+    }
+  }
 }
