@@ -8,6 +8,7 @@ import {
   useCompleteOrder,
   useRefundOrder,
   useSellerOrdersInfinite,
+  useSellerSalesSummary,
 } from '../api/orders';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
@@ -15,6 +16,9 @@ import { useAuthStore } from '../store/useAuthStore';
 /**
  * Seller orders — the orders buyers placed on the caller's listings
  * (GET /api/seller/orders, newest first) as a "load more" infinite list.
+ * A sales-summary header (GET /api/seller/orders/summary, backlog #108)
+ * renders the seller's orders / completed / gross totals — all-time and
+ * for the current calendar month — from a single summary query.
  * Mirrors MyOrdersPage but reads the seller endpoint and rows link to the
  * listing (the seller cares about which item is moving), not the order
  * confirmation page.
@@ -48,6 +52,10 @@ export default function SellerOrdersPage() {
   // on the next render; the mid-session 401 path still handles the
   // credential-died-after-login case.
   const orders = useSellerOrdersInfinite(20, user !== null);
+  // Sales summary header (backlog #108): one summary query, independent
+  // of the list — a summary failure hides the header instead of blocking
+  // the orders below, which stay the authoritative view.
+  const summaryQuery = useSellerSalesSummary(user !== null);
   const completeOrder = useCompleteOrder();
   const refundOrder = useRefundOrder();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -85,9 +93,32 @@ export default function SellerOrdersPage() {
     });
   };
 
+  const summary = summaryQuery.data;
+  // Render only a well-formed summary — a malformed payload hides the
+  // header rather than printing NaN totals over the list.
+  const showSummary =
+    summary != null &&
+    Number.isFinite(summary.totalOrders) &&
+    Number.isFinite(summary.completedCount) &&
+    Number.isFinite(summary.grossCents) &&
+    summary.currentMonth != null;
+
   return (
     <div>
       <h1 className="mb-4 text-2xl font-bold">Orders on my listings</h1>
+      {showSummary && (
+        <section aria-label="Sales summary" className="mb-4 rounded-lg bg-white p-4 shadow-sm">
+          <p className="font-semibold">
+            Sales summary: {summary.totalOrders} orders · {summary.completedCount} completed · ¥
+            {(summary.grossCents / 100).toFixed(2)} gross
+          </p>
+          <p className="mt-1 text-sm text-neutral-500">
+            This month: {summary.currentMonth.totalOrders} orders ·{' '}
+            {summary.currentMonth.completedCount} completed · ¥
+            {(summary.currentMonth.grossCents / 100).toFixed(2)} gross
+          </p>
+        </section>
+      )}
       {orders.isLoading && <p>Loading orders…</p>}
       {orders.isError && (
         <p role="alert" className="text-red-600">

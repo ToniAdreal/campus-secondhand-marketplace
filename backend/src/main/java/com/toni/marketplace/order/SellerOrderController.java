@@ -52,6 +52,22 @@ public class SellerOrderController {
   }
 
   /**
+   * Sales summary over the orders on the caller's listings (backlog
+   * #108): per-status counts + gross (PAID/COMPLETED price snapshots),
+   * all-time and for the current calendar month. Strictly scoped to the
+   * caller's {@code sellerId} like the list — no ADMIN bypass — and a
+   * caller with no orders gets an all-zero summary, not an error. The
+   * literal {@code /summary} path wins over {@code /{id}} in Spring's
+   * path matching, so this never reaches the single-read handler.
+   */
+  @GetMapping("/summary")
+  public ApiResponse<SellerSalesSummaryDto> summary() {
+    Long sellerId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(orderService.sellerSalesSummary(sellerId));
+  }
+
+  /**
    * Reads one order on the caller's listing. The listing's seller — or an
    * ADMIN — may read; an order on someone else's listing gets 403; anonymous
    * callers get the JSON 401 envelope; unknown ids get 404.

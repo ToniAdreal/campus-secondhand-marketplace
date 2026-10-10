@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
-import { type Order } from '../api/orders';
+import { type Order, type SellerSalesSummary } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
 import SellerOrdersPage from './SellerOrdersPage';
 
@@ -248,6 +248,63 @@ describe('SellerOrdersPage', () => {
       'This order was already completed — it can no longer be refunded.',
     );
     confirmSpy.mockRestore();
+  });
+
+  const summaryFixture: SellerSalesSummary = {
+    totalOrders: 5,
+    pendingCount: 1,
+    paidCount: 1,
+    completedCount: 2,
+    cancelledCount: 1,
+    refundedCount: 0,
+    grossCents: 50500,
+    currentMonth: { year: 2026, month: 10, totalOrders: 3, completedCount: 1, grossCents: 30000 },
+  };
+
+  function summaryEnvelope(summary: SellerSalesSummary) {
+    return { data: { code: 0, message: 'ok', data: summary } } as never;
+  }
+
+  /** Routes the two GETs the page fires (list + summary) to their payloads. */
+  function mockListAndSummary(summary: SellerSalesSummary | Error) {
+    getSpy.mockImplementation(((path: string) => {
+      if (path === '/seller/orders/summary') {
+        return summary instanceof Error
+          ? Promise.reject(summary)
+          : Promise.resolve(summaryEnvelope(summary));
+      }
+      return Promise.resolve(pageEnvelope([order1], 0, 1));
+    }) as never);
+  }
+
+  it('renders the sales summary header from the summary query (orders / completed / gross)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    mockListAndSummary(summaryFixture);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByLabelText('Sales summary')).toBeTruthy());
+
+    const header = screen.getByLabelText('Sales summary');
+    // all-time headline: orders / completed / gross from ONE summary query
+    expect(header.textContent).toContain('5 orders');
+    expect(header.textContent).toContain('2 completed');
+    expect(header.textContent).toContain('¥505.00 gross');
+    // plus the current-month slice
+    expect(header.textContent).toContain('This month: 3 orders');
+    expect(header.textContent).toContain('1 completed');
+    expect(header.textContent).toContain('¥300.00 gross');
+    expect(getSpy).toHaveBeenCalledWith('/seller/orders/summary');
+    // the list still renders underneath the header
+    expect(screen.getByText('Order #9')).toBeTruthy();
+  });
+
+  it('a summary failure hides the header but the orders list still renders', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    mockListAndSummary(new Error('summary exploded'));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
+    expect(screen.queryByLabelText('Sales summary')).toBeNull();
   });
 
   it('a non-401 list failure shows the friendly error mapping', async () => {

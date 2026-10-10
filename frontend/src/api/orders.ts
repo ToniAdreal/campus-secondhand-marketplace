@@ -24,7 +24,32 @@ export const orderKeys = {
   detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
   /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
   sellerList: () => [...orderKeys.all, 'seller', 'list'] as const,
+  sellerSummary: () => [...orderKeys.all, 'seller', 'summary'] as const,
 };
+
+/**
+ * GET /api/seller/orders/summary shape (backlog #108). Gross sums the
+ * orders' amountCents price snapshots for PAID + COMPLETED orders only —
+ * REFUNDED orders are excluded server-side, so the header never has to
+ * re-derive money rules. `currentMonth` is the current calendar month
+ * in the server's local time zone (documented server scope).
+ */
+export interface SellerSalesSummary {
+  totalOrders: number;
+  pendingCount: number;
+  paidCount: number;
+  completedCount: number;
+  cancelledCount: number;
+  refundedCount: number;
+  grossCents: number;
+  currentMonth: {
+    year: number;
+    month: number;
+    totalOrders: number;
+    completedCount: number;
+    grossCents: number;
+  };
+}
 
 /**
  * GET /api/orders/{id} — the caller's own order (buyer), or any order (ADMIN).
@@ -66,6 +91,25 @@ export function useOrdersInfinite(size = 20, enabled = true) {
  * user with no listings just gets empty pages — there is no "buyer" role
  * to deny, so no 403 for non-sellers on the list endpoint.
  */
+/**
+ * GET /api/seller/orders/summary — the seller's sales totals from ONE
+ * query (backlog #108): orders / completed / gross, all-time plus the
+ * current calendar month. A seller with no orders gets zeros from the
+ * backend (never an error), mirroring the seller list. Lifecycle
+ * mutations invalidate the whole orders subtree, so the summary
+ * refetches after a complete/refund without any extra wiring here.
+ */
+export function useSellerSalesSummary(enabled = true) {
+  return useQuery({
+    queryKey: orderKeys.sellerSummary(),
+    queryFn: () =>
+      api
+        .get<ApiResponse<SellerSalesSummary>>('/seller/orders/summary')
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
 export function useSellerOrdersInfinite(size = 20, enabled = true) {
   return useInfiniteQuery({
     queryKey: orderKeys.sellerList(),

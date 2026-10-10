@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
@@ -15,10 +15,13 @@ import {
   useCompleteOrder,
   usePayOrder,
   useRefundOrder,
+  useSellerSalesSummary,
   type Order,
+  type SellerSalesSummary,
 } from './orders';
 
 const postSpy = vi.spyOn(api, 'post');
+const getSpy = vi.spyOn(api, 'get');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -182,6 +185,39 @@ describe('order mutation invalidation', () => {
     expect(postSpy).toHaveBeenCalledWith('/orders/9/cancel', {});
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
+  });
+
+  it('useSellerSalesSummary reads /seller/orders/summary under its own key', async () => {
+    const summary: SellerSalesSummary = {
+      totalOrders: 5,
+      pendingCount: 1,
+      paidCount: 1,
+      completedCount: 2,
+      cancelledCount: 1,
+      refundedCount: 0,
+      grossCents: 50500,
+      currentMonth: { year: 2026, month: 10, totalOrders: 3, completedCount: 1, grossCents: 30000 },
+    };
+    getSpy.mockResolvedValueOnce(envelope(summary));
+
+    const queryClient = makeClient();
+    const { result } = renderHook(() => useSellerSalesSummary(), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getSpy).toHaveBeenCalledWith('/seller/orders/summary');
+    expect(result.current.data).toEqual(summary);
+    expect(queryClient.getQueryState(orderKeys.sellerSummary())?.data).toEqual(summary);
+  });
+
+  it('useSellerSalesSummary stays idle when disabled (anonymous page guard)', async () => {
+    const { result } = renderHook(() => useSellerSalesSummary(false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
   });
 
   it('a failed complete does not invalidate anything', async () => {

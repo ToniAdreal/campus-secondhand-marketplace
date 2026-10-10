@@ -6,7 +6,10 @@ import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,12 +39,13 @@ public class OrderService {
   private final OrderCreationService creation;
   private final OrderMetrics metrics;
   private final AuditService audit;
+  private final Clock clock;
 
   @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
                      OrderCreationService creation, OrderMetrics metrics,
-                     AuditService audit) {
+                     AuditService audit, Clock clock) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
@@ -49,6 +53,7 @@ public class OrderService {
     this.creation = creation;
     this.metrics = metrics;
     this.audit = audit;
+    this.clock = clock;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -56,7 +61,16 @@ public class OrderService {
                      IdempotencyKeyService idempotency, PaymentService payments,
                      OrderCreationService creation) {
     this(orders, items, idempotency, payments, creation, OrderMetrics.noop(),
-        AuditService.noop());
+        AuditService.noop(), Clock.systemDefaultZone());
+  }
+
+  /**
+   * Clock accessor with a system fallback, mirroring {@link #metrics()}:
+   * direct unit tests that construct this service by hand must never fail
+   * on the clock.
+   */
+  private Clock clock() {
+    return clock != null ? clock : Clock.systemDefaultZone();
   }
 
   /**
@@ -171,6 +185,45 @@ public class OrderService {
   @Transactional(readOnly = true)
   public Page<OrderDto> listSellerOrders(Long sellerId, Pageable pageable) {
     return orders.findByItem_SellerId(sellerId, pageable).map(OrderDto::from);
+  }
+
+  /** The {@code [from, to)} instant window of one calendar month. */
+  record MonthWindow(YearMonth month, Instant from, Instant to) {}
+
+  /**
+   * Month window for {@code now} in {@code zone}: from the first instant
+   * of the month containing {@code now} to the first instant of the next
+   * month. Package-private and static so the boundary arithmetic is
+   * unit-testable with a fixed instant and an explicit zone.
+   */
+  static MonthWindow monthWindow(Instant now, ZoneId zone) {
+    YearMonth month = YearMonth.from(now.atZone(zone));
+    Instant from = month.atDay(1).atStartOfDay(zone).toInstant();
+    Instant to = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant();
+    return new MonthWindow(month, from, to);
+  }
+
+  /**
+   * Sales summary for one seller (backlog #108): per-status counts and
+   * gross over every order on the caller's listings, plus the same
+   * headline numbers for the current calendar month. Gross sums the
+   * orders' {@code amountCents} price snapshots (see
+   * {@link SellerSalesSummaryDto}), so a later listing price edit never
+   * rewrites it. Scoped strictly to the caller's listings like
+   * {@link #listSellerOrders(Long, Pageable)} — no ADMIN bypass — and a
+   * seller with no orders gets zeros, not an error.
+   *
+   * <p>The month window uses the injected {@link Clock} for "now" and
+   * the server-local zone ({@link ZoneId#systemDefault()}) for the
+   * calendar boundary, as documented on {@link SellerSalesSummaryDto}.
+   */
+  @Transactional(readOnly = true)
+  public SellerSalesSummaryDto sellerSalesSummary(Long sellerId) {
+    MonthWindow window = monthWindow(clock().instant(), ZoneId.systemDefault());
+    return SellerSalesSummaryDto.from(
+        orders.summarizeBySellerId(sellerId),
+        orders.summarizeBySellerIdBetween(sellerId, window.from(), window.to()),
+        window.month());
   }
 
   /**
