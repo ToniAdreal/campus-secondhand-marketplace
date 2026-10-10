@@ -91,6 +91,18 @@ app:
     # file (stored before its transaction commits) is never swept.
     orphan-grace: 24h
   auth:
+    # Refresh-cookie Secure flag (AuthController, backlog #130): the
+    # httpOnly refresh_token cookie is a 7-day credential, so behind
+    # HTTPS it must carry the Secure attribute; local plain-HTTP dev
+    # cannot store a Secure cookie at all, so the flag defaults to
+    # false here. On the `mysql` profile the app REFUSES to boot with
+    # it still false — RefreshCookieSecureStartupCheck fails fast —
+    # unless the operator sets the explicit local-only opt-out
+    # allow-insecure-cookie=true (APP_AUTH_ALLOW_INSECURE_COOKIE=true).
+    # The set cookie and the logout clear-cookie always share this flag
+    # (they must agree or the browser will not overwrite the cookie).
+    cookie-secure: ${APP_AUTH_COOKIE_SECURE:false}
+    allow-insecure-cookie: ${APP_AUTH_ALLOW_INSECURE_COOKIE:false}
     password-reset:
       # Password-reset token lifetime (PasswordResetService, backlog #90):
       # a reset token is a bearer credential for a full password change, so

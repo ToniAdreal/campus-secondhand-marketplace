@@ -88,9 +88,11 @@ class TotpEncryptionKeyStartupCheckTest {
             () ->
                 new SpringApplicationBuilder(MarketplaceApplication.class)
                     .profiles("mysql")
-                    // Real JWT secret, so the ONLY failing check is the
-                    // TOTP one under test.
-                    .run(bootArgs("--app.jwt.secret=" + randomKey())));
+                    // Real JWT secret + Secure cookie, so the ONLY
+                    // failing check is the TOTP one under test (#130's
+                    // guard would otherwise also refuse this boot).
+                    .run(bootArgs("--app.jwt.secret=" + randomKey(),
+                        "--app.auth.cookie-secure=true")));
 
     assertThat(thrown)
         .as("expected the context to refuse to boot with the placeholder TOTP key")
@@ -106,7 +108,10 @@ class TotpEncryptionKeyStartupCheckTest {
         new SpringApplicationBuilder(MarketplaceApplication.class)
             .profiles("mysql")
             .run(bootArgs("--app.jwt.secret=" + randomKey(),
-                "--app.auth.totp.encryption-key=" + randomKey()))) {
+                "--app.auth.totp.encryption-key=" + randomKey(),
+                // Secure refresh cookie too (backlog #130): the mysql
+                // profile also carries RefreshCookieSecureStartupCheck.
+                "--app.auth.cookie-secure=true"))) {
       assertThat(context.getBeansOfType(TotpEncryptionKeyStartupCheck.class)).hasSize(1);
     }
   }

@@ -34,12 +34,14 @@ public class AuthController {
   private final AuthService auth;
   private final PasswordResetService passwordReset;
   private final JwtProperties jwtProps;
+  private final RefreshCookieProperties cookieProps;
 
   public AuthController(AuthService auth, PasswordResetService passwordReset,
-                        JwtProperties jwtProps) {
+                        JwtProperties jwtProps, RefreshCookieProperties cookieProps) {
     this.auth = auth;
     this.passwordReset = passwordReset;
     this.jwtProps = jwtProps;
+    this.cookieProps = cookieProps;
   }
 
   @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure or weak password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username or email already taken (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
@@ -299,8 +301,9 @@ public class AuthController {
   private ResponseCookie clearedRefreshCookie() {
     return ResponseCookie.from(REFRESH_COOKIE, "")
         .httpOnly(true)
-        // Local dev runs plain HTTP; production behind HTTPS must set Secure.
-        .secure(false)
+        // Must agree with refreshCookie's Secure flag (backlog #130) or
+        // the browser will not overwrite the stored cookie.
+        .secure(cookieProps.isCookieSecure())
         .path("/")
         .sameSite("Lax")
         .maxAge(Duration.ZERO)
@@ -319,8 +322,11 @@ public class AuthController {
     Duration maxAge = jwtProps.getRefreshTtl();
     return ResponseCookie.from(REFRESH_COOKIE, token)
         .httpOnly(true)
-        // Local dev runs plain HTTP; production behind HTTPS must set Secure.
-        .secure(false)
+        // Secure is configured via app.auth.cookie-secure (backlog #130):
+        // off for local plain-HTTP dev, on behind HTTPS — the mysql
+        // profile refuses to boot with it off unless the operator sets
+        // the explicit allow-insecure-cookie opt-out.
+        .secure(cookieProps.isCookieSecure())
         .path("/")
         .sameSite("Lax")
         .maxAge(maxAge)
