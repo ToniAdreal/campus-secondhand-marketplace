@@ -155,11 +155,19 @@ Intended package dependency direction (enforced by ArchUnit — see
 build fails on violation):
 
 ```
-common/ ◀── auth/  item/  order/  message/      (domains depend only on the kernel)
+common/ ◀── auth/  item/  order/  message/  audit/   (domains depend only on the kernel)
 auth/   ◀── message/                            (sender/receiver lookups)
 order/  ──╳── auth/ web classes                 (order never imports auth web
                                                 classes; shared needs go via
                                                 common/ types)
+audit/  ──╳── auth/ item/ order/ message/ job/  (the trail is a leaf: it depends on
+                                                no domain package — its own repository,
+                                                a Clock, and common/ types only)
+auth/, order/ services ──▶ AuditService         (transitions record from the service
+                                                layer, inside their own transaction;
+                                                no controller records, and no controller
+                                                outside audit/ touches AuditService —
+                                                audit/'s own ADMIN controller reads only)
 *Controller ──▶ *Service ──▶ *Repository        (controllers never touch
                                                 repositories directly)
 job/    ──▶ auth/, order/ stores                (scheduled sweeps only)
