@@ -117,10 +117,13 @@ export const AUDIT_ACTIONS = [
   'ORDER_REFUNDED',
   'USER_DISABLED',
   'USER_ENABLED',
+  'CATEGORY_CREATED',
+  'CATEGORY_UPDATED',
+  'CATEGORY_DELETED',
 ] as const;
 
 /** Allowlisted AuditTargetType values (backend enum, source of truth). */
-export const AUDIT_TARGET_TYPES = ['USER', 'ORDER'] as const;
+export const AUDIT_TARGET_TYPES = ['USER', 'ORDER', 'CATEGORY'] as const;
 
 export interface AuditLogFilters {
   actorUserId?: number | null;

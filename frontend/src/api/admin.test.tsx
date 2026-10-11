@@ -131,8 +131,11 @@ describe('admin query keys', () => {
       'ORDER_REFUNDED',
       'USER_DISABLED',
       'USER_ENABLED',
+      'CATEGORY_CREATED',
+      'CATEGORY_UPDATED',
+      'CATEGORY_DELETED',
     ]);
-    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER']);
+    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER', 'CATEGORY']);
   });
 });
 

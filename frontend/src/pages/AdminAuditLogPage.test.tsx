@@ -225,6 +225,52 @@ describe('AdminAuditLogPage', () => {
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('offers the category audit actions and target type in the filters (backlog #132)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([paidRow], 0, 1));
+
+    renderAt('/admin/audit-log');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+
+    const actionSelect = screen.getByLabelText(/filter by action/i) as HTMLSelectElement;
+    const actionValues = Array.from(actionSelect.options).map((o) => o.value);
+    expect(actionValues).toContain('CATEGORY_CREATED');
+    expect(actionValues).toContain('CATEGORY_UPDATED');
+    expect(actionValues).toContain('CATEGORY_DELETED');
+
+    const typeSelect = screen.getByLabelText(/filter by target type/i) as HTMLSelectElement;
+    const typeValues = Array.from(typeSelect.options).map((o) => o.value);
+    expect(typeValues).toContain('CATEGORY');
+  });
+
+  it('category URL filters are sent to the API (backlog #132)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    const categoryRow: AuditLogEntry = {
+      id: 11,
+      actorUserId: 1,
+      action: 'CATEGORY_CREATED',
+      targetType: 'CATEGORY',
+      targetId: 7,
+      createdAt: '2026-09-04T10:00:00Z',
+    };
+    getSpy.mockResolvedValue(pageEnvelope([categoryRow], 0, 1));
+
+    renderAt('/admin/audit-log?action=CATEGORY_CREATED&targetType=CATEGORY&targetId=7');
+    await waitFor(() =>
+      expect(screen.getByRole('cell', { name: 'CATEGORY_CREATED' })).toBeTruthy(),
+    );
+    expect(screen.getByText('CATEGORY #7')).toBeTruthy();
+    expect(getSpy).toHaveBeenCalledWith('/admin/audit-log', {
+      params: {
+        page: 0,
+        size: 20,
+        action: 'CATEGORY_CREATED',
+        targetType: 'CATEGORY',
+        targetId: 7,
+      },
+    });
+  });
+
   it('an empty filtered page renders the no-matches state', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([], 0, 0));

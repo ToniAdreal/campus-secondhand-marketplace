@@ -5,8 +5,9 @@ package com.toni.marketplace.audit;
  * per audited action; the set is deliberately small — v1 covers the seams
  * that exist today (password change, TOTP enable, order complete/refund,
  * ADMIN disable/enable); backlog #122 adds the order pay / buyer-cancel
- * transitions. New audited transitions add a value here rather than
- * free-text strings, so the trail stays queryable.
+ * transitions and backlog #132 the ADMIN category writes. New audited
+ * transitions add a value here rather than free-text strings, so the
+ * trail stays queryable.
  */
 public enum AuditAction {
   /** The account holder changed their password ({@code AuthService.changePassword}). */
@@ -64,5 +65,28 @@ public enum AuditAction {
   /** An ADMIN disabled an account ({@code AuthService.disableUser}). */
   USER_DISABLED,
   /** An ADMIN re-enabled an account ({@code AuthService.enableUser}). */
-  USER_ENABLED
+  USER_ENABLED,
+  /**
+   * An ADMIN created a listing category ({@code CategoryService.createCategory},
+   * backlog #132). Actor is the acting ADMIN; target is the new category.
+   * A rejected create (duplicate name/slug, invalid slug) writes no row —
+   * the exception rolls the transaction back before the record call.
+   */
+  CATEGORY_CREATED,
+  /**
+   * An ADMIN renamed a listing category ({@code CategoryService.updateCategory},
+   * backlog #132). Actor is the acting ADMIN; target is the renamed
+   * category. The rename endpoint itself lands with #132 — before it,
+   * categories could only be created and deleted, so there was no update
+   * transition to audit.
+   */
+  CATEGORY_UPDATED,
+  /**
+   * An ADMIN deleted a listing category ({@code CategoryService.deleteCategory},
+   * backlog #132). Actor is the acting ADMIN; target is the deleted
+   * category's id — the row survives the deletion precisely because the
+   * audit table carries no foreign keys. A delete rejected as in-use
+   * (409) writes no row.
+   */
+  CATEGORY_DELETED
 }

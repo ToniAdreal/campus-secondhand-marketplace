@@ -18,7 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
  * / {@code USER_ENABLED} from the ADMIN endpoints (#88), and
  * {@code ORDER_PAID} / {@code ORDER_CANCELLED} (backlog #122) and
  * {@code ORDER_COMPLETED} / {@code ORDER_REFUNDED} from
- * {@code OrderService}, and {@code PASSWORD_RESET_COMPLETED} from
+ * {@code OrderService}, {@code CATEGORY_CREATED} /
+ * {@code CATEGORY_UPDATED} / {@code CATEGORY_DELETED} from
+ * {@code CategoryService} (backlog #132 — the ADMIN-only taxonomy writes
+ * previously left no trail at all), and {@code PASSWORD_RESET_COMPLETED} from
  * {@code PasswordResetService} (backlog #110 — attribution decision:
  * the reset token resolves to exactly one account, so actor and target
  * are both that account; the row evidences a credential change via the

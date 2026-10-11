@@ -1,5 +1,8 @@
 package com.toni.marketplace.item;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.common.CategoryInUseException;
 import com.toni.marketplace.common.DuplicateCategoryException;
 import java.util.List;
@@ -19,6 +22,15 @@ import org.springframework.web.server.ResponseStatusException;
  * <p>Exists so controllers never touch {@link CategoryRepository} directly —
  * the layering rule enforced by ArchitectureTest. ADMIN write operations
  * (backlog #70) land here too.
+ *
+ * <p>Every successful write also appends an audit row (backlog #132)
+ * through {@link AuditService} from inside the write's own transaction —
+ * comparably privileged transitions (ADMIN disable/enable, order money
+ * moves) already did, while these taxonomy writes previously left no
+ * trail. A rejected write throws before the record call (and its
+ * transaction rolls back regardless), so it leaves no row; the actor is
+ * the authenticated ADMIN's id, threaded from the controller's
+ * {@code @AuthenticationPrincipal} — never a request parameter.
  */
 @Service
 class CategoryService {
@@ -27,10 +39,21 @@ class CategoryService {
 
   private final CategoryRepository categories;
   private final ItemRepository items;
+  private final AuditService audit;
 
-  CategoryService(CategoryRepository categories, ItemRepository items) {
+  CategoryService(CategoryRepository categories, ItemRepository items, AuditService audit) {
     this.categories = categories;
     this.items = items;
+    this.audit = audit;
+  }
+
+  /**
+   * Audit accessor with a no-op fallback, mirroring {@code OrderService}:
+   * a hand-constructed service without an AuditService must never fail
+   * on the trail. Production always gets the Spring bean.
+   */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -38,7 +61,7 @@ class CategoryService {
    * browse page and the create-listing form read this on every render,
    * while writes are rare and ADMIN-only. The returned list is
    * unmodifiable ({@code Stream.toList()}), so sharing the cached
-   * instance with every caller is safe. Eviction lives on the two write
+   * instance with every caller is safe. Eviction lives on the three write
    * methods below — a write that fails (duplicate, in-use) throws before
    * evicting, so a rejected ADMIN call never flushes a warm cache.
    */
@@ -55,7 +78,7 @@ class CategoryService {
    */
   @Transactional
   @CacheEvict(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, allEntries = true)
-  public CategoryDto createCategory(String name, String slug) {
+  public CategoryDto createCategory(long actorId, String name, String slug) {
     String displayName = name.trim();
     if (categories.existsByNameLower(Category.canonical(displayName))) {
       throw new DuplicateCategoryException("category name already exists");
@@ -70,7 +93,51 @@ class CategoryService {
     if (categories.existsBySlug(resolvedSlug)) {
       throw new DuplicateCategoryException("category slug already exists");
     }
-    return CategoryDto.from(categories.save(new Category(displayName, resolvedSlug)));
+    Category saved = categories.save(new Category(displayName, resolvedSlug));
+    audit().record(actorId, AuditAction.CATEGORY_CREATED, AuditTargetType.CATEGORY,
+        saved.getId());
+    return CategoryDto.from(saved);
+  }
+
+  /**
+   * Renames a category (backlog #132 — the update path whose audit action
+   * the #132 spec requires; before it, categories could only be created
+   * and deleted). 404 on unknown id. Name uniqueness mirrors create but
+   * excludes the category itself, so a pure case change ("gadgets" →
+   * "Gadgets") is allowed. An omitted/blank slug keeps the current slug;
+   * a supplied slug is validated exactly like create's and must not
+   * collide with another category. Writes a {@code CATEGORY_UPDATED}
+   * audit row in the same transaction; a rejected rename writes none.
+   */
+  @Transactional
+  @CacheEvict(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, allEntries = true)
+  public CategoryDto updateCategory(long actorId, Long id, String name, String slug) {
+    Category category = categories.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "category not found"));
+    String displayName = name.trim();
+    String canonical = Category.canonical(displayName);
+    if (!canonical.equals(category.getNameLower())
+        && categories.existsByNameLower(canonical)) {
+      throw new DuplicateCategoryException("category name already exists");
+    }
+    String resolvedSlug = category.getSlug();
+    if (slug != null && !slug.isBlank()) {
+      resolvedSlug = slug.trim().toLowerCase(Locale.ROOT);
+      if (!SLUG.matcher(resolvedSlug).matches()) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            "slug must be lowercase letters, digits and single hyphens");
+      }
+      if (!resolvedSlug.equals(category.getSlug())
+          && categories.existsBySlug(resolvedSlug)) {
+        throw new DuplicateCategoryException("category slug already exists");
+      }
+    }
+    category.rename(displayName, resolvedSlug);
+    Category saved = categories.save(category);
+    audit().record(actorId, AuditAction.CATEGORY_UPDATED, AuditTargetType.CATEGORY,
+        saved.getId());
+    return CategoryDto.from(saved);
   }
 
   /**
@@ -81,7 +148,7 @@ class CategoryService {
    */
   @Transactional
   @CacheEvict(cacheNames = CategoryCacheConfig.CATEGORIES_CACHE, allEntries = true)
-  public void deleteCategory(Long id) {
+  public void deleteCategory(long actorId, Long id) {
     Category category = categories.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "category not found"));
@@ -89,6 +156,10 @@ class CategoryService {
       throw new CategoryInUseException("category is used by listings");
     }
     categories.delete(category);
+    // Recorded after the delete, still inside the same transaction: the
+    // row names the now-deleted category id, which stays meaningful
+    // because the audit table carries no foreign keys (backlog #132).
+    audit().record(actorId, AuditAction.CATEGORY_DELETED, AuditTargetType.CATEGORY, id);
   }
 
   /**

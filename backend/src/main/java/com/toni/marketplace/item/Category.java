@@ -54,6 +54,19 @@ public class Category {
     return name == null ? null : name.toLowerCase(Locale.ROOT);
   }
 
+  /**
+   * Renames the category (backlog #132): the display name keeps its case
+   * and {@code nameLower} is re-derived, so the case-insensitive
+   * uniqueness contract follows the rename. Validation (duplicate name /
+   * slug, slug shape) lives in {@code CategoryService.updateCategory} —
+   * this method assumes already-validated values.
+   */
+  public void rename(String name, String slug) {
+    this.name = name;
+    this.nameLower = canonical(name);
+    this.slug = slug;
+  }
+
   public Long getId() { return id; }
   public String getName() { return name; }
   public String getNameLower() { return nameLower; }

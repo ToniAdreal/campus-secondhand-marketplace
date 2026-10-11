@@ -163,7 +163,7 @@ class CategoryCacheTest {
 
     // "Electronics" is seeded by Flyway V3 — the create is rejected, and a
     // rejected write must not flush a warm cache as a side effect.
-    assertThatThrownBy(() -> categoryService.createCategory("electronics", null))
+    assertThatThrownBy(() -> categoryService.createCategory(1L, "electronics", null))
         .isInstanceOf(DuplicateCategoryException.class);
 
     categoryRepo.save(new Category("Marker Row", "marker-row")); // bypass, no eviction
