@@ -11,18 +11,31 @@ const calls: Array<{
   filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null };
 }> = [];
 
-vi.mock('../api/items', () => ({
-  useItems: (
-    page: number,
-    q = '',
-    categoryId: number | null = null,
-    filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null },
-  ) => {
-    calls.push({ page, q, categoryId, filters });
-    const emptyPage: Page<Item> = { content: [], totalElements: 0, totalPages: 0, number: page };
-    return { data: emptyPage, isLoading: false, isError: false };
-  },
-}));
+/** Content the mocked useItems serves; empty unless a test seeds listings. */
+let mockContent: Item[] = [];
+
+vi.mock('../api/items', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/items')>();
+  return {
+    // Keep the real listingPhotoUrls — the photo tests exercise it, not a stub.
+    ...actual,
+    useItems: (
+      page: number,
+      q = '',
+      categoryId: number | null = null,
+      filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null },
+    ) => {
+      calls.push({ page, q, categoryId, filters });
+      const pageData: Page<Item> = {
+        content: mockContent,
+        totalElements: mockContent.length,
+        totalPages: mockContent.length === 0 ? 0 : 1,
+        number: page,
+      };
+      return { data: pageData, isLoading: false, isError: false };
+    },
+  };
+});
 
 vi.mock('../api/categories', () => ({
   useCategories: () => ({
@@ -261,5 +274,64 @@ describe('HomePage price range + sort', () => {
     renderHome('/?minPrice=abc');
 
     expect(calls[calls.length - 1].filters).toMatchObject({ minPriceCents: null });
+  });
+});
+
+describe('HomePage listing photos', () => {
+  const baseItem: Item = {
+    id: 7,
+    title: 'Used bike',
+    description: 'Rides fine',
+    priceCents: 12000,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  beforeEach(() => {
+    mockContent = [];
+    currentSearch = '';
+  });
+
+  afterEach(() => {
+    cleanup();
+    mockContent = [];
+    vi.clearAllMocks();
+  });
+
+  it('renders the primary (lowest-position) gallery photo on the card', () => {
+    mockContent = [
+      {
+        ...baseItem,
+        photos: [
+          { id: 2, url: '/uploads/b.png', position: 1 },
+          { id: 1, url: '/uploads/a.png', position: 0 },
+        ],
+      },
+    ];
+    renderHome('/');
+
+    const img = screen.getByRole('img', { name: 'Used bike' }) as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/uploads/a.png');
+  });
+
+  it('renders the legacy photoUrl when the gallery is empty', () => {
+    mockContent = [{ ...baseItem, photoUrl: '/uploads/legacy.png' }];
+    renderHome('/');
+
+    const img = screen.getByRole('img', { name: 'Used bike' }) as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/uploads/legacy.png');
+  });
+
+  it('renders an honest placeholder and no img for a photo-less listing', () => {
+    mockContent = [baseItem];
+    const { container } = renderHome('/');
+
+    expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
+    expect(container.querySelector('img')).toBeNull();
   });
 });

@@ -29,6 +29,7 @@ const fakeItem: Item = {
   categoryId: null,
   categoryName: null,
   photoUrl: null,
+  photos: [],
 };
 
 const fakeOrder: Order = {
@@ -351,5 +352,64 @@ describe('ItemDetailPage mark-as-sold', () => {
     await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Mark as sold' })).toBeNull();
     expect(patchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('ItemDetailPage photo gallery', () => {
+  beforeEach(() => {
+    currentPath = '';
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation(() =>
+      Promise.resolve(
+        envelope({ content: [], totalElements: 0, totalPages: 0, number: 0 }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('renders the gallery primary-first and switches on thumbnail click', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope({
+        ...fakeItem,
+        photos: [
+          { id: 1, url: '/uploads/a.png', position: 0 },
+          { id: 2, url: '/uploads/b.png', position: 1 },
+        ],
+      }),
+    );
+    renderAt('/items/7');
+
+    const main = (await screen.findByRole('img', {
+      name: 'Used bike',
+    })) as HTMLImageElement;
+    expect(main.getAttribute('src')).toBe('/uploads/a.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show photo 2 of 2' }));
+    expect(main.getAttribute('src')).toBe('/uploads/b.png');
+  });
+
+  it('renders the legacy photoUrl as a single photo when the gallery is empty', async () => {
+    getSpy.mockResolvedValueOnce(envelope({ ...fakeItem, photoUrl: '/uploads/legacy.png' }));
+    renderAt('/items/7');
+
+    const main = (await screen.findByRole('img', {
+      name: 'Used bike',
+    })) as HTMLImageElement;
+    expect(main.getAttribute('src')).toBe('/uploads/legacy.png');
+    expect(screen.queryByRole('button', { name: /show photo/i })).toBeNull();
+  });
+
+  it('renders the placeholder and no broken img for a photo-less listing', async () => {
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    const { container } = renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
+    expect(container.querySelector('img')).toBeNull();
   });
 });

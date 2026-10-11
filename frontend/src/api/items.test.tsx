@@ -3,7 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
-import { itemKeys, useItems } from './items';
+import { itemKeys, listingPhotoUrls, useItems, type ItemPhoto } from './items';
 
 const getSpy = vi.spyOn(api, 'get');
 
@@ -95,5 +95,37 @@ describe('useItems request params', () => {
   it('keys the cache by category so filtered and unfiltered lists never collide', () => {
     expect(itemKeys.list(0, '')).not.toEqual(itemKeys.list(0, '', 2));
     expect(itemKeys.list(0, 'bike', 2)).not.toEqual(itemKeys.list(0, 'bike'));
+  });
+});
+
+describe('listingPhotoUrls', () => {
+  const photo = (id: number, url: string, position: number): ItemPhoto => ({ id, url, position });
+
+  it('returns the gallery ordered by position, primary first', () => {
+    expect(
+      listingPhotoUrls({
+        photoUrl: null,
+        photos: [photo(2, '/uploads/b.png', 1), photo(1, '/uploads/a.png', 0)],
+      }),
+    ).toEqual(['/uploads/a.png', '/uploads/b.png']);
+  });
+
+  it('prefers the gallery over the legacy photoUrl when both exist', () => {
+    expect(
+      listingPhotoUrls({
+        photoUrl: '/uploads/legacy.png',
+        photos: [photo(1, '/uploads/a.png', 0)],
+      }),
+    ).toEqual(['/uploads/a.png']);
+  });
+
+  it('falls back to the legacy photoUrl when the gallery is empty', () => {
+    expect(listingPhotoUrls({ photoUrl: '/uploads/legacy.png', photos: [] })).toEqual([
+      '/uploads/legacy.png',
+    ]);
+  });
+
+  it('is empty when the listing has no photo at all', () => {
+    expect(listingPhotoUrls({ photoUrl: null, photos: [] })).toEqual([]);
   });
 });

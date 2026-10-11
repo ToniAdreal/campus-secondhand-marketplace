@@ -16,6 +16,7 @@ const fakeItem: Item = {
   categoryId: null,
   categoryName: null,
   photoUrl: null,
+  photos: [],
 };
 
 const fakePage: Page<Item> = { content: [fakeItem], totalElements: 1, totalPages: 1, number: 0 };

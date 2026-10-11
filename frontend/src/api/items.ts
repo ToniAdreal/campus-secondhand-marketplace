@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 
+/** Mirrors the backend's ItemPhotoDto (backlog #69 gallery). */
+export interface ItemPhoto {
+  id: number;
+  /** Public URL path ("/uploads/<uuid>.<ext>"), served without auth. */
+  url: string;
+  /** Display order within the listing's gallery; lowest is primary. */
+  position: number;
+}
+
 export interface Item {
   id: number;
   title: string;
@@ -14,6 +23,33 @@ export interface Item {
   categoryId: number | null;
   categoryName: string | null;
   photoUrl: string | null;
+  /**
+   * The listing's photo gallery (backlog #69), ordered by position — the
+   * first entry is the primary photo. Never null on the wire (the backend
+   * sends an empty list); legacy listings uploaded through the single-photo
+   * endpoint carry only {@link Item.photoUrl} and an empty gallery.
+   */
+  photos: ItemPhoto[];
+}
+
+/**
+ * The photo URLs a listing renders, primary first. The gallery wins when
+ * it has entries (sorted by position — the backend already orders them,
+ * the sort keeps hand-built fixtures honest); a gallery-less listing falls
+ * back to its legacy single {@link Item.photoUrl}, which is the channel
+ * the create-listing form uploads through, so those photos show too.
+ * Empty when the listing has no photo at all — callers render an honest
+ * placeholder instead of a broken image. `/uploads/**` URLs are used
+ * as-is: UploadWebConfig serves them publicly.
+ */
+export function listingPhotoUrls(item: Pick<Item, 'photos' | 'photoUrl'>): string[] {
+  const gallery = [...(item.photos ?? [])]
+    .sort((a, b) => a.position - b.position)
+    .map((photo) => photo.url);
+  if (gallery.length > 0) {
+    return gallery;
+  }
+  return item.photoUrl ? [item.photoUrl] : [];
 }
 
 export interface Page<T> {

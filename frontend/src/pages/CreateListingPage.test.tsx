@@ -40,6 +40,7 @@ function createdItemPayload() {
     categoryId: 1,
     categoryName: 'Electronics',
     photoUrl: null,
+    photos: [],
   };
 }
 

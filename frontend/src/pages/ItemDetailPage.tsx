@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { describeMarkSoldError, useItem, useMarkSold } from '../api/items';
+import {
+  describeMarkSoldError,
+  listingPhotoUrls,
+  useItem,
+  useMarkSold,
+} from '../api/items';
 import { describeOrderError, useCreateOrder } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
+import ListingGallery from '../components/ListingGallery';
 import MessageThread from '../components/MessageThread';
 
 export default function ItemDetailPage() {
@@ -48,6 +54,9 @@ export default function ItemDetailPage() {
   return (
     <article className="rounded-lg bg-white p-6 shadow-sm">
       <h1 className="text-2xl font-bold">{data.title}</h1>
+      <div className="mt-4">
+        <ListingGallery title={data.title} photoUrls={listingPhotoUrls(data)} />
+      </div>
       <p className="mt-2 text-lg">¥{(data.priceCents / 100).toFixed(2)}</p>
       <p className="mt-4 whitespace-pre-wrap text-neutral-700">{data.description}</p>
       <span className="mt-4 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">

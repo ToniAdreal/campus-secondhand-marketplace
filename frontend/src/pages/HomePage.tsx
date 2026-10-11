@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router-dom';
-import { useItems } from '../api/items';
+import { listingPhotoUrls, useItems } from '../api/items';
 import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
 
@@ -194,8 +194,24 @@ export default function HomePage() {
         <>
           {data.content.length === 0 && <p>{emptyMessage}</p>}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {data.content.map((item) => (
+            {data.content.map((item) => {
+              const photoUrls = listingPhotoUrls(item);
+              return (
               <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
+                {photoUrls.length > 0 ? (
+                  <img
+                    src={photoUrls[0]}
+                    alt={item.title}
+                    className="mb-3 h-40 w-full rounded object-cover"
+                  />
+                ) : (
+                  <div
+                    data-testid="no-photo-placeholder"
+                    className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
+                  >
+                    No photo
+                  </div>
+                )}
                 <Link to={`/items/${item.id}`} className="font-semibold hover:underline">
                   {item.title}
                 </Link>
@@ -206,7 +222,8 @@ export default function HomePage() {
                   {item.status}
                 </span>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </>
       )}
