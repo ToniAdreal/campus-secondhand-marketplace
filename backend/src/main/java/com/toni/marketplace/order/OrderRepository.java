@@ -108,6 +108,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
    * given statuses. Checked before creating an order for a friendly 409; the
    * database constraint remains the final arbiter under races.
    */
+  /** Webhook reconciliation lookup by the persisted PSP capture id (#114/#140). */
+  java.util.Optional<Order> findByCaptureId(String captureId);
+
+  /** Webhook reconciliation lookup by the persisted PSP refund id (#114/#140). */
+  java.util.Optional<Order> findByRefundId(String refundId);
+
   boolean existsByItem_IdAndStatusIn(Long itemId, Collection<OrderStatus> statuses);
 
   /**

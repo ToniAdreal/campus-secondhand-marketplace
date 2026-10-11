@@ -9,6 +9,6 @@ import org.springframework.context.annotation.Configuration;
  * config only owns the order-domain property binding.
  */
 @Configuration
-@EnableConfigurationProperties(OrderExpiryProperties.class)
+@EnableConfigurationProperties({OrderExpiryProperties.class, WebhookProperties.class})
 public class OrderConfig {
 }

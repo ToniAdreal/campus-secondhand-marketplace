@@ -229,6 +229,18 @@ app:
     # is the 5-minute cadence, so a stale order holds its listing at most
     # TTL + one cadence.
     pending-ttl: 30m
+  payments:
+    # Mock-PSP webhook receiver (PaymentWebhookService, backlog #140):
+    # POST /api/payments/webhooks/mock-psp is a public route authenticated
+    # by an HMAC-SHA256 signature header (X-Mock-Psp-Signature, hex over
+    # the raw body) instead of a Bearer token. This committed value is a
+    # dev-only placeholder for local H2 runs; on the `mysql` profile the
+    # app REFUSES to boot with it — WebhookSecretStartupCheck fails fast
+    # unless APP_PAYMENTS_WEBHOOK_SECRET is set to a random secret shared
+    # only with the PSP. Deliveries are idempotent on the PSP event id
+    # (Flyway V28) and never move money state by themselves: they only
+    # reconcile against orders already carrying the capture/refund id.
+    webhook-secret: ${APP_PAYMENTS_WEBHOOK_SECRET:dev-only-webhook-secret-change-me}
   jwt:
     # Base64 HS256 key (256 bits). Dev-only placeholder for local H2 runs.
     # On the `mysql` profile (the docker-compose path) the app REFUSES to boot
