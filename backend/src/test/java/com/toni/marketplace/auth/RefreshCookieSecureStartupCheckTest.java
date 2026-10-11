@@ -33,6 +33,10 @@ class RefreshCookieSecureStartupCheckTest {
       // cookie guard under test decides this boot.
       "--app.jwt.secret=" + randomKey(),
       "--app.auth.totp.encryption-key=" + randomKey(),
+      // Real webhook secret too (backlog #140): the mysql profile also
+      // carries WebhookSecretStartupCheck, which would otherwise refuse
+      // every boot in this class.
+      "--app.payments.webhook-secret=" + randomKey(),
     };
     String[] all = new String[base.length + extra.length];
     System.arraycopy(base, 0, all, 0, base.length);
