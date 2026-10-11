@@ -60,6 +60,8 @@ class OpenApiContractTest {
       "/api/auth/2fa/recovery-codes/count",
       "/api/auth/2fa/recovery-codes/regenerate",
       "/api/auth/2fa/setup",
+      "/api/auth/email-verification/confirm",
+      "/api/auth/email-verification/resend",
       "/api/auth/login",
       "/api/auth/logout",
       "/api/auth/me",
@@ -183,6 +185,14 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/auth/password-reset", "post")).contains("429");
     assertThat(responseCodes(docs, "/api/auth/password-reset/confirm", "post"))
         .contains("400", "401", "429");
+    // Email verification (#138): register pins its session-less 201, login
+    // its unverified 403, and both verification endpoints their throttle.
+    assertThat(responseCodes(docs, "/api/auth/register", "post")).contains("201");
+    assertThat(responseCodes(docs, "/api/auth/login", "post")).contains("403");
+    assertThat(responseCodes(docs, "/api/auth/email-verification/confirm", "post"))
+        .contains("400", "429");
+    assertThat(responseCodes(docs, "/api/auth/email-verification/resend", "post"))
+        .contains("429");
     assertThat(responseCodes(docs, "/api/auth/2fa/authenticate", "post"))
         .contains("423", "429");
     // TOTP disable (#121) pins its not-enabled 422 and lockout 423.

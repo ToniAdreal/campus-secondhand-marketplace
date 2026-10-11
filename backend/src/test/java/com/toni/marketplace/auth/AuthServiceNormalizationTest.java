@@ -58,7 +58,7 @@ class AuthServiceNormalizationTest {
     when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     when(jwt.createTokenPair(any(User.class), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = service.register("Alice", "Alice@Example.com", "s3cret-pass1");
+    AuthService.RegisterResult result = service.register("Alice", "Alice@Example.com", "s3cret-pass1");
 
     // Lookups ran with the canonical form, never the raw mixed-case input.
     verify(users).findByUsernameIgnoreCase("alice");

@@ -1,0 +1,69 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { api } from '../api/client';
+import VerifyEmailPage from './VerifyEmailPage';
+
+const postSpy = vi.spyOn(api, 'post');
+
+function envelope(data: unknown) {
+  return { data: { code: 0, message: 'ok', data } } as never;
+}
+
+function axiosFailure(status: number, message: string) {
+  return {
+    isAxiosError: true,
+    response: { status, data: { code: status, message, data: null } },
+  };
+}
+
+function renderAt(initialEntry: string) {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/register" element={<div>register page stub</div>} />
+        <Route path="/login" element={<div>login page stub</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe('VerifyEmailPage', () => {
+  afterEach(() => {
+    cleanup(); // vitest runs with globals off, so RTL's auto-cleanup is not registered
+    vi.clearAllMocks();
+  });
+
+  it('missing token param renders the explanatory state and makes no API call', async () => {
+    renderAt('/verify-email');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('missing its token');
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('confirms on arrival and renders the confirmed state with a login link', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+    renderAt('/verify-email?token=raw-token-abc');
+
+    const status = await screen.findByText(/email address confirmed/i);
+    expect(status).toBeTruthy();
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/confirm', {
+      token: 'raw-token-abc',
+    });
+    expect(screen.getByRole('link', { name: /back to login/i })).toBeTruthy();
+  });
+
+  it('maps the identical 400 to one generic invalid-or-expired message', async () => {
+    postSpy.mockRejectedValueOnce(
+      axiosFailure(400, 'invalid or expired verification token'),
+    );
+    renderAt('/verify-email?token=stale-token');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('invalid or has expired');
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+  });
+});

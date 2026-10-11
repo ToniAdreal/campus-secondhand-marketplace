@@ -72,6 +72,95 @@ export async function login(payload: LoginPayload): Promise<LoginOutcome> {
   return { kind: 'authenticated', user: auth.user, accessToken: auth.accessToken };
 }
 
+export interface RegisterPayload {
+  username: string;
+  email: string;
+  password: string;
+}
+
+/**
+ * Discriminated outcome of POST /api/auth/register (backlog #138): with
+ * the backend's email-verification gate on (the default), registration
+ * answers 201 with NO session — the account exists but cannot log in
+ * until the address is confirmed — so the outcome is
+ * `verification-required` carrying just the user summary. With the gate
+ * off, the answer is the normal token pair and the outcome is
+ * `authenticated`, exactly like a finished login.
+ */
+export type RegisterOutcome =
+  | ({ kind: 'authenticated' } & LoginResult)
+  | { kind: 'verification-required'; user: AuthUser };
+
+interface RegisterPendingBody {
+  user: AuthUser;
+  emailVerificationRequired: boolean;
+}
+
+/**
+ * POST /api/auth/register (backlog #138). Goes through the shared `api`
+ * instance (withCredentials) like login, so when the gate is off the
+ * httpOnly `refresh_token` cookie from the 200 response is stored by the
+ * browser automatically. When verification is required the 201 response
+ * carries no token at all — callers must render the "check your inbox"
+ * state, never a logged-in one.
+ *
+ * Throws the Axios error on failure (400 weak password / validation, 409
+ * duplicate username or email — the {code,message,data} envelope).
+ */
+export async function register(payload: RegisterPayload): Promise<RegisterOutcome> {
+  const res = await api.post<ApiResponse<AuthResponseBody | RegisterPendingBody>>(
+    '/auth/register',
+    payload,
+  );
+  const body = res.data.data;
+  if (body && 'emailVerificationRequired' in body && body.emailVerificationRequired) {
+    return { kind: 'verification-required', user: (body as RegisterPendingBody).user };
+  }
+  const auth = body as AuthResponseBody;
+  return { kind: 'authenticated', user: auth.user, accessToken: auth.accessToken };
+}
+
+export interface ConfirmEmailVerificationPayload {
+  token: string;
+}
+
+/**
+ * POST /api/auth/email-verification/confirm (backlog #138). The token
+ * from the mailed link IS the credential: on success the account's
+ * verified flag flips on. No session is issued — the user logs in with
+ * their password afterwards. Unknown, used and expired tokens all fail
+ * with the identical 400, so callers map them to one generic message.
+ *
+ * Throws the Axios error on failure (the {code,message,data} envelope).
+ */
+export async function confirmEmailVerification(
+  payload: ConfirmEmailVerificationPayload,
+): Promise<void> {
+  await api.post('/auth/email-verification/confirm', payload);
+}
+
+export interface ResendEmailVerificationPayload {
+  email: string;
+}
+
+/**
+ * POST /api/auth/email-verification/resend (backlog #138). The backend
+ * ALWAYS answers the identical 200 envelope whether or not the address
+ * belongs to an unverified account (no enumeration oracle), so a resolved
+ * promise tells the caller nothing about the account — the UI must render
+ * the same state for every address. A fresh token supersedes any earlier
+ * link; it is delivered through the backend's mail seam only and never
+ * appears in this response.
+ *
+ * Throws the Axios error on failure (e.g. 400 on a malformed address,
+ * 429 when the shared verification bucket is exhausted).
+ */
+export async function resendEmailVerification(
+  payload: ResendEmailVerificationPayload,
+): Promise<void> {
+  await api.post('/auth/email-verification/resend', payload);
+}
+
 export interface AuthenticateTotpPayload {
   challenge: string;
   code: string;

@@ -127,4 +127,27 @@ public class AuthRateLimitProperties {
   public void setTotpAttemptsPerMinute(int totpAttemptsPerMinute) {
     this.totpAttemptsPerMinute = totpAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the email-verification endpoints (backlog #138):
+   * {@code POST /api/auth/email-verification/resend} (a mail-bombing
+   * surface) and {@code POST /api/auth/email-verification/confirm} (a
+   * token-guessing surface) share this one bucket. Sized like the
+   * credential bucket (5/min) — a legitimate user resends once and
+   * confirms once, so the ceiling only bites automation. Its own bucket,
+   * on the backlog #101 pattern: verification traffic must neither
+   * consume nor be starved by the credential bucket, and a successful
+   * confirm never resets it (a completed verification must not refill a
+   * guesser's budget). Must be &ge; 1.
+   */
+  private int emailVerificationAttemptsPerMinute = 5;
+
+  public int getEmailVerificationAttemptsPerMinute() {
+    return emailVerificationAttemptsPerMinute;
+  }
+
+  public void setEmailVerificationAttemptsPerMinute(int emailVerificationAttemptsPerMinute) {
+    this.emailVerificationAttemptsPerMinute = emailVerificationAttemptsPerMinute;
+  }
 }

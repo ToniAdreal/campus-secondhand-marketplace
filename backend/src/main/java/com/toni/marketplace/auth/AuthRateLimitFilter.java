@@ -35,6 +35,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * fourth, per-IP bucket (default 5/minute): the request endpoint is a
  * mail-bombing surface and the confirm endpoint a token-guessing surface.
  *
+ * <p>The email-verification endpoints ({@code POST
+ * /api/auth/email-verification/resend} and {@code POST
+ * /api/auth/email-verification/confirm}, backlog #138) share a sixth,
+ * per-IP bucket (default 5/minute): the resend endpoint is a
+ * mail-bombing surface and the confirm endpoint a token-guessing surface.
+ *
  * <p>The second-factor exchange ({@code POST /api/auth/2fa/authenticate},
  * backlog #101) has a fifth, per-IP bucket (default 5/minute): the
  * 5-minute challenge is a Bearer <redacted> for a 6-digit code, so the
@@ -118,6 +124,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String RESET_PATH = "/api/auth/password-reset";
   private static final String RESET_CONFIRM_PATH = "/api/auth/password-reset/confirm";
   private static final String TOTP_AUTH_PATH = "/api/auth/2fa/authenticate";
+  private static final String VERIFY_RESEND_PATH = "/api/auth/email-verification/resend";
+  private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String BEARER_PREFIX = "Bearer ";
 
@@ -126,6 +134,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter messageLimiter;
   private final AuthRateLimiter passwordResetLimiter;
   private final AuthRateLimiter totpLimiter;
+  private final AuthRateLimiter emailVerificationLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -136,6 +145,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("passwordResetRateLimiter")
                                  AuthRateLimiter passwordResetLimiter,
                              @Qualifier("totpRateLimiter") AuthRateLimiter totpLimiter,
+                             @Qualifier("emailVerificationRateLimiter")
+                                 AuthRateLimiter emailVerificationLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -144,6 +155,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.messageLimiter = messageLimiter;
     this.passwordResetLimiter = passwordResetLimiter;
     this.totpLimiter = totpLimiter;
+    this.emailVerificationLimiter = emailVerificationLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -163,6 +175,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (TOTP_AUTH_PATH.equals(path)) {
       return !totpLimiter.isEnabled();
+    }
+    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)) {
+      return !emailVerificationLimiter.isEnabled();
     }
     if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
       return !credentialLimiter.isEnabled();
@@ -202,6 +217,20 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!totpLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, totpLimiter.retryAfterSeconds(ip));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)) {
+      // Email verification (backlog #138): both endpoints share one per-IP
+      // bucket — the resend endpoint is a mail-bombing surface, the
+      // confirm endpoint a token-guessing surface. Never reset on
+      // success: a completed verification must not refill a guesser's
+      // budget (the backlog #101 pattern).
+      String ip = clientIp(request);
+      if (!emailVerificationLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, emailVerificationLimiter.retryAfterSeconds(ip));
         return;
       }
       chain.doFilter(request, response);

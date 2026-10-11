@@ -105,6 +105,19 @@ public class User {
   @Column(name = "disabled", nullable = false)
   private boolean disabled;
 
+  /**
+   * Email verification (backlog #138, Flyway V26). New signups start
+   * unverified while the gate is enabled: registration issues no session
+   * and login answers 403 until the address is confirmed through
+   * {@link EmailVerificationService}. The field initializer (and the V26
+   * column default) is {@code true} so every account that is NOT created
+   * through the gated registration flow — pre-existing rows, rows seeded
+   * directly — stays verified; {@code AuthService.register} is the one
+   * place that writes {@code false}.
+   */
+  @Column(name = "email_verified", nullable = false)
+  private boolean emailVerified = true;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -160,6 +173,8 @@ public class User {
   public void setTotpEnabled(boolean totpEnabled) { this.totpEnabled = totpEnabled; }
   public boolean isDisabled() { return disabled; }
   public void setDisabled(boolean disabled) { this.disabled = disabled; }
+  public boolean isEmailVerified() { return emailVerified; }
+  public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

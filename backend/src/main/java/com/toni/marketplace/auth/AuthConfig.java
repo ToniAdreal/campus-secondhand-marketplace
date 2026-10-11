@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
     LoginLockoutProperties.class, TotpLockoutProperties.class,
     TotpEncryptionProperties.class, PasswordResetProperties.class,
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
-    PasswordPolicyProperties.class})
+    PasswordPolicyProperties.class, EmailVerificationProperties.class})
 public class AuthConfig {
 
   /**
@@ -103,6 +103,24 @@ public class AuthConfig {
     totpProps.setEnabled(props.isEnabled());
     totpProps.setAttemptsPerMinute(props.getTotpAttemptsPerMinute());
     return new AuthRateLimiter(clock, totpProps);
+  }
+
+  /**
+   * Separate token bucket for the email-verification endpoints
+   * (backlog #138): {@code POST /api/auth/email-verification/resend} and
+   * {@code POST /api/auth/email-verification/confirm} share it (default
+   * 5/minute per client IP). The resend endpoint is a mail-bombing surface
+   * and the confirm endpoint a token-guessing surface; neither may consume
+   * the credential bucket, and verification traffic must not be able to
+   * starve logins either — the backlog #101 dedicated-bucket pattern.
+   */
+  @Bean
+  public AuthRateLimiter emailVerificationRateLimiter(Clock clock,
+                                                      AuthRateLimitProperties props) {
+    AuthRateLimitProperties verificationProps = new AuthRateLimitProperties();
+    verificationProps.setEnabled(props.isEnabled());
+    verificationProps.setAttemptsPerMinute(props.getEmailVerificationAttemptsPerMinute());
+    return new AuthRateLimiter(clock, verificationProps);
   }
 
   /**

@@ -158,6 +158,33 @@ public class GlobalExceptionHandler {
   }
 
   /**
+   * Email verification (backlog #138): the credentials were right but the
+   * account's address is unverified, so login is refused with 403 — not
+   * the 401 above, which would falsely claim the password is wrong. The
+   * distinct message tells the user what to actually do (confirm the
+   * address / resend the link); it is only raised after the password has
+   * matched, so it is no enumeration oracle.
+   */
+  @ExceptionHandler(EmailNotVerifiedException.class)
+  public ResponseEntity<ApiResponse<Void>> handleEmailNotVerified(
+      EmailNotVerifiedException ex) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(ApiResponse.fail(HttpStatus.FORBIDDEN.value(), ex.getMessage()));
+  }
+
+  /**
+   * Email-verification confirm failures (backlog #138): unknown, used and
+   * expired tokens are the identical 400 — a stale-link problem the user
+   * fixes by requesting a fresh link.
+   */
+  @ExceptionHandler(InvalidEmailVerificationTokenException.class)
+  public ResponseEntity<ApiResponse<Void>> handleInvalidEmailVerificationToken(
+      InvalidEmailVerificationTokenException ex) {
+    return ResponseEntity.badRequest()
+        .body(ApiResponse.fail(400, ex.getMessage()));
+  }
+
+  /**
    * Per-account login lockout (backlog #60): the account is temporarily
    * locked after {@code app.auth.login-lockout.max-attempts} consecutive
    * failed logins. Answers {@code 423 Locked} in the JSON envelope with a

@@ -52,13 +52,18 @@ public class AuthService {
   private final AuditService audit;
   private final PasswordPolicyProperties passwordPolicy;
 
+  private final EmailVerificationService emailVerification;
+  private final EmailVerificationProperties emailVerificationProps;
+
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
                      TotpService totp, TotpSecretCipher totpCipher,
                      TotpRecoveryCodeRepository recoveryCodes, Clock clock,
                      LoginLockoutProperties lockout, TotpLockoutProperties totpLockout,
                      AuthMetrics metrics, AuditService audit,
-                     PasswordPolicyProperties passwordPolicy) {
+                     PasswordPolicyProperties passwordPolicy,
+                     EmailVerificationService emailVerification,
+                     EmailVerificationProperties emailVerificationProps) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -71,6 +76,8 @@ public class AuthService {
     this.metrics = metrics;
     this.audit = audit;
     this.passwordPolicy = passwordPolicy;
+    this.emailVerification = emailVerification;
+    this.emailVerificationProps = emailVerificationProps;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -79,7 +86,21 @@ public class AuthService {
     this(users, passwords, jwt, totp,
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
-        AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties());
+        AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
+        null, new EmailVerificationProperties());
+  }
+
+  /**
+   * Email-verification gate (backlog #138) with the same null-fallback
+   * rationale as {@link #passwordPolicy()}: a hand-built instance without
+   * the verification service (the legacy constructor, Mockito
+   * {@code @InjectMocks}) cannot issue or check tokens, so the gate reads
+   * as OFF there and registration/login behave exactly as before #138.
+   * Production always gets both beans, and the configured default is ON.
+   */
+  private boolean emailVerificationEnabled() {
+    return emailVerification != null && emailVerificationProps != null
+        && emailVerificationProps.isEnabled();
   }
 
   /**
@@ -126,6 +147,16 @@ public class AuthService {
 
   /** Registered user plus their first token pair. */
   public record AuthResult(User user, JwtTokenService.TokenPair pair) {}
+
+  /**
+   * Registration outcome (backlog #138). When the email-verification gate
+   * is on, {@code pair} is null and {@code emailVerificationRequired} is
+   * true: the account exists but no session was issued — the user must
+   * confirm the mailed token and then log in. When the gate is off, this
+   * wraps the same user + first token pair registration always issued.
+   */
+  public record RegisterResult(User user, JwtTokenService.TokenPair pair,
+                               boolean emailVerificationRequired) {}
 
   /**
    * Outcome of a password login (backlog #78). Most logins produce a
@@ -184,7 +215,7 @@ public class AuthService {
     return raw.toLowerCase(Locale.ROOT);
   }
 
-  public AuthResult register(String username, String email, String rawPassword) {
+  public RegisterResult register(String username, String email, String rawPassword) {
     return register(username, email, rawPassword, SessionMeta.unknown());
   }
 
@@ -194,11 +225,21 @@ public class AuthService {
    * The username and email are stored canonical-lowercase, so the response
    * echoes the canonical form ("Alice" registers as "alice").
    *
+   * <p>Email verification (backlog #138): while the gate is enabled
+   * ({@code app.auth.email-verification.enabled}, default on) the account
+   * is saved unverified, a single-use token is issued through
+   * {@link EmailVerificationService} inside this transaction, and NO token
+   * pair is created — the result's {@code pair} is null and the controller
+   * answers a session-less 201. Only after the address is confirmed can
+   * the user log in. With the gate off, registration issues the first
+   * token pair exactly as before.
+   *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
    */
   @Transactional
-  public AuthResult register(String username, String email, String rawPassword, SessionMeta meta) {
+  public RegisterResult register(String username, String email, String rawPassword,
+                                 SessionMeta meta) {
     PasswordStrengthValidator.requireStrong(rawPassword,
         passwordPolicy().getPasswordMinLength());
     String canonicalUsername = canonical(username);
@@ -209,8 +250,15 @@ public class AuthService {
     if (users.findByEmailIgnoreCase(canonicalEmail).isPresent()) {
       throw new DuplicateUserException("email is already registered");
     }
-    User user = users.save(new User(canonicalUsername, canonicalEmail, passwords.encode(rawPassword)));
-    return new AuthResult(user, jwt.createTokenPair(user, meta));
+    User user = new User(canonicalUsername, canonicalEmail, passwords.encode(rawPassword));
+    if (emailVerificationEnabled()) {
+      user.setEmailVerified(false);
+      user = users.save(user);
+      emailVerification.issue(user);
+      return new RegisterResult(user, null, true);
+    }
+    user = users.save(user);
+    return new RegisterResult(user, jwt.createTokenPair(user, meta), false);
   }
 
   public LoginResult login(String usernameOrEmail, String rawPassword) {
@@ -233,6 +281,12 @@ public class AuthService {
    * <p>ADMIN-disabled accounts (backlog #88) get the identical 401, checked
    * before the password so the response leaks nothing about the account's
    * state or its password.
+   *
+   * <p>Unverified accounts (backlog #138) are the opposite arrangement: the
+   * gate is checked only AFTER the password matches, and answers 403
+   * ({@code EmailNotVerifiedException}) — credentials may be right, so the
+   * credential failure's 401 would lie; and checking before the password
+   * would hand the verification state to anyone who knows an address.
    *
    * <p>TOTP two-factor (backlog #78): when the password is correct but the
    * account has 2FA enabled, no token pair is issued — the result is a
@@ -289,6 +343,18 @@ public class AuthService {
         }
       }
       throw new InvalidCredentialsException();
+    }
+    if (emailVerificationEnabled() && !user.isEmailVerified()) {
+      // Email verification (backlog #138): the password matched, but the
+      // address was never confirmed, so no session and no TOTP challenge
+      // is issued. This is a 403 (EmailNotVerifiedException), NOT the 401
+      // credential failure — the credentials may be exactly right, and a
+      // 401 would send the user into a password-reset loop that fixes
+      // nothing. The check sits AFTER the password match on purpose: the
+      // verification state leaks only to someone who already holds the
+      // password. A wrong password above still counts toward the lockout;
+      // this refusal does not (it is not a credential guess).
+      throw new com.toni.marketplace.common.EmailNotVerifiedException();
     }
     // Password verified: the login succeeded at this stage — for a
     // TOTP-enabled account the challenge issuance below still counts

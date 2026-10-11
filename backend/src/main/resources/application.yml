@@ -127,6 +127,26 @@ app:
     # of them. Existing accounts are untouched until their next
     # change/reset — no forced migration.
     password-min-length: ${APP_AUTH_PASSWORD_MIN_LENGTH:12}
+    email-verification:
+      # Email verification for new accounts (EmailVerificationService,
+      # backlog #138): while enabled (the default), registration creates
+      # the account unverified and issues NO session; a single-use token
+      # (32 random bytes, only its SHA-256 hash stored, Flyway V26) is
+      # delivered through the EmailVerificationMailSender seam (honest
+      # scope: no mail server exists in this project, so the default
+      # sender logs the request at INFO with the token redacted and
+      # delivers nothing; a real deployment injects an SMTP/SES sender).
+      # POST /api/auth/email-verification/confirm {token} flips the flag;
+      # login of an unverified account answers 403 (the credentials may be
+      # right — it is not a 401). Accounts that predate V26 migrate
+      # verified=true: the gate applies to new signups only. Both public
+      # endpoints share their own 5/min-per-IP rate-limit bucket
+      # (AuthRateLimitFilter). The token lifetime is a day, not the reset
+      # flow's 30 min: a verification link goes to a mailbox the new user
+      # may only check hours later, and confirming it grants no session
+      # by itself.
+      enabled: ${APP_AUTH_EMAIL_VERIFICATION_ENABLED:true}
+      token-ttl: 24h
     password-reset:
       # Password-reset token lifetime (PasswordResetService, backlog #90):
       # a reset token is a bearer credential for a full password change, so

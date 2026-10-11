@@ -33,23 +33,70 @@ public class AuthController {
 
   private final AuthService auth;
   private final PasswordResetService passwordReset;
+  private final EmailVerificationService emailVerification;
   private final JwtProperties jwtProps;
   private final RefreshCookieProperties cookieProps;
 
   public AuthController(AuthService auth, PasswordResetService passwordReset,
+                        EmailVerificationService emailVerification,
                         JwtProperties jwtProps, RefreshCookieProperties cookieProps) {
     this.auth = auth;
     this.passwordReset = passwordReset;
+    this.emailVerification = emailVerification;
     this.jwtProps = jwtProps;
     this.cookieProps = cookieProps;
   }
 
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure or weak password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username or email already taken (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  /**
+   * Registers a new account. While the email-verification gate is on
+   * (backlog #138, the default), the answer is 201 with a
+   * {@link RegisterResponse} and NO session — no access token in the body,
+   * no refresh cookie — until the address is confirmed at
+   * {@code POST /api/auth/email-verification/confirm}. With the gate off,
+   * the answer is the pre-#138 200 with the first token pair.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "account created; email verification pending — no session issued (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "account created and session issued (verification gate off) (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure or weak password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username or email already taken (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/register")
-  public ResponseEntity<ApiResponse<AuthResponse>> register(
+  public ResponseEntity<?> register(
       @Valid @RequestBody RegisterRequest request, HttpServletRequest http) {
-    return ok(auth.register(request.username(), request.email(), request.password(),
-        SessionMeta.of(http)));
+    AuthService.RegisterResult result = auth.register(request.username(), request.email(),
+        request.password(), SessionMeta.of(http));
+    if (result.emailVerificationRequired()) {
+      return ResponseEntity.status(HttpStatus.CREATED)
+          .body(ApiResponse.ok(RegisterResponse.pendingVerification(result.user())));
+    }
+    return ok(new AuthService.AuthResult(result.user(), result.pair()));
+  }
+
+  /**
+   * Confirms an email address (backlog #138, public — the token IS the
+   * credential): consumes the single-use token and flips the account's
+   * verified flag. Unknown, used and expired tokens → the identical 400.
+   * No session is issued here; the user logs in with their password
+   * afterwards.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "email address verified; log in with the account password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "unknown, used or expired token — identical for every token failure (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @PostMapping("/email-verification/confirm")
+  public ResponseEntity<ApiResponse<Void>> confirmEmailVerification(
+      @Valid @RequestBody EmailVerificationConfirmRequest request) {
+    emailVerification.confirm(request.token());
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * Re-sends a verification token (backlog #138, public): the answer is
+   * ALWAYS this identical 200 envelope, whether or not the address
+   * belongs to an unverified account — no enumeration oracle. When it
+   * does, a fresh single-use token (24 h, hash-only storage) replaces any
+   * earlier one and is delivered through the mail seam; it never appears
+   * in any response.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "always this identical envelope, account or not — no enumeration oracle"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @PostMapping("/email-verification/resend")
+  public ResponseEntity<ApiResponse<Void>> resendEmailVerification(
+      @Valid @RequestBody EmailVerificationResendRequest request) {
+    emailVerification.resend(request.email());
+    return ResponseEntity.ok(ApiResponse.ok(null));
   }
 
   /**
@@ -59,7 +106,7 @@ public class AuthController {
    * exchanges — with the 6-digit code — at {@code POST
    * /api/auth/2fa/authenticate}.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "TOTP enabled: exchange the signed challenge at /api/auth/2fa/authenticate"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "TOTP enabled: exchange the signed challenge at /api/auth/2fa/authenticate"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credentials correct but the email address is not verified yet (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/login")
   public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest http) {

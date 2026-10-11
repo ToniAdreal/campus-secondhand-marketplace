@@ -14,9 +14,14 @@ function AuthNav() {
 
   if (!user) {
     return (
-      <Link to="/login" className="text-sm text-blue-600 hover:underline">
-        Login
-      </Link>
+      <div className="flex items-center gap-3">
+        <Link to="/login" className="text-sm text-blue-600 hover:underline">
+          Login
+        </Link>
+        <Link to="/register" className="text-sm text-blue-600 hover:underline">
+          Register
+        </Link>
+      </div>
     );
   }
 

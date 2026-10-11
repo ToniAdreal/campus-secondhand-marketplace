@@ -1,0 +1,193 @@
+import axios from 'axios';
+import { type FormEvent, useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { register, resendEmailVerification } from '../api/auth';
+import { useAuthStore } from '../store/useAuthStore';
+
+/** Reads the human message out of the backend {code,message,data} envelope. */
+function envelopeMessage(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return fallback;
+}
+
+/**
+ * Register (backlog #138). Until #138 the SPA had no registration page at
+ * all (accounts were created through the API only). With the backend's
+ * email-verification gate on, a successful POST /api/auth/register
+ * answers 201 with NO session: the page switches to a "check your inbox"
+ * state — the account cannot log in until the mailed token is confirmed
+ * at /verify-email. The copy is honest about the demo's mail seam: the
+ * default sender is log-only, so no email is actually delivered. The
+ * resend button posts to /email-verification/resend, whose identical-200
+ * contract means the resent note renders the same whatever the address's
+ * state. With the gate off the register call returns a session and the
+ * page signs the user in, exactly like a login.
+ */
+export default function RegisterPage() {
+  const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  const storeLogin = useAuthStore((s) => s.login);
+
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [awaitingVerification, setAwaitingVerification] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  if (user) {
+    // Already signed in — no reason to show the form.
+    return <Navigate to="/" replace />;
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (username.trim() === '' || email.trim() === '' || password === '') {
+      setError('Username, email and password are all required.');
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      const outcome = await register({
+        username: username.trim(),
+        email: email.trim(),
+        password,
+      });
+      if (outcome.kind === 'verification-required') {
+        setAwaitingVerification(email.trim());
+        setPassword('');
+        return;
+      }
+      storeLogin(outcome.user, outcome.accessToken);
+      navigate('/', { replace: true });
+    } catch (err) {
+      setError(envelopeMessage(err, 'Registration failed'));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function onResend() {
+    if (!awaitingVerification) return;
+    setResending(true);
+    setError(null);
+    try {
+      await resendEmailVerification({ email: awaitingVerification });
+      setResent(true);
+    } catch (err) {
+      setError(envelopeMessage(err, 'Could not resend the verification link'));
+    } finally {
+      setResending(false);
+    }
+  }
+
+  if (awaitingVerification) {
+    return (
+      <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
+        <h1 className="mb-4 text-xl font-bold">Check your inbox</h1>
+        <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+          Account created for {awaitingVerification}. Confirm your email address with the
+          verification link before logging in — no session has been started yet. In this
+          demo the default mail sender is log-only, so no email is actually delivered.
+        </p>
+        {error && (
+          <p role="alert" className="mt-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        {resent ? (
+          <p role="status" className="mt-4 text-sm text-neutral-600">
+            A fresh verification link was issued — earlier links no longer work.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={onResend}
+            disabled={resending}
+            className="mt-4 w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {resending ? 'Resending…' : 'Resend verification link'}
+          </button>
+        )}
+        <p className="mt-4 text-sm text-neutral-500">
+          Already confirmed?{' '}
+          <Link to="/login" className="text-blue-600 hover:underline">
+            Back to login
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
+      <h1 className="mb-4 text-xl font-bold">Register</h1>
+      {error && (
+        <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      <form onSubmit={onSubmit} className="space-y-3">
+        <div>
+          <label htmlFor="register-username" className="mb-1 block text-sm font-medium">
+            Username
+          </label>
+          <input
+            id="register-username"
+            type="text"
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label htmlFor="register-email" className="mb-1 block text-sm font-medium">
+            Email
+          </label>
+          <input
+            id="register-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label htmlFor="register-password" className="mb-1 block text-sm font-medium">
+            Password
+          </label>
+          <input
+            id="register-password"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={pending}
+          className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {pending ? 'Creating account…' : 'Create account'}
+        </button>
+      </form>
+      <p className="mt-4 text-sm text-neutral-500">
+        Already have an account?{' '}
+        <Link to="/login" className="text-blue-600 hover:underline">
+          Back to login
+        </Link>
+      </p>
+    </div>
+  );
+}

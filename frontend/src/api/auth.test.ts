@@ -8,6 +8,9 @@ import {
   revokeSession,
   requestPasswordReset,
   confirmPasswordReset,
+  register,
+  confirmEmailVerification,
+  resendEmailVerification,
   authenticateTotp,
   setupTotp,
   enableTotp,
@@ -369,5 +372,90 @@ describe('password reset (backlog #99)', () => {
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(confirmPasswordReset({ token: 'tok', newPassword: 'x' })).rejects.toBe(failure);
+  });
+});
+
+describe('email verification (backlog #138)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('register maps a session-less 201 body to the verification-required outcome', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 201,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: {
+          user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+          emailVerificationRequired: true,
+        },
+      },
+    } as never);
+
+    const result = await register({
+      username: 'toni',
+      email: 'toni@example.com',
+      password: 's3cret-pass1',
+    });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/register', {
+      username: 'toni',
+      email: 'toni@example.com',
+      password: 's3cret-pass1',
+    });
+    expect(result).toEqual({
+      kind: 'verification-required',
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    });
+  });
+
+  it('register maps a token-pair body (gate off) to the authenticated outcome', async () => {
+    postSpy.mockResolvedValueOnce(envelope(authBody));
+
+    const result = await register({
+      username: 'toni',
+      email: 'toni@example.com',
+      password: 's3cret-pass1',
+    });
+
+    expect(result).toEqual({
+      kind: 'authenticated',
+      accessToken: 'tok-abc',
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    });
+  });
+
+  it('posts the token to /auth/email-verification/confirm', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+
+    await confirmEmailVerification({ token: 'raw-token-abc' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/confirm', {
+      token: 'raw-token-abc',
+    });
+  });
+
+  it('posts the address to /auth/email-verification/resend', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+
+    await resendEmailVerification({ email: 'toni@example.com' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/resend', {
+      email: 'toni@example.com',
+    });
+  });
+
+  it('propagates the identical 400 for unknown/used/expired tokens (no oracle to leak)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: { code: 400, message: 'invalid or expired verification token', data: null },
+      },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(confirmEmailVerification({ token: 'stale' })).rejects.toBe(failure);
   });
 });

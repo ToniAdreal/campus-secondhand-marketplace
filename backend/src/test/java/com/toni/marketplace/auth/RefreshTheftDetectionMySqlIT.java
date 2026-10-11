@@ -102,7 +102,7 @@ class RefreshTheftDetectionMySqlIT {
    */
   @Test
   void rotationTheftLifecycleOnRealMySql() {
-    AuthResult reg = auth.register("theft-lifecycle-it", "theft-lifecycle-it@example.com", PASSWORD);
+    AuthService.RegisterResult reg = auth.register("theft-lifecycle-it", "theft-lifecycle-it@example.com", PASSWORD);
     long userId = reg.user().getId();
     String t0 = reg.pair().refreshToken();
     String familyJti = jwt.sessionFamilyOfToken(t0).orElseThrow();
@@ -138,7 +138,7 @@ class RefreshTheftDetectionMySqlIT {
    */
   @Test
   void concurrentReplaysUnderLoad_endInACoherentFamilyState() throws Exception {
-    AuthResult reg = auth.register("theft-storm-it", "theft-storm-it@example.com", PASSWORD);
+    AuthService.RegisterResult reg = auth.register("theft-storm-it", "theft-storm-it@example.com", PASSWORD);
     long userId = reg.user().getId();
     String t0 = reg.pair().refreshToken();
     String familyJti = jwt.sessionFamilyOfToken(t0).orElseThrow();
