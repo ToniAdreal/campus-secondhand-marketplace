@@ -58,7 +58,7 @@ class AuthRateLimitTest {
 
   private static final AtomicInteger IP_SEQ = new AtomicInteger(1);
 
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;

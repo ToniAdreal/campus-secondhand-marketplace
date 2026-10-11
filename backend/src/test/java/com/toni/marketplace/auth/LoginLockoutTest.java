@@ -45,7 +45,7 @@ class LoginLockoutTest {
     }
   }
 
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;

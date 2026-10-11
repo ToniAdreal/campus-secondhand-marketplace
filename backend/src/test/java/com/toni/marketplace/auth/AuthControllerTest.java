@@ -55,7 +55,7 @@ class AuthControllerTest {
   private JwtTokenService jwt;
 
   private static final String REGISTER =
-      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void registerCreatesUserAndSetsHttpOnlyRefreshCookie() throws Exception {
@@ -80,7 +80,7 @@ class AuthControllerTest {
 
     User saved = users.findByUsernameIgnoreCase("alice").orElseThrow();
     assertThat(saved.getPasswordHash()).startsWith("$2a$");
-    assertThat(saved.getPasswordHash()).doesNotContain("s3cret-pass");
+    assertThat(saved.getPasswordHash()).doesNotContain("s3cret-pass1");
   }
 
   @Test
@@ -88,7 +88,7 @@ class AuthControllerTest {
     register(REGISTER);
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"alice\",\"email\":\"other@example.com\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"username\":\"alice\",\"email\":\"other@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value(409))
         .andExpect(jsonPath("$.message").value("username is already taken"));
@@ -99,7 +99,7 @@ class AuthControllerTest {
     register(REGISTER);
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"alice2\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"username\":\"alice2\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value(409));
   }
@@ -120,7 +120,7 @@ class AuthControllerTest {
     for (String id : new String[]{"alice", "alice@example.com"}) {
       mockMvc.perform(post("/api/auth/login")
               .contentType(MediaType.APPLICATION_JSON)
-              .content("{\"usernameOrEmail\":\"" + id + "\",\"password\":\"s3cret-pass\"}"))
+              .content("{\"usernameOrEmail\":\"" + id + "\",\"password\":\"s3cret-pass1\"}"))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.code").value(0))
           .andExpect(jsonPath("$.data.accessToken").exists())
@@ -215,7 +215,7 @@ class AuthControllerTest {
     register(REGISTER);
     MvcResult login = mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
     String access = com.jayway.jsonpath.JsonPath.read(
@@ -243,7 +243,7 @@ class AuthControllerTest {
     // A second session for the same user (e.g. another device).
     MvcResult login = mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
     Cookie second = login.getResponse().getCookie("refresh_token");

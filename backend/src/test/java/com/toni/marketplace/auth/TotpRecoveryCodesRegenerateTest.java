@@ -39,7 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 class TotpRecoveryCodesRegenerateTest {
 
   private static final AtomicInteger IP_SEQ = new AtomicInteger();
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;
@@ -226,7 +226,7 @@ class TotpRecoveryCodesRegenerateTest {
     mockMvc.perform(post("/api/auth/2fa/recovery-codes/regenerate")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"wr0ng-pass\",\"code\":\""
+            .content("{\"currentPassword\":\"wr0ng-pass12\",\"code\":\""
                 + currentCode(enrolled.get(1)) + "\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.message").value("invalid credentials"));
@@ -263,7 +263,7 @@ class TotpRecoveryCodesRegenerateTest {
 
     // Password checked before the second factor is touched: the failed
     // attempt must not burn the one-time code it carried.
-    regenerate(access, "wr0ng-pass", recoveryCode, 401);
+    regenerate(access, "wr0ng-pass12", recoveryCode, 401);
     List<String> fresh = regenerate(access, PASSWORD, recoveryCode, 200);
     assertThat(fresh).hasSize(TotpService.RECOVERY_CODE_COUNT);
     assertThat(count(access)).isEqualTo(10);

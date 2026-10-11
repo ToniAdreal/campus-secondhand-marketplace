@@ -47,7 +47,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class TotpRegenerateLockoutTest {
 
   private static final AtomicInteger SEQ = new AtomicInteger();
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;
@@ -154,9 +154,9 @@ class TotpRegenerateLockoutTest {
     enroll();
     // Three wrong-password attempts: plain 401s, never a lock — the
     // password proof is not a second-factor guess.
-    regenerate("wr0ng-pass", currentCode(), 401);
-    regenerate("wr0ng-pass", currentCode(), 401);
-    regenerate("wr0ng-pass", currentCode(), 401);
+    regenerate("wr0ng-pass12", currentCode(), 401);
+    regenerate("wr0ng-pass12", currentCode(), 401);
+    regenerate("wr0ng-pass12", currentCode(), 401);
     // And the correct proofs still regenerate immediately afterwards.
     regenerate(PASSWORD, currentCode(), 200);
   }

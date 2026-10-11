@@ -34,7 +34,7 @@ class AuthMeTest {
   private UserRepository users;
 
   private static final String REGISTER =
-      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void anonymousMeReturns401Envelope() throws Exception {
@@ -70,7 +70,7 @@ class AuthMeTest {
     alice.setRoles(EnumSet.of(Role.USER, Role.ADMIN));
     users.save(alice);
 
-    String fresh = accessToken(login("alice", "s3cret-pass"));
+    String fresh = accessToken(login("alice", "s3cret-pass1"));
 
     mockMvc.perform(get("/api/auth/me")
             .header("Authorization", "Bearer " + fresh))

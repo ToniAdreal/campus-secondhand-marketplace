@@ -45,7 +45,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class TotpDisableLockoutTest {
 
   private static final AtomicInteger SEQ = new AtomicInteger();
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;
@@ -153,9 +153,9 @@ class TotpDisableLockoutTest {
     // Three wrong-password attempts: plain 401s, never a lock — the
     // password proof is not a second-factor guess (mirrors the
     // change-password precedent of feeding no counter).
-    disable("wr0ng-pass", currentCode(), 401);
-    disable("wr0ng-pass", currentCode(), 401);
-    disable("wr0ng-pass", currentCode(), 401);
+    disable("wr0ng-pass12", currentCode(), 401);
+    disable("wr0ng-pass12", currentCode(), 401);
+    disable("wr0ng-pass12", currentCode(), 401);
     // And the correct proofs still disable immediately afterwards.
     disable(PASSWORD, currentCode(), 200);
   }

@@ -50,13 +50,15 @@ public class AuthService {
   private final TotpLockoutProperties totpLockout;
   private final AuthMetrics metrics;
   private final AuditService audit;
+  private final PasswordPolicyProperties passwordPolicy;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
                      TotpService totp, TotpSecretCipher totpCipher,
                      TotpRecoveryCodeRepository recoveryCodes, Clock clock,
                      LoginLockoutProperties lockout, TotpLockoutProperties totpLockout,
-                     AuthMetrics metrics, AuditService audit) {
+                     AuthMetrics metrics, AuditService audit,
+                     PasswordPolicyProperties passwordPolicy) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -68,6 +70,7 @@ public class AuthService {
     this.totpLockout = totpLockout;
     this.metrics = metrics;
     this.audit = audit;
+    this.passwordPolicy = passwordPolicy;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -76,7 +79,18 @@ public class AuthService {
     this(users, passwords, jwt, totp,
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
-        AuthMetrics.noop(), AuditService.noop());
+        AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties());
+  }
+
+  /**
+   * Password-policy accessor with a defaults fallback, same rationale as
+   * {@link #totpLockout()}: Mockito {@code @InjectMocks} in older unit tests
+   * may leave the field null; the documented default (minimum length
+   * {@link PasswordStrengthValidator#DEFAULT_MIN_LENGTH}) then applies.
+   * Production always gets the configured bean.
+   */
+  private PasswordPolicyProperties passwordPolicy() {
+    return passwordPolicy != null ? passwordPolicy : new PasswordPolicyProperties();
   }
 
   /**
@@ -185,7 +199,8 @@ public class AuthService {
    */
   @Transactional
   public AuthResult register(String username, String email, String rawPassword, SessionMeta meta) {
-    PasswordStrengthValidator.requireStrong(rawPassword);
+    PasswordStrengthValidator.requireStrong(rawPassword,
+        passwordPolicy().getPasswordMinLength());
     String canonicalUsername = canonical(username);
     String canonicalEmail = canonical(email);
     if (users.findByUsernameIgnoreCase(canonicalUsername).isPresent()) {
@@ -810,7 +825,8 @@ public class AuthService {
     if (passwords.matches(newPassword, user.getPasswordHash())) {
       throw new PasswordReuseException("new password must differ from the current password");
     }
-    PasswordStrengthValidator.requireStrong(newPassword);
+    PasswordStrengthValidator.requireStrong(newPassword,
+        passwordPolicy().getPasswordMinLength());
     user.setPasswordHash(passwords.encode(newPassword));
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);

@@ -91,7 +91,7 @@ class PasswordResetRateLimitTest {
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .with(fromIp(ip))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"bogus\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"bogus\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isTooManyRequests())
         .andExpect(jsonPath("$.code").value(429));
   }

@@ -67,7 +67,7 @@ class AuditLogAuthTest {
             .with(uniqueIp())
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\"" + username + "\",\"email\":\"" + username
-                + "@example.com\",\"password\":\"s3cret-pass\"}"))
+                + "@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
   }
@@ -94,7 +94,7 @@ class AuditLogAuthTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
 
     List<AuditLog> rows = rowsFor(AuditTargetType.USER, aliceId);
@@ -113,7 +113,7 @@ class AuditLogAuthTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"wrong-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"wrong-pass\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized());
 
     assertThat(rowsFor(AuditTargetType.USER, bobId)).isEmpty();

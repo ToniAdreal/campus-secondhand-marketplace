@@ -59,9 +59,9 @@ class PasswordReuseUnitTest {
   void reusingCurrentPasswordThrowsAndEncodesNothing() {
     User alice = alice();
     when(users.findById(7L)).thenReturn(Optional.of(alice));
-    when(passwords.matches("s3cret-pass", "$2a$12$storedhash")).thenReturn(true);
+    when(passwords.matches("s3cret-pass1", "$2a$12$storedhash")).thenReturn(true);
 
-    assertThatThrownBy(() -> auth.changePassword(7L, "s3cret-pass", "s3cret-pass"))
+    assertThatThrownBy(() -> auth.changePassword(7L, "s3cret-pass1", "s3cret-pass1"))
         .isInstanceOf(PasswordReuseException.class)
         .hasMessage("new password must differ from the current password");
 

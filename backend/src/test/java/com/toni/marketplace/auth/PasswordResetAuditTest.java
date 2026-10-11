@@ -89,7 +89,7 @@ class PasswordResetAuditTest {
             .with(uniqueIp())
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\"" + username + "\",\"email\":\"" + username
-                + "@example.com\",\"password\":\"s3cret-pass\"}"))
+                + "@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
     return ((Number) JsonPath.read(result.getResponse().getContentAsString(),
@@ -123,7 +123,7 @@ class PasswordResetAuditTest {
     long userId = register("reset-audit-alice");
     String token = requestResetAndCapture("reset-audit-alice");
 
-    confirm(token, "n3w-s3cret", 200);
+    confirm(token, "n3w-s3cret12", 200);
 
     List<AuditLog> rows = rowsFor(userId);
     assertThat(rows).hasSize(1);
@@ -138,7 +138,7 @@ class PasswordResetAuditTest {
   void unknownTokenWritesNoRow() throws Exception {
     long userId = register("reset-audit-bob");
 
-    confirm("totally-unknown-token", "n3w-s3cret", 401);
+    confirm("totally-unknown-token", "n3w-s3cret12", 401);
 
     // Scoped to this test's user: the shared test DB legitimately holds
     // committed audit rows from other (non-@Transactional) test classes,
@@ -151,7 +151,7 @@ class PasswordResetAuditTest {
     long userId = register("reset-audit-carol");
     String token = requestResetAndCapture("reset-audit-carol");
 
-    confirm(token, "n3w-s3cret", 200);
+    confirm(token, "n3w-s3cret12", 200);
     // Replay of the consumed token: identical 401, and no second row.
     confirm(token, "an0ther-one", 401);
 
@@ -165,7 +165,7 @@ class PasswordResetAuditTest {
 
     clock.advance(Duration.ofMinutes(31));
 
-    confirm(token, "n3w-s3cret", 401);
+    confirm(token, "n3w-s3cret12", 401);
 
     assertThat(rowsFor(userId)).isEmpty();
   }
@@ -180,7 +180,7 @@ class PasswordResetAuditTest {
 
     // The token was not consumed by the rejected attempt: the retry
     // succeeds and writes the single row.
-    confirm(token, "n3w-s3cret", 200);
+    confirm(token, "n3w-s3cret12", 200);
     assertThat(rowsFor(userId)).hasSize(1);
   }
 }

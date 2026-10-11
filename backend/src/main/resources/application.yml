@@ -103,6 +103,12 @@ app:
     # (they must agree or the browser will not overwrite the cookie).
     cookie-secure: ${APP_AUTH_COOKIE_SECURE:false}
     allow-insecure-cookie: ${APP_AUTH_ALLOW_INSECURE_COOKIE:false}
+    # Minimum password length (PasswordStrengthValidator, backlog #131):
+    # every credential-setting path (register, password change, reset
+    # confirm) shares the one validator, so this single knob governs all
+    # of them. Existing accounts are untouched until their next
+    # change/reset — no forced migration.
+    password-min-length: ${APP_AUTH_PASSWORD_MIN_LENGTH:12}
     password-reset:
       # Password-reset token lifetime (PasswordResetService, backlog #90):
       # a reset token is a bearer credential for a full password change, so

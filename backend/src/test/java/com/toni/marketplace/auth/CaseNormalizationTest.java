@@ -31,7 +31,7 @@ class CaseNormalizationTest {
   private UserRepository users;
 
   private static final String MIXED_CASE_REGISTER =
-      "{\"username\":\"Alice\",\"email\":\"Alice@Example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"Alice\",\"email\":\"Alice@Example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void registerStoresCanonicalLowercase() throws Exception {
@@ -55,7 +55,7 @@ class CaseNormalizationTest {
     // "ALICE" is the same account as "alice" — 409, not a raw DB error.
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"ALICE\",\"email\":\"other@example.com\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"username\":\"ALICE\",\"email\":\"other@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value(409))
         .andExpect(jsonPath("$.message").value("username is already taken"));
@@ -67,7 +67,7 @@ class CaseNormalizationTest {
 
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"alice2\",\"email\":\"ALICE@EXAMPLE.COM\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"username\":\"alice2\",\"email\":\"ALICE@EXAMPLE.COM\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value(409))
         .andExpect(jsonPath("$.message").value("email is already registered"));
@@ -80,7 +80,7 @@ class CaseNormalizationTest {
     for (String id : new String[]{"ALICE", "Alice", "ALICE@EXAMPLE.COM", "alice@example.com"}) {
       mockMvc.perform(post("/api/auth/login")
               .contentType(MediaType.APPLICATION_JSON)
-              .content("{\"usernameOrEmail\":\"" + id + "\",\"password\":\"s3cret-pass\"}"))
+              .content("{\"usernameOrEmail\":\"" + id + "\",\"password\":\"s3cret-pass1\"}"))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.code").value(0))
           .andExpect(jsonPath("$.data.user.username").value("alice"));

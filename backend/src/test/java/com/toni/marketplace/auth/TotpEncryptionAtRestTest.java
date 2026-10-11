@@ -45,7 +45,7 @@ class TotpEncryptionAtRestTest {
     MvcResult result = mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\"" + username + "\",\"email\":\"" + username
-                + "@example.com\",\"password\":\"s3cret-pass\"}"))
+                + "@example.com\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
     return JsonPath.read(result.getResponse().getContentAsString(), "$.data.accessToken");
@@ -72,7 +72,7 @@ class TotpEncryptionAtRestTest {
     MvcResult result = mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"usernameOrEmail\":\"" + username
-                + "\",\"password\":\"s3cret-pass\"}"))
+                + "\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isAccepted())
         .andReturn();
     return JsonPath.read(result.getResponse().getContentAsString(), "$.data.challenge");

@@ -71,12 +71,12 @@ class RefreshFamilyLifetimeTest {
   void setUp() {
     // No token pair is issued here (register would create one and skew the
     // row counts); the logins below mint the starting tokens.
-    users.save(new User("family-tester", "family@example.com", passwords.encode("s3cret-pass")));
+    users.save(new User("family-tester", "family@example.com", passwords.encode("s3cret-pass1")));
   }
 
   /** Service-level login, outside the HTTP budget. */
   private Cookie freshRefreshCookie() {
-    String token = ((AuthService.LoginResult.Pair) auth.login("family-tester", "s3cret-pass")).result().pair().refreshToken();
+    String token = ((AuthService.LoginResult.Pair) auth.login("family-tester", "s3cret-pass1")).result().pair().refreshToken();
     return new Cookie("refresh_token", token);
   }
 

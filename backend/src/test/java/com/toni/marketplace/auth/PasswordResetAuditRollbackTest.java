@@ -58,7 +58,7 @@ class PasswordResetAuditRollbackTest {
 
   private User seedUserWithLiveToken(String username) {
     User user = users.save(new User(username, username + "@example.com",
-        passwords.encode("s3cret-pass")));
+        passwords.encode("s3cret-pass1")));
     resetTokens.save(new PasswordResetToken(user.getId(),
         JwtTokenService.sha256Hex(RAW_TOKEN), Instant.now().plus(30, ChronoUnit.MINUTES)));
     return user;
@@ -72,7 +72,7 @@ class PasswordResetAuditRollbackTest {
 
     TransactionTemplate tx = new TransactionTemplate(transactionManager);
     tx.executeWithoutResult(status -> {
-      resets.confirmReset(RAW_TOKEN, "n3w-s3cret");
+      resets.confirmReset(RAW_TOKEN, "n3w-s3cret12");
       status.setRollbackOnly();
     });
 
@@ -87,7 +87,7 @@ class PasswordResetAuditRollbackTest {
     User user = seedUserWithLiveToken("reset-commit");
     long userId = user.getId();
 
-    resets.confirmReset(RAW_TOKEN, "n3w-s3cret");
+    resets.confirmReset(RAW_TOKEN, "n3w-s3cret12");
 
     var rows = auditLog.findByTargetTypeAndTargetIdOrderByIdAsc(AuditTargetType.USER, userId);
     assertThat(rows).hasSize(1);

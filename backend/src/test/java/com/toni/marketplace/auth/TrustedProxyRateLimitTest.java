@@ -49,7 +49,7 @@ class TrustedProxyRateLimitTest {
 
   private static final AtomicInteger SEQ = new AtomicInteger(1);
   private static final String PROXY = "10.99.0.1";
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;

@@ -24,7 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @SpringBootTest
 class TotpDisableRollbackTest {
 
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private AuthService auth;

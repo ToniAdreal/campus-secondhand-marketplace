@@ -52,13 +52,13 @@ class AuditRollbackTest {
   @Test
   void rolledBackPasswordChangeLeavesNoAuditRow() {
     User user = users.save(new User("audit-rollback", "audit-rollback@example.com",
-        passwords.encode("s3cret-pass")));
+        passwords.encode("s3cret-pass1")));
     long userId = user.getId();
     String hashBefore = user.getPasswordHash();
 
     TransactionTemplate tx = new TransactionTemplate(transactionManager);
     tx.executeWithoutResult(status -> {
-      auth.changePassword(userId, "s3cret-pass", "n3w-s3cret");
+      auth.changePassword(userId, "s3cret-pass1", "n3w-s3cret12");
       status.setRollbackOnly();
     });
 
@@ -71,10 +71,10 @@ class AuditRollbackTest {
   @Test
   void committedPasswordChangeLeavesExactlyOneAuditRow() {
     User user = users.save(new User("audit-commit", "audit-commit@example.com",
-        passwords.encode("s3cret-pass")));
+        passwords.encode("s3cret-pass1")));
     long userId = user.getId();
 
-    auth.changePassword(userId, "s3cret-pass", "n3w-s3cret");
+    auth.changePassword(userId, "s3cret-pass1", "n3w-s3cret12");
 
     var rows = auditLog.findByTargetTypeAndTargetIdOrderByIdAsc(AuditTargetType.USER, userId);
     assertThat(rows).hasSize(1);

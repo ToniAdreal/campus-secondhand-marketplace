@@ -54,11 +54,11 @@ class AuthServiceNormalizationTest {
   void registerNormalizesBeforeDuplicateChecksAndSave() {
     when(users.findByUsernameIgnoreCase("alice")).thenReturn(Optional.empty());
     when(users.findByEmailIgnoreCase("alice@example.com")).thenReturn(Optional.empty());
-    when(passwords.encode("s3cret-pass")).thenReturn("$2a$12$hashed");
+    when(passwords.encode("s3cret-pass1")).thenReturn("$2a$12$hashed");
     when(users.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     when(jwt.createTokenPair(any(User.class), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = service.register("Alice", "Alice@Example.com", "s3cret-pass");
+    AuthService.AuthResult result = service.register("Alice", "Alice@Example.com", "s3cret-pass1");
 
     // Lookups ran with the canonical form, never the raw mixed-case input.
     verify(users).findByUsernameIgnoreCase("alice");
@@ -76,7 +76,7 @@ class AuthServiceNormalizationTest {
     User existing = new User("alice", "alice@example.com", "$2a$12$hashed");
     when(users.findByUsernameIgnoreCase("alice")).thenReturn(Optional.of(existing));
 
-    assertThatThrownBy(() -> service.register("ALICE", "other@example.com", "s3cret-pass"))
+    assertThatThrownBy(() -> service.register("ALICE", "other@example.com", "s3cret-pass1"))
         .isInstanceOf(DuplicateUserException.class)
         .hasMessage("username is already taken");
   }
@@ -85,10 +85,10 @@ class AuthServiceNormalizationTest {
   void loginNormalizesTheIdentifierBeforeLookup() {
     User existing = new User("alice", "alice@example.com", "$2a$12$hashed");
     when(users.findByUsernameIgnoreCase("alice")).thenReturn(Optional.of(existing));
-    when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
+    when(passwords.matches("s3cret-pass1", "$2a$12$hashed")).thenReturn(true);
     when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE", "s3cret-pass")).result();
+    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE", "s3cret-pass1")).result();
 
     verify(users).findByUsernameIgnoreCase("alice");
     assertThat(result.user()).isSameAs(existing);
@@ -99,10 +99,10 @@ class AuthServiceNormalizationTest {
     User existing = new User("alice", "alice@example.com", "$2a$12$hashed");
     when(users.findByUsernameIgnoreCase("alice@example.com")).thenReturn(Optional.empty());
     when(users.findByEmailIgnoreCase("alice@example.com")).thenReturn(Optional.of(existing));
-    when(passwords.matches("s3cret-pass", "$2a$12$hashed")).thenReturn(true);
+    when(passwords.matches("s3cret-pass1", "$2a$12$hashed")).thenReturn(true);
     when(jwt.createTokenPair(eq(existing), any(SessionMeta.class))).thenReturn(pair());
 
-    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE@EXAMPLE.COM", "s3cret-pass")).result();
+    AuthService.AuthResult result = ((AuthService.LoginResult.Pair) service.login("ALICE@EXAMPLE.COM", "s3cret-pass1")).result();
 
     verify(users).findByUsernameIgnoreCase("alice@example.com");
     verify(users).findByEmailIgnoreCase("alice@example.com");

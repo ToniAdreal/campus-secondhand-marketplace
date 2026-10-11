@@ -8,6 +8,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,12 +76,24 @@ public class PasswordResetService {
   private final PasswordResetProperties props;
   private final Clock clock;
   private final AuditService audit;
+  private final PasswordPolicyProperties passwordPolicy;
   private final SecureRandom random = new SecureRandom();
 
   public PasswordResetService(UserRepository users, PasswordResetTokenRepository resetTokens,
                               PasswordService passwords, JwtTokenService jwt,
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
                               Clock clock, AuditService audit) {
+    this(users, resetTokens, passwords, jwt, mailSender, props, clock, audit,
+        new PasswordPolicyProperties());
+  }
+
+  /** Full constructor (Spring): the password policy is the configured bean. */
+  @Autowired
+  public PasswordResetService(UserRepository users, PasswordResetTokenRepository resetTokens,
+                              PasswordService passwords, JwtTokenService jwt,
+                              PasswordResetMailSender mailSender, PasswordResetProperties props,
+                              Clock clock, AuditService audit,
+                              PasswordPolicyProperties passwordPolicy) {
     this.users = users;
     this.resetTokens = resetTokens;
     this.passwords = passwords;
@@ -89,6 +102,17 @@ public class PasswordResetService {
     this.props = props;
     this.clock = clock;
     this.audit = audit;
+    this.passwordPolicy = passwordPolicy;
+  }
+
+  /**
+   * Password-policy accessor with a defaults fallback, mirroring
+   * {@link #audit()}: a hand-built instance without the policy bean applies
+   * the documented default minimum length. Production always gets the
+   * configured bean.
+   */
+  private PasswordPolicyProperties passwordPolicy() {
+    return passwordPolicy != null ? passwordPolicy : new PasswordPolicyProperties();
   }
 
   /**
@@ -142,7 +166,8 @@ public class PasswordResetService {
     User user = users.findById(row.getUserId()).orElseThrow(InvalidCredentialsException::new);
     // Strength is checked before consumption: a rejected password must not
     // burn the user's one live token.
-    PasswordStrengthValidator.requireStrong(newPassword);
+    PasswordStrengthValidator.requireStrong(newPassword,
+        passwordPolicy().getPasswordMinLength());
     user.setPasswordHash(passwords.encode(newPassword));
     // Same kill semantics as AuthService.changePassword: the version bump
     // kills pre-reset Bearer tokens at the filter, revokeAll kills every

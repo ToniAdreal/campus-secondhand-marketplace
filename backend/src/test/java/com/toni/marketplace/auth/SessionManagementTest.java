@@ -40,8 +40,8 @@ class SessionManagementTest {
 
   @Test
   void listShowsTwoSessionsAndFlagsThePresentedOneCurrent() throws Exception {
-    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass", "device-a");
-    MvcResult loggedIn = login("alice", "s3cret-pass", "device-b");
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
+    MvcResult loggedIn = login("alice", "s3cret-pass1", "device-b");
     Cookie cookieB = refreshCookie(loggedIn);
     assertThat(cookieB).isNotNull();
 
@@ -81,7 +81,7 @@ class SessionManagementTest {
 
   @Test
   void deviceLabelIsNullWhenTheClientSentNoUserAgent() throws Exception {
-    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass", null);
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", null);
 
     MvcResult listed = mockMvc.perform(get("/api/auth/sessions")
             .header("Authorization", "Bearer " + accessToken(registered))
@@ -97,8 +97,8 @@ class SessionManagementTest {
 
   @Test
   void deleteRevokesTheOtherSessionWhileTheCallersKeepsRotating() throws Exception {
-    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass", "device-a");
-    MvcResult loggedIn = login("alice", "s3cret-pass", "device-b");
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
+    MvcResult loggedIn = login("alice", "s3cret-pass1", "device-b");
     Cookie cookieA = refreshCookie(registered);
     Cookie cookieB = refreshCookie(loggedIn);
 
@@ -131,7 +131,7 @@ class SessionManagementTest {
 
   @Test
   void deleteOwnCurrentSessionKillsItsNextRefresh() throws Exception {
-    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass", "device-a");
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
     Cookie cookieA = refreshCookie(registered);
 
     String ownFamily = currentSessionId(accessToken(registered), cookieA);
@@ -149,8 +149,8 @@ class SessionManagementTest {
 
   @Test
   void deleteAnotherUsersSessionIs404AndLeavesItAlive() throws Exception {
-    MvcResult alice = register("alice", "alice@example.com", "s3cret-pass", "device-a");
-    MvcResult bob = register("bob", "bob@example.com", "s3cret-pass", "device-b");
+    MvcResult alice = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
+    MvcResult bob = register("bob", "bob@example.com", "s3cret-pass1", "device-b");
     Cookie bobCookie = refreshCookie(bob);
 
     String bobsFamily = currentSessionId(accessToken(bob), bobCookie);

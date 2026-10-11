@@ -61,7 +61,7 @@ class PasswordResetTest {
   }
 
   private static final String REGISTER =
-      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Autowired
   private MockMvc mockMvc;
@@ -93,7 +93,7 @@ class PasswordResetTest {
 
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0));
 
@@ -109,11 +109,11 @@ class PasswordResetTest {
     // Old password is gone, new password logs in.
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isUnauthorized());
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0));
     assertThat(MAILBOX).containsKey(userId);
@@ -143,7 +143,7 @@ class PasswordResetTest {
 
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
 
     // Replay of the consumed token: the identical 401 as an unknown token.
@@ -164,7 +164,7 @@ class PasswordResetTest {
     // replay's password does not.
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
   }
 
@@ -178,12 +178,12 @@ class PasswordResetTest {
 
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + first + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + first + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value(401));
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + second + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + second + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
   }
 
@@ -196,14 +196,14 @@ class PasswordResetTest {
 
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value(401))
         .andExpect(jsonPath("$.message").value("invalid credentials"));
 
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk());
   }
 
@@ -214,7 +214,7 @@ class PasswordResetTest {
 
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"abcdefgh\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"abcdefghijkl\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400))
         .andExpect(jsonPath("$.message")
@@ -223,7 +223,7 @@ class PasswordResetTest {
     // The token survived the rejected attempt.
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
   }
 
@@ -239,19 +239,19 @@ class PasswordResetTest {
     }
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isLocked());
 
     String token = requestResetAndCapture("alice");
     mockMvc.perform(post("/api/auth/password-reset/confirm")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"token\":\"" + token + "\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
 
     // The recovered user logs in immediately — no 15-minute lock remains.
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
   }
 

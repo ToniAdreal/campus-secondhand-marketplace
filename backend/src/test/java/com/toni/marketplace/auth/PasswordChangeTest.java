@@ -34,7 +34,7 @@ class PasswordChangeTest {
   private RefreshTokenRepository refreshTokens;
 
   private static final String REGISTER =
-      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"alice\",\"email\":\"alice@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void changePasswordSucceedsAndKeepsCurrentSessionAlive() throws Exception {
@@ -44,14 +44,14 @@ class PasswordChangeTest {
     assertThat(first).isNotNull();
 
     // A second session for the same user (e.g. another device).
-    Cookie second = login("alice", "s3cret-pass").getResponse().getCookie("refresh_token");
+    Cookie second = login("alice", "s3cret-pass1").getResponse().getCookie("refresh_token");
     assertThat(second).isNotNull();
     assertThat(refreshTokens.count()).isEqualTo(2);
 
     MvcResult changed = mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0))
         .andExpect(jsonPath("$.data.accessToken").exists())
@@ -81,10 +81,10 @@ class PasswordChangeTest {
     // so the family is: [revoked fresh-cookie row, new live row].
     assertThat(refreshTokens.count()).isEqualTo(2);
 
-    login("alice", "n3w-s3cret");
+    login("alice", "n3w-s3cret12");
     mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value(401));
   }
@@ -98,25 +98,26 @@ class PasswordChangeTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"wrong-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"wrong-pass\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value(401))
         .andExpect(jsonPath("$.message").value("invalid credentials"));
 
     // No partial state: nothing revoked, the old password still works.
     assertThat(refreshTokens.count()).isEqualTo(tokensBefore);
-    login("alice", "s3cret-pass");
+    login("alice", "s3cret-pass1");
   }
 
   @Test
   void weakNewPasswordReturns400() throws Exception {
     String access = accessToken(register());
 
-    // Missing digits.
+    // Missing digits (12 letters: long enough to pass the length rule,
+    // so the composition rule is the one that fires).
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"abcdefgh\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"abcdefghijkl\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400))
         .andExpect(jsonPath("$.message")
@@ -126,13 +127,13 @@ class PasswordChangeTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"qwerty123\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"qwerty123\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400))
         .andExpect(jsonPath("$.message")
             .value("password is too common, choose a less predictable one"));
 
-    login("alice", "s3cret-pass");
+    login("alice", "s3cret-pass1");
   }
 
   @Test
@@ -145,7 +146,7 @@ class PasswordChangeTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"s3cret-pass\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"s3cret-pass1\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400))
         .andExpect(jsonPath("$.message")
@@ -154,16 +155,16 @@ class PasswordChangeTest {
     // No partial state: nothing revoked, nothing re-encoded — the old
     // password still works and the session count is unchanged.
     assertThat(refreshTokens.count()).isEqualTo(tokensBefore);
-    login("alice", "s3cret-pass");
+    login("alice", "s3cret-pass1");
 
     // And a genuinely new password still changes it fine.
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0));
-    login("alice", "n3w-s3cret");
+    login("alice", "n3w-s3cret12");
   }
 
   @Test
@@ -171,7 +172,7 @@ class PasswordChangeTest {
     register();
     mockMvc.perform(post("/api/auth/password")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value(401))
         .andExpect(jsonPath("$.message").value("unauthorized"));

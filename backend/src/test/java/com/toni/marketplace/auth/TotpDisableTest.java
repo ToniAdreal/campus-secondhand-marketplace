@@ -38,7 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 class TotpDisableTest {
 
   private static final AtomicInteger IP_SEQ = new AtomicInteger();
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;
@@ -199,7 +199,7 @@ class TotpDisableTest {
     mockMvc.perform(post("/api/auth/2fa/disable")
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"wr0ng-pass\",\"code\":\""
+            .content("{\"currentPassword\":\"wr0ng-pass12\",\"code\":\""
                 + currentCode(enrolled.get(1)) + "\"}"))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.message").value("invalid credentials"));
@@ -239,7 +239,7 @@ class TotpDisableTest {
 
     // Password checked before the second factor is touched: the failed
     // attempt must not burn the one-time code it carried.
-    disable(access, "wr0ng-pass", recoveryCode, 401);
+    disable(access, "wr0ng-pass12", recoveryCode, 401);
     disable(access, PASSWORD, recoveryCode, 200);
     assertThat(users.findById(userId("mona")).orElseThrow().isTotpEnabled()).isFalse();
   }

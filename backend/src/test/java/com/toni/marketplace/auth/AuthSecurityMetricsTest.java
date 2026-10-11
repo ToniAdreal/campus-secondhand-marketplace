@@ -49,7 +49,7 @@ class AuthSecurityMetricsTest {
     }
   }
 
-  private static final String PASSWORD = "s3cret-pass";
+  private static final String PASSWORD = "s3cret-pass1";
 
   @Autowired
   private MockMvc mockMvc;
@@ -136,7 +136,7 @@ class AuthSecurityMetricsTest {
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"currentPassword\":\"not-the-password\""
-                + ",\"newPassword\":\"n3w-s3cret\"}"))
+                + ",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isUnauthorized());
     assertThat(count("auth.password.changed")).isEqualTo(before);
 
@@ -144,7 +144,7 @@ class AuthSecurityMetricsTest {
             .header("Authorization", "Bearer " + access)
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"currentPassword\":\"" + PASSWORD + "\""
-                + ",\"newPassword\":\"n3w-s3cret\"}"))
+                + ",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
     assertThat(count("auth.password.changed")).isEqualTo(before + 1);
   }

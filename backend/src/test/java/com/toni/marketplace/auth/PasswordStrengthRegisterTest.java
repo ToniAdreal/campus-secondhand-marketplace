@@ -35,7 +35,7 @@ class PasswordStrengthRegisterTest {
   void lettersOnlyPasswordIsRejectedWith400() throws Exception {
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content(registerBody("weakuser1", "abcdefgh")))
+            .content(registerBody("weakuser1", "abcdefghijkl")))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400))
         .andExpect(jsonPath("$.message").value("password must contain both letters and digits"));
@@ -58,7 +58,7 @@ class PasswordStrengthRegisterTest {
   void compliantPasswordRegistersNormally() throws Exception {
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content(registerBody("stronguser", "abcd1234")))
+            .content(registerBody("stronguser", "abcd1234efgh")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0))
         .andExpect(jsonPath("$.data.accessToken").exists());
@@ -70,12 +70,25 @@ class PasswordStrengthRegisterTest {
     // rejection regardless of the account's existence.
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
-            .content(registerBody("stronguser", "abcd1234")))
+            .content(registerBody("stronguser", "abcd1234efgh")))
         .andExpect(status().isOk());
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
             .content(registerBody("stronguser", "abcdefgh")))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400));
+  }
+
+  @Test
+  void shortPasswordIsRejectedWith400() throws Exception {
+    // Backlog #131: 11 characters with letters + digits — composition is
+    // fine, only the new minimum-length rule fails it.
+    mockMvc.perform(post("/api/auth/register")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(registerBody("weakuser3", "abcd1234efg")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400))
+        .andExpect(jsonPath("$.message")
+            .value("password must be at least 12 characters"));
   }
 }

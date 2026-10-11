@@ -89,6 +89,20 @@ describe('ResetPasswordPage', () => {
     expect(screen.queryByText('login page stub')).toBeNull();
   });
 
+  it('maps a 400 with the minimum-length reason verbatim (backlog #131)', async () => {
+    postSpy.mockRejectedValueOnce(
+      axiosFailure(400, 'password must be at least 12 characters'),
+    );
+    renderAt('/reset-password?token=raw-token-abc');
+    fill('short1', 'short1');
+    fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'password must be at least 12 characters',
+    );
+    expect(screen.queryByText('login page stub')).toBeNull();
+  });
+
   it('maps a 401 to one generic invalid-or-expired message (unknown/used/expired are identical)', async () => {
     postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid or expired reset token'));
     renderAt('/reset-password?token=stale-token');

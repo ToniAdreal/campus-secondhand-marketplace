@@ -70,12 +70,12 @@ class RefreshRotationGraceTest {
   void setUp() {
     // No token pair is issued here (register would create one and skew the
     // row counts); the login below mints the single starting token.
-    users.save(new User("grace-tester", "grace@example.com", passwords.encode("s3cret-pass")));
+    users.save(new User("grace-tester", "grace@example.com", passwords.encode("s3cret-pass1")));
   }
 
   /** Service-level login, outside the HTTP budget. */
   private Cookie freshRefreshCookie() {
-    String token = ((AuthService.LoginResult.Pair) auth.login("grace-tester", "s3cret-pass")).result().pair().refreshToken();
+    String token = ((AuthService.LoginResult.Pair) auth.login("grace-tester", "s3cret-pass1")).result().pair().refreshToken();
     return new Cookie("refresh_token", token);
   }
 

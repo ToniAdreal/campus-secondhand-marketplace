@@ -44,7 +44,7 @@ class AccessTokenVersionTest {
     MvcResult changed = mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + oldAccess)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andReturn();
     String freshAccess = accessToken(changed);
@@ -61,7 +61,7 @@ class AccessTokenVersionTest {
     // …and a brand-new login's token works too (same version, not stale).
     MvcResult loggedIn = mockMvc.perform(post("/api/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret\"}"))
+            .content("{\"usernameOrEmail\":\"alice\",\"password\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk())
         .andReturn();
     mockMvc.perform(get("/api/auth/me")
@@ -79,7 +79,7 @@ class AccessTokenVersionTest {
     mockMvc.perform(post("/api/auth/password")
             .header("Authorization", "Bearer " + aliceAccess)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"currentPassword\":\"s3cret-pass\",\"newPassword\":\"n3w-s3cret\"}"))
+            .content("{\"currentPassword\":\"s3cret-pass1\",\"newPassword\":\"n3w-s3cret12\"}"))
         .andExpect(status().isOk());
 
     // Alice's old token is dead…
@@ -96,7 +96,7 @@ class AccessTokenVersionTest {
     return mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\"" + username + "\",\"email\":\"" + email
-                + "\",\"password\":\"s3cret-pass\"}"))
+                + "\",\"password\":\"s3cret-pass1\"}"))
         .andExpect(status().isOk())
         .andReturn();
   }

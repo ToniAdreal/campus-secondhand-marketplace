@@ -33,7 +33,7 @@ class RefreshCookieSecureTest {
   private MockMvc mockMvc;
 
   private static final String REGISTER =
-      "{\"username\":\"carol\",\"email\":\"carol@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"carol\",\"email\":\"carol@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void setCookieOmitsSecureByDefault() throws Exception {
@@ -81,7 +81,7 @@ class RefreshCookieSecureEnabledTest {
   private MockMvc mockMvc;
 
   private static final String REGISTER =
-      "{\"username\":\"dave\",\"email\":\"dave@example.com\",\"password\":\"s3cret-pass\"}";
+      "{\"username\":\"dave\",\"email\":\"dave@example.com\",\"password\":\"s3cret-pass1\"}";
 
   @Test
   void setCookieCarriesSecureWhenPropertyOn() throws Exception {
