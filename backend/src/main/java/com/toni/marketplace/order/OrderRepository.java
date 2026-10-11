@@ -76,6 +76,33 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                                                    @Param("createdTo") Instant createdTo);
 
   /**
+   * Per-status aggregates over every order in the marketplace (backlog
+   * #134) — the platform-wide counterpart of
+   * {@link #summarizeBySellerId}. Statuses with no orders produce no row.
+   */
+  @Query("select o.status as status, count(o) as orderCount, "
+      + "coalesce(sum(o.amountCents), 0) as amountCents from Order o "
+      + "group by o.status")
+  List<StatusAggregate> summarizeAll();
+
+  /**
+   * Captured total for the ADMIN settlement summary (backlog #134): the
+   * sum of {@code amountCents} over every order carrying a capture id.
+   * A REFUNDED order was still captured, so it counts here too; a PENDING
+   * order carries no capture id and contributes nothing. Keyed on the
+   * persisted capture id (backlog #114) so the figure survives restarts.
+   */
+  @Query("select coalesce(sum(o.amountCents), 0) from Order o where o.captureId is not null")
+  long sumCapturedCents();
+
+  /**
+   * Refunded total for the ADMIN settlement summary (backlog #134): the
+   * sum of {@code amountCents} over REFUNDED orders.
+   */
+  @Query("select coalesce(sum(o.amountCents), 0) from Order o where o.status = :status")
+  long sumAmountCentsByStatus(@Param("status") OrderStatus status);
+
+  /**
    * Application-level counterpart of the {@code uq_order_active_item}
    * constraint: true when the item already sits in an order with one of the
    * given statuses. Checked before creating an order for a friendly 409; the

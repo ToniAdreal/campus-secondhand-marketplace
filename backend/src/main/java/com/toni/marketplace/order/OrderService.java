@@ -260,6 +260,25 @@ public class OrderService {
   }
 
   /**
+   * Mock-PSP settlement summary for ADMINs (backlog #134): captured /
+   * refunded / net totals plus per-status counts, reconciled in aggregate
+   * queries over the orders table — the database of record. This
+   * deliberately does NOT read {@code PaymentService}'s in-memory
+   * counters (lost on restart, and they count invocations, not money):
+   * backlog #114 persisted the PSP capture/refund ids on the order rows
+   * precisely so this summary survives restarts. An empty orders table
+   * yields zeros, not an error. Authorization (ADMIN-only) lives on the
+   * controller, mirroring the audit-log read.
+   */
+  @Transactional(readOnly = true)
+  public SettlementSummaryDto settlementSummary() {
+    return SettlementSummaryDto.from(
+        orders.summarizeAll(),
+        orders.sumCapturedCents(),
+        orders.sumAmountCentsByStatus(OrderStatus.REFUNDED));
+  }
+
+  /**
    * Reads a single order for the buyer who placed it — or for an ADMIN.
    * Unknown id → 404; anyone else → 403. The 403 deliberately mirrors
    * {@link #pay(Long, Long)}: an order id never leaks whether the caller

@@ -35,7 +35,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>The expected path set below is enumerated from the controllers, the
  * source of truth — {@code AuthController}, {@code AdminUserController},
- * {@code AuditLogController}, {@code CategoryController},
+ * {@code AdminPaymentController}, {@code AuditLogController},
+ * {@code CategoryController},
  * {@code ItemController}, {@code MessageController}, {@code OrderController}
  * and {@code SellerOrderController}. The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
@@ -46,9 +47,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class OpenApiContractTest {
 
-  /** Every path the eight controllers expose, as springdoc renders them. */
+  /** Every path the nine controllers expose, as springdoc renders them. */
   private static final Set<String> EXPECTED_PATHS = Set.of(
       "/api/admin/audit-log",
+      "/api/admin/payments/settlement",
       "/api/admin/users",
       "/api/admin/users/{id}/disable",
       "/api/admin/users/{id}/enable",
