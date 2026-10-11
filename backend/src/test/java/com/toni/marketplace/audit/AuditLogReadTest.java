@@ -61,6 +61,11 @@ class AuditLogReadTest {
 
   @BeforeEach
   void createUsersTokensAndRows() {
+    // The read endpoint reports table-wide totals, so committed audit rows
+    // from other test classes sharing this context must not leak in (the
+    // delete rolls back with this class's transaction, like
+    // AuditLogOrderTest/AuditRollbackTest already do).
+    auditLog.deleteAll();
     admin = new User("aud-admin", "aud-admin@example.com", passwords.encode("admin-password"));
     admin.setRoles(EnumSet.of(Role.ADMIN));
     admin = users.save(admin);
