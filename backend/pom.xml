@@ -24,6 +24,7 @@
     <testcontainers.version>1.19.7</testcontainers.version>
     <springdoc.version>2.5.0</springdoc.version>
     <jacoco.version>0.8.12</jacoco.version>
+    <logstash-encoder.version>7.4</logstash-encoder.version>
   </properties>
 
   <dependencies>
@@ -59,6 +60,17 @@
       <groupId>org.springdoc</groupId>
       <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
       <version>${springdoc.version}</version>
+    </dependency>
+    <dependency>
+      <!-- Structured JSON logging (backlog #137): used ONLY by the opt-in
+           `json-logs` profile in logback-spring.xml (LogstashEncoder writes
+           one JSON object per line, requestId from the MDC included). The
+           default console output stays the plain-text pattern. 7.4 is the
+           line built for Logback 1.4 (Spring Boot 3.2.5); 8.x needs
+           Logback 1.5 / Boot 3.3+. -->
+      <groupId>net.logstash.logback</groupId>
+      <artifactId>logstash-logback-encoder</artifactId>
+      <version>${logstash-encoder.version}</version>
     </dependency>
     <dependency>
       <groupId>org.flywaydb</groupId>

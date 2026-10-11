@@ -21,8 +21,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       it back in bug reports;</li>
  *   <li>placed in the SLF4J MDC under {@code requestId}, so every log line
  *       emitted while the request is being handled carries it — the
- *       {@code logging.pattern.console} in application.yml renders the
- *       {@code %X{requestId}} value.</li>
+ *       console pattern in logback-spring.xml renders the
+ *       {@code %X{requestId}} value, and the opt-in {@code json-logs}
+ *       profile (backlog #137) emits it as a top-level {@code requestId}
+ *       JSON field.</li>
  * </ul>
  *
  * <p>Runs at {@link Ordered#HIGHEST_PRECEDENCE} so the id is attached before

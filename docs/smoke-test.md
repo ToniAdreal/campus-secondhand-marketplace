@@ -121,6 +121,34 @@ The backend exposes Spring Boot Actuator:
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.
 
+## Logging
+
+By default the backend logs the plain console pattern defined in
+`backend/src/main/resources/logback-spring.xml` (timestamp, thread, level,
+`[requestId]`, logger, message — the `requestId` is the X-Request-ID MDC
+value from `RequestIdFilter`).
+
+For a log aggregator, opt into structured JSON logging with the
+`json-logs` Spring profile — one JSON object per line (`@timestamp`,
+`level`, `logger_name`, `thread_name`, `message`, and `requestId` as a
+top-level field whenever the MDC carries one), encoded by
+logstash-logback-encoder:
+
+```bash
+# local dev (H2)
+SPRING_PROFILES_ACTIVE=json-logs mvn -f backend/pom.xml spring-boot:run
+
+# compose stack — layer the profile onto `mysql` (the compose file
+# forwards SPRING_PROFILES_ACTIVE, defaulting to plain `mysql`)
+SPRING_PROFILES_ACTIVE=mysql,json-logs docker compose up
+```
+
+Verify: `docker compose logs backend | head -1 | python3 -m json.tool`
+parses, and request-handling lines carry the `"requestId"` field.
+Honest scope: the profile only shapes the lines — shipping them to an
+aggregator (collector, retention, dashboards) is the operator's setup;
+nothing of that kind is bundled with this repo.
+
 ## Shutdown
 
 `docker compose down` (without `-v`) stops the backend gracefully:

@@ -31,7 +31,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: mysql
+      # Profiles are overridable from the shell so the opt-in structured
+      # JSON logging profile (backlog #137, logback-spring.xml) can be
+      # layered onto the mysql profile without editing this file:
+      #   SPRING_PROFILES_ACTIVE=mysql,json-logs docker compose up
+      # The default stays exactly `mysql` (plain-text console logs).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-mysql}
       # The backend refuses to boot on the mysql profile with the committed
       # dev placeholder (JwtSecretStartupCheck). Compose fails early with this
       # message if the operator forgets to export APP_JWT_SECRET first —

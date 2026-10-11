@@ -242,11 +242,13 @@ app:
     # a fresh valid TOTP code.
     totp-challenge-ttl: 5m
 
-logging:
-  pattern:
-    # %X{requestId} is set by RequestIdFilter (backlog #44) — every request's
-    # log lines carry its X-Request-ID; empty when nothing is in the MDC.
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{requestId}] %logger{36} - %msg%n"
+# Logging is configured in logback-spring.xml (backlog #137): the default
+# console pattern lives there (it renders %X{requestId}, the MDC value set
+# by RequestIdFilter — backlog #44; empty when nothing is in the MDC), and
+# the opt-in `json-logs` Spring profile swaps the console encoder to
+# logstash-logback-encoder JSON (one object per line, requestId included).
+# There is deliberately no `logging.pattern.console` here anymore — with a
+# logback-spring.xml present, Boot would ignore it and the two would drift.
 
 management:
   endpoint:
