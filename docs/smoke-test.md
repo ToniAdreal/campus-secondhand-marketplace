@@ -121,6 +121,27 @@ The backend exposes Spring Boot Actuator:
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.
 
+## Shutdown
+
+`docker compose down` (without `-v`) stops the backend gracefully:
+
+- Compose sends SIGTERM to the backend container and waits
+  `stop_grace_period: 40s` (backend service in `docker-compose.yml`)
+  before escalating to SIGKILL.
+- The backend runs with `server.shutdown=graceful` and
+  `spring.lifecycle.timeout-per-shutdown-phase: 30s`
+  (`application.yml`): the web server stops accepting new requests
+  and in-flight HTTP requests (a pay, an upload) get up to 30 s to
+  finish instead of being cut off by an abrupt JVM exit. The 40 s
+  grace period sits just above the 30 s drain window so the drain
+  can complete first.
+
+Honest scope: this drains HTTP requests only. The `@Scheduled`
+sweeps (nightly retention purge, pending-order expiry) are not
+transactional with shutdown — they are idempotent and batch-tolerant
+by design, so a sweep interrupted mid-batch simply re-runs its
+remaining work on the next start/cadence.
+
 ## Teardown
 
 ```bash

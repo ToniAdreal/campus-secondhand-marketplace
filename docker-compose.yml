@@ -22,6 +22,12 @@ services:
 
   backend:
     build: ./backend
+    # Graceful shutdown (backlog #136): `docker compose down` sends
+    # SIGTERM and the backend drains in-flight HTTP requests for up to
+    # 30 s (server.shutdown=graceful + spring.lifecycle timeout in
+    # application.yml). Give the container 40 s — just above that drain
+    # window — before Docker escalates to SIGKILL.
+    stop_grace_period: 40s
     ports:
       - "8080:8080"
     environment:

@@ -1,3 +1,14 @@
+server:
+  # Graceful shutdown (backlog #136): on SIGTERM the embedded web server
+  # stops accepting new requests and drains in-flight ones instead of the
+  # JVM exiting abruptly mid-request (a pay or upload cut in half).
+  # The drain window is spring.lifecycle.timeout-per-shutdown-phase
+  # below; docker-compose gives the container stop_grace_period 40 s —
+  # just above that window — before SIGKILL. Honest scope: this drains
+  # HTTP requests only; the @Scheduled sweeps (#35/#51) are not
+  # transactional with shutdown and stay idempotent/batch-tolerant.
+  shutdown: graceful
+
 springdoc:
   # OpenAPI contract (backlog #95): /v3/api-docs (JSON) + /swagger-ui.html.
   # Both are behind Bearer authentication in SecurityConfig — the route map
@@ -8,6 +19,13 @@ springdoc:
     path: /swagger-ui.html
 
 spring:
+  lifecycle:
+    # Per-phase shutdown timeout for graceful shutdown (backlog #136,
+    # server.shutdown above): in-flight HTTP requests get up to 30 s to
+    # finish before the phase is forced on. Kept below the compose
+    # backend service's stop_grace_period (40 s) so the drain can
+    # complete before Docker escalates to SIGKILL.
+    timeout-per-shutdown-phase: 30s
   datasource:
     # Local dev default: in-memory H2 (MySQL compatibility mode), migrated by Flyway.
     # Real MySQL path: docker compose up (uses the `mysql` profile below).
