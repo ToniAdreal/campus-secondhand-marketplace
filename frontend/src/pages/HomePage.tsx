@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { listingPhotoUrls, useItems } from '../api/items';
+import FavoriteButton from '../components/FavoriteButton';
 import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
 
@@ -220,7 +221,8 @@ export default function HomePage() {
                 </p>
                 <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
                   {item.status}
-                </span>
+                </span>{' '}
+                <FavoriteButton itemId={item.id} />
               </li>
               );
             })}

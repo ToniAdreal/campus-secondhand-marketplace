@@ -8,6 +8,7 @@ import {
 } from '../api/items';
 import { describeOrderError, useCreateOrder } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
+import FavoriteButton from '../components/FavoriteButton';
 import ListingGallery from '../components/ListingGallery';
 import MessageThread from '../components/MessageThread';
 
@@ -61,7 +62,8 @@ export default function ItemDetailPage() {
       <p className="mt-4 whitespace-pre-wrap text-neutral-700">{data.description}</p>
       <span className="mt-4 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
         {data.status}
-      </span>
+      </span>{' '}
+      <FavoriteButton itemId={data.id} />
       {data.sellerUsername && (
         <p className="mt-2 text-sm text-neutral-600">Sold by {data.sellerUsername}</p>
       )}

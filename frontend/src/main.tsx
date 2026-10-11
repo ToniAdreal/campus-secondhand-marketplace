@@ -21,6 +21,7 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const MyOrdersPage = lazy(() => import('./pages/MyOrdersPage'));
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
 const OrderConfirmationPage = lazy(() => import('./pages/OrderConfirmationPage'));
 const SessionsPage = lazy(() => import('./pages/SessionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -39,6 +40,7 @@ const router = createBrowserRouter([
       { path: 'items/new', element: <CreateListingPage /> },
       { path: 'items/:id', element: <ItemDetailPage /> },
       { path: 'orders', element: <MyOrdersPage /> },
+      { path: 'favorites', element: <FavoritesPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'seller/orders', element: <SellerOrdersPage /> },
       { path: 'login', element: <LoginPage /> },

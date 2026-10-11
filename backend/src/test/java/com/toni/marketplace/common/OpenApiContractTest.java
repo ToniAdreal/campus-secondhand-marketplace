@@ -91,7 +91,9 @@ class OpenApiContractTest {
       "/api/orders/{id}/refund",
       "/api/seller/orders",
       "/api/seller/orders/{id}",
-      "/api/seller/orders/summary");
+      "/api/seller/orders/summary",
+      "/api/users/me/favorites",
+      "/api/users/me/favorites/{itemId}");
 
   @Autowired
   private MockMvc mockMvc;

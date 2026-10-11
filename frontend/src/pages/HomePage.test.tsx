@@ -37,6 +37,13 @@ vi.mock('../api/items', async (importOriginal) => {
   };
 });
 
+vi.mock('../api/favorites', () => ({
+  // Cards render a FavoriteButton (#143); anonymous in these tests, so it
+  // renders nothing — the hooks only need to exist and stay inert.
+  useFavorites: () => ({ data: [], isLoading: false, isError: false, isSuccess: true }),
+  useToggleFavorite: () => ({ mutate: () => undefined, isLoading: false }),
+}));
+
 vi.mock('../api/categories', () => ({
   useCategories: () => ({
     data: [
