@@ -127,6 +127,15 @@ app:
     # of them. Existing accounts are untouched until their next
     # change/reset — no forced migration.
     password-min-length: ${APP_AUTH_PASSWORD_MIN_LENGTH:12}
+    # Password history (PasswordHistoryService, backlog #139): every
+    # successful password change AND reset confirm appends the outgoing
+    # BCrypt hash to the password_history table (Flyway V27), and a new
+    # password matching the current hash or any of the last this-many
+    # outgoing hashes is rejected 400 through ONE check shared by both
+    # paths — A→B→A cycling no longer works, and the reset path (which
+    # previously had no reuse guard at all) enforces identically. The
+    # window slides: the sixth-oldest password is allowed again.
+    password-history-size: ${APP_AUTH_PASSWORD_HISTORY_SIZE:5}
     email-verification:
       # Email verification for new accounts (EmailVerificationService,
       # backlog #138): while enabled (the default), registration creates

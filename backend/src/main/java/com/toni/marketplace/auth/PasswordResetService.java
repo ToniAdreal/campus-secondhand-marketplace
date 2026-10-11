@@ -4,6 +4,7 @@ import com.toni.marketplace.audit.AuditAction;
 import com.toni.marketplace.audit.AuditService;
 import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.common.InvalidCredentialsException;
+import com.toni.marketplace.common.PasswordReuseException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
@@ -77,6 +78,7 @@ public class PasswordResetService {
   private final Clock clock;
   private final AuditService audit;
   private final PasswordPolicyProperties passwordPolicy;
+  private final PasswordHistoryService passwordHistory;
   private final SecureRandom random = new SecureRandom();
 
   public PasswordResetService(UserRepository users, PasswordResetTokenRepository resetTokens,
@@ -84,7 +86,7 @@ public class PasswordResetService {
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
                               Clock clock, AuditService audit) {
     this(users, resetTokens, passwords, jwt, mailSender, props, clock, audit,
-        new PasswordPolicyProperties());
+        new PasswordPolicyProperties(), null);
   }
 
   /** Full constructor (Spring): the password policy is the configured bean. */
@@ -93,7 +95,8 @@ public class PasswordResetService {
                               PasswordService passwords, JwtTokenService jwt,
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
                               Clock clock, AuditService audit,
-                              PasswordPolicyProperties passwordPolicy) {
+                              PasswordPolicyProperties passwordPolicy,
+                              PasswordHistoryService passwordHistory) {
     this.users = users;
     this.resetTokens = resetTokens;
     this.passwords = passwords;
@@ -103,6 +106,7 @@ public class PasswordResetService {
     this.clock = clock;
     this.audit = audit;
     this.passwordPolicy = passwordPolicy;
+    this.passwordHistory = passwordHistory;
   }
 
   /**
@@ -113,6 +117,29 @@ public class PasswordResetService {
    */
   private PasswordPolicyProperties passwordPolicy() {
     return passwordPolicy != null ? passwordPolicy : new PasswordPolicyProperties();
+  }
+
+  /**
+   * Password-history seam (backlog #139), mirroring {@code AuthService}:
+   * production gets the shared {@link PasswordHistoryService} bean, so
+   * the reset path enforces exactly what the authenticated change path
+   * enforces. A hand-built instance without the bean falls back to the
+   * current-hash check only.
+   */
+  private void requirePasswordNotReused(User user, String rawNewPassword) {
+    if (passwordHistory != null) {
+      passwordHistory.requireNotReused(user, rawNewPassword);
+    } else if (passwords.matches(rawNewPassword, user.getPasswordHash())) {
+      throw new PasswordReuseException(
+          "new password must differ from the current password");
+    }
+  }
+
+  /** Records the outgoing hash on a successful confirm; see {@link #requirePasswordNotReused}. */
+  private void recordOutgoingPassword(User user) {
+    if (passwordHistory != null) {
+      passwordHistory.recordOutgoing(user);
+    }
   }
 
   /**
@@ -153,7 +180,8 @@ public class PasswordResetService {
   /**
    * Consumes a reset token and sets the new password. Every token failure
    * (unknown / used / expired / orphaned) is the identical 401; a weak new
-   * password is 400 and leaves the token usable.
+   * password — or one reusing the current / a recent password (backlog
+   * #139, the shared history check) — is 400 and leaves the token usable.
    */
   @Transactional
   public void confirmReset(String rawToken, String newPassword) {
@@ -168,6 +196,12 @@ public class PasswordResetService {
     // burn the user's one live token.
     PasswordStrengthValidator.requireStrong(newPassword,
         passwordPolicy().getPasswordMinLength());
+    // Backlog #139: the reset path enforces the password history through
+    // the same shared check as the authenticated change — before #139 it
+    // had no reuse guard at all. A reuse rejection is a 400 and, like a
+    // weak password, leaves the token usable.
+    requirePasswordNotReused(user, newPassword);
+    recordOutgoingPassword(user);
     user.setPasswordHash(passwords.encode(newPassword));
     // Same kill semantics as AuthService.changePassword: the version bump
     // kills pre-reset Bearer tokens at the filter, revokeAll kills every

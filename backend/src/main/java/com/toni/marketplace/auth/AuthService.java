@@ -54,6 +54,7 @@ public class AuthService {
 
   private final EmailVerificationService emailVerification;
   private final EmailVerificationProperties emailVerificationProps;
+  private final PasswordHistoryService passwordHistory;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -63,7 +64,8 @@ public class AuthService {
                      AuthMetrics metrics, AuditService audit,
                      PasswordPolicyProperties passwordPolicy,
                      EmailVerificationService emailVerification,
-                     EmailVerificationProperties emailVerificationProps) {
+                     EmailVerificationProperties emailVerificationProps,
+                     PasswordHistoryService passwordHistory) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -78,6 +80,7 @@ public class AuthService {
     this.passwordPolicy = passwordPolicy;
     this.emailVerification = emailVerification;
     this.emailVerificationProps = emailVerificationProps;
+    this.passwordHistory = passwordHistory;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -87,7 +90,7 @@ public class AuthService {
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
-        null, new EmailVerificationProperties());
+        null, new EmailVerificationProperties(), null);
   }
 
   /**
@@ -112,6 +115,31 @@ public class AuthService {
    */
   private PasswordPolicyProperties passwordPolicy() {
     return passwordPolicy != null ? passwordPolicy : new PasswordPolicyProperties();
+  }
+
+  /**
+   * Password-history seam (backlog #139) with the same null-fallback
+   * rationale as {@link #passwordPolicy()}: a hand-built instance
+   * without the history service (the legacy constructor) falls back to
+   * the pre-#139 current-hash-only check, so direct unit tests keep
+   * their exact semantics. Production always gets the shared bean —
+   * the same bean {@code PasswordResetService} uses, so the change and
+   * reset paths enforce identically and cannot drift.
+   */
+  private void requirePasswordNotReused(User user, String rawNewPassword) {
+    if (passwordHistory != null) {
+      passwordHistory.requireNotReused(user, rawNewPassword);
+    } else if (passwords.matches(rawNewPassword, user.getPasswordHash())) {
+      throw new PasswordReuseException(
+          "new password must differ from the current password");
+    }
+  }
+
+  /** Records the outgoing hash on a successful change; see {@link #requirePasswordNotReused}. */
+  private void recordOutgoingPassword(User user) {
+    if (passwordHistory != null) {
+      passwordHistory.recordOutgoing(user);
+    }
   }
 
   /**
@@ -876,7 +904,11 @@ public class AuthService {
    * Reusing the current password is rejected with 400 (compared against the
    * stored hash via {@code PasswordEncoder.matches} before anything is
    * encoded — the caller already proved the current password, so this
-   * leaks no new oracle).
+   * leaks no new oracle). Backlog #139 extends the guard through the
+   * shared {@link PasswordHistoryService}: a password matching any of
+   * the last {@code app.auth.password-history-size} outgoing hashes is
+   * likewise 400, and the outgoing hash is appended to the history
+   * inside this transaction.
    *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
@@ -888,11 +920,10 @@ public class AuthService {
     if (!passwords.matches(currentPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();
     }
-    if (passwords.matches(newPassword, user.getPasswordHash())) {
-      throw new PasswordReuseException("new password must differ from the current password");
-    }
+    requirePasswordNotReused(user, newPassword);
     PasswordStrengthValidator.requireStrong(newPassword,
         passwordPolicy().getPasswordMinLength());
+    recordOutgoingPassword(user);
     user.setPasswordHash(passwords.encode(newPassword));
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);

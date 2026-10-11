@@ -24,11 +24,29 @@ public class PasswordPolicyProperties {
   /** Minimum password length, in characters. Matches the validator default. */
   private int passwordMinLength = PasswordStrengthValidator.DEFAULT_MIN_LENGTH;
 
+  /**
+   * How many outgoing password hashes {@link PasswordHistoryService}
+   * checks a new password against (backlog #139): a candidate matching
+   * any of the last this-many hashes is rejected as a reuse. The window
+   * slides — the sixth-oldest password is allowed again. {@code 0}
+   * disables the history window (the current-password check always
+   * applies).
+   */
+  private int passwordHistorySize = 5;
+
   public int getPasswordMinLength() {
     return passwordMinLength;
   }
 
   public void setPasswordMinLength(int passwordMinLength) {
     this.passwordMinLength = passwordMinLength;
+  }
+
+  public int getPasswordHistorySize() {
+    return passwordHistorySize;
+  }
+
+  public void setPasswordHistorySize(int passwordHistorySize) {
+    this.passwordHistorySize = passwordHistorySize;
   }
 }
