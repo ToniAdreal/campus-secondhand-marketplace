@@ -8,16 +8,21 @@ import {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
   adminAuditLogKeys,
+  adminPaymentKeys,
   adminUserKeys,
   describeAdminUserError,
   describeAuditLogError,
+  describeSettlementError,
+  formatCents,
   isForbidden,
   useAdminAuditLog,
+  useAdminPaymentSettlement,
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
   type AdminUser,
   type AuditLogEntry,
+  type SettlementSummary,
 } from './admin';
 
 const getSpy = vi.spyOn(api, 'get');
@@ -370,6 +375,92 @@ describe('describeAuditLogError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAuditLogError(error)).toBe(expected);
+  });
+});
+
+const settlementFixture: SettlementSummary = {
+  capturedCents: 35000,
+  refundedCents: 5000,
+  netCents: 30000,
+  totalOrders: 5,
+  pendingCount: 1,
+  paidCount: 1,
+  completedCount: 1,
+  cancelledCount: 1,
+  refundedCount: 1,
+};
+
+describe('useAdminPaymentSettlement', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('settlement keys hang off [admin, payments] as their own subtree', () => {
+    expect(adminPaymentKeys.all).toEqual(['admin', 'payments']);
+    expect(adminPaymentKeys.settlement()).toEqual(['admin', 'payments', 'settlement']);
+    expect(adminPaymentKeys.all).not.toEqual(adminUserKeys.all);
+    expect(adminPaymentKeys.all).not.toEqual(adminAuditLogKeys.all);
+  });
+
+  it('GETs /admin/payments/settlement with no params and unwraps the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope(settlementFixture));
+
+    const { result } = renderHook(() => useAdminPaymentSettlement(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/settlement');
+    expect(result.current.data).toEqual(settlementFixture);
+  });
+
+  it('stays idle when disabled (anonymous / non-admin page guard)', async () => {
+    const { result } = renderHook(() => useAdminPaymentSettlement(false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('propagates the failure shape so the page can render its error state', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
+    };
+    getSpy.mockRejectedValueOnce(failure);
+
+    const { result } = renderHook(() => useAdminPaymentSettlement(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(result.current.error).toBe(failure);
+    expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe('describeSettlementError', () => {
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view the settlement summary.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view the settlement summary.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeSettlementError(error)).toBe(expected);
+  });
+});
+
+describe('formatCents', () => {
+  it.each([
+    [0, '¥0.00'],
+    [999, '¥9.99'],
+    [35000, '¥350.00'],
+    [30000, '¥300.00'],
+  ])('%i cents -> %s', (cents, expected) => {
+    expect(formatCents(cents)).toBe(expected);
   });
 });
 

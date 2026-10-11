@@ -232,3 +232,73 @@ export function describeAdminUserError(error: unknown): string {
   }
   return message || 'Something went wrong. Please try again.';
 }
+
+/**
+ * Mock-PSP settlement summary, mirroring the backend's
+ * SettlementSummaryDto (GET /api/admin/payments/settlement, backlog
+ * #134). Money is in cents: `capturedCents` sums amountCents over orders
+ * carrying a capture id (a REFUNDED order was still captured, so it
+ * counts there as well as in `refundedCents`), `refundedCents` sums
+ * REFUNDED orders, and `netCents` is the difference. The remaining
+ * fields are per-status order counts. All figures are reconciled from
+ * the orders table — mock money only, no real processor is involved.
+ */
+export interface SettlementSummary {
+  capturedCents: number;
+  refundedCents: number;
+  netCents: number;
+  totalOrders: number;
+  pendingCount: number;
+  paidCount: number;
+  completedCount: number;
+  cancelledCount: number;
+  refundedCount: number;
+}
+
+/**
+ * Query keys for the ADMIN payments subtree, sibling to the users and
+ * audit-log subtrees under ['admin', …] so invalidating one never
+ * refetches the others. The settlement summary is a single unpaginated
+ * aggregate, so its key carries no parameters.
+ */
+export const adminPaymentKeys = {
+  all: ['admin', 'payments'] as const,
+  settlement: () => [...adminPaymentKeys.all, 'settlement'] as const,
+};
+
+/**
+ * GET /api/admin/payments/settlement — ADMIN-only (the backend's
+ * @PreAuthorize is the real gate; the SPA route/nav hiding is cosmetic).
+ * Non-admin callers get the JSON 403 envelope and anonymous callers 401 —
+ * both surface as Axios errors here.
+ */
+export function useAdminPaymentSettlement(enabled = true) {
+  return useQuery({
+    queryKey: adminPaymentKeys.settlement(),
+    queryFn: () =>
+      api
+        .get<ApiResponse<SettlementSummary>>('/admin/payments/settlement')
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed settlement call to user-facing copy. */
+export function describeSettlementError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view the settlement summary.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view the settlement summary.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/** Formats a cents amount the way the order pages do (¥ + two decimals). */
+export function formatCents(cents: number): string {
+  return `¥${(cents / 100).toFixed(2)}`;
+}

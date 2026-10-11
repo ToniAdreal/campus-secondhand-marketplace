@@ -150,4 +150,28 @@ describe('App nav admin users entry (backlog #111)', () => {
     await waitFor(() => expect(screen.getByText('buyer')).toBeTruthy());
     expect(screen.queryByRole('link', { name: 'Admin users' })).toBeNull();
   });
+
+  it('shows the Admin payments nav entry to ADMIN sessions only', async () => {
+    useAuthStore.getState().login(
+      { id: 1, username: 'adminboss', email: 'admin@example.com', roles: ['ADMIN', 'USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(0));
+    renderApp();
+
+    const link = await screen.findByRole('link', { name: 'Admin payments' });
+    expect(link.getAttribute('href')).toBe('/admin/payments');
+  });
+
+  it('hides the Admin payments nav entry from non-admin sessions', async () => {
+    useAuthStore.getState().login(
+      { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(0));
+    renderApp();
+
+    await waitFor(() => expect(screen.getByText('buyer')).toBeTruthy());
+    expect(screen.queryByRole('link', { name: 'Admin payments' })).toBeNull();
+  });
 });
