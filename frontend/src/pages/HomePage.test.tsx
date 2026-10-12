@@ -14,6 +14,9 @@ const calls: Array<{
 /** Content the mocked useItems serves; empty unless a test seeds listings. */
 let mockContent: Item[] = [];
 
+/** Page-count override for the pagination tests; null derives it from content. */
+let mockTotalPages: number | null = null;
+
 vi.mock('../api/items', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/items')>();
   return {
@@ -29,7 +32,7 @@ vi.mock('../api/items', async (importOriginal) => {
       const pageData: Page<Item> = {
         content: mockContent,
         totalElements: mockContent.length,
-        totalPages: mockContent.length === 0 ? 0 : 1,
+        totalPages: mockTotalPages ?? (mockContent.length === 0 ? 0 : 1),
         number: page,
       };
       return { data: pageData, isLoading: false, isError: false };
@@ -340,5 +343,131 @@ describe('HomePage listing photos', () => {
 
     expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
     expect(container.querySelector('img')).toBeNull();
+  });
+});
+
+describe('HomePage pagination (backlog #144)', () => {
+  const pagedItem: Item = {
+    id: 11,
+    title: 'Paged bike',
+    description: 'Rides fine',
+    priceCents: 12000,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls.length = 0;
+    currentSearch = '';
+    mockContent = [pagedItem];
+    mockTotalPages = 3;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mockContent = [];
+    mockTotalPages = null;
+  });
+
+  it('direct load of ?page=2 renders that page (refresh-safe, shareable)', () => {
+    renderHome('/?page=2');
+
+    expect(calls[calls.length - 1]).toMatchObject({ page: 2 });
+    expect(screen.getByText('Page 3 of 3')).toBeTruthy();
+  });
+
+  it('Next requests page 1 and syncs ?page= into the URL', () => {
+    renderHome('/');
+
+    expect(screen.getByText('Page 1 of 3')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    expect(currentSearch).toBe('?page=1');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 1 });
+    expect(screen.getByText('Page 2 of 3')).toBeTruthy();
+  });
+
+  it('Previous from ?page=2 returns to page 1, and back to page 0 clears the param', () => {
+    renderHome('/?page=2');
+
+    fireEvent.click(screen.getByRole('button', { name: /previous/i }));
+    expect(currentSearch).toBe('?page=1');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 1 });
+
+    fireEvent.click(screen.getByRole('button', { name: /previous/i }));
+    expect(currentSearch).toBe('');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+  });
+
+  it('disables Previous on the first page and Next on the last page', () => {
+    renderHome('/');
+    expect((screen.getByRole('button', { name: /previous/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /next/i }) as HTMLButtonElement).disabled).toBe(false);
+
+    cleanup();
+    calls.length = 0;
+    renderHome('/?page=2');
+    expect((screen.getByRole('button', { name: /previous/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: /next/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('a category change drops ?page= so the new result set starts at page 0', () => {
+    renderHome('/?page=2');
+
+    fireEvent.change(screen.getByLabelText(/filter by category/i), { target: { value: '1' } });
+
+    expect(currentSearch).toBe('?categoryId=1');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0, categoryId: 1 });
+  });
+
+  it('a sort change drops ?page=', () => {
+    renderHome('/?page=1');
+
+    fireEvent.change(screen.getByLabelText(/sort listings/i), { target: { value: 'price-asc' } });
+
+    expect(currentSearch).toBe('?sort=price-asc');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+  });
+
+  it('a committed search drops ?page= after the debounce', () => {
+    renderHome('/?page=2');
+
+    fireEvent.change(screen.getByLabelText(/search listings/i), { target: { value: 'lamp' } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(currentSearch).toBe('?q=lamp');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0, q: 'lamp' });
+  });
+
+  it('a committed price filter drops ?page= after the debounce', () => {
+    renderHome('/?page=1');
+
+    fireEvent.change(screen.getByLabelText(/minimum price/i), { target: { value: '25' } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(currentSearch).toBe('?minPrice=25');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+  });
+
+  it('treats a non-numeric or negative ?page= as page 0 instead of sending it on', () => {
+    renderHome('/?page=abc');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+
+    cleanup();
+    calls.length = 0;
+    renderHome('/?page=-1');
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
   });
 });

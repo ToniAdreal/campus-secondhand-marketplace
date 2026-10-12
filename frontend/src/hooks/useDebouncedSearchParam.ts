@@ -15,10 +15,17 @@ import { useSearchParams } from 'react-router-dom';
  *
  * Returns {@code [input, committed, update]}: the live input, the value
  * currently in the URL (what queries should subscribe to), and the setter.
+ *
+ * `options.resetParams` names other URL params that a commit deletes in
+ * the same write — the browse page passes `['page']` (backlog #144) so
+ * changing a filter drops the pagination param and the list restarts at
+ * page 0 instead of stranding the reader on a page the new result set
+ * may not have. Callers that do not paginate simply omit the option.
  */
 export function useDebouncedSearchParam(
   param = 'q',
   debounceMs = 300,
+  options?: { resetParams?: string[] },
 ): [string, string, (value: string) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
   const [input, setInput] = useState(() => searchParams.get(param) ?? '');
@@ -48,6 +55,9 @@ export function useDebouncedSearchParam(
             next.delete(param);
           } else {
             next.set(param, trimmed);
+          }
+          for (const resetParam of options?.resetParams ?? []) {
+            next.delete(resetParam);
           }
           return next;
         },

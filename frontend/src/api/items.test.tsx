@@ -98,6 +98,50 @@ describe('useItems request params', () => {
   });
 });
 
+describe('useItems keepPreviousData (backlog #144)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('keeps the previous page visible while the next page loads', async () => {
+    const page0 = {
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { content: [{ id: 1 }], totalElements: 21, totalPages: 2, number: 0 },
+      },
+    } as never;
+    let resolvePage1: (value: never) => void = () => undefined;
+    const page1Pending = new Promise<never>((resolve) => {
+      resolvePage1 = resolve;
+    });
+    getSpy.mockResolvedValueOnce(page0).mockReturnValueOnce(page1Pending);
+
+    const { result, rerender } = renderHook(({ page }: { page: number }) => useItems(page), {
+      wrapper,
+      initialProps: { page: 0 },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.number).toBe(0);
+
+    rerender({ page: 1 });
+
+    // The page-1 request is still in flight, but the page-0 rows stay.
+    expect(result.current.data?.number).toBe(0);
+    expect(result.current.isPreviousData).toBe(true);
+
+    resolvePage1({
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { content: [{ id: 21 }], totalElements: 21, totalPages: 2, number: 1 },
+      },
+    } as never);
+    await waitFor(() => expect(result.current.data?.number).toBe(1));
+    expect(result.current.isPreviousData).toBe(false);
+  });
+});
+
 describe('listingPhotoUrls', () => {
   const photo = (id: number, url: string, position: number): ItemPhoto => ({ id, url, position });
 

@@ -95,6 +95,10 @@ export function useItems(
   filters?: ItemListFilters,
 ) {
   return useQuery({
+    // keepPreviousData (backlog #144): paging or re-filtering keeps the
+    // previous page's rows on screen until the new page lands, so the
+    // browse list never flashes empty between pages.
+    keepPreviousData: true,
     queryKey: itemKeys.list(page, q, categoryId, filters),
     queryFn: () =>
       api

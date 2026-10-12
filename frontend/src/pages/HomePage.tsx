@@ -35,25 +35,64 @@ export function parseCategoryId(raw: string | null): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * Parses the `page` URL parameter (backlog #144). Pages are 0-based,
+ * matching the backend's `page` param and {@link useItems}; the controls
+ * render the human-facing "Page x of y" as page + 1. Anything that is
+ * not a non-negative integer (hand-edited links, negatives, blanks) is
+ * treated as page 0 rather than sent to the backend, where a negative
+ * page would 400.
+ */
+export function parsePageParam(raw: string | null): number {
+  if (raw === null || raw.trim() === '') {
+    return 0;
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 export default function HomePage() {
-  const [searchInput, searchQuery, setSearchInput] = useDebouncedSearchParam('q', 300);
+  // Every filter commit drops ?page= (backlog #144): a new result set
+  // restarts at page 0 instead of stranding the reader mid-list.
+  const [searchInput, searchQuery, setSearchInput] = useDebouncedSearchParam('q', 300, {
+    resetParams: ['page'],
+  });
   // Price bounds ride the same debounced URL pattern, in yuan as typed
   // (?minPrice=/?maxPrice=); they are converted to cents for the API.
   const [minPriceInput, minPriceCommitted, setMinPriceInput] =
-    useDebouncedSearchParam('minPrice', 300);
+    useDebouncedSearchParam('minPrice', 300, { resetParams: ['page'] });
   const [maxPriceInput, maxPriceCommitted, setMaxPriceInput] =
-    useDebouncedSearchParam('maxPrice', 300);
+    useDebouncedSearchParam('maxPrice', 300, { resetParams: ['page'] });
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryId = parseCategoryId(searchParams.get('categoryId'));
   const minPriceCents = parsePriceYuanToCents(minPriceCommitted);
   const maxPriceCents = parsePriceYuanToCents(maxPriceCommitted);
   const sort = parseSortParam(searchParams.get('sort'));
+  // Browse pagination (backlog #144): ?page= rides the same URL pattern
+  // as the filters — refresh-safe and shareable. Page 0 is the default
+  // and leaves no param behind, exactly like ?sort=newest.
+  const page = parsePageParam(searchParams.get('page'));
   const categoriesQuery = useCategories();
-  const { data, isLoading, isError } = useItems(0, searchQuery, categoryId, {
+  const { data, isLoading, isError } = useItems(page, searchQuery, categoryId, {
     minPriceCents,
     maxPriceCents,
     sort,
   });
+
+  const setPage = (nextPage: number) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (nextPage <= 0) {
+          next.delete('page');
+        } else {
+          next.set('page', String(nextPage));
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   const setSort = (value: string) => {
     setSearchParams(
@@ -64,6 +103,7 @@ export default function HomePage() {
         } else {
           next.set('sort', value);
         }
+        next.delete('page');
         return next;
       },
       { replace: true },
@@ -82,6 +122,7 @@ export default function HomePage() {
         } else {
           next.set('categoryId', value);
         }
+        next.delete('page');
         return next;
       },
       { replace: true },
@@ -227,6 +268,29 @@ export default function HomePage() {
               );
             })}
           </ul>
+          {data.totalPages > 0 && (
+            <nav aria-label="Listing pages" className="mt-6 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => setPage(page - 1)}
+                disabled={page <= 0}
+                className="rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span>
+                Page {page + 1} of {data.totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(page + 1)}
+                disabled={page + 1 >= data.totalPages}
+                className="rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </nav>
+          )}
         </>
       )}
     </div>
