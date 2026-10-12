@@ -16,11 +16,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Bearer-token kill switch on password change (#59): the user's
- * {@code tokenVersion} row is embedded in every access token's {@code tver}
- * claim and checked on each request, so a password change bumps the row and
- * every previously issued token 401s immediately — while the fresh pair
- * (minted at the new version) and other users' tokens keep working.
+ * Bearer-token kill switch on password change (#59) and on logout (#148):
+ * the user's {@code tokenVersion} row is embedded in every access token's
+ * {@code tver} claim and checked on each request, so a password change or
+ * a logout bumps the row and every previously issued token 401s
+ * immediately — while a fresh login (minted at the new version) and other
+ * users' tokens keep working.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -90,6 +91,61 @@ class AccessTokenVersionTest {
     mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + bobAccess))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.username").value("bob"));
+  }
+
+  @Test
+  void preLogoutBearerToken401sAfterLogout() throws Exception {
+    MvcResult registered = register("carol", "carol@example.com");
+    String oldAccess = accessToken(registered);
+
+    // Sanity: the token works before logout.
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + oldAccess))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+
+    // Logout with the still-valid token.
+    mockMvc.perform(post("/api/auth/logout")
+            .header("Authorization", "Bearer " + oldAccess))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+
+    // The pre-logout token is dead on arrival — it must not live out the
+    // rest of its 15-minute TTL now that the refresh family is gone (#148).
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + oldAccess))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+
+    // A fresh login afterwards works (its token is minted at the bumped
+    // version, not the stale one).
+    MvcResult loggedIn = mockMvc.perform(post("/api/auth/login")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"carol\",\"password\":\"s3cret-pass1\"}"))
+        .andExpect(status().isOk())
+        .andReturn();
+    mockMvc.perform(get("/api/auth/me")
+            .header("Authorization", "Bearer " + accessToken(loggedIn)))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void logoutVersionBumpDoesNotTouchOtherUsers() throws Exception {
+    MvcResult carol = register("carol", "carol@example.com");
+    MvcResult dave = register("dave", "dave@example.com");
+    String carolAccess = accessToken(carol);
+    String daveAccess = accessToken(dave);
+
+    mockMvc.perform(post("/api/auth/logout")
+            .header("Authorization", "Bearer " + carolAccess))
+        .andExpect(status().isOk());
+
+    // Carol's old token is dead…
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + carolAccess))
+        .andExpect(status().isUnauthorized());
+
+    // …but Dave's untouched token (his row stayed at version 0) still works.
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + daveAccess))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.username").value("dave"));
   }
 
   private MvcResult register(String username, String email) throws Exception {

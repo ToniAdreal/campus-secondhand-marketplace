@@ -948,11 +948,25 @@ public class AuthService {
   /**
    * Logs out: deletes every refresh token of the user (all their sessions,
    * on all devices), so no presented refresh cookie can mint new access
-   * tokens afterwards. The httpOnly cookie itself is cleared by the
-   * controller with an expired {@code Set-Cookie}.
+   * tokens afterwards, and bumps the row's tokenVersion in the same
+   * transaction so every previously issued Bearer token 401s immediately
+   * (backlog #148) — before this, a token captured before logout stayed
+   * valid for the rest of its 15-minute access TTL even though the user
+   * believed they had signed out everywhere. The bump matches logout's
+   * already-global semantics (revokeAll kills every family, so no live
+   * session is meant to survive) and mirrors password change, password
+   * reset and ADMIN disable, which all bump for the same reason. The
+   * httpOnly cookie itself is cleared by the controller with an expired
+   * {@code Set-Cookie}. A user row that no longer exists skips the bump
+   * (its tokens already fail the filter's row lookup) and revokeAll is a
+   * no-op, preserving the previous behaviour for that edge.
    */
   @Transactional
   public void logout(long userId) {
+    users.findById(userId).ifPresent(user -> {
+      user.setTokenVersion(user.getTokenVersion() + 1);
+      users.save(user);
+    });
     jwt.revokeAll(userId);
   }
 

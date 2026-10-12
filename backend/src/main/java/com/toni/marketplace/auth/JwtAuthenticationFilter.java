@@ -22,8 +22,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       filter chain's entry point answers 401 with the JSON envelope).</li>
  *   <li>Invalid/expired/wrong-type token → also left unauthenticated; same 401.</li>
  *   <li>Stale token → the {@code tver} claim disagrees with the user's
- *       {@code token_version} row (password was changed after the token was
- *       issued) → unauthenticated, same 401. The row lookup costs one extra
+ *       {@code token_version} row (password was changed, reset or the user
+ *       logged out — backlog #148 — after the token was issued) →
+ *       unauthenticated, same 401. The row lookup costs one extra
  *       query per authenticated request; that is the price of server-side
  *       bearer revocation without a token denylist.</li>
  *   <li>Disabled account (backlog #88) → the user's {@code disabled} flag
@@ -61,8 +62,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       String token = header.substring(BEARER_PREFIX.length()).trim();
       try {
         JwtTokenService.AccessClaims claims = jwt.parseAccessToken(token);
-        // Server-side revocation check: a password change bumps the row's
-        // tokenVersion, invalidating every previously issued bearer token.
+        // Server-side revocation check: a password change/reset, an ADMIN
+        // disable or a logout bumps the row's tokenVersion, invalidating
+        // every previously issued bearer token.
         if (isStale(claims)) {
           SecurityContextHolder.clearContext();
         } else {

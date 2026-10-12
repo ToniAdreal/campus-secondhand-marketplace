@@ -331,7 +331,9 @@ public class AuthController {
   /**
    * Logs out the caller (identified by the Bearer access token — the
    * SecurityConfig requires authentication for this route): every refresh
-   * token of the user is revoked server-side, and the httpOnly
+   * token of the user is revoked server-side, the user's tokenVersion is
+   * bumped so every previously issued access token 401s immediately
+   * (backlog #148), and the httpOnly
    * {@code refresh_token} cookie is cleared with an expired
    * {@code Set-Cookie}. Anonymous callers get the JSON 401 envelope.
    */
