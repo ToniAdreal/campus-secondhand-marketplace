@@ -112,6 +112,33 @@ public class ItemService {
   }
 
   /**
+   * "My listings" seller view (backlog #146): the #96 filtered list
+   * projection narrowed to one seller via
+   * {@link ItemRepository#findListViewFilteredBySeller}. The seller id
+   * comes from the caller's JWT (resolved in the controller) — never
+   * from a request parameter — so the view can only ever show the
+   * caller their own rows, including RESERVED/SOLD rows the seller
+   * needs to manage. The MySQL full-text path is deliberately not used
+   * here: the seller view is a management list, not a search surface,
+   * and the projection path keeps it to the same single SELECT per page
+   * (plus the bounded gallery merge) on every database.
+   */
+  @Transactional(readOnly = true)
+  public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 Long sellerId) {
+    if (sellerId == null) {
+      return listItems(pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort);
+    }
+    String canonicalSort = validatePriceRangeAndSort(minPriceCents, maxPriceCents, sort);
+    Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+        sortFor(canonicalSort));
+    Page<ItemDto> page = items.findListViewFilteredBySeller(sellerId, categoryId,
+        normalizeKeyword(keyword), minPriceCents, maxPriceCents, sorted);
+    return new PageImpl<>(withPhotos(page.getContent()), sorted, page.getTotalElements());
+  }
+
+  /**
    * Validates the price range and resolves the sort allowlist, returning
    * the canonical sort name. Shared by both search paths so validation
    * behaves identically on H2 and MySQL.

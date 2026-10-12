@@ -39,6 +39,19 @@ public class ItemController {
    * (default), price-asc, price-desc — anything else is 400, as are
    * negative price bounds (@PositiveOrZero) and min &gt; max (checked in
    * the service), all in the {code,message,data} envelope.
+   *
+   * <p>{@code mine=true} (backlog #146) narrows the list to the
+   * caller's own listings — the "My listings" seller view, including
+   * RESERVED/SOLD rows. The seller id is resolved server-side from the
+   * JWT principal; there is deliberately no {@code sellerId} request
+   * parameter. Trade-off, honestly: a client-supplied sellerId would
+   * only expose what the public projection already shows (seller ids
+   * and statuses are public list fields), but it would invite bulk
+   * scraping of one seller's full inventory in a single query, so the
+   * shortcut stays self-only. {@code mine=true} without a token is
+   * 401 — the security chain already requires authentication for this
+   * route, and the explicit principal check below keeps the contract
+   * if that ever loosens.
    */
   @GetMapping
   public ApiResponse<Page<ItemDto>> list(
@@ -47,9 +60,21 @@ public class ItemController {
       @RequestParam(required = false) @PositiveOrZero Long minPriceCents,
       @RequestParam(required = false) @PositiveOrZero Long maxPriceCents,
       @RequestParam(required = false) String sort,
+      @RequestParam(required = false, defaultValue = "false") boolean mine,
       @PageableDefault(size = 20) Pageable pageable) {
+    Long sellerId = null;
+    if (mine) {
+      Object principal = SecurityContextHolder.getContext().getAuthentication() == null
+          ? null
+          : SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+      if (!(principal instanceof Long callerId)) {
+        throw new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.UNAUTHORIZED, "unauthorized");
+      }
+      sellerId = callerId;
+    }
     return ApiResponse.ok(itemService.listItems(
-        pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort));
+        pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort, sellerId));
   }
 
   @GetMapping("/{id}")

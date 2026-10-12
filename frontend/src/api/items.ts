@@ -86,6 +86,7 @@ export const itemKeys = {
       filters?.sort ?? null,
     ] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
+  mine: (page: number) => [...itemKeys.all, 'mine', page] as const,
 };
 
 export function useItems(
@@ -118,6 +119,27 @@ export function useItems(
               ? { sort: filters.sort }
               : {}),
           },
+        })
+        .then((res) => res.data.data),
+  });
+}
+
+/**
+ * GET /api/items?mine=true — the caller's own listings (backlog #146),
+ * newest first, every status included (RESERVED/SOLD rows are exactly
+ * what a seller needs to find again). The backend resolves the seller
+ * from the token; the client never sends a seller id. Only call this
+ * signed in — anonymous callers get 401, and the page bounces them to
+ * /login before the query matters.
+ */
+export function useMyListings(page = 0) {
+  return useQuery({
+    keepPreviousData: true,
+    queryKey: itemKeys.mine(page),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<Item>>>('/items', {
+          params: { page, size: 20, mine: true },
         })
         .then((res) => res.data.data),
   });

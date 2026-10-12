@@ -93,6 +93,45 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                     Pageable pageable);
 
   /**
+   * Seller-scoped variant of {@link #findListViewFiltered} (backlog #146):
+   * the same constructor projection and the same optional category /
+   * keyword / price predicates, plus {@code i.sellerId = :sellerId}. The
+   * seller id is always resolved server-side from the caller's token (the
+   * {@code mine=true} list shortcut) — it is never a client-supplied
+   * parameter, so this query cannot be pointed at another seller. Unlike
+   * the public list path there is no status predicate anywhere in the
+   * list projections, so the caller's RESERVED and SOLD rows ride along,
+   * which is the point of the seller view.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where i.sellerId = :sellerId "
+          + "and (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')",
+      countQuery = "select count(i) from Item i "
+          + "where i.sellerId = :sellerId "
+          + "and (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')")
+  Page<ItemDto> findListViewFilteredBySeller(@Param("sellerId") Long sellerId,
+                                    @Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
+                                    Pageable pageable);
+
+  /**
    * Detail view: JPQL fetch join pulls the optional category together with
    * the item, so the {@link ItemDto} mapping needs no extra lazy query.
    * The gallery ({@link ItemPhoto}) is fetch-joined in the same SELECT so
