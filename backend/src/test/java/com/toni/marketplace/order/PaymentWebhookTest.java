@@ -24,9 +24,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Mock-PSP webhook receiver (backlog #140): POST
- * /api/payments/webhooks/mock-psp is public but HMAC-authenticated.
- * A valid capture.succeeded for a PAID order records a MATCHED event row;
+ * Mock-PSP webhook receiver (backlog #140, timestamped signatures
+ * #149): POST /api/payments/webhooks/mock-psp is public but
+ * HMAC-authenticated with a Stripe-style header
+ * (t=<unix seconds>,v1=<hmac over "<t>.<raw body>">) that must also be
+ * fresh (default 5-minute tolerance). A valid capture.succeeded for a PAID order records a MATCHED event row;
  * a tampered body or wrong secret is 401 and records nothing; a replayed
  * event id applies once; an unknown capture id (or an order not yet in
  * the matching state) is a MISMATCH answered 200 — the webhook never
@@ -75,7 +77,13 @@ class PaymentWebhookTest {
   }
 
   private String sign(String body) {
-    return PaymentWebhookService.sign(SECRET, body.getBytes(StandardCharsets.UTF_8));
+    return PaymentWebhookService.sign(SECRET, java.time.Instant.now().getEpochSecond(),
+        body.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private String signAt(String body, java.time.Instant at) {
+    return PaymentWebhookService.sign(SECRET, at.getEpochSecond(),
+        body.getBytes(StandardCharsets.UTF_8));
   }
 
   private org.springframework.test.web.servlet.ResultActions deliver(String body, String sig)
@@ -132,7 +140,7 @@ class PaymentWebhookTest {
     String body = "{\"id\":\"evt_wrong\",\"type\":\"capture.succeeded\","
         + "\"captureId\":\"cap_mock_wh_paid\"}";
     String wrongSig = PaymentWebhookService.sign("some-other-secret",
-        body.getBytes(StandardCharsets.UTF_8));
+        java.time.Instant.now().getEpochSecond(), body.getBytes(StandardCharsets.UTF_8));
     deliver(body, wrongSig).andExpect(status().isUnauthorized());
     deliver(body, null).andExpect(status().isUnauthorized());
     assertThat(events.findByEventId("evt_wrong")).isEmpty();
@@ -189,5 +197,36 @@ class PaymentWebhookTest {
     deliver(body, sign(body))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value(400));
+  }
+
+  @Test
+  void staleTimestampIs401EvenWithValidHmacForThatTimestamp() throws Exception {
+    // Backlog #149: signed 10 minutes ago (tolerance is the default
+    // 5 min) with a cryptographically valid HMAC for that timestamp —
+    // freshness rejects it, and nothing is recorded.
+    seedOrder(OrderStatus.PAID, "cap_mock_wh_stale", null);
+    String body = "{\"id\":\"evt_stale\",\"type\":\"capture.succeeded\","
+        + "\"captureId\":\"cap_mock_wh_stale\"}";
+    deliver(body, signAt(body, java.time.Instant.now().minusSeconds(600)))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+    assertThat(events.findByEventId("evt_stale")).isEmpty();
+  }
+
+  @Test
+  void tamperedTimestampIs401AndRecordsNothing() throws Exception {
+    // Backlog #149: the HMAC covers "<t>.<body>", so reusing a fresh
+    // delivery's v1 under a different (still fresh) t cannot verify.
+    seedOrder(OrderStatus.PAID, "cap_mock_wh_tstamper", null);
+    String body = "{\"id\":\"evt_tstamper\",\"type\":\"capture.succeeded\","
+        + "\"captureId\":\"cap_mock_wh_tstamper\"}";
+    String fresh = sign(body);
+    String digest = fresh.substring(fresh.indexOf(",v1=") + 4);
+    String tampered = "t=" + java.time.Instant.now().minusSeconds(30).getEpochSecond()
+        + ",v1=" + digest;
+    deliver(body, tampered)
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+    assertThat(events.findByEventId("evt_tstamper")).isEmpty();
   }
 }

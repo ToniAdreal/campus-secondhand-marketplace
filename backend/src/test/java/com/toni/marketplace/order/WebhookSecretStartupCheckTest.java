@@ -42,11 +42,15 @@ class WebhookSecretStartupCheckTest {
   @Test
   void signatureRoundTripAndTamperDetection() {
     byte[] body = "{\"id\":\"evt_1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    String sig = PaymentWebhookService.sign("s3cret", body);
+    long timestamp = 1_760_000_000L;
+    String sig = PaymentWebhookService.sign("s3cret", timestamp, body);
     WebhookProperties props = new WebhookProperties();
     props.setWebhookSecret("s3cret");
     PaymentWebhookService svc = new PaymentWebhookService(
-        null, null, props, WebhookMetrics.noop(), new com.fasterxml.jackson.databind.ObjectMapper());
+        null, null, props, new WebhookSignatureProperties(),
+        WebhookMetrics.noop(), new com.fasterxml.jackson.databind.ObjectMapper(),
+        java.time.Clock.fixed(java.time.Instant.ofEpochSecond(timestamp),
+            java.time.ZoneOffset.UTC));
     assertThat(svc.signatureValid(sig, body)).isTrue();
     assertThat(svc.signatureValid(sig,
         "{\"id\":\"evt_2\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))).isFalse();

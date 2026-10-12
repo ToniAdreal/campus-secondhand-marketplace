@@ -232,8 +232,10 @@ app:
   payments:
     # Mock-PSP webhook receiver (PaymentWebhookService, backlog #140):
     # POST /api/payments/webhooks/mock-psp is a public route authenticated
-    # by an HMAC-SHA256 signature header (X-Mock-Psp-Signature, hex over
-    # the raw body) instead of a Bearer token. This committed value is a
+    # by a timestamped HMAC-SHA256 signature header (X-Mock-Psp-Signature,
+    # Stripe-style t=<unix seconds>,v1=<hmac over "<t>.<raw body>"> since
+    # backlog #149; freshness window in app.webhooks below) instead of a
+    # Bearer token. This committed value is a
     # dev-only placeholder for local H2 runs; on the `mysql` profile the
     # app REFUSES to boot with it — WebhookSecretStartupCheck fails fast
     # unless APP_PAYMENTS_WEBHOOK_SECRET is set to a random secret shared
@@ -241,6 +243,17 @@ app:
     # (Flyway V28) and never move money state by themselves: they only
     # reconcile against orders already carrying the capture/refund id.
     webhook-secret: ${APP_PAYMENTS_WEBHOOK_SECRET:dev-only-webhook-secret-change-me}
+  webhooks:
+    # Webhook signature freshness window (PaymentWebhookService, backlog
+    # #149): deliveries carry a Stripe-style header
+    # (X-Mock-Psp-Signature: t=<unix seconds>,v1=<HMAC-SHA256 over
+    # "<t>.<raw body>">). A timestamp more than this far from the server
+    # clock — stale or far-future — answers the same 401 as a bad
+    # signature, so a captured delivery expires instead of staying
+    # replayable until the event-id ledger happens to dedupe it. The
+    # pre-#149 bare-hex body-only format is NOT accepted (no dual-format
+    # grace; the mock PSP is this repo's own sender).
+    signature-tolerance: 5m
   jwt:
     # Base64 HS256 key (256 bits). Dev-only placeholder for local H2 runs.
     # On the `mysql` profile (the docker-compose path) the app REFUSES to boot

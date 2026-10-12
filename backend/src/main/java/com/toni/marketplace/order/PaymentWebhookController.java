@@ -13,9 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
  * Mock-PSP webhook receiver (backlog #140): POST
  * /api/payments/webhooks/mock-psp. Public in {@code SecurityConfig} (no
  * Bearer token — a PSP callback holds no user session) and authenticated
- * instead by the HMAC-SHA256 signature header over the raw body, verified
- * in {@link PaymentWebhookService} before anything is parsed or recorded.
- * A missing or invalid signature answers the JSON 401 envelope; every
+ * instead by the timestamped HMAC-SHA256 signature header (backlog #149:
+ * {@code t=<unix seconds>,v1=<hmac over "<t>.<raw body>">}, freshness
+ * window {@code app.webhooks.signature-tolerance}), verified in
+ * {@link PaymentWebhookService} before anything is parsed or recorded.
+ * A missing, malformed, stale or invalid signature answers the JSON 401 envelope; every
  * accepted delivery answers 200 in the envelope — matched, mismatched
  * (a webhook never moves money state by itself) and replayed alike, so
  * the PSP stops retrying.
