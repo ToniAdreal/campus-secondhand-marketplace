@@ -21,6 +21,7 @@ import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import com.toni.marketplace.common.InvalidTotpCodeException;
 import com.toni.marketplace.common.PasswordReuseException;
+import io.micrometer.core.instrument.Timer;
 
 /**
  * Registration / login / refresh flows. HTTP concerns (cookies, status codes)
@@ -326,6 +327,23 @@ public class AuthService {
    */
   @Transactional
   public LoginResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
+    // Backlog #153: exactly one auth.login.duration sample per call —
+    // success when the call returns (pair or TOTP challenge), failure
+    // when it throws. The sample stops inside this transaction,
+    // mirroring the counters, which also increment in-transaction.
+    Timer.Sample sample = metrics().startLoginTimer();
+    try {
+      LoginResult result = loginAttempt(usernameOrEmail, rawPassword, meta);
+      metrics().stopLoginTimer(sample, true);
+      return result;
+    } catch (RuntimeException e) {
+      metrics().stopLoginTimer(sample, false);
+      throw e;
+    }
+  }
+
+  private LoginResult loginAttempt(String usernameOrEmail, String rawPassword,
+                                   SessionMeta meta) {
     String identifier = canonical(usernameOrEmail);
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
@@ -877,6 +895,20 @@ public class AuthService {
    */
   @Transactional
   public AuthResult refresh(String refreshToken, SessionMeta meta) {
+    // Backlog #153: exactly one auth.refresh.duration sample per call —
+    // success on a completed rotation, failure when rotation throws.
+    Timer.Sample sample = metrics().startRefreshTimer();
+    try {
+      AuthResult result = refreshAttempt(refreshToken, meta);
+      metrics().stopRefreshTimer(sample, true);
+      return result;
+    } catch (RuntimeException e) {
+      metrics().stopRefreshTimer(sample, false);
+      throw e;
+    }
+  }
+
+  private AuthResult refreshAttempt(String refreshToken, SessionMeta meta) {
     JwtTokenService.TokenPair pair = jwt.rotateRefreshToken(refreshToken, meta);
     // Rotation re-reads the user for role changes; resolve it for the response.
     // (Only the stored hash is known here, so re-derive the user from the new

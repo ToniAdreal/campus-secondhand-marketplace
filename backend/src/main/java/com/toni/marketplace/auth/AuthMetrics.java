@@ -2,6 +2,7 @@ package com.toni.marketplace.auth;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.stereotype.Component;
 
@@ -30,23 +31,47 @@ import org.springframework.stereotype.Component;
  *       new password) do not count.</li>
  * </ul>
  *
+ * <p>Latency timers (backlog #153) live here too, so the counters and
+ * the timers cannot drift apart:
+ * <ul>
+ *   <li>{@code auth.login.duration} — one sample per {@code login} call:
+ *       {@code outcome=success} when the call returns normally (a token
+ *       pair, or a TOTP challenge — the same boundary as
+ *       {@code auth.login.success}), {@code outcome=failure} when it
+ *       throws. Login has no idempotent-replay path, so every call
+ *       samples exactly once.</li>
+ *   <li>{@code auth.refresh.duration} — one sample per {@code refresh}
+ *       call, success on a completed rotation, failure when rotation
+ *       throws (unknown / replayed-after-grace token). A grace-window
+ *       replay is a completed rotation here, not a no-op replay, so it
+ *       samples as success.</li>
+ * </ul>
+ *
  * <p>The event is encoded in the counter name itself — deliberately no
  * tags carrying usernames, ids, or IPs: tag values would be both a
- * cardinality hazard and a PII leak into the metrics store. Honest
- * scope: these counters exist and are scrapeable; alerting on them
- * does not exist (see the README observability row).
+ * cardinality hazard and a PII leak into the metrics store. The timers
+ * carry exactly one tag, {@code outcome} ({@code success} /
+ * {@code failure}), for the same reason. Honest scope: these meters
+ * exist and are scrapeable; alerting on them does not exist (see the
+ * README observability row).
  */
 @Component
 public class AuthMetrics {
 
+  private final MeterRegistry registry;
   private final Counter loginSuccess;
   private final Counter loginFailure;
   private final Counter lockoutTriggered;
   private final Counter refreshTheftDetected;
   private final Counter passwordChanged;
+  private final Timer loginSuccessTimer;
+  private final Timer loginFailureTimer;
+  private final Timer refreshSuccessTimer;
+  private final Timer refreshFailureTimer;
 
   public AuthMetrics(MeterRegistry registry) {
     MeterRegistry reg = registry != null ? registry : new SimpleMeterRegistry();
+    this.registry = reg;
     this.loginSuccess = Counter.builder("auth.login.success")
         .description("Logins whose password verified (TOTP challenge issuance included)")
         .register(reg);
@@ -61,6 +86,22 @@ public class AuthMetrics {
         .register(reg);
     this.passwordChanged = Counter.builder("auth.password.changed")
         .description("Completed password changes")
+        .register(reg);
+    this.loginSuccessTimer = Timer.builder("auth.login.duration")
+        .tag("outcome", "success")
+        .description("Login call latency, successful calls")
+        .register(reg);
+    this.loginFailureTimer = Timer.builder("auth.login.duration")
+        .tag("outcome", "failure")
+        .description("Login call latency, rejected calls")
+        .register(reg);
+    this.refreshSuccessTimer = Timer.builder("auth.refresh.duration")
+        .tag("outcome", "success")
+        .description("Refresh-rotation call latency, successful calls")
+        .register(reg);
+    this.refreshFailureTimer = Timer.builder("auth.refresh.duration")
+        .tag("outcome", "failure")
+        .description("Refresh-rotation call latency, rejected calls")
         .register(reg);
   }
 
@@ -91,5 +132,29 @@ public class AuthMetrics {
 
   public void passwordChanged() {
     passwordChanged.increment();
+  }
+
+  /** Starts a login timer sample; stop it exactly once via {@link #stopLoginTimer}. */
+  public Timer.Sample startLoginTimer() {
+    return Timer.start(registry);
+  }
+
+  /** Stops a login sample on the success or failure timer, per {@code success}. */
+  public void stopLoginTimer(Timer.Sample sample, boolean success) {
+    if (sample != null) {
+      sample.stop(success ? loginSuccessTimer : loginFailureTimer);
+    }
+  }
+
+  /** Starts a refresh timer sample; stop it exactly once via {@link #stopRefreshTimer}. */
+  public Timer.Sample startRefreshTimer() {
+    return Timer.start(registry);
+  }
+
+  /** Stops a refresh sample on the success or failure timer, per {@code success}. */
+  public void stopRefreshTimer(Timer.Sample sample, boolean success) {
+    if (sample != null) {
+      sample.stop(success ? refreshSuccessTimer : refreshFailureTimer);
+    }
   }
 }

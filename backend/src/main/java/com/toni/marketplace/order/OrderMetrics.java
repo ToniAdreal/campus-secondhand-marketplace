@@ -2,6 +2,7 @@ package com.toni.marketplace.order;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.stereotype.Component;
 
@@ -40,19 +41,47 @@ import org.springframework.stereotype.Component;
  *       returns before any capture is attempted).</li>
  * </ul>
  *
+ * <p>Latency timers (backlog #153) live here too, so the counters and
+ * the timers cannot drift apart:
+ * <ul>
+ *   <li>{@code orders.create.duration} — timed from the moment a fresh
+ *       creation is attempted in {@link OrderService#createOrder} (the
+ *       same point the {@code orders.created} counter keys on):
+ *       {@code outcome=success} for a fresh creation, {@code
+ *       outcome=failure} when the attempt throws (unknown item, item
+ *       unavailable, a lost race mapped to 409, …).</li>
+ *   <li>{@code orders.pay.duration} — timed from the moment a capture
+ *       is attempted in {@link OrderService#pay}: {@code
+ *       outcome=success} for a fresh PENDING → PAID transition,
+ *       {@code outcome=failure} for a declined capture or a 409 race
+ *       loss inside the attempt.</li>
+ * </ul>
+ * Idempotent replays are treated exactly as the counters treat them —
+ * they record NO timer sample: an Idempotency-Key replay returns the
+ * original order before any creation is attempted, and a re-pay of an
+ * already-PAID order returns before any capture is attempted.
+ * Pre-attempt rejections likewise record no sample (pay: unknown
+ * order 404, non-buyer 403, terminal-state 422; create: an invalid
+ * Idempotency-Key 400) — the timers measure the hot-path work, not the
+ * validation rejects in front of it, mirroring how no transition
+ * counter moves on those paths either.
+ *
  * <p>Counters increment at exactly the transition points in
  * {@link OrderService}, after the deliberate in-transaction flush that
  * surfaces a lost {@code @Version} race as 409 — so a transition that
  * loses a race (or rolls back) is never counted. The event is encoded
  * in the counter name itself — deliberately no tags carrying
  * usernames, order ids, or IPs: tag values would be both a cardinality
- * hazard and a PII leak into the metrics store. Honest scope: these
- * counters exist and are scrapeable; alerting on them does not exist
- * (see the README observability row).
+ * hazard and a PII leak into the metrics store. The timers carry
+ * exactly one tag, {@code outcome} ({@code success} / {@code
+ * failure}), for the same reason. Honest scope: these meters exist
+ * and are scrapeable; alerting on them does not exist (see the README
+ * observability row).
  */
 @Component
 public class OrderMetrics {
 
+  private final MeterRegistry registry;
   private final Counter created;
   private final Counter paid;
   private final Counter cancelled;
@@ -60,9 +89,14 @@ public class OrderMetrics {
   private final Counter refunded;
   private final Counter expired;
   private final Counter paymentsDeclined;
+  private final Timer createSuccessTimer;
+  private final Timer createFailureTimer;
+  private final Timer paySuccessTimer;
+  private final Timer payFailureTimer;
 
   public OrderMetrics(MeterRegistry registry) {
     MeterRegistry reg = registry != null ? registry : new SimpleMeterRegistry();
+    this.registry = reg;
     this.created = Counter.builder("orders.created")
         .description("Fresh orders created (Idempotency-Key replays excluded)")
         .register(reg);
@@ -83,6 +117,22 @@ public class OrderMetrics {
         .register(reg);
     this.paymentsDeclined = Counter.builder("payments.declined")
         .description("Mock PSP capture declines (order stays PENDING)")
+        .register(reg);
+    this.createSuccessTimer = Timer.builder("orders.create.duration")
+        .tag("outcome", "success")
+        .description("Order-creation attempt latency, fresh creations")
+        .register(reg);
+    this.createFailureTimer = Timer.builder("orders.create.duration")
+        .tag("outcome", "failure")
+        .description("Order-creation attempt latency, failed attempts")
+        .register(reg);
+    this.paySuccessTimer = Timer.builder("orders.pay.duration")
+        .tag("outcome", "success")
+        .description("Order-pay capture attempt latency, fresh payments")
+        .register(reg);
+    this.payFailureTimer = Timer.builder("orders.pay.duration")
+        .tag("outcome", "failure")
+        .description("Order-pay capture attempt latency, declined or raced attempts")
         .register(reg);
   }
 
@@ -121,5 +171,29 @@ public class OrderMetrics {
 
   public void paymentsDeclined() {
     paymentsDeclined.increment();
+  }
+
+  /** Starts a create timer sample; stop it exactly once via {@link #stopCreateTimer}. */
+  public Timer.Sample startCreateTimer() {
+    return Timer.start(registry);
+  }
+
+  /** Stops a create sample on the success or failure timer, per {@code success}. */
+  public void stopCreateTimer(Timer.Sample sample, boolean success) {
+    if (sample != null) {
+      sample.stop(success ? createSuccessTimer : createFailureTimer);
+    }
+  }
+
+  /** Starts a pay timer sample; stop it exactly once via {@link #stopPayTimer}. */
+  public Timer.Sample startPayTimer() {
+    return Timer.start(registry);
+  }
+
+  /** Stops a pay sample on the success or failure timer, per {@code success}. */
+  public void stopPayTimer(Timer.Sample sample, boolean success) {
+    if (sample != null) {
+      sample.stop(success ? paySuccessTimer : payFailureTimer);
+    }
   }
 }

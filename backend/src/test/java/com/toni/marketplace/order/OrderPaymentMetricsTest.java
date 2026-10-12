@@ -18,6 +18,7 @@ import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -95,6 +96,12 @@ class OrderPaymentMetricsTest {
   private double count(String name) {
     Counter counter = registry.find(name).counter();
     return counter == null ? 0.0 : counter.count();
+  }
+
+  /** Current sample count for a timer outcome, 0 when never recorded. */
+  private long timerCount(String name, String outcome) {
+    Timer timer = registry.find(name).tag("outcome", outcome).timer();
+    return timer == null ? 0 : timer.count();
   }
 
   private User newUser(String role) {
@@ -254,6 +261,83 @@ class OrderPaymentMetricsTest {
     payExpectingDecline(buyer, orderId);
 
     assertThat(count("payments.declined")).isEqualTo(declinedBefore + 2);
+  }
+
+  @Test
+  void createTimer_freshSamplesOnce_replaySamplesNothing_failureSamplesOnce()
+      throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    Item item = newItem(seller);
+    String key = "key-" + UUID.randomUUID();
+    long successBefore = timerCount("orders.create.duration", "success");
+    long failureBefore = timerCount("orders.create.duration", "failure");
+
+    long orderId = createOrder(buyer, item, key);
+    assertThat(timerCount("orders.create.duration", "success"))
+        .isEqualTo(successBefore + 1);
+
+    // Idempotency-Key replay: no sample, exactly as orders.created
+    // does not move on a replay (#153, mirroring #93).
+    assertThat(createOrder(buyer, item, key)).isEqualTo(orderId);
+    assertThat(timerCount("orders.create.duration", "success"))
+        .isEqualTo(successBefore + 1);
+    assertThat(timerCount("orders.create.duration", "failure"))
+        .isEqualTo(failureBefore);
+
+    // A fresh attempt that fails inside creation (unknown item → 404)
+    // records exactly one failure sample.
+    mockMvc.perform(post("/api/orders")
+            .header("Authorization", "Bearer " + token(buyer))
+            .header("Idempotency-Key", "key-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"itemId\":999999999}"))
+        .andExpect(status().isNotFound());
+    assertThat(timerCount("orders.create.duration", "failure"))
+        .isEqualTo(failureBefore + 1);
+    assertThat(timerCount("orders.create.duration", "success"))
+        .isEqualTo(successBefore + 1);
+  }
+
+  @Test
+  void payTimer_freshSamplesOnce_replaySamplesNothing_declineSamplesFailure()
+      throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    long orderId = createOrder(buyer, newItem(seller));
+    long successBefore = timerCount("orders.pay.duration", "success");
+    long failureBefore = timerCount("orders.pay.duration", "failure");
+
+    act(buyer, orderId, "pay");
+    assertThat(timerCount("orders.pay.duration", "success"))
+        .isEqualTo(successBefore + 1);
+
+    // Re-pay of an already-PAID order: no capture is attempted, so no
+    // sample — exactly as orders.paid does not move (#153).
+    act(buyer, orderId, "pay");
+    assertThat(timerCount("orders.pay.duration", "success"))
+        .isEqualTo(successBefore + 1);
+    assertThat(timerCount("orders.pay.duration", "failure"))
+        .isEqualTo(failureBefore);
+
+    // A declined capture is an attempted capture that failed: one
+    // failure sample.
+    long declinedId = createOrder(buyer, newItem(seller));
+    payExpectingDecline(buyer, declinedId);
+    assertThat(timerCount("orders.pay.duration", "failure"))
+        .isEqualTo(failureBefore + 1);
+    assertThat(timerCount("orders.pay.duration", "success"))
+        .isEqualTo(successBefore + 1);
+
+    // Pre-attempt rejections record no sample either (documented in
+    // OrderMetrics): paying an unknown order 404s before any capture.
+    mockMvc.perform(post("/api/orders/{id}/pay", 999999999L)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isNotFound());
+    assertThat(timerCount("orders.pay.duration", "failure"))
+        .isEqualTo(failureBefore + 1);
+    assertThat(timerCount("orders.pay.duration", "success"))
+        .isEqualTo(successBefore + 1);
   }
 
   @Test

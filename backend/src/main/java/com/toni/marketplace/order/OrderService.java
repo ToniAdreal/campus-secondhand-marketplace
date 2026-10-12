@@ -7,6 +7,7 @@ import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.YearMonth;
@@ -121,11 +122,17 @@ public class OrderService {
     }
 
     if (reservation instanceof IdempotencyKeyService.Reservation.Replayed replayed) {
+      // Backlog #153: a replay records no timer sample, exactly as it
+      // moves no orders.created counter (#93) — see OrderMetrics.
       return getOrder(replayed.record().getOrderId());
     }
     IdempotencyKey record =
         ((IdempotencyKeyService.Reservation.Created) reservation).record();
 
+    // Backlog #153: the create timer starts here, at the fresh-creation
+    // attempt — one sample, success or failure, per attempt.
+    Timer.Sample sample = metrics().startCreateTimer();
+    boolean timerStopped = false;
     try {
       // Runs in its own transaction on the OrderCreationService proxy (see
       // its javadoc): the listing flip and the order insert commit together.
@@ -133,9 +140,14 @@ public class OrderService {
       // Count transitions, not calls (#93): only a fresh creation lands
       // here — a replayed key returned above, a failed creation throws.
       metrics().created();
+      metrics().stopCreateTimer(sample, true);
+      timerStopped = true;
       idempotency.complete(record.getId(), created.id());
       return created;
     } catch (DataIntegrityViolationException e) {
+      if (!timerStopped) {
+        metrics().stopCreateTimer(sample, false);
+      }
       // Lost the uq_order_active_item race: a concurrent request created the
       // item's active order first. The creation transaction rolled back; the
       // client retries with a NEW key (this one is burned as failed).
@@ -143,6 +155,9 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "item already has an active order");
     } catch (ObjectOptimisticLockingFailureException e) {
+      if (!timerStopped) {
+        metrics().stopCreateTimer(sample, false);
+      }
       // Lost the item-status race: a concurrent request flipped the item to
       // RESERVED first, bumping its @Version, so this request's status flip
       // failed fast on the stale version. Same outcome as the constraint
@@ -151,6 +166,9 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "item already has an active order");
     } catch (RuntimeException e) {
+      if (!timerStopped) {
+        metrics().stopCreateTimer(sample, false);
+      }
       idempotency.fail(record.getId());
       throw e;
     }
@@ -549,6 +567,10 @@ public class OrderService {
           "only the buyer can pay for this order");
     }
     if (order.getStatus() == OrderStatus.PAID) {
+      // Backlog #153: an idempotent re-pay records no timer sample,
+      // exactly as it moves no orders.paid counter — see OrderMetrics.
+      // The 404/403/422 rejections above and here likewise record no
+      // sample: the pay timer starts at the capture attempt below.
       return OrderDto.from(order);
     }
     if (order.getStatus() == OrderStatus.COMPLETED
@@ -556,6 +578,9 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "order is " + order.getStatus() + ", payment is not allowed");
     }
+    // Backlog #153: one orders.pay.duration sample per capture attempt.
+    Timer.Sample sample = metrics().startPayTimer();
+    boolean timerStopped = false;
     try {
       // Backlog #114: persist the PSP capture reference in the same
       // transaction as the transition, so a paid order always names the
@@ -587,6 +612,8 @@ public class OrderService {
       // only its own key, and forgetting is keyed/idempotent.
       payments.forgetCapture(captureKey);
       metrics().paid();
+      metrics().stopPayTimer(sample, true);
+      timerStopped = true;
       // Backlog #122: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, the
       // idempotent re-pay above returns before this point, and a declined
@@ -594,6 +621,9 @@ public class OrderService {
       audit().record(buyerId, AuditAction.ORDER_PAID, AuditTargetType.ORDER, orderId);
       return dto;
     } catch (PaymentDeclinedException e) {
+      if (!timerStopped) {
+        metrics().stopPayTimer(sample, false);
+      }
       // Backlog #115: count the decline at exactly this point. The
       // exception rolls the transaction back (order stays PENDING), but
       // a Micrometer counter is not transactional — the increment
@@ -603,8 +633,18 @@ public class OrderService {
       metrics().paymentsDeclined();
       throw e;
     } catch (ObjectOptimisticLockingFailureException e) {
+      if (!timerStopped) {
+        metrics().stopPayTimer(sample, false);
+      }
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
+    } catch (RuntimeException e) {
+      // Any other failure inside the capture attempt still records its
+      // one failure sample (#153) before propagating unchanged.
+      if (!timerStopped) {
+        metrics().stopPayTimer(sample, false);
+      }
+      throw e;
     }
   }
 

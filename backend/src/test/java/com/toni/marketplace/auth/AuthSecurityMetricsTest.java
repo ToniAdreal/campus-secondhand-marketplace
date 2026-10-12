@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.servlet.http.Cookie;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -70,6 +72,20 @@ class AuthSecurityMetricsTest {
   private double count(String name) {
     Counter counter = registry.find(name).counter();
     return counter == null ? 0.0 : counter.count();
+  }
+
+  /** Current sample count for a timer outcome, 0 when never recorded. */
+  private long timerCount(String name, String outcome) {
+    Timer timer = registry.find(name).tag("outcome", outcome).timer();
+    return timer == null ? 0 : timer.count();
+  }
+
+  /** Distinct client IPs keep the per-IP rate-limit buckets out of these tests. */
+  private static RequestPostProcessor fromIp(String ip) {
+    return request -> {
+      request.setRemoteAddr(ip);
+      return request;
+    };
   }
 
   private void saveUser(String username) {
@@ -171,5 +187,70 @@ class AuthSecurityMetricsTest {
     mockMvc.perform(post("/api/auth/refresh").cookie(first))
         .andExpect(status().isUnauthorized());
     assertThat(count("auth.refresh.theft_detected")).isEqualTo(before + 1);
+  }
+
+  @Test
+  void loginTimerRecordsExactlyOneSamplePerCall() throws Exception {
+    saveUser("metrics-login-timer");
+    long successBefore = timerCount("auth.login.duration", "success");
+    long failureBefore = timerCount("auth.login.duration", "failure");
+
+    mockMvc.perform(post("/api/auth/login")
+            .with(fromIp("10.153.0.1"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"metrics-login-timer\",\"password\":\""
+                + PASSWORD + "\"}"))
+        .andExpect(status().isOk());
+    mockMvc.perform(post("/api/auth/login")
+            .with(fromIp("10.153.0.2"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"metrics-login-timer\""
+                + ",\"password\":\"wrong-password\"}"))
+        .andExpect(status().isUnauthorized());
+    // Unknown identifiers are failures too (identical 401, #60).
+    mockMvc.perform(post("/api/auth/login")
+            .with(fromIp("10.153.0.3"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"no-such-user-timer\""
+                + ",\"password\":\"wrong-password\"}"))
+        .andExpect(status().isUnauthorized());
+
+    assertThat(timerCount("auth.login.duration", "success"))
+        .isEqualTo(successBefore + 1);
+    assertThat(timerCount("auth.login.duration", "failure"))
+        .isEqualTo(failureBefore + 2);
+  }
+
+  @Test
+  void refreshTimerRecordsExactlyOneSamplePerCall() throws Exception {
+    saveUser("metrics-refresh-timer");
+    MvcResult login = mockMvc.perform(post("/api/auth/login")
+            .with(fromIp("10.153.1.1"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"usernameOrEmail\":\"metrics-refresh-timer\",\"password\":\""
+                + PASSWORD + "\"}"))
+        .andExpect(status().isOk())
+        .andReturn();
+    Cookie first = login.getResponse().getCookie("refresh_token");
+    assertThat(first).isNotNull();
+    long successBefore = timerCount("auth.refresh.duration", "success");
+    long failureBefore = timerCount("auth.refresh.duration", "failure");
+
+    mockMvc.perform(post("/api/auth/refresh")
+            .with(fromIp("10.153.1.2"))
+            .cookie(first))
+        .andExpect(status().isOk());
+    // A forged token reaches the rotation seam and is rejected: one
+    // failure sample (a missing cookie is refused before the seam and
+    // is deliberately not asserted here).
+    mockMvc.perform(post("/api/auth/refresh")
+            .with(fromIp("10.153.1.3"))
+            .cookie(new Cookie("refresh_token", "forged.token.value")))
+        .andExpect(status().isUnauthorized());
+
+    assertThat(timerCount("auth.refresh.duration", "success"))
+        .isEqualTo(successBefore + 1);
+    assertThat(timerCount("auth.refresh.duration", "failure"))
+        .isEqualTo(failureBefore + 1);
   }
 }
