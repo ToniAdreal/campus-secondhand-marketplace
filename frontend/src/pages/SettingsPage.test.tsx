@@ -267,6 +267,63 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Turn off two-factor authentication' })).toBeNull();
   });
 
+  it('posts the change-email payload and shows the signed-out-everywhere note on success (backlog #150)', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New email address'), {
+      target: { value: 'toni.new@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm with current password'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change email' }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-change', {
+      currentPassword: 'old-secret',
+      newEmail: 'toni.new@example.com',
+    });
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Email changed to toni.new@example.com.');
+    expect(status.textContent).toContain('signed out everywhere');
+    // the backend killed this session too: the in-memory credential is gone
+    expect(getAccessToken()).toBeNull();
+    // the form is replaced — no second change can ride the dead session
+    expect(screen.queryByRole('button', { name: 'Change email' })).toBeNull();
+  });
+
+  it('maps a change-email 401 to "Current password is incorrect." (backlog #150)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New email address'), {
+      target: { value: 'toni.new@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm with current password'), {
+      target: { value: 'wrong-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change email' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Current password is incorrect.');
+    // nothing changed: the old credential is still in place
+    expect(getAccessToken()).toBe('old-credential');
+  });
+
+  it('maps a change-email 409 to the backend message verbatim (backlog #150)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(409, 'email is already registered'));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New email address'), {
+      target: { value: 'taken@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm with current password'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change email' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('email is already registered');
+  });
+
   it('bounces anonymous users to /login without firing any request', () => {
     useAuthStore.setState({ user: null });
     renderAt('/settings');

@@ -4,6 +4,7 @@ import {
   login,
   me,
   changePassword,
+  changeEmail,
   listSessions,
   revokeSession,
   requestPasswordReset,
@@ -148,6 +149,44 @@ describe('changePassword', () => {
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(changePassword({ currentPassword: 'old', newPassword: 'x' })).rejects.toBe(failure);
+  });
+});
+
+describe('changeEmail', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts to /auth/email-change and resolves with no credential (every session died)', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+
+    const result = await changeEmail({
+      currentPassword: 'old',
+      newEmail: 'new@example.com',
+    });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-change', {
+      currentPassword: 'old',
+      newEmail: 'new@example.com',
+    });
+    // No fresh pair is returned — the account must verify the new address
+    // and sign in again, so the function resolves void.
+    expect(result).toBeUndefined();
+  });
+
+  it('propagates the envelope error (401 wrong current password, 409 taken address)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: { code: 409, message: 'email is already registered', data: null },
+      },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(
+      changeEmail({ currentPassword: 'old', newEmail: 'taken@example.com' }),
+    ).rejects.toBe(failure);
   });
 });
 

@@ -31,6 +31,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * <ul>
  *   <li>{@code /api/auth/**} is public (register/login/refresh land here),
  *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password},
+ *       {@code POST /api/auth/email-change},
  *       {@code GET /api/auth/me}, {@code GET /api/auth/sessions} and
  *       {@code DELETE /api/auth/sessions/**},
  *       which need a Bearer access token because they act on the caller's own
@@ -180,6 +181,7 @@ public class SecurityConfig {
             // unauthenticated second-factor exchange for the 202 challenge.
             .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/email-change").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/sessions").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()

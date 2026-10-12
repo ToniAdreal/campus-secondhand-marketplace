@@ -13,6 +13,16 @@ public enum AuditAction {
   /** The account holder changed their password ({@code AuthService.changePassword}). */
   PASSWORD_CHANGED,
   /**
+   * The account holder changed their account email address
+   * ({@code AuthService.changeEmail}, backlog #150). Actor and target are
+   * both the account holder, mirroring {@link #PASSWORD_CHANGED}. The
+   * audit table deliberately carries no payload column (see AuditLog), so
+   * the old/new addresses are NOT stored here — the row is evidence that
+   * the change happened, and the addresses themselves remain only on the
+   * user row's history-free current value.
+   */
+  EMAIL_CHANGED,
+  /**
    * A password reset was completed via the emailed-token flow
    * ({@code PasswordResetService.confirmReset}, backlog #110). Actor and
    * target are both the account whose password was reset: the caller is a

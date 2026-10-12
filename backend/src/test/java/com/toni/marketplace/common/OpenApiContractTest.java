@@ -61,6 +61,7 @@ class OpenApiContractTest {
       "/api/auth/2fa/recovery-codes/count",
       "/api/auth/2fa/recovery-codes/regenerate",
       "/api/auth/2fa/setup",
+      "/api/auth/email-change",
       "/api/auth/email-verification/confirm",
       "/api/auth/email-verification/resend",
       "/api/auth/login",
@@ -205,5 +206,8 @@ class OpenApiContractTest {
     // it pins the same not-enabled 422 and lockout 423.
     assertThat(responseCodes(docs, "/api/auth/2fa/recovery-codes/regenerate", "post"))
         .contains("422", "423");
+    // Email change (#150) pins its wrong-password 401 and taken-address 409.
+    assertThat(responseCodes(docs, "/api/auth/email-change", "post"))
+        .contains("400", "401", "409");
   }
 }

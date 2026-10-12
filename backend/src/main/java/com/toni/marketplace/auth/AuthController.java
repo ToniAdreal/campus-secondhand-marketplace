@@ -296,6 +296,27 @@ public class AuthController {
   }
 
   /**
+   * Changes the caller's account email address (backlog #150,
+   * authenticated — SecurityConfig). The current password proves
+   * possession (wrong → the identical 401); a taken address — or the
+   * caller's own current one — is a 409. On success every session is
+   * revoked and the account is unverified until the NEW address is
+   * confirmed through the #138 verification flow, so no session is
+   * issued here: the answer is the plain 200 envelope, and the
+   * httpOnly refresh cookie is cleared exactly like logout's.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "email changed; every session revoked and the new address must be verified before the next login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — malformed new address (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong current password — identical to a bad login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "new address already registered, or equal to the current address (envelope)")})
+  @PostMapping("/email-change")
+  public ResponseEntity<ApiResponse<Void>> changeEmail(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody EmailChangeRequest request) {
+    auth.changeEmail(userId, request.currentPassword(), request.newEmail());
+    return ResponseEntity.status(HttpStatus.OK)
+        .header(HttpHeaders.SET_COOKIE, clearedRefreshCookie().toString())
+        .body(ApiResponse.ok(null));
+  }
+
+  /**
    * Per-session management (backlog #62): lists the caller's live
    * refresh-token sessions — one entry per device/browser that holds a
    * valid refresh token — with the device label (User-Agent) and IP

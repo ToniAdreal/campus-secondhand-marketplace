@@ -2,6 +2,7 @@ import axios from 'axios';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
+  changeEmail,
   changePassword,
   disableTotp,
   enableTotp,
@@ -9,6 +10,7 @@ import {
   setupTotp,
   type TotpSetup,
 } from '../api/auth';
+import { setAccessToken } from '../api/client';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -44,6 +46,23 @@ function describeDisableTotpError(err: unknown): string {
   return 'Turning off two-factor authentication failed';
 }
 
+/**
+ * Maps a failed change-email call to UI copy (backlog #150). A wrong
+ * current password fails with the same envelope 401 as everywhere else
+ * (no oracle), phrased the same way as the password form; a taken (or
+ * unchanged) address fails 409 and every other failure shows the
+ * backend's envelope message verbatim.
+ */
+function describeEmailChangeError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.response?.status === 401) return 'Current password is incorrect.';
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Email change failed';
+}
+
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
 function describeTotpError(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -72,6 +91,17 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pending, setPending] = useState(false);
+
+  // Email change (backlog #150). Success is terminal for this tab: the
+  // backend revoked every session (this one included) and the account is
+  // unverified until the new address is confirmed, so the form is
+  // replaced by the done panel and the dead in-memory credential is
+  // dropped — nothing on this page can act as the old session any more.
+  const [newEmail, setNewEmail] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailDone, setEmailDone] = useState<string | null>(null);
+  const [emailPending, setEmailPending] = useState(false);
 
   // Two-factor enrollment (backlog #100). The recovery codes live ONLY in
   // this state, straight from the enable response — they are shown once
@@ -148,6 +178,29 @@ export default function SettingsPage() {
       setError(describePasswordChangeError(err));
     } finally {
       setPending(false);
+    }
+  }
+
+  async function onChangeEmail(e: FormEvent) {
+    e.preventDefault();
+    if (newEmail.trim() === '' || emailPassword === '') {
+      setEmailError('Enter the new email address and your current password.');
+      return;
+    }
+    setEmailPending(true);
+    setEmailError(null);
+    try {
+      const target = newEmail.trim();
+      await changeEmail({ currentPassword: emailPassword, newEmail: target });
+      // The server killed every session and this tab's credential with
+      // them; drop it locally too so no later call presents a dead token.
+      setAccessToken(null);
+      setEmailPassword('');
+      setEmailDone(target);
+    } catch (err) {
+      setEmailError(describeEmailChangeError(err));
+    } finally {
+      setEmailPending(false);
     }
   }
 
@@ -282,6 +335,64 @@ export default function SettingsPage() {
           {pending ? 'Changing…' : 'Change password'}
         </button>
       </form>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Email address</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Currently {user.email}. Changing it signs out every device and the new
+          address must be verified before you can sign in again.
+        </p>
+        {emailDone ? (
+          <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+            Email changed to {emailDone}. You have been signed out everywhere —
+            open the verification link sent to the new address, then sign in with
+            it.
+          </p>
+        ) : (
+          <form onSubmit={onChangeEmail} className="space-y-3">
+            {emailError && (
+              <p role="alert" className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+                {emailError}
+              </p>
+            )}
+            <div>
+              <label htmlFor="settings-new-email" className="mb-1 block text-sm font-medium">
+                New email address
+              </label>
+              <input
+                id="settings-new-email"
+                type="email"
+                autoComplete="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="settings-email-password"
+                className="mb-1 block text-sm font-medium"
+              >
+                Confirm with current password
+              </label>
+              <input
+                id="settings-email-password"
+                type="password"
+                autoComplete="current-password"
+                value={emailPassword}
+                onChange={(e) => setEmailPassword(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={emailPending}
+              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {emailPending ? 'Changing…' : 'Change email'}
+            </button>
+          </form>
+        )}
+      </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Two-factor authentication</h2>
         <p className="mb-3 text-sm text-neutral-500">

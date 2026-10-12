@@ -936,6 +936,63 @@ public class AuthService {
   }
 
   /**
+   * Changes the account's email address (backlog #150). Before this, no
+   * change-email path existed anywhere: a user whose mailbox changed had
+   * no supported way to move their account.
+   *
+   * <p>Proof discipline mirrors {@link #changePassword}: the current
+   * password is required and a wrong one produces the identical 401 as a
+   * bad login, so no oracle leaks. The new address is canonicalized
+   * exactly like registration and uniqueness-checked against every OTHER
+   * account (taken → 409, the register envelope); re-submitting the
+   * account's own current address is likewise a 409 — it is not a change.
+   *
+   * <p>On success, inside this one transaction: the address flips, the
+   * account goes back to UNVERIFIED while the verification gate is on
+   * (#138) and a fresh single-use verification token for the NEW address
+   * is issued through {@link EmailVerificationService} (the old address
+   * receives nothing further), every refresh family is revoked and
+   * tokenVersion is bumped — so every pre-change session, this one
+   * included, dies immediately; unlike password change there is NO fresh
+   * pair for the caller, because the account cannot log in again until
+   * the new address is verified (login with the old address then fails
+   * as an unknown identifier; with the new address it answers the #138
+   * 403 until confirmed). With the gate off, the account simply stays
+   * verified at the new address and no token is issued. An
+   * {@code EMAIL_CHANGED} audit row (actor = target = the account
+   * holder) joins the transaction; the audit trail stores no addresses
+   * (the table has no payload column by design).
+   */
+  @Transactional
+  public void changeEmail(long userId, String currentPassword, String newEmail) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    String canonicalNewEmail = canonical(newEmail);
+    if (canonicalNewEmail.equals(user.getEmail())) {
+      throw new DuplicateUserException("new email must differ from the current email");
+    }
+    if (users.findByEmailIgnoreCase(canonicalNewEmail).isPresent()) {
+      throw new DuplicateUserException("email is already registered");
+    }
+    user.setEmail(canonicalNewEmail);
+    boolean gateOn = emailVerificationEnabled();
+    if (gateOn) {
+      user.setEmailVerified(false);
+    }
+    user.setTokenVersion(user.getTokenVersion() + 1);
+    users.save(user);
+    jwt.revokeAll(userId);
+    if (gateOn && emailVerification != null) {
+      emailVerification.issue(user);
+    }
+    // Backlog #98: the audit row joins this transaction, so a change that
+    // rolls back leaves no row.
+    audit().record(userId, AuditAction.EMAIL_CHANGED, AuditTargetType.USER, userId);
+  }
+
+  /**
    * Session restore for the SPA: resolves the caller behind a valid access
    * token to their profile. A valid token whose user row is gone (deleted
    * user) reads as invalid credentials — the session no longer exists.

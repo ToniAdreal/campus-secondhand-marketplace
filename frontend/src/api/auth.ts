@@ -313,6 +313,27 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<Lo
   return { user: body.user, accessToken: body.accessToken };
 }
 
+export interface ChangeEmailPayload {
+  currentPassword: string;
+  newEmail: string;
+}
+
+/**
+ * POST /api/auth/email-change (backlog #150). Changes the account email:
+ * the current password must match (a wrong one fails with the same 401 as
+ * everywhere else — no oracle) and the new address must not be taken
+ * (409). On success the backend revokes EVERY session (this one too),
+ * clears the refresh cookie, and flips the account back to unverified —
+ * no fresh credential is returned, so the caller must treat the user as
+ * signed out and send them to verify the new address, then sign in.
+ *
+ * Throws the Axios error on failure; the backend wraps failures in the
+ * {code,message,data} envelope.
+ */
+export async function changeEmail(payload: ChangeEmailPayload): Promise<void> {
+  await api.post<ApiResponse<null>>('/auth/email-change', payload);
+}
+
 export interface RequestPasswordResetPayload {
   usernameOrEmail: string;
 }
