@@ -1,10 +1,12 @@
 package com.toni.marketplace.job;
 
 import com.toni.marketplace.audit.AuditLogRepository;
+import com.toni.marketplace.auth.EmailVerificationTokenRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.IdempotencyStatus;
+import com.toni.marketplace.order.WebhookEventRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -38,14 +40,27 @@ import org.springframework.transaction.annotation.Transactional;
  *   permanent archive (backlog #102);</li>
  *   <li>{@code audit_log} rows past the retention window (backlog #118) —
  *   the trail is the security record, so its window (365 days by default)
- *   is materially longer than the token windows above.</li>
+ *   is materially longer than the token windows above;</li>
+ *   <li>{@code webhook_event} rows past the retention window (backlog
+ *   #152) — every accepted webhook delivery since #140 is recorded for
+ *   PSP reconciliation, but the evidence value of a delivery decays, so
+ *   rows age out by {@code created_at} only (180 days by default), never
+ *   by outcome: the purge must not become a way to erase one specific
+ *   delivery;</li>
+ *   <li>used-or-expired {@code email_verification_token} rows (backlog
+ *   #152) — the sibling of the password-reset purge: a confirm consumes a
+ *   token or it expires unused, and neither is ever deleted by the
+ *   verification flow itself, so dead rows would otherwise accumulate
+ *   forever. Kept 30 days after creation by default, aligned with the
+ *   password-reset window.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
  * delete statement grows unbounded. {@code IN_PROGRESS} idempotency keys are
  * never touched — an owner may still be working — and a still-valid unused
  * password-reset token is never touched either: a purge must not kill an
- * in-flight reset.
+ * in-flight reset — and the same holds for verification: a still-valid
+ * unused email-verification token is never touched either.
  *
  * <p>"Append-only" vs retention: the audit trail is append-only
  * <em>within</em> its retention window — no code path updates or deletes a
@@ -76,6 +91,8 @@ public class DataRetentionService {
   private final IdempotencyKeyRepository idempotencyKeys;
   private final PasswordResetTokenRepository passwordResetTokens;
   private final AuditLogRepository auditLog;
+  private final WebhookEventRepository webhookEvents;
+  private final EmailVerificationTokenRepository emailVerificationTokens;
   private final CleanupProperties props;
   private final Clock clock;
 
@@ -83,19 +100,24 @@ public class DataRetentionService {
                               IdempotencyKeyRepository idempotencyKeys,
                               PasswordResetTokenRepository passwordResetTokens,
                               AuditLogRepository auditLog,
+                              WebhookEventRepository webhookEvents,
+                              EmailVerificationTokenRepository emailVerificationTokens,
                               CleanupProperties props,
                               Clock clock) {
     this.refreshTokens = refreshTokens;
     this.idempotencyKeys = idempotencyKeys;
     this.passwordResetTokens = passwordResetTokens;
     this.auditLog = auditLog;
+    this.webhookEvents = webhookEvents;
+    this.emailVerificationTokens = emailVerificationTokens;
     this.props = props;
     this.clock = clock;
   }
 
   /** How many rows of each kind one purge run removed. */
   public record PurgeCounts(int refreshTokens, int idempotencyKeys,
-                            int passwordResetTokens, int auditLogRows) {}
+                            int passwordResetTokens, int auditLogRows,
+                            int webhookEvents, int emailVerificationTokens) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -109,9 +131,13 @@ public class DataRetentionService {
     int keys = purgeIdempotencyKeys(now);
     int resets = purgePasswordResetTokens(now);
     int audit = purgeAuditLog(now);
+    int webhooks = purgeWebhookEvents(now);
+    int verifications = purgeEmailVerificationTokens(now);
     log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
-        + "{} password_reset_token and {} audit_log rows", tokens, keys, resets, audit);
-    return new PurgeCounts(tokens, keys, resets, audit);
+        + "{} password_reset_token, {} audit_log, {} webhook_event and "
+        + "{} email_verification_token rows",
+        tokens, keys, resets, audit, webhooks, verifications);
+    return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications);
   }
 
   private int purgeRefreshTokens(Instant now) {
@@ -166,6 +192,47 @@ public class DataRetentionService {
           PageRequest.of(0, BATCH_SIZE));
       if (!ids.isEmpty()) {
         passwordResetTokens.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeWebhookEvents(Instant now) {
+    // Webhook deliveries are judged by age alone: created_at past the
+    // retention window. There is deliberately no outcome predicate —
+    // MATCHED and MISMATCH rows age out together, so the purge can never
+    // erase one specific delivery (see the class javadoc).
+    Instant createdBefore = now.minus(Duration.ofDays(props.getWebhookEventRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = webhookEvents.findPurgeableIds(createdBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        webhookEvents.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeEmailVerificationTokens(Instant now) {
+    // Mirror of the password-reset purge: a verification row is purgeable
+    // only once it is dead (used, or expired as of now) AND past the
+    // retention window after its creation. Verification tokens live 24 h
+    // by default, so the 30-day window is far past any live token's
+    // expiry anyway; the repository query's dead-row predicate is what
+    // guarantees a still-valid unused token — an in-flight verification —
+    // is never selected.
+    Instant createdBefore =
+        now.minus(Duration.ofDays(props.getEmailVerificationTokenRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = emailVerificationTokens.findPurgeableIds(now, createdBefore,
+          PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        emailVerificationTokens.deleteAllByIdInBatch(ids);
         deleted += ids.size();
       }
     } while (ids.size() == BATCH_SIZE);

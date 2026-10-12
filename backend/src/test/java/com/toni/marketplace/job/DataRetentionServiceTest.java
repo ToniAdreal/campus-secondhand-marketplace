@@ -8,11 +8,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.toni.marketplace.audit.AuditLogRepository;
+import com.toni.marketplace.auth.EmailVerificationTokenRepository;
 import com.toni.marketplace.auth.MutableClock;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.IdempotencyStatus;
+import com.toni.marketplace.order.WebhookEventRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -49,6 +51,12 @@ class DataRetentionServiceTest {
   @Mock
   private AuditLogRepository auditLog;
 
+  @Mock
+  private WebhookEventRepository webhookEvents;
+
+  @Mock
+  private EmailVerificationTokenRepository emailVerificationTokens;
+
   private MutableClock clock;
   private CleanupProperties props;
   private DataRetentionService purge;
@@ -60,7 +68,8 @@ class DataRetentionServiceTest {
     clock = new MutableClock(Instant.EPOCH);
     props = new CleanupProperties();
     purge = new DataRetentionService(refreshTokens, idempotencyKeys,
-        passwordResetTokens, auditLog, props, clock);
+        passwordResetTokens, auditLog, webhookEvents, emailVerificationTokens,
+        props, clock);
   }
 
   @Test
@@ -71,6 +80,12 @@ class DataRetentionServiceTest {
     // The audit trail is the security record: its window is materially
     // longer than every token window (backlog #118).
     assertThat(props.getAuditLogRetention()).isEqualTo(365);
+    // Webhook deliveries are reconciliation evidence: kept longer than
+    // the token windows, shorter than the audit trail (backlog #152).
+    assertThat(props.getWebhookEventRetention()).isEqualTo(180);
+    // Aligned with the password-reset window — the two token tables are
+    // siblings (backlog #152).
+    assertThat(props.getEmailVerificationTokenRetention()).isEqualTo(30);
   }
 
   @Test
@@ -84,7 +99,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(2, 0, 0, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(2, 0, 0, 0, 0, 0));
     verify(refreshTokens, times(1)).deleteAllByIdInBatch(List.of(1L, 2L));
 
     ArgumentCaptor<Instant> nowCaptor = ArgumentCaptor.forClass(Instant.class);
@@ -123,7 +138,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(91));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 700, 0, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 700, 0, 0, 0, 0));
     verify(idempotencyKeys, times(2)).deleteAllByIdInBatch(any());
     verify(idempotencyKeys).deleteAllByIdInBatch(fullBatch);
     verify(idempotencyKeys).deleteAllByIdInBatch(partialBatch);
@@ -144,11 +159,13 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(365));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 0));
     verify(refreshTokens, never()).deleteAllByIdInBatch(any());
     verify(idempotencyKeys, never()).deleteAllByIdInBatch(any());
     verify(passwordResetTokens, never()).deleteAllByIdInBatch(any());
     verify(auditLog, never()).deleteAllByIdInBatch(any());
+    verify(webhookEvents, never()).deleteAllByIdInBatch(any());
+    verify(emailVerificationTokens, never()).deleteAllByIdInBatch(any());
   }
 
   @Test
@@ -159,6 +176,8 @@ class DataRetentionServiceTest {
     props.setIdempotencyRetention(14);
     props.setPasswordResetRetention(5);
     props.setAuditLogRetention(9);
+    props.setWebhookEventRetention(20);
+    props.setEmailVerificationTokenRetention(6);
 
     clock.advance(Duration.ofDays(10));
     purge.purgeStaleData();
@@ -182,6 +201,17 @@ class DataRetentionServiceTest {
     ArgumentCaptor<Instant> auditCutoff = ArgumentCaptor.forClass(Instant.class);
     verify(auditLog).findPurgeableIds(auditCutoff.capture(), any(Pageable.class));
     assertThat(auditCutoff.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(1)));
+
+    ArgumentCaptor<Instant> webhookCutoff = ArgumentCaptor.forClass(Instant.class);
+    verify(webhookEvents).findPurgeableIds(webhookCutoff.capture(), any(Pageable.class));
+    // 10 days elapsed < 20-day webhook retention: the cut-off predates
+    // creation, so nothing can match yet.
+    assertThat(webhookCutoff.getValue()).isEqualTo(Instant.EPOCH.minus(Duration.ofDays(10)));
+
+    ArgumentCaptor<Instant> verificationCutoff = ArgumentCaptor.forClass(Instant.class);
+    verify(emailVerificationTokens).findPurgeableIds(any(), verificationCutoff.capture(),
+        any(Pageable.class));
+    assertThat(verificationCutoff.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(4)));
   }
 
   @Test
@@ -197,7 +227,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 2, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 2, 0, 0, 0));
     assertThat(counts.passwordResetTokens()).isEqualTo(2);
     verify(passwordResetTokens, times(1)).deleteAllByIdInBatch(List.of(7L, 8L));
 
@@ -248,7 +278,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(31));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 600, 0));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 600, 0, 0, 0));
     verify(passwordResetTokens, times(2)).deleteAllByIdInBatch(any());
     verify(passwordResetTokens).deleteAllByIdInBatch(fullBatch);
     verify(passwordResetTokens).deleteAllByIdInBatch(partialBatch);
@@ -268,7 +298,7 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(366));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 2));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 2, 0, 0));
     assertThat(counts.auditLogRows()).isEqualTo(2);
     verify(auditLog, times(1)).deleteAllByIdInBatch(List.of(11L, 12L));
 
@@ -313,9 +343,153 @@ class DataRetentionServiceTest {
     clock.advance(Duration.ofDays(366));
     DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
 
-    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 600));
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 600, 0, 0));
     verify(auditLog, times(2)).deleteAllByIdInBatch(any());
     verify(auditLog).deleteAllByIdInBatch(fullBatch);
     verify(auditLog).deleteAllByIdInBatch(partialBatch);
+  }
+
+  @Test
+  void purgeDeletesWebhookEventsPastRetentionWindow() {
+    // The repository query selects by created_at alone; here it hands
+    // back the two deliveries that predate the retention cut-off.
+    // Deliveries inside the window fail the predicate, so they are
+    // never handed back and never deleted.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    when(webhookEvents.findPurgeableIds(any(), any())).thenReturn(List.of(21L, 22L));
+
+    clock.advance(Duration.ofDays(181));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 2, 0));
+    assertThat(counts.webhookEvents()).isEqualTo(2);
+    verify(webhookEvents, times(1)).deleteAllByIdInBatch(List.of(21L, 22L));
+
+    // now = EPOCH + 181 d; the 180-day default retention puts the
+    // creation cut-off at EPOCH + 1 d.
+    ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(webhookEvents, times(1)).findPurgeableIds(cutoffCaptor.capture(),
+        any(Pageable.class));
+    assertThat(cutoffCaptor.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(1)));
+  }
+
+  @Test
+  void purgeKeepsWebhookEventsInsideRetentionWindow() {
+    // 179 days elapsed < 180-day retention: the cut-off predates every
+    // row's creation, so nothing is selected and nothing is deleted.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    when(webhookEvents.findPurgeableIds(any(), any())).thenReturn(List.of());
+
+    clock.advance(Duration.ofDays(179));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts.webhookEvents()).isEqualTo(0);
+    verify(webhookEvents, never()).deleteAllByIdInBatch(any());
+    ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(webhookEvents).findPurgeableIds(cutoffCaptor.capture(), any(Pageable.class));
+    assertThat(cutoffCaptor.getValue()).isEqualTo(Instant.EPOCH.minus(Duration.ofDays(1)));
+  }
+
+  @Test
+  void purgeDeletesWebhookEventsInBatches() {
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    List<Long> fullBatch = LongStream.range(0, DataRetentionService.BATCH_SIZE)
+        .boxed().toList();
+    List<Long> partialBatch = LongStream.range(4000, 4100).boxed().toList();
+    when(webhookEvents.findPurgeableIds(any(), any()))
+        .thenReturn(fullBatch, partialBatch);
+
+    clock.advance(Duration.ofDays(181));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 600, 0));
+    verify(webhookEvents, times(2)).deleteAllByIdInBatch(any());
+    verify(webhookEvents).deleteAllByIdInBatch(fullBatch);
+    verify(webhookEvents).deleteAllByIdInBatch(partialBatch);
+  }
+
+  @Test
+  void purgeDeletesDeadEmailVerificationTokensPastRetention() {
+    // The repository query is what decides "dead" (used, or expired as
+    // of now); here it hands back the used row and the expired-never-used
+    // row that both predate the retention cut-off.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    when(emailVerificationTokens.findPurgeableIds(any(), any(), any()))
+        .thenReturn(List.of(31L, 32L));
+
+    clock.advance(Duration.ofDays(31));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 2));
+    assertThat(counts.emailVerificationTokens()).isEqualTo(2);
+    verify(emailVerificationTokens, times(1)).deleteAllByIdInBatch(List.of(31L, 32L));
+
+    // now = EPOCH + 31 d; the 30-day default retention puts the creation
+    // cut-off at EPOCH + 1 d — anything created later is still evidence
+    // and must survive.
+    ArgumentCaptor<Instant> nowCaptor = ArgumentCaptor.forClass(Instant.class);
+    ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(emailVerificationTokens, times(1))
+        .findPurgeableIds(nowCaptor.capture(), cutoffCaptor.capture(),
+            any(Pageable.class));
+    assertThat(nowCaptor.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(31)));
+    assertThat(cutoffCaptor.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(1)));
+  }
+
+  @Test
+  void purgeNeverDeletesWhatTheVerificationQueryDidNotSelect() {
+    // A still-valid unused token (an in-flight verification) and dead
+    // rows still inside the retention window both fail the repository
+    // predicate, so the query returns nothing and the service deletes
+    // nothing — the service itself never widens the selection.
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    when(emailVerificationTokens.findPurgeableIds(any(), any(), any()))
+        .thenReturn(List.of());
+
+    clock.advance(Duration.ofDays(365));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts.emailVerificationTokens()).isEqualTo(0);
+    verify(emailVerificationTokens, never()).deleteAllByIdInBatch(any());
+    ArgumentCaptor<Instant> nowCaptor = ArgumentCaptor.forClass(Instant.class);
+    verify(emailVerificationTokens)
+        .findPurgeableIds(nowCaptor.capture(), any(), any(Pageable.class));
+    assertThat(nowCaptor.getValue()).isEqualTo(Instant.EPOCH.plus(Duration.ofDays(365)));
+  }
+
+  @Test
+  void purgeDeletesEmailVerificationTokensInBatches() {
+    when(refreshTokens.findStaleIds(any(), any(), any())).thenReturn(List.of());
+    when(idempotencyKeys.findTerminalIdsBefore(any(), any(), any())).thenReturn(List.of());
+    when(passwordResetTokens.findPurgeableIds(any(), any(), any())).thenReturn(List.of());
+    when(auditLog.findPurgeableIds(any(), any())).thenReturn(List.of());
+    List<Long> fullBatch = LongStream.range(0, DataRetentionService.BATCH_SIZE)
+        .boxed().toList();
+    List<Long> partialBatch = LongStream.range(5000, 5100).boxed().toList();
+    when(emailVerificationTokens.findPurgeableIds(any(), any(), any()))
+        .thenReturn(fullBatch, partialBatch);
+
+    clock.advance(Duration.ofDays(31));
+    DataRetentionService.PurgeCounts counts = purge.purgeStaleData();
+
+    assertThat(counts).isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 600));
+    verify(emailVerificationTokens, times(2)).deleteAllByIdInBatch(any());
+    verify(emailVerificationTokens).deleteAllByIdInBatch(fullBatch);
+    verify(emailVerificationTokens).deleteAllByIdInBatch(partialBatch);
   }
 }

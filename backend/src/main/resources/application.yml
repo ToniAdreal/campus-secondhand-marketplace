@@ -216,10 +216,19 @@ app:
     #   materially longer than the token windows. Deletion is by created_at
     #   only (never by action/actor); the trail is append-only within the
     #   window, and operators export before purge for longer evidence.
+    # webhook-event-retention: webhook_event rows kept after creation,
+    #   default 180 (backlog #152) — delivery evidence for PSP
+    #   reconciliation. Deletion is by created_at only (never by outcome).
+    # email-verification-token-retention: used-or-expired
+    #   email_verification_token rows kept after creation, default 30
+    #   (backlog #152, aligned with password-reset-retention).
+    #   Still-valid unused tokens are never purged.
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30
     audit-log-retention: 365
+    webhook-event-retention: 180
+    email-verification-token-retention: 30
   orders:
     # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
     # minutes server-local). A buyer who creates an order and never pays

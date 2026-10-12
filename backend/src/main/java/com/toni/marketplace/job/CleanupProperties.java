@@ -12,10 +12,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * are kept 90 days after their last state transition (late client retries
  * still replay the stored order), and used-or-expired
  * {@code password_reset_token} rows are kept 30 days after creation
- * (security-audit evidence, briefly — not forever), and {@code audit_log}
+ * (security-audit evidence, briefly — not forever), {@code audit_log}
  * rows are kept 365 days after creation (backlog #118 — the audit trail
  * is the security record, so its window is materially longer than the
- * token windows). Override with e.g.
+ * token windows), {@code webhook_event} rows are kept 180 days after
+ * creation (backlog #152 — delivery evidence for PSP reconciliation,
+ * longer than the token windows, shorter than the audit trail), and
+ * used-or-expired {@code email_verification_token} rows are kept 30
+ * days after creation (backlog #152 — aligned with the password-reset
+ * window; the two token tables are siblings). Override with e.g.
  * {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -52,6 +57,24 @@ public class CleanupProperties {
    */
   private long auditLogRetention = 365;
 
+  /**
+   * Days a {@code webhook_event} row is kept after its creation before
+   * the purge may delete it. Must be &ge; 1. Deletion is by
+   * {@code created_at} only — never filtered by outcome, so no specific
+   * delivery can be selectively erased (backlog #152).
+   */
+  private long webhookEventRetention = 180;
+
+  /**
+   * Days a used-or-expired {@code email_verification_token} row is kept
+   * after its creation before the purge may delete it. Must be &ge; 1.
+   * A still-valid unused token is never purged regardless of age — the
+   * purge must not kill an in-flight verification. Selection is by the
+   * time columns ({@code created_at} / {@code expires_at} /
+   * {@code used_at}) only — never by user or address (backlog #152).
+   */
+  private long emailVerificationTokenRetention = 30;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -82,5 +105,21 @@ public class CleanupProperties {
 
   public void setAuditLogRetention(long auditLogRetention) {
     this.auditLogRetention = auditLogRetention;
+  }
+
+  public long getWebhookEventRetention() {
+    return webhookEventRetention;
+  }
+
+  public void setWebhookEventRetention(long webhookEventRetention) {
+    this.webhookEventRetention = webhookEventRetention;
+  }
+
+  public long getEmailVerificationTokenRetention() {
+    return emailVerificationTokenRetention;
+  }
+
+  public void setEmailVerificationTokenRetention(long emailVerificationTokenRetention) {
+    this.emailVerificationTokenRetention = emailVerificationTokenRetention;
   }
 }
