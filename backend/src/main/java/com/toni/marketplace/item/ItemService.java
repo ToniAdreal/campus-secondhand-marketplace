@@ -351,7 +351,13 @@ public class ItemService {
    * AVAILABLE listings are allowed.
    *
    * <p>The write is optimistic-locked via {@code Item.@Version}, so a
-   * concurrent edit fails fast instead of silently overwriting.
+   * concurrent edit fails fast instead of silently overwriting. The flush
+   * below surfaces a lost race inside this transaction as
+   * {@code ObjectOptimisticLockingFailureException}, which
+   * {@code GlobalExceptionHandler} maps to 409 "listing was modified —
+   * reload and retry" (backlog #147); without it the version check would
+   * happen at commit and — under a surrounding transaction — possibly
+   * outside the request entirely.
    */
   @Transactional
   public ItemDto updateItem(Long id, ItemUpdateRequest request) {
@@ -381,6 +387,11 @@ public class ItemService {
     if (category != null) {
       item.setCategory(category);
     }
+    // Flush deliberately inside the transaction (not at commit), mirroring
+    // OrderService.pay(): a concurrent edit of the same listing between
+    // read and write surfaces here as ObjectOptimisticLockingFailureException
+    // and is mapped to 409 by GlobalExceptionHandler (backlog #147).
+    items.flush();
     return mapper.toDto(item);
   }
 
@@ -391,7 +402,10 @@ public class ItemService {
    * and a listing that is already SOLD has no onward transition. Both
    * violations are answered 422 with the JSON envelope. The flip is
    * optimistic-locked via {@code Item.@Version}, so a concurrent flip fails
-   * fast instead of silently overwriting.
+   * fast instead of silently overwriting; the flush below surfaces a lost
+   * race inside this transaction and {@code GlobalExceptionHandler} maps
+   * it to 409 "listing was modified — reload and retry" (backlog #147),
+   * mirroring {@link #updateItem}.
    *
    * <p>Ownership/role checks live on the controller's {@code @PreAuthorize}
    * ({@link ItemSecurity}); the service stays role-agnostic.
@@ -409,6 +423,11 @@ public class ItemService {
           "item is already SOLD");
     }
     item.setStatus(ItemStatus.SOLD);
+    // Flush deliberately inside the transaction (not at commit), mirroring
+    // updateItem: a concurrent write to the same listing between read and
+    // write surfaces here as ObjectOptimisticLockingFailureException and
+    // is mapped to 409 by GlobalExceptionHandler (backlog #147).
+    items.flush();
     return mapper.toDto(item);
   }
 

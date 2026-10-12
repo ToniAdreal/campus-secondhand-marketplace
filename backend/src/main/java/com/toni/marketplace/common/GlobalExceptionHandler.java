@@ -13,6 +13,7 @@ import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
@@ -202,6 +203,43 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ApiResponse<Void>> handleConflict(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiResponse.fail(409, ex.getMessage()));
+  }
+
+  /**
+   * Stale optimistic-lock writes (backlog #147): a {@code @Version} check
+   * that loses a race is a client conflict, not a server fault — before
+   * this handler it fell through to the generic 500 below. The message is
+   * worded for the listing writes this handler exists for; the order paths
+   * keep their own, more specific 409 messages because they never reach
+   * here (see the audit below).
+   *
+   * <p>Audit of every {@code @Version} write path (the only versioned
+   * entities are {@code Item} and {@code Order}):
+   * <ul>
+   *   <li>Already handled internally, so this handler never sees them:
+   *       {@code OrderService} order creation (the create seam catches the
+   *       failure around {@code OrderCreationService} and answers its own
+   *       409) and pay / cancel / complete / refund (each flushes inside
+   *       its transaction and catches the failure into a 409
+   *       {@code ResponseStatusException}).</li>
+   *   <li>Handled by the caller, not HTTP: the stale-PENDING expiry sweep
+   *       (backlog #51) — {@code OrderService.expireStaleOrder} lets the
+   *       failure propagate and {@code PendingOrderExpiryService} catches
+   *       it per row and skips the row.</li>
+   *   <li>Newly covered by this handler: the direct listing writes in
+   *       {@code ItemService} — {@code updateItem} and {@code markSold}
+   *       (which now also flush inside their transactions, mirroring the
+   *       order seams, so the failure surfaces here instead of at commit),
+   *       plus {@code deleteItem} and {@code attachPhoto} at commit. Two
+   *       tabs editing the same listing concurrently now get 409
+   *       "listing was modified — reload and retry" instead of a 500.</li>
+   * </ul>
+   */
+  @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+  public ResponseEntity<ApiResponse<Void>> handleOptimisticLockConflict(
+      ObjectOptimisticLockingFailureException ex) {
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .body(ApiResponse.fail(409, "listing was modified — reload and retry"));
   }
 
   /**
