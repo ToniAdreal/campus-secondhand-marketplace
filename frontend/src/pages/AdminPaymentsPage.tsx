@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   describeSettlementError,
@@ -21,7 +22,9 @@ import { useAuthStore } from '../store/useAuthStore';
  * The figures are the backend's mock-PSP settlement summary, reconciled
  * from the orders table: captured sums orders carrying a capture id (a
  * refunded order was still captured), refunded sums REFUNDED orders, net
- * is the difference, alongside per-status counts. The page labels them
+ * is the difference, alongside per-status counts. An optional From/To
+ * date window (backlog #155) scopes every figure to orders created in
+ * the window; blank dates keep the all-time view. The page labels them
  * as what they are — mock-PSP derived figures; no real money has moved
  * and no PSP settlement file was imported.
  */
@@ -29,7 +32,26 @@ export default function AdminPaymentsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user !== null && user.roles.includes('ADMIN');
 
-  const settlement = useAdminPaymentSettlement(isAdmin);
+  // Date window (backlog #155): blank means all time, so the default view
+  // is exactly the pre-#155 page. The backend window is [from, to) over
+  // order createdAt; the To input is a calendar date the admin means to
+  // include, so it is sent as the following day's start (exclusive bound).
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const window = {
+    ...(fromDate !== '' ? { from: `${fromDate}T00:00:00Z` } : {}),
+    ...(toDate !== ''
+      ? {
+          to: (() => {
+            const day = new Date(`${toDate}T00:00:00.000Z`);
+            day.setUTCDate(day.getUTCDate() + 1);
+            return day.toISOString().replace('.000Z', 'Z');
+          })(),
+        }
+      : {}),
+  };
+
+  const settlement = useAdminPaymentSettlement(isAdmin, window);
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -73,6 +95,48 @@ export default function AdminPaymentsPage() {
         Mock-PSP settlement summary, derived from the orders table. These are demo
         figures only — no real money has moved and no PSP settlement file was imported.
       </p>
+      <section aria-label="Settlement date window" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg bg-white p-4 shadow-sm">
+        <div>
+          <label htmlFor="settlement-from" className="mb-1 block text-sm text-neutral-500">
+            From
+          </label>
+          <input
+            id="settlement-from"
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="rounded border border-neutral-300 px-2 py-1"
+          />
+        </div>
+        <div>
+          <label htmlFor="settlement-to" className="mb-1 block text-sm text-neutral-500">
+            To
+          </label>
+          <input
+            id="settlement-to"
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            className="rounded border border-neutral-300 px-2 py-1"
+          />
+        </div>
+        {(fromDate !== '' || toDate !== '') && (
+          <button
+            type="button"
+            onClick={() => {
+              setFromDate('');
+              setToDate('');
+            }}
+            className="rounded border border-neutral-300 px-3 py-1 text-sm"
+          >
+            Clear dates (all time)
+          </button>
+        )}
+        <p className="text-sm text-neutral-500">
+          Blank dates mean all time. The window covers orders created in the range; the To
+          date itself is included.
+        </p>
+      </section>
       {settlement.isLoading && <p>Loading settlement summary…</p>}
       {settlement.isError && (
         <p role="alert" className="text-red-600">

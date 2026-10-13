@@ -103,6 +103,38 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
   long sumAmountCentsByStatus(@Param("status") OrderStatus status);
 
   /**
+   * Windowed variant of {@link #summarizeAll} (backlog #155): same
+   * per-status aggregates, restricted to orders created in
+   * {@code [createdFrom, createdTo)} over {@code Order.createdAt} — the
+   * exact bounds of the seller window ({@link #summarizeBySellerIdBetween}).
+   * Either bound may be null, meaning that side is open.
+   */
+  @Query("select o.status as status, count(o) as orderCount, "
+      + "coalesce(sum(o.amountCents), 0) as amountCents from Order o "
+      + "where (:createdFrom is null or o.createdAt >= :createdFrom) "
+      + "and (:createdTo is null or o.createdAt < :createdTo) "
+      + "group by o.status")
+  List<StatusAggregate> summarizeAllBetween(@Param("createdFrom") Instant createdFrom,
+                                            @Param("createdTo") Instant createdTo);
+
+  /** Windowed variant of {@link #sumCapturedCents} (backlog #155). */
+  @Query("select coalesce(sum(o.amountCents), 0) from Order o "
+      + "where o.captureId is not null "
+      + "and (:createdFrom is null or o.createdAt >= :createdFrom) "
+      + "and (:createdTo is null or o.createdAt < :createdTo)")
+  long sumCapturedCentsBetween(@Param("createdFrom") Instant createdFrom,
+                               @Param("createdTo") Instant createdTo);
+
+  /** Windowed variant of {@link #sumAmountCentsByStatus} (backlog #155). */
+  @Query("select coalesce(sum(o.amountCents), 0) from Order o "
+      + "where o.status = :status "
+      + "and (:createdFrom is null or o.createdAt >= :createdFrom) "
+      + "and (:createdTo is null or o.createdAt < :createdTo)")
+  long sumAmountCentsByStatusBetween(@Param("status") OrderStatus status,
+                                     @Param("createdFrom") Instant createdFrom,
+                                     @Param("createdTo") Instant createdTo);
+
+  /**
    * Application-level counterpart of the {@code uq_order_active_item}
    * constraint: true when the item already sits in an order with one of the
    * given statuses. Checked before creating an order for a friendly 409; the

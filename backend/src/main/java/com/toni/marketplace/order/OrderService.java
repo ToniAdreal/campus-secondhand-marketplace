@@ -290,10 +290,37 @@ public class OrderService {
    */
   @Transactional(readOnly = true)
   public SettlementSummaryDto settlementSummary() {
+    return settlementSummary(null, null);
+  }
+
+  /**
+   * Windowed settlement summary (backlog #155): the same aggregates as
+   * {@link #settlementSummary()}, restricted to orders created in
+   * {@code [from, to)} over {@code Order.createdAt} — mirroring the seller
+   * window semantics ({@link #summarizeBySellerIdBetween} bounds). Either
+   * bound may be null (open side); both null is exactly the all-time
+   * summary. The window is an order-activity window over the only
+   * timestamps orders carry that mark their creation — there is no
+   * {@code paidAt} column, so this is not a PSP value-date window. An
+   * inverted window ({@code from} not before {@code to}) is a client
+   * error: 400 in the JSON envelope.
+   */
+  @Transactional(readOnly = true)
+  public SettlementSummaryDto settlementSummary(Instant from, Instant to) {
+    if (from != null && to != null && !from.isBefore(to)) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "from must be before to");
+    }
+    if (from == null && to == null) {
+      return SettlementSummaryDto.from(
+          orders.summarizeAll(),
+          orders.sumCapturedCents(),
+          orders.sumAmountCentsByStatus(OrderStatus.REFUNDED));
+    }
     return SettlementSummaryDto.from(
-        orders.summarizeAll(),
-        orders.sumCapturedCents(),
-        orders.sumAmountCentsByStatus(OrderStatus.REFUNDED));
+        orders.summarizeAllBetween(from, to),
+        orders.sumCapturedCentsBetween(from, to),
+        orders.sumAmountCentsByStatusBetween(OrderStatus.REFUNDED, from, to));
   }
 
   /**

@@ -32,6 +32,16 @@ import java.util.Map;
  * <p>Honest scope: this is mock money. The figures are derived totals over
  * the demo orders table only — no PSP settlement file is imported, no real
  * processor is reconciled, and no real money has moved.
+ *
+ * <p>Date window (backlog #155): the optional {@code from}/{@code to}
+ * query parameters restrict every figure above to orders whose
+ * {@code createdAt} lies in {@code [from, to)} — the same inclusive /
+ * exclusive bounds as the seller summary's month window. Orders carry
+ * {@code createdAt}/{@code updatedAt} only and there is no {@code paidAt}
+ * column, so the window is an order-activity window driven by
+ * {@code createdAt}, not a PSP value-date window, and the mock has no
+ * settlement file to reconcile against. Omitting both parameters yields
+ * exactly the all-time summary this DTO has always returned.
  */
 public record SettlementSummaryDto(
     long capturedCents,

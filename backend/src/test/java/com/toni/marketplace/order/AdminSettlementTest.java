@@ -12,6 +12,8 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.EnumSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,6 +59,9 @@ class AdminSettlementTest {
 
   @Autowired
   private JwtTokenService jwt;
+
+  @Autowired
+  private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
   private String adminToken;
   private String userToken;
@@ -114,6 +119,87 @@ class AdminSettlementTest {
         .andExpect(jsonPath("$.data.completedCount").value(1))
         .andExpect(jsonPath("$.data.cancelledCount").value(1))
         .andExpect(jsonPath("$.data.refundedCount").value(1));
+  }
+
+  private Order seedOrderAt(OrderStatus status, long amountCents, String captureId,
+                              String refundId, Instant createdAt) {
+    Order order = seedOrder(status, amountCents, captureId, refundId);
+    jdbc.update("update orders set created_at = ? where id = ?",
+        Timestamp.from(createdAt), order.getId());
+    return order;
+  }
+
+  @Test
+  void windowCountsOnlyOrdersCreatedInFromInclusiveToExclusive() throws Exception {
+    // Inside the window.
+    seedOrderAt(OrderStatus.PAID, 10_000L, "cap_in", null,
+        Instant.parse("2026-01-15T12:00:00Z"));
+    // Exactly at `from` — inclusive, counts.
+    seedOrderAt(OrderStatus.COMPLETED, 20_000L, "cap_from", null,
+        Instant.parse("2026-01-10T00:00:00Z"));
+    // Exactly at `to` — exclusive, does not count.
+    seedOrderAt(OrderStatus.PAID, 40_000L, "cap_to", null,
+        Instant.parse("2026-01-20T00:00:00Z"));
+    // Before the window.
+    seedOrderAt(OrderStatus.REFUNDED, 5_000L, "cap_before", "rfd_before",
+        Instant.parse("2026-01-09T23:59:59Z"));
+    // After the window.
+    seedOrderAt(OrderStatus.PAID, 8_000L, "cap_after", null,
+        Instant.parse("2026-01-25T00:00:00Z"));
+
+    mockMvc.perform(get("/api/admin/payments/settlement")
+            .param("from", "2026-01-10T00:00:00Z")
+            .param("to", "2026-01-20T00:00:00Z")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.capturedCents").value(30_000))
+        .andExpect(jsonPath("$.data.refundedCents").value(0))
+        .andExpect(jsonPath("$.data.netCents").value(30_000))
+        .andExpect(jsonPath("$.data.totalOrders").value(2))
+        .andExpect(jsonPath("$.data.paidCount").value(1))
+        .andExpect(jsonPath("$.data.completedCount").value(1))
+        .andExpect(jsonPath("$.data.refundedCount").value(0));
+  }
+
+  @Test
+  void windowSingleSidedBoundsAreOpenOnTheOtherSide() throws Exception {
+    seedOrderAt(OrderStatus.PAID, 10_000L, "cap_early", null,
+        Instant.parse("2026-01-05T00:00:00Z"));
+    seedOrderAt(OrderStatus.PAID, 20_000L, "cap_late", null,
+        Instant.parse("2026-02-05T00:00:00Z"));
+
+    mockMvc.perform(get("/api/admin/payments/settlement")
+            .param("from", "2026-02-01T00:00:00Z")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.capturedCents").value(20_000))
+        .andExpect(jsonPath("$.data.totalOrders").value(1));
+
+    mockMvc.perform(get("/api/admin/payments/settlement")
+            .param("to", "2026-02-01T00:00:00Z")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.capturedCents").value(10_000))
+        .andExpect(jsonPath("$.data.totalOrders").value(1));
+  }
+
+  @Test
+  void invertedWindowIs400Envelope() throws Exception {
+    mockMvc.perform(get("/api/admin/payments/settlement")
+            .param("from", "2026-01-20T00:00:00Z")
+            .param("to", "2026-01-10T00:00:00Z")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+  }
+
+  @Test
+  void malformedWindowParamIs400Envelope() throws Exception {
+    mockMvc.perform(get("/api/admin/payments/settlement")
+            .param("from", "not-a-date")
+            .header("Authorization", "Bearer " + adminToken))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
   }
 
   @Test

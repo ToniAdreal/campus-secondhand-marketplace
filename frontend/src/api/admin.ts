@@ -263,8 +263,20 @@ export interface SettlementSummary {
  */
 export const adminPaymentKeys = {
   all: ['admin', 'payments'] as const,
-  settlement: () => [...adminPaymentKeys.all, 'settlement'] as const,
+  settlement: (window: SettlementWindow = {}) =>
+    [...adminPaymentKeys.all, 'settlement', window.from ?? null, window.to ?? null] as const,
 };
+
+/**
+ * Optional date window for the settlement summary (backlog #155).
+ * `from`/`to` are ISO-8601 instants bounding order `createdAt` as
+ * [from, to) on the backend — the same inclusive/exclusive bounds as the
+ * seller summary window. Both omitted means all time.
+ */
+export interface SettlementWindow {
+  from?: string;
+  to?: string;
+}
 
 /**
  * GET /api/admin/payments/settlement — ADMIN-only (the backend's
@@ -272,13 +284,20 @@ export const adminPaymentKeys = {
  * Non-admin callers get the JSON 403 envelope and anonymous callers 401 —
  * both surface as Axios errors here.
  */
-export function useAdminPaymentSettlement(enabled = true) {
+export function useAdminPaymentSettlement(enabled = true, window: SettlementWindow = {}) {
+  const hasWindow = window.from != null || window.to != null;
   return useQuery({
-    queryKey: adminPaymentKeys.settlement(),
+    queryKey: adminPaymentKeys.settlement(window),
     queryFn: () =>
-      api
-        .get<ApiResponse<SettlementSummary>>('/admin/payments/settlement')
-        .then((res) => res.data.data),
+      (hasWindow
+        ? api.get<ApiResponse<SettlementSummary>>('/admin/payments/settlement', {
+            params: {
+              ...(window.from != null ? { from: window.from } : {}),
+              ...(window.to != null ? { to: window.to } : {}),
+            },
+          })
+        : api.get<ApiResponse<SettlementSummary>>('/admin/payments/settlement')
+      ).then((res) => res.data.data),
     enabled,
   });
 }
@@ -294,6 +313,9 @@ export function describeSettlementError(error: unknown): string {
   }
   if (code === 401) {
     return 'Please log in again to view the settlement summary.';
+  }
+  if (code === 400) {
+    return 'That date window is not valid — from must be before to.';
   }
   return message || 'Something went wrong. Please try again.';
 }

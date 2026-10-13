@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, setAccessToken } from '../api/client';
@@ -113,6 +113,46 @@ describe('AdminPaymentsPage', () => {
 
     await waitFor(() => expect(screen.getAllByText('¥0.00')).toHaveLength(3));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('date inputs fire a windowed request: from at day start, to as the exclusive next-day bound', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(summaryEnvelope(summaryFixture));
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('¥350.00')).toBeTruthy());
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/settlement');
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-10' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-01-20' } });
+
+    // The To date is inclusive in the UI, so it is sent as 2026-01-21 —
+    // the backend window is [from, to) over order createdAt.
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/admin/payments/settlement', {
+        params: { from: '2026-01-10T00:00:00Z', to: '2026-01-21T00:00:00Z' },
+      }),
+    );
+  });
+
+  it('clearing the dates returns to the plain all-time request', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(summaryEnvelope(summaryFixture));
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('¥350.00')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-10' } });
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/admin/payments/settlement', {
+        params: { from: '2026-01-10T00:00:00Z' },
+      }),
+    );
+
+    fireEvent.click(screen.getByText('Clear dates (all time)'));
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenLastCalledWith('/admin/payments/settlement'),
+    );
   });
 
   it('non-admin sessions bounce home and fire no request', async () => {
