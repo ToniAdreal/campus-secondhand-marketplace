@@ -397,7 +397,7 @@ describe('useAdminPaymentSettlement', () => {
 
   it('settlement keys hang off [admin, payments] as their own subtree', () => {
     expect(adminPaymentKeys.all).toEqual(['admin', 'payments']);
-    expect(adminPaymentKeys.settlement()).toEqual(['admin', 'payments', 'settlement']);
+    expect(adminPaymentKeys.settlement()).toEqual(['admin', 'payments', 'settlement', null, null]);
     expect(adminPaymentKeys.all).not.toEqual(adminUserKeys.all);
     expect(adminPaymentKeys.all).not.toEqual(adminAuditLogKeys.all);
   });
