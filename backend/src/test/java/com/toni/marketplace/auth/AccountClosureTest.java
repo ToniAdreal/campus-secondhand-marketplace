@@ -13,9 +13,6 @@ import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
-import com.toni.marketplace.order.Order;
-import com.toni.marketplace.order.OrderRepository;
-import com.toni.marketplace.order.OrderStatus;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -32,20 +29,17 @@ import org.springframework.transaction.annotation.Transactional;
  * test profile (email-verification gate off, so registration issues a
  * session directly).
  *
- * <p>Covered: the happy path anonymizes the user row to the
- * {@code deleted-<id>} tombstone (original username/email freed and
- * re-registerable), replaces the password hash with an unusable random
- * one, kills every session (old Bearer 401s, old refresh cookie 401s,
- * the response clears the cookie), answers the identical 401 to a later
- * login, withdraws only the caller's AVAILABLE listings (RESERVED/SOLD
- * untouched) and leaves order history intact, and writes exactly one
- * ACCOUNT_CLOSED audit row. A wrong current password is the identical
- * 401 with NOTHING changed; an anonymous call is 401 (the
+ * <p>Covered: a wrong current password is the identical 401 with
+ * NOTHING changed; an anonymous call is 401 (the
  * SecurityConfig matcher — the #127 fall-through class). For a
  * TOTP-enabled account the second factor is required as well: no code
  * and a wrong code are both the identical 401 with nothing changed, and
  * a valid TOTP code closes the account (secret cleared, recovery set
- * deleted).
+ * deleted). The happy path that runs through a real order lives in
+ * {@link AccountClosureOrderFlowTest}: it cannot run inside this
+ * class's wrapping transaction, because the order's idempotency-key
+ * reservation commits in its own transaction and its foreign keys
+ * cannot see this transaction's uncommitted users/order.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -62,9 +56,6 @@ class AccountClosureTest {
 
   @Autowired
   private ItemRepository items;
-
-  @Autowired
-  private OrderRepository orders;
 
   @Autowired
   private AuditLogRepository auditLog;
@@ -102,94 +93,6 @@ class AccountClosureTest {
             .content(json))
         .andExpect(status().is(expected))
         .andReturn();
-  }
-
-  @Test
-  void happyPathAnonymizesWithdrawsListingsAndKillsEverySession() throws Exception {
-    Session seller = register("closer", "closer@example.com");
-    Session buyer = register("closer-buyer", "closer-buyer@example.com");
-    long sellerId = seller.userId();
-    long versionBefore = users.findById(sellerId).orElseThrow().getTokenVersion();
-    String hashBefore = users.findById(sellerId).orElseThrow().getPasswordHash();
-
-    Item available = items.save(new Item("Desk", "oak desk", 10000L, sellerId));
-    Item reserved = items.save(new Item("Bike", "city bike", 20000L, sellerId));
-    Item sold = items.save(new Item("Lamp", "desk lamp", 3000L, sellerId));
-    sold.setStatus(ItemStatus.SOLD);
-    sold = items.save(sold);
-
-    // A real PAID order on the second listing (item flips to RESERVED).
-    MvcResult created = mockMvc.perform(post("/api/orders")
-            .header("Authorization", "Bearer " + buyer.accessToken())
-            .header("Idempotency-Key", "closure-order-1")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"itemId\":" + reserved.getId() + "}"))
-        .andExpect(status().isOk())
-        .andReturn();
-    long orderId = ((Number) JsonPath.read(
-        created.getResponse().getContentAsString(), "$.data.id")).longValue();
-    mockMvc.perform(post("/api/orders/" + orderId + "/pay")
-            .header("Authorization", "Bearer " + buyer.accessToken()))
-        .andExpect(status().isOk());
-    assertThat(items.findById(reserved.getId()).orElseThrow().getStatus())
-        .isEqualTo(ItemStatus.RESERVED);
-
-    MvcResult closed = close(seller.accessToken(),
-        "{\"currentPassword\":\"" + PASSWORD + "\"}", 200);
-    Cookie cleared = closed.getResponse().getCookie("refresh_token");
-    assertThat(cleared).isNotNull();
-    assertThat(cleared.getMaxAge()).isZero();
-
-    // The row is a tombstone: originals freed, hash unusable, disabled,
-    // token version bumped.
-    User user = users.findById(sellerId).orElseThrow();
-    assertThat(user.getUsername()).isEqualTo("deleted-" + sellerId);
-    assertThat(user.getEmail()).isEqualTo("deleted-" + sellerId + "@deleted.invalid");
-    assertThat(user.getPasswordHash()).isNotEqualTo(hashBefore);
-    assertThat(passwords.matches(PASSWORD, user.getPasswordHash())).isFalse();
-    assertThat(user.isDisabled()).isTrue();
-    assertThat(user.getTokenVersion()).isEqualTo(versionBefore + 1);
-    assertThat(user.getTotpSecret()).isNull();
-    assertThat(user.isTotpEnabled()).isFalse();
-
-    // Listings: only the AVAILABLE one was withdrawn; order history intact.
-    assertThat(items.findById(available.getId()).orElseThrow().getStatus())
-        .isEqualTo(ItemStatus.WITHDRAWN);
-    assertThat(items.findById(reserved.getId()).orElseThrow().getStatus())
-        .isEqualTo(ItemStatus.RESERVED);
-    assertThat(items.findById(sold.getId()).orElseThrow().getStatus())
-        .isEqualTo(ItemStatus.SOLD);
-    Order order = orders.findById(orderId).orElseThrow();
-    assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
-    assertThat(order.getItem().getSellerId()).isEqualTo(sellerId);
-    assertThat(order.getBuyerId()).isEqualTo(buyer.userId());
-
-    // Every pre-close session is dead.
-    mockMvc.perform(get("/api/auth/me")
-            .header("Authorization", "Bearer " + seller.accessToken()))
-        .andExpect(status().isUnauthorized());
-    mockMvc.perform(post("/api/auth/refresh").cookie(seller.refreshCookie()))
-        .andExpect(status().isUnauthorized());
-
-    // Later logins with the original credentials are the identical 401.
-    mockMvc.perform(post("/api/auth/login")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"closer\",\"password\":\"" + PASSWORD + "\"}"))
-        .andExpect(status().isUnauthorized());
-    mockMvc.perform(post("/api/auth/login")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"closer@example.com\",\"password\":\""
-                + PASSWORD + "\"}"))
-        .andExpect(status().isUnauthorized());
-
-    // Exactly one audit row, actor = target = the account holder.
-    assertThat(auditLog.findByActorUserIdOrderByIdAsc(sellerId))
-        .extracting(row -> row.getAction())
-        .containsExactly(AuditAction.ACCOUNT_CLOSED);
-
-    // The freed username and email can be registered again as a new account.
-    Session again = register("closer", "closer@example.com");
-    assertThat(again.userId()).isNotEqualTo(sellerId);
   }
 
   @Test
