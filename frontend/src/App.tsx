@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useUnreadMessageCount } from './api/messages';
+import { useUnreadNotificationCount } from './api/notifications';
 import { useAuthStore } from './store/useAuthStore';
 
 function AuthNav() {
@@ -11,6 +12,9 @@ function AuthNav() {
   // Unread-message badge (#106): the count query only runs signed in;
   // the badge itself renders only above zero.
   const { data: unreadCount } = useUnreadMessageCount(user !== null);
+  // Unread-notification bell (#157): same badge pattern as messages;
+  // the count query only runs signed in.
+  const { data: unreadNotifications } = useUnreadNotificationCount(user !== null);
 
   if (!user) {
     return (
@@ -32,6 +36,17 @@ function AuthNav() {
       </Link>
       <Link to="/favorites" className="text-sm text-blue-600 hover:underline">
         Favorites
+      </Link>
+      <Link to="/notifications" className="text-sm text-blue-600 hover:underline">
+        Notifications
+        {unreadNotifications !== undefined && unreadNotifications > 0 && (
+          <span
+            aria-label={`${unreadNotifications} unread notifications`}
+            className="ml-1 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white"
+          >
+            {unreadNotifications}
+          </span>
+        )}
       </Link>
       <Link to="/my-listings" className="text-sm text-blue-600 hover:underline">
         My listings

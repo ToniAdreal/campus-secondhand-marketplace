@@ -119,6 +119,45 @@ describe('App nav unread-message badge (backlog #106)', () => {
   });
 });
 
+describe('App nav notification bell (backlog #157)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  it('renders the bell badge with the unread notification count above zero', async () => {
+    useAuthStore.getState().login(
+      { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(2));
+    renderApp();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('2 unread notifications')).toBeTruthy(),
+    );
+    expect(getSpy).toHaveBeenCalledWith('/notifications/unread-count');
+    const link = screen.getByRole('link', { name: /Notifications/ });
+    expect(link.getAttribute('href')).toBe('/notifications');
+  });
+
+  it('hides the bell badge at zero but keeps the Notifications link', async () => {
+    useAuthStore.getState().login(
+      { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] },
+      'tok',
+    );
+    getSpy.mockResolvedValue(envelope(0));
+    renderApp();
+
+    await waitFor(() => expect(screen.getByText('buyer')).toBeTruthy());
+    await act(async () => {});
+    expect(screen.queryByLabelText(/unread notifications/)).toBeNull();
+    expect(screen.getByRole('link', { name: /Notifications/ })).toBeTruthy();
+  });
+});
+
 describe('App nav admin users entry (backlog #111)', () => {
   afterEach(() => {
     cleanup();

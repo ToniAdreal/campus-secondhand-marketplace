@@ -37,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
  * source of truth — {@code AuthController}, {@code AdminUserController},
  * {@code AdminPaymentController}, {@code AuditLogController},
  * {@code CategoryController},
- * {@code ItemController}, {@code MessageController}, {@code OrderController}
+ * {@code ItemController}, {@code MessageController},
+ * {@code NotificationController}, {@code OrderController}
  * and {@code SellerOrderController}. The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
@@ -85,6 +86,9 @@ class OpenApiContractTest {
       "/api/items/{id}/status",
       "/api/messages",
       "/api/messages/unread-count",
+      "/api/notifications",
+      "/api/notifications/unread-count",
+      "/api/notifications/{id}/read",
       "/api/orders",
       "/api/orders/{id}",
       "/api/orders/{id}/cancel",

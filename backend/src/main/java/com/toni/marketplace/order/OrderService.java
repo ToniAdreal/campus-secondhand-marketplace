@@ -7,6 +7,8 @@ import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationService;
+import com.toni.marketplace.notification.NotificationType;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Instant;
@@ -41,13 +43,15 @@ public class OrderService {
   private final OrderCreationService creation;
   private final OrderMetrics metrics;
   private final AuditService audit;
+  private final NotificationService notifications;
   private final Clock clock;
 
   @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
                      OrderCreationService creation, OrderMetrics metrics,
-                     AuditService audit, Clock clock) {
+                     AuditService audit, NotificationService notifications,
+                     Clock clock) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
@@ -55,7 +59,17 @@ public class OrderService {
     this.creation = creation;
     this.metrics = metrics;
     this.audit = audit;
+    this.notifications = notifications;
     this.clock = clock;
+  }
+
+  /** Constructor for direct unit tests that do not assert on notifications. */
+  public OrderService(OrderRepository orders, ItemRepository items,
+                     IdempotencyKeyService idempotency, PaymentService payments,
+                     OrderCreationService creation, OrderMetrics metrics,
+                     AuditService audit, Clock clock) {
+    this(orders, items, idempotency, payments, creation, metrics, audit,
+        NotificationService.noop(), clock);
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -82,6 +96,15 @@ public class OrderService {
    */
   private AuditService audit() {
     return audit != null ? audit : AuditService.noop();
+  }
+
+  /**
+   * Notifications accessor with a no-op fallback, mirroring
+   * {@link #audit()}: direct unit tests that construct this service by
+   * hand must never fail on the notification write.
+   */
+  private NotificationService notifications() {
+    return notifications != null ? notifications : NotificationService.noop();
   }
 
   /**
@@ -469,6 +492,11 @@ public class OrderService {
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-cancel above returns before this point.
       audit().record(buyerId, AuditAction.ORDER_CANCELLED, AuditTargetType.ORDER, orderId);
+      // Backlog #157: notify the seller in the same transaction — the
+      // idempotent re-cancel above returns before this point, so a
+      // replay writes no duplicate row.
+      notifications().record(order.getItem().getSellerId(),
+          NotificationType.ORDER_CANCELLED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -534,6 +562,10 @@ public class OrderService {
     // race instead of skipping the row.
     orders.flush();
     metrics().expired();
+    // Backlog #157: expiry writes no audit row (no actor — see above),
+    // but the buyer is still notified in this transaction: they are the
+    // one party who needs to learn their order lapsed.
+    notifications().record(order.getBuyerId(), NotificationType.ORDER_EXPIRED, orderId);
     return true;
   }
 
@@ -646,6 +678,11 @@ public class OrderService {
       // idempotent re-pay above returns before this point, and a declined
       // capture throws before reaching it (and rolls back besides).
       audit().record(buyerId, AuditAction.ORDER_PAID, AuditTargetType.ORDER, orderId);
+      // Backlog #157: notify the seller in the same transaction — the
+      // idempotent re-pay above returns before this point, so a replay
+      // writes no duplicate row.
+      notifications().record(order.getItem().getSellerId(),
+          NotificationType.ORDER_PAID, orderId);
       return dto;
     } catch (PaymentDeclinedException e) {
       if (!timerStopped) {
@@ -740,6 +777,10 @@ public class OrderService {
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-complete above returns before this point.
       audit().record(callerId, AuditAction.ORDER_COMPLETED, AuditTargetType.ORDER, orderId);
+      // Backlog #157: notify the buyer in the same transaction — the
+      // idempotent re-complete above returns before this point.
+      notifications().record(order.getBuyerId(),
+          NotificationType.ORDER_COMPLETED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -834,6 +875,10 @@ public class OrderService {
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-refund above returns before this point.
       audit().record(callerId, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, orderId);
+      // Backlog #157: notify the buyer in the same transaction — the
+      // idempotent re-refund above returns before this point.
+      notifications().record(order.getBuyerId(),
+          NotificationType.ORDER_REFUNDED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
