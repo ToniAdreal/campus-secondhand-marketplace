@@ -12,6 +12,14 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   List<Item> findByStatus(ItemStatus status);
 
   /**
+   * One seller's listings in one status — the account-closure sweep
+   * (backlog #158) flips exactly the caller's {@code AVAILABLE} rows to
+   * {@code WITHDRAWN}; RESERVED rows (a live order) and SOLD rows (sale
+   * history) are never touched by it.
+   */
+  List<Item> findBySellerIdAndStatus(Long sellerId, ItemStatus status);
+
+  /**
    * Every non-null primary photo URL across all listings — the reference
    * set the orphan-upload sweeper (backlog #103) checks disk files
    * against. A plain column projection: no entities are materialized.

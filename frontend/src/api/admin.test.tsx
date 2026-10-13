@@ -128,6 +128,7 @@ describe('admin query keys', () => {
 
   it('pins the allowlisted audit actions and target types to the backend enums', () => {
     expect(AUDIT_ACTIONS).toEqual([
+      'ACCOUNT_CLOSED',
       'PASSWORD_CHANGED',
       'PASSWORD_RESET_COMPLETED',
       'TOTP_ENABLED',

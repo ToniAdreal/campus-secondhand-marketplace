@@ -9,6 +9,7 @@ import SettingsPage from './SettingsPage';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 const user: AuthUser = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
 
@@ -322,6 +323,58 @@ describe('SettingsPage', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe('email is already registered');
+  });
+
+  it('closes the account from the danger zone after the typed confirmation (backlog #158)', async () => {
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+    renderAt('/settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Close my account' }));
+    fireEvent.change(screen.getByLabelText('Password to confirm closure'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.change(screen.getByLabelText('Type DELETE to confirm'), {
+      target: { value: 'DELETE' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm: close my account' }));
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledTimes(1));
+    expect(deleteSpy).toHaveBeenCalledWith('/auth/me', {
+      data: { currentPassword: 'old-secret' },
+    });
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Account closed.');
+    // the backend killed this session too: the in-memory credential is gone
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it('refuses account closure without the typed DELETE confirmation (backlog #158)', async () => {
+    renderAt('/settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Close my account' }));
+    fireEvent.change(screen.getByLabelText('Password to confirm closure'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm: close my account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Type DELETE to confirm account closure.');
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it('maps an account-closure 401 to the shared no-oracle copy (backlog #158)', async () => {
+    deleteSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    renderAt('/settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Close my account' }));
+    fireEvent.change(screen.getByLabelText('Password to confirm closure'), {
+      target: { value: 'wrong-secret' },
+    });
+    fireEvent.change(screen.getByLabelText('Type DELETE to confirm'), {
+      target: { value: 'DELETE' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm: close my account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Current password or code is incorrect.');
+    expect(getAccessToken()).toBe('old-credential');
   });
 
   it('bounces anonymous users to /login without firing any request', () => {

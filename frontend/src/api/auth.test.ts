@@ -5,6 +5,7 @@ import {
   me,
   changePassword,
   changeEmail,
+  closeAccount,
   listSessions,
   revokeSession,
   requestPasswordReset,
@@ -187,6 +188,37 @@ describe('changeEmail', () => {
     await expect(
       changeEmail({ currentPassword: 'old', newEmail: 'taken@example.com' }),
     ).rejects.toBe(failure);
+  });
+});
+
+describe('closeAccount', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('DELETEs /auth/me with the proof payload in the body and resolves void', async () => {
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+
+    const result = await closeAccount({ currentPassword: 'old', code: '123456' });
+
+    expect(deleteSpy).toHaveBeenCalledWith('/auth/me', {
+      data: { currentPassword: 'old', code: '123456' },
+    });
+    // No credential is returned — the account and every session are gone.
+    expect(result).toBeUndefined();
+  });
+
+  it('propagates the identical 401 for a wrong password or code', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 401,
+        data: { code: 401, message: 'invalid credentials', data: null },
+      },
+    };
+    deleteSpy.mockRejectedValueOnce(failure);
+
+    await expect(closeAccount({ currentPassword: 'wrong' })).rejects.toBe(failure);
   });
 });
 

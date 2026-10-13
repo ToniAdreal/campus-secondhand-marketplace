@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
   changeEmail,
   changePassword,
+  closeAccount,
   disableTotp,
   enableTotp,
   recoveryCodeCount,
@@ -61,6 +62,22 @@ function describeEmailChangeError(err: unknown): string {
     if (!err.response) return 'Network error — is the backend running?';
   }
   return 'Email change failed';
+}
+
+/**
+ * Maps a failed account-closure call to UI copy (backlog #158). A wrong
+ * password and a wrong/missing second-factor code share the backend's
+ * identical 401, so the copy names both and neither (no oracle); every
+ * other failure shows the backend's envelope message verbatim.
+ */
+function describeCloseAccountError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.response?.status === 401) return 'Current password or code is incorrect.';
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Account closure failed';
 }
 
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
@@ -125,6 +142,19 @@ export default function SettingsPage() {
   const [disableError, setDisableError] = useState<string | null>(null);
   const [disableDone, setDisableDone] = useState(false);
   const [disablePending, setDisablePending] = useState(false);
+
+  // Account closure (backlog #158). The danger zone stays collapsed until
+  // the user opens it, and the destructive call additionally requires the
+  // typed confirmation below — a single stray click can never close the
+  // account. Success is terminal for this tab (every session died with
+  // the account), mirroring the email-change done panel.
+  const [closureOpen, setClosureOpen] = useState(false);
+  const [closurePassword, setClosurePassword] = useState('');
+  const [closureCode, setClosureCode] = useState('');
+  const [closureConfirm, setClosureConfirm] = useState('');
+  const [closureError, setClosureError] = useState<string | null>(null);
+  const [closureDone, setClosureDone] = useState(false);
+  const [closurePending, setClosurePending] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -201,6 +231,39 @@ export default function SettingsPage() {
       setEmailError(describeEmailChangeError(err));
     } finally {
       setEmailPending(false);
+    }
+  }
+
+  async function onCloseAccount(e: FormEvent) {
+    e.preventDefault();
+    if (closurePassword === '') {
+      setClosureError('Enter your current password to confirm.');
+      return;
+    }
+    if (closureConfirm !== 'DELETE') {
+      setClosureError('Type DELETE to confirm account closure.');
+      return;
+    }
+    setClosurePending(true);
+    setClosureError(null);
+    try {
+      const code = closureCode.trim();
+      await closeAccount(
+        code
+          ? { currentPassword: closurePassword, code }
+          : { currentPassword: closurePassword },
+      );
+      // The account is gone server-side and every session with it; drop
+      // this tab's credential too so no later call presents a dead token.
+      setAccessToken(null);
+      setClosurePassword('');
+      setClosureCode('');
+      setClosureConfirm('');
+      setClosureDone(true);
+    } catch (err) {
+      setClosureError(describeCloseAccountError(err));
+    } finally {
+      setClosurePending(false);
     }
   }
 
@@ -564,6 +627,105 @@ export default function SettingsPage() {
           </Link>{' '}
           page.
         </p>
+      </div>
+      <div className="mt-6 border-t border-red-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold text-red-700">Danger zone</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Closing your account is permanent. Every session is signed out, your
+          available listings are withdrawn, and your username and email address
+          are released. Orders you were part of stay in the other party&apos;s
+          history — they are never rewritten.
+        </p>
+        {closureDone ? (
+          <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+            Account closed. You have been signed out everywhere — this account can
+            no longer be used to sign in.
+          </p>
+        ) : closureOpen ? (
+          <form onSubmit={onCloseAccount} className="space-y-3">
+            {closureError && (
+              <p role="alert" className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+                {closureError}
+              </p>
+            )}
+            <div>
+              <label
+                htmlFor="settings-closure-password"
+                className="mb-1 block text-sm font-medium"
+              >
+                Password to confirm closure
+              </label>
+              <input
+                id="settings-closure-password"
+                type="password"
+                autoComplete="current-password"
+                value={closurePassword}
+                onChange={(e) => setClosurePassword(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label htmlFor="settings-closure-code" className="mb-1 block text-sm font-medium">
+                Authenticator or recovery code (only if two-factor is on)
+              </label>
+              <input
+                id="settings-closure-code"
+                type="text"
+                autoComplete="one-time-code"
+                value={closureCode}
+                onChange={(e) => setClosureCode(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="settings-closure-confirm"
+                className="mb-1 block text-sm font-medium"
+              >
+                Type DELETE to confirm
+              </label>
+              <input
+                id="settings-closure-confirm"
+                type="text"
+                autoComplete="off"
+                value={closureConfirm}
+                onChange={(e) => setClosureConfirm(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={closurePending}
+              className="w-full rounded bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {closurePending ? 'Closing…' : 'Confirm: close my account'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setClosureOpen(false);
+                setClosureError(null);
+                setClosurePassword('');
+                setClosureCode('');
+                setClosureConfirm('');
+              }}
+              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Keep my account
+            </button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setClosureOpen(true);
+              setClosureError(null);
+            }}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          >
+            Close my account
+          </button>
+        )}
       </div>
     </div>
   );

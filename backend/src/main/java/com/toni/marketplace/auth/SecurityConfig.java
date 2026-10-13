@@ -32,7 +32,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *   <li>{@code /api/auth/**} is public (register/login/refresh land here),
  *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password},
  *       {@code POST /api/auth/email-change},
- *       {@code GET /api/auth/me}, {@code GET /api/auth/sessions} and
+ *       {@code GET /api/auth/me}, {@code DELETE /api/auth/me} (account
+ *       closure, backlog #158), {@code GET /api/auth/sessions} and
  *       {@code DELETE /api/auth/sessions/**},
  *       which need a Bearer access token because they act on the caller's own
  *       session(s).</li>
@@ -183,6 +184,7 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/email-change").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
+            .requestMatchers(HttpMethod.DELETE, "/api/auth/me").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/sessions").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()

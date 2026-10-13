@@ -214,5 +214,9 @@ class OpenApiContractTest {
     // Email change (#150) pins its wrong-password 401 and taken-address 409.
     assertThat(responseCodes(docs, "/api/auth/email-change", "post"))
         .contains("400", "401", "409");
+    // Account closure (#158) shares the /me path (no new path in the set
+    // above) and pins its identical-proof 401 and lockout 423 on DELETE.
+    assertThat(responseCodes(docs, "/api/auth/me", "delete"))
+        .contains("200", "400", "401", "423");
   }
 }

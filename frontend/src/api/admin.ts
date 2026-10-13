@@ -106,6 +106,7 @@ export interface AuditLogEntry {
 
 /** Allowlisted AuditAction values (backend enum, source of truth). */
 export const AUDIT_ACTIONS = [
+  'ACCOUNT_CLOSED',
   'PASSWORD_CHANGED',
   'PASSWORD_RESET_COMPLETED',
   'TOTP_ENABLED',

@@ -23,6 +23,15 @@ public enum AuditAction {
    */
   EMAIL_CHANGED,
   /**
+   * The account holder closed their own account
+   * ({@code AuthService.closeAccount}, backlog #158). Actor and target are
+   * both the account holder, mirroring {@link #PASSWORD_CHANGED}. The row
+   * survives the closure precisely because the audit table carries no
+   * foreign keys — it is the evidence that the tombstoned user row was a
+   * self-service closure, not an ADMIN disable ({@link #USER_DISABLED}).
+   */
+  ACCOUNT_CLOSED,
+  /**
    * A password reset was completed via the emailed-token flow
    * ({@code PasswordResetService.confirmReset}, backlog #110). Actor and
    * target are both the account whose password was reset: the caller is a

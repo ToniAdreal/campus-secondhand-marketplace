@@ -21,6 +21,9 @@ import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import com.toni.marketplace.common.InvalidTotpCodeException;
 import com.toni.marketplace.common.PasswordReuseException;
+import com.toni.marketplace.item.Item;
+import com.toni.marketplace.item.ItemRepository;
+import com.toni.marketplace.item.ItemStatus;
 import io.micrometer.core.instrument.Timer;
 
 /**
@@ -56,6 +59,7 @@ public class AuthService {
   private final EmailVerificationService emailVerification;
   private final EmailVerificationProperties emailVerificationProps;
   private final PasswordHistoryService passwordHistory;
+  private final ItemRepository items;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -66,7 +70,8 @@ public class AuthService {
                      PasswordPolicyProperties passwordPolicy,
                      EmailVerificationService emailVerification,
                      EmailVerificationProperties emailVerificationProps,
-                     PasswordHistoryService passwordHistory) {
+                     PasswordHistoryService passwordHistory,
+                     ItemRepository items) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -82,6 +87,7 @@ public class AuthService {
     this.emailVerification = emailVerification;
     this.emailVerificationProps = emailVerificationProps;
     this.passwordHistory = passwordHistory;
+    this.items = items;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -91,7 +97,7 @@ public class AuthService {
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
-        null, new EmailVerificationProperties(), null);
+        null, new EmailVerificationProperties(), null, null);
   }
 
   /**
@@ -1022,6 +1028,96 @@ public class AuthService {
     // Backlog #98: the audit row joins this transaction, so a change that
     // rolls back leaves no row.
     audit().record(userId, AuditAction.EMAIL_CHANGED, AuditTargetType.USER, userId);
+  }
+
+  /**
+   * Self-service account closure (backlog #158) — {@code DELETE
+   * /api/auth/me}. Before this, no account-deletion path existed anywhere:
+   * a user who wanted to leave had no supported exit, and their live
+   * sessions and listings had no terminal handling (the ADMIN disable of
+   * #88 is staff-side only, and reversible).
+   *
+   * <p>Proof discipline mirrors {@link #changePassword} plus, for a
+   * TOTP-enabled account, {@link #disableTotp}: the current password is
+   * required, and a 2FA-enabled account must also present a valid TOTP or
+   * recovery code through the shared seam ({@link #requireTotpUnlocked} +
+   * {@link #verifySecondFactor}) — the password is checked BEFORE the
+   * second factor is touched, so a wrong-password attempt never burns a
+   * one-time recovery code, and failed code proofs feed the shared #101
+   * lockout (an active lock answers 423). Every proof failure is the
+   * identical 401 — no oracle reveals which proof failed.
+   *
+   * <p>On success, in this one transaction:
+   * <ul>
+   *   <li>every refresh family is revoked and {@code tokenVersion} is
+   *       bumped, so live Bearer tokens die immediately (the #148
+   *       semantics);</li>
+   *   <li>the caller's AVAILABLE listings flip to {@link
+   *       ItemStatus#WITHDRAWN} — RESERVED listings (a live order) and
+   *       SOLD listings are untouched, and order history is NEVER
+   *       rewritten: PAID/COMPLETED rows keep the seller id for the
+   *       counterparty's records;</li>
+   *   <li>the user row is ANONYMIZED instead of hard-deleted: username
+   *       and email become the {@code deleted-<id>} tombstone (which
+   *       frees the originals for re-registration), the password hash is
+   *       replaced with the hash of a random UUID nobody knows, the TOTP
+   *       secret is cleared, 2FA is switched off, every recovery code is
+   *       deleted, and the row is flagged disabled so even the tombstone
+   *       credentials answer the identical login 401. A hard DELETE is
+   *       impossible without destroying other users' history — order,
+   *       message and favorite rows reference this account — so the
+   *       tombstone is the design, not a shortcut;</li>
+   *   <li>an {@code ACCOUNT_CLOSED} audit row is appended (actor =
+   *       target = the account holder).</li>
+   * </ul>
+   *
+   * <p>{@code noRollbackFor}: same rationale as {@link #disableTotp} —
+   * the shared lockout counter increment must survive the 401 / 423 it
+   * produces; the failure paths mutate nothing else, so committing them
+   * is safe.
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public void closeAccount(long userId, String currentPassword, String code) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (user.isTotpEnabled()) {
+      requireTotpUnlocked(user);
+    }
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    if (user.isTotpEnabled()) {
+      if (code == null || code.isBlank()) {
+        throw new InvalidCredentialsException();
+      }
+      verifySecondFactor(user, code);
+    }
+    // Withdraw the caller's live listings — never rewrite order history.
+    if (items != null) {
+      List<Item> available = items.findBySellerIdAndStatus(userId, ItemStatus.AVAILABLE);
+      for (Item item : available) {
+        item.setStatus(ItemStatus.WITHDRAWN);
+      }
+      items.saveAll(available);
+    }
+    if (recoveryCodesAvailable()) {
+      recoveryCodes.deleteByUserId(userId);
+    }
+    // Anonymize the row into its tombstone form (see the javadoc above).
+    user.setUsername("deleted-" + userId);
+    user.setEmail("deleted-" + userId + "@deleted.invalid");
+    user.setPasswordHash(passwords.encode(java.util.UUID.randomUUID().toString()));
+    user.setTotpSecret(null);
+    user.setTotpEnabled(false);
+    user.setFailedTotpAttempts(0);
+    user.setTotpLockedUntil(null);
+    user.setFailedLoginAttempts(0);
+    user.setLockedUntil(null);
+    user.setDisabled(true);
+    user.setTokenVersion(user.getTokenVersion() + 1);
+    users.save(user);
+    jwt.revokeAll(userId);
+    audit().record(userId, AuditAction.ACCOUNT_CLOSED, AuditTargetType.USER, userId);
   }
 
   /**

@@ -334,6 +334,31 @@ export async function changeEmail(payload: ChangeEmailPayload): Promise<void> {
   await api.post<ApiResponse<null>>('/auth/email-change', payload);
 }
 
+export interface CloseAccountPayload {
+  currentPassword: string;
+  /** Required only when the account has TOTP 2FA enabled; omit otherwise. */
+  code?: string;
+}
+
+/**
+ * DELETE /api/auth/me (backlog #158). Closes the caller's own account:
+ * the current password must match, and a TOTP-enabled account must also
+ * present a valid TOTP or recovery code in `code` — every proof failure
+ * fails with the identical 401 (no oracle). On success the backend
+ * revokes EVERY session (this one too), withdraws the caller's AVAILABLE
+ * listings, and anonymizes the user row to a `deleted-<id>` tombstone
+ * (order history is never rewritten) — no credential is returned, so
+ * the caller must treat the user as signed out for good and drop the
+ * local credential. The original username/email are freed for a fresh
+ * registration.
+ *
+ * Throws the Axios error on failure; the backend wraps failures in the
+ * {code,message,data} envelope.
+ */
+export async function closeAccount(payload: CloseAccountPayload): Promise<void> {
+  await api.delete<ApiResponse<null>>('/auth/me', { data: payload });
+}
+
 export interface RequestPasswordResetPayload {
   usernameOrEmail: string;
 }

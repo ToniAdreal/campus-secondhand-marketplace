@@ -280,6 +280,29 @@ public class AuthController {
   }
 
   /**
+   * Closes the caller's own account (backlog #158, authenticated —
+   * SecurityConfig). The current password proves possession, and a
+   * TOTP-enabled account must also present a valid TOTP or recovery
+   * code in {@code code}; every proof failure is the identical 401.
+   * On success every session is revoked, the caller's AVAILABLE
+   * listings are withdrawn, and the user row is anonymized to a
+   * {@code deleted-<id>} tombstone (order history is never rewritten) —
+   * see {@code AuthService.closeAccount}. No session is issued here:
+   * the answer is the plain 200 envelope, and the httpOnly refresh
+   * cookie is cleared exactly like logout's.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "account closed; every session revoked, AVAILABLE listings withdrawn, user row anonymized (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — missing current password (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong password or wrong/missing second-factor code — identical for both (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor attempts locked after repeated failures — see Retry-After (envelope)")})
+  @DeleteMapping("/me")
+  public ResponseEntity<ApiResponse<Void>> closeAccount(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody AccountClosureRequest request) {
+    auth.closeAccount(userId, request.currentPassword(), request.code());
+    return ResponseEntity.status(HttpStatus.OK)
+        .header(HttpHeaders.SET_COOKIE, clearedRefreshCookie().toString())
+        .body(ApiResponse.ok(null));
+  }
+
+  /**
    * Changes the caller's password (identified by the Bearer access token —
    * SecurityConfig requires authentication for this route). The current
    * password is required; the new one must pass the strength policy. On
