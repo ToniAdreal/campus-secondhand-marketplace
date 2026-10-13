@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -298,6 +299,31 @@ public class OrderService {
         orders.summarizeBySellerId(sellerId),
         orders.summarizeBySellerIdBetween(sellerId, window.from(), window.to()),
         window.month());
+  }
+
+  /**
+   * Seller sales CSV export (backlog #159): the caller's own PAID and
+   * COMPLETED sales rendered by {@link SellerSalesCsv}. PAID/COMPLETED
+   * only — the same rows that count toward the sales summary's gross:
+   * PENDING has no capture to book, CANCELLED never happened, and a
+   * REFUNDED sale was handed back, so none of them belong in a seller's
+   * books export. The optional window mirrors the settlement window
+   * (#155): {@code [from, to)} over {@code Order.createdAt}, either side
+   * open, an inverted window is a 400. Scoped strictly to the caller's
+   * listings like {@link #sellerSalesSummary(Long)} — no ADMIN bypass —
+   * and a seller with no qualifying sales gets a header-only file, not
+   * an error.
+   */
+  @Transactional(readOnly = true)
+  public String sellerSalesCsv(Long sellerId, Instant from, Instant to) {
+    if (from != null && to != null && !from.isBefore(to)) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "from must be before to");
+    }
+    List<Order> rows = orders.findSellerSalesExportRows(sellerId,
+        List.of(OrderStatus.PAID, OrderStatus.COMPLETED), from, to);
+    return SellerSalesCsv.render(
+        rows.stream().map(SellerSalesCsv.Row::from).toList());
   }
 
   /**

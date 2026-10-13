@@ -125,6 +125,26 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
   long sumCapturedCentsBetween(@Param("createdFrom") Instant createdFrom,
                                @Param("createdTo") Instant createdTo);
 
+  /**
+   * Rows for the seller sales CSV export (backlog #159): the caller's own
+   * orders in the given statuses (the export passes PAID/COMPLETED only),
+   * optionally windowed to {@code [createdFrom, createdTo)} over
+   * {@code createdAt} — the #155 bounds; either bound may be null (open
+   * side). Newest first ({@code createdAt} desc, {@code id} desc
+   * tie-break), mirroring the seller order list. The item is fetch-joined
+   * because every row renders the listing title, so the export never
+   * degrades into one lazy load per row.
+   */
+  @Query("select o from Order o join fetch o.item "
+      + "where o.item.sellerId = :sellerId and o.status in :statuses "
+      + "and (:createdFrom is null or o.createdAt >= :createdFrom) "
+      + "and (:createdTo is null or o.createdAt < :createdTo) "
+      + "order by o.createdAt desc, o.id desc")
+  List<Order> findSellerSalesExportRows(@Param("sellerId") Long sellerId,
+                                        @Param("statuses") Collection<OrderStatus> statuses,
+                                        @Param("createdFrom") Instant createdFrom,
+                                        @Param("createdTo") Instant createdTo);
+
   /** Windowed variant of {@link #sumAmountCentsByStatus} (backlog #155). */
   @Query("select coalesce(sum(o.amountCents), 0) from Order o "
       + "where o.status = :status "

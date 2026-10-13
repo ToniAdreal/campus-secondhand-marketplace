@@ -38,8 +38,9 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code AdminPaymentController}, {@code AuditLogController},
  * {@code CategoryController},
  * {@code ItemController}, {@code MessageController},
- * {@code NotificationController}, {@code OrderController}
- * and {@code SellerOrderController}. The set is asserted by equality, so
+ * {@code NotificationController}, {@code OrderController},
+ * {@code SellerOrderController} and {@code SellerSalesExportController}.
+ * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
  */
@@ -98,6 +99,7 @@ class OpenApiContractTest {
       "/api/seller/orders",
       "/api/seller/orders/{id}",
       "/api/seller/orders/summary",
+      "/api/seller/sales/export.csv",
       "/api/users/me/favorites",
       "/api/users/me/favorites/{itemId}");
 
@@ -218,5 +220,8 @@ class OpenApiContractTest {
     // above) and pins its identical-proof 401 and lockout 423 on DELETE.
     assertThat(responseCodes(docs, "/api/auth/me", "delete"))
         .contains("200", "400", "401", "423");
+    // Seller sales CSV export (#159) pins its inverted-window 400.
+    assertThat(responseCodes(docs, "/api/seller/sales/export.csv", "get"))
+        .contains("400", "401");
   }
 }
