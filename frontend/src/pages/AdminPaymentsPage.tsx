@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
+  WEBHOOK_OUTCOMES,
   describeSettlementError,
+  describeWebhookEventsError,
   formatCents,
   isForbidden,
   useAdminPaymentSettlement,
+  useAdminWebhookEvents,
   type SettlementSummary,
+  type WebhookEventEntry,
 } from '../api/admin';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -27,6 +31,14 @@ import { useAuthStore } from '../store/useAuthStore';
  * the window; blank dates keep the all-time view. The page labels them
  * as what they are — mock-PSP derived figures; no real money has moved
  * and no PSP settlement file was imported.
+ *
+ * Below the summary, the webhook-event viewer (backlog #156) lists the
+ * webhook_event ledger (#140) newest first with an outcome filter, in
+ * the AdminAuditLogPage pattern: each row shows the PSP event id, its
+ * type, the PSP reference it carried, the outcome as a chip and the
+ * received-at time. The ledger stores no raw body or signature, so the
+ * section can show neither — the PSP reference is the join key against
+ * the orders table.
  */
 export default function AdminPaymentsPage() {
   const user = useAuthStore((s) => s.user);
@@ -53,6 +65,12 @@ export default function AdminPaymentsPage() {
 
   const settlement = useAdminPaymentSettlement(isAdmin, window);
 
+  // Webhook-event viewer (backlog #156): paginated newest first; a new
+  // outcome filter restarts from the first page.
+  const [webhookPage, setWebhookPage] = useState(0);
+  const [webhookOutcome, setWebhookOutcome] = useState('');
+  const webhooks = useAdminWebhookEvents(webhookPage, webhookOutcome, isAdmin);
+
   if (!isAdmin) {
     return <Navigate to="/" replace />;
   }
@@ -78,6 +96,9 @@ export default function AdminPaymentsPage() {
     Number.isFinite(data.capturedCents) &&
     Number.isFinite(data.refundedCents) &&
     Number.isFinite(data.netCents);
+
+  const webhookRows: WebhookEventEntry[] = webhooks.data?.content ?? [];
+  const webhookTotalPages = webhooks.data?.totalPages ?? 0;
 
   const statusCounts: Array<{ label: string; count: number | undefined }> = [
     { label: 'Total orders', count: data?.totalOrders },
@@ -172,6 +193,108 @@ export default function AdminPaymentsPage() {
           </section>
         </>
       )}
+      <section aria-label="Webhook events" className="mt-6">
+        <h2 className="mb-3 text-lg font-semibold">Webhook events</h2>
+        <p className="mb-4 text-sm text-neutral-600">
+          Mock-PSP deliveries recorded in the webhook ledger, newest first. The PSP
+          reference is the capture or refund id the delivery carried; the raw delivery
+          body and its signature are not stored, so they are not shown here.
+        </p>
+        <div className="mb-4">
+          <label htmlFor="webhook-outcome" className="sr-only">
+            Filter by outcome
+          </label>
+          <select
+            id="webhook-outcome"
+            aria-label="Filter by outcome"
+            value={webhookOutcome}
+            onChange={(e) => {
+              setWebhookOutcome(e.target.value);
+              setWebhookPage(0);
+            }}
+            className="rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm focus:border-sky-500 focus:outline-none"
+          >
+            <option value="">All outcomes</option>
+            {WEBHOOK_OUTCOMES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </div>
+        {webhooks.isLoading && <p>Loading webhook events…</p>}
+        {webhooks.isError && (
+          <p className="text-red-600">{describeWebhookEventsError(webhooks.error)}</p>
+        )}
+        {webhooks.isSuccess && webhookRows.length === 0 && (
+          <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+            <p className="text-neutral-600">
+              {webhookOutcome !== ''
+                ? 'No webhook events match this filter.'
+                : 'No webhook events yet.'}
+            </p>
+          </div>
+        )}
+        {webhookRows.length > 0 && (
+          <>
+            <div className="overflow-x-auto rounded-lg bg-white shadow-sm">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-neutral-500">
+                    <th scope="col" className="px-4 py-3 font-medium">Event</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Type</th>
+                    <th scope="col" className="px-4 py-3 font-medium">PSP reference</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Outcome</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Received</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webhookRows.map((row) => (
+                    <tr key={row.id} className="border-b border-neutral-100 last:border-0">
+                      <td className="px-4 py-3 font-medium">{row.eventId}</td>
+                      <td className="px-4 py-3">{row.eventType}</td>
+                      <td className="px-4 py-3">{row.pspReference ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            row.outcome === 'MATCHED'
+                              ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800'
+                              : 'rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800'
+                          }
+                        >
+                          {row.outcome}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{new Date(row.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setWebhookPage((p) => Math.max(0, p - 1))}
+                disabled={webhookPage <= 0 || webhooks.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-neutral-600">
+                Page {webhookTotalPages === 0 ? 0 : webhookPage + 1} of {webhookTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setWebhookPage((p) => p + 1)}
+                disabled={webhookPage + 1 >= webhookTotalPages || webhooks.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </>
+        )}
+      </section>
     </div>
   );
 }

@@ -265,7 +265,71 @@ export const adminPaymentKeys = {
   all: ['admin', 'payments'] as const,
   settlement: (window: SettlementWindow = {}) =>
     [...adminPaymentKeys.all, 'settlement', window.from ?? null, window.to ?? null] as const,
+  webhooks: (page: number, outcome: string) =>
+    [...adminPaymentKeys.all, 'webhooks', page, outcome] as const,
 };
+
+/** Allowlisted webhook outcomes (backend WebhookEvent.Outcome). */
+export const WEBHOOK_OUTCOMES = ['MATCHED', 'MISMATCH'] as const;
+
+/**
+ * One row of the ADMIN webhook-event viewer, mirroring the backend's
+ * WebhookEventDto (GET /api/admin/payments/webhooks, backlog #156).
+ * The ledger carries no order id — `pspReference` (a capture or refund
+ * id) is the join key against the orders table — and no raw body or
+ * signature is stored, so none exists here either.
+ */
+export interface WebhookEventEntry {
+  id: number;
+  eventId: string;
+  eventType: string;
+  pspReference: string | null;
+  outcome: string;
+  createdAt: string;
+}
+
+/**
+ * GET /api/admin/payments/webhooks — ADMIN-only (the backend's
+ * @PreAuthorize is the real gate). Paginated, newest first; the
+ * outcome filter is omitted entirely when unset, so the unfiltered
+ * request stays a plain paginated list. Callers must only pass
+ * allowlisted outcome values — anything else is a backend 400.
+ */
+export function useAdminWebhookEvents(
+  page = 0,
+  outcome = '',
+  enabled = true,
+  size = 20,
+) {
+  return useQuery({
+    queryKey: adminPaymentKeys.webhooks(page, outcome),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<WebhookEventEntry>>>('/admin/payments/webhooks', {
+          params: { page, size, ...(outcome ? { outcome } : {}) },
+        })
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed webhook-events call to user-facing copy. */
+export function describeWebhookEventsError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view webhook events.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view webhook events.';
+  }
+  if (code === 400) {
+    return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
 
 /**
  * Optional date window for the settlement summary (backlog #155).

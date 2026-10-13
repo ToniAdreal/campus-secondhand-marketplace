@@ -2,6 +2,10 @@ package com.toni.marketplace.order;
 
 import com.toni.marketplace.common.ApiResponse;
 import java.time.Instant;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,18 +32,13 @@ import org.springframework.web.bind.annotation.RestController;
 class AdminPaymentController {
 
   private final OrderService orderService;
+  private final PaymentWebhookService webhooks;
 
-  AdminPaymentController(OrderService orderService) {
+  AdminPaymentController(OrderService orderService, PaymentWebhookService webhooks) {
     this.orderService = orderService;
+    this.webhooks = webhooks;
   }
 
-  /**
-   * Settlement summary reconciled from the orders table: captured total
-   * (orders carrying a capture id — a refunded order was still captured),
-   * refunded total (REFUNDED orders), net, and counts per status. See
-   * {@link SettlementSummaryDto} for the exact money semantics and the
-   * honest mock-money scope.
-   */
   /**
    * Settlement summary, optionally scoped to a date window (backlog
    * #155). {@code from}/{@code to} are ISO-8601 instants bounding
@@ -59,5 +58,29 @@ class AdminPaymentController {
       @RequestParam(name = "to", required = false)
       @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
     return ApiResponse.ok(orderService.settlementSummary(from, to));
+  }
+
+  /**
+   * Webhook-event viewer (backlog #156): the read side of the
+   * {@code webhook_event} ledger (#140). Until now the rows were
+   * written by the receiver and consumed only by that same service, so
+   * reconciling "the PSP says it sent it" against "we applied it"
+   * meant raw SQL. Rows are paginated newest first, optionally
+   * filtered by exact {@code outcome} (bound to the enum, so anything
+   * else is a 400, never a query fragment). Rows are
+   * {@link WebhookEventDto} projections — see that record for what is
+   * and is not exposed (no order id exists on the ledger; no raw body
+   * or signature is stored, so none can leak).
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "unknown outcome filter (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)")})
+  @GetMapping("/webhooks")
+  public ApiResponse<Page<WebhookEventDto>> webhooks(
+      @RequestParam(name = "outcome", required = false) WebhookEvent.Outcome outcome,
+      @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
+      Pageable pageable) {
+    return ApiResponse.ok(webhooks.listWebhookEvents(outcome, pageable));
   }
 }

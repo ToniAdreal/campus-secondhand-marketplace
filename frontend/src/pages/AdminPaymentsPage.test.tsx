@@ -190,4 +190,87 @@ describe('AdminPaymentsPage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toContain('settlement unavailable');
   });
+
+  // Webhook-event viewer (backlog #156): the section lists ledger rows
+  // from GET /admin/payments/webhooks under the settlement summary.
+  const webhookRowsFixture = [
+    {
+      id: 2,
+      eventId: 'evt_new',
+      eventType: 'refund.succeeded',
+      pspReference: 'rfd_new',
+      outcome: 'MISMATCH',
+      createdAt: '2026-01-12T00:00:00Z',
+    },
+    {
+      id: 1,
+      eventId: 'evt_old',
+      eventType: 'capture.succeeded',
+      pspReference: 'cap_old',
+      outcome: 'MATCHED',
+      createdAt: '2026-01-10T00:00:00Z',
+    },
+  ];
+
+  function mockSettlementAndWebhooks(webhookData: unknown) {
+    getSpy.mockImplementation(((url: string) =>
+      url === '/admin/payments/webhooks'
+        ? Promise.resolve({ data: { code: 0, message: 'ok', data: webhookData } })
+        : Promise.resolve(summaryEnvelope(summaryFixture))) as never);
+  }
+
+  it('renders webhook events with outcome chips and PSP references', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+    expect(screen.getByText('evt_old')).toBeTruthy();
+    expect(screen.getByText('refund.succeeded')).toBeTruthy();
+    expect(screen.getByText('rfd_new')).toBeTruthy();
+    // Each outcome appears twice: the filter <option> and the row chip.
+    expect(screen.getAllByText('MISMATCH')).toHaveLength(2);
+    expect(screen.getAllByText('MATCHED')).toHaveLength(2);
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/webhooks', {
+      params: { page: 0, size: 20 },
+    });
+  });
+
+  it('outcome filter fires a filtered webhook request', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Filter by outcome'), {
+      target: { value: 'MISMATCH' },
+    });
+
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/admin/payments/webhooks', {
+        params: { page: 0, size: 20, outcome: 'MISMATCH' },
+      }),
+    );
+  });
+
+  it('renders the webhook empty state when the ledger is empty', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({ content: [], totalElements: 0, totalPages: 0, number: 0 });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('No webhook events yet.')).toBeTruthy());
+  });
 });

@@ -51,6 +51,7 @@ class OpenApiContractTest {
   private static final Set<String> EXPECTED_PATHS = Set.of(
       "/api/admin/audit-log",
       "/api/admin/payments/settlement",
+      "/api/admin/payments/webhooks",
       "/api/payments/webhooks/mock-psp",
       "/api/admin/users",
       "/api/admin/users/{id}/disable",

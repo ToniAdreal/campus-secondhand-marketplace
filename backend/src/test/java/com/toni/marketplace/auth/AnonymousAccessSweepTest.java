@@ -89,6 +89,7 @@ class AnonymousAccessSweepTest {
   private static final Set<String> EXPECTED_OPERATIONS = Set.of(
       "GET /api/admin/audit-log",
       "GET /api/admin/payments/settlement",
+      "GET /api/admin/payments/webhooks",
       "POST /api/payments/webhooks/mock-psp",
       "GET /api/admin/users",
       "POST /api/admin/users/{id}/disable",

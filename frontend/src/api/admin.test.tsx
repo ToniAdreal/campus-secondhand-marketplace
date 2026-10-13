@@ -13,16 +13,19 @@ import {
   describeAdminUserError,
   describeAuditLogError,
   describeSettlementError,
+  describeWebhookEventsError,
   formatCents,
   isForbidden,
   useAdminAuditLog,
   useAdminPaymentSettlement,
+  useAdminWebhookEvents,
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
   type AdminUser,
   type AuditLogEntry,
   type SettlementSummary,
+  type WebhookEventEntry,
 } from './admin';
 
 const getSpy = vi.spyOn(api, 'get');
@@ -450,6 +453,87 @@ describe('describeSettlementError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeSettlementError(error)).toBe(expected);
+  });
+});
+
+const webhookPageFixture: Page<WebhookEventEntry> = {
+  content: [
+    {
+      id: 1,
+      eventId: 'evt_1',
+      eventType: 'capture.succeeded',
+      pspReference: 'cap_1',
+      outcome: 'MATCHED',
+      createdAt: '2026-01-10T00:00:00Z',
+    },
+  ],
+  totalElements: 1,
+  totalPages: 1,
+  number: 0,
+};
+
+describe('useAdminWebhookEvents', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('webhook keys hang off the payments subtree', () => {
+    expect(adminPaymentKeys.webhooks(0, '')).toEqual(['admin', 'payments', 'webhooks', 0, '']);
+    expect(adminPaymentKeys.webhooks(1, 'MISMATCH')).toEqual([
+      'admin',
+      'payments',
+      'webhooks',
+      1,
+      'MISMATCH',
+    ]);
+  });
+
+  it('GETs /admin/payments/webhooks paginated and unwraps the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope(webhookPageFixture));
+
+    const { result } = renderHook(() => useAdminWebhookEvents(0, ''), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/webhooks', {
+      params: { page: 0, size: 20 },
+    });
+    expect(result.current.data).toEqual(webhookPageFixture);
+  });
+
+  it('passes the outcome filter only when set', async () => {
+    getSpy.mockResolvedValueOnce(envelope(webhookPageFixture));
+
+    const { result } = renderHook(() => useAdminWebhookEvents(0, 'MISMATCH'), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/webhooks', {
+      params: { page: 0, size: 20, outcome: 'MISMATCH' },
+    });
+  });
+
+  it('stays idle when disabled (anonymous / non-admin page guard)', async () => {
+    const { result } = renderHook(() => useAdminWebhookEvents(0, '', false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeWebhookEventsError', () => {
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view webhook events.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view webhook events.'],
+    ['invalid filter', envelopeError(400, 'unknown outcome'), 'That filter is not valid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeWebhookEventsError(error)).toBe(expected);
   });
 });
 

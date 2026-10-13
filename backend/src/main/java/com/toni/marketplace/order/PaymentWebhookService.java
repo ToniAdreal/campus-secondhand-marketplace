@@ -15,6 +15,8 @@ import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -241,6 +243,21 @@ public class PaymentWebhookService {
           eventId, type, reference);
     }
     return new WebhookAck(eventId, outcome.name(), false);
+  }
+
+  /**
+   * ADMIN webhook-event viewer (backlog #156): paginated, newest first
+   * (the controller's {@code @PageableDefault} supplies createdAt/id
+   * DESC; the global max-page-size cap from #75 clamps oversized
+   * {@code size}). The outcome filter is an optional exact match bound
+   * to the {@link WebhookEvent.Outcome} enum, so only allowlisted values
+   * reach the query. Rows map to {@link WebhookEventDto} — never the
+   * entity, and the ledger stores no raw body or signature to expose.
+   */
+  @Transactional(readOnly = true)
+  public Page<WebhookEventDto> listWebhookEvents(WebhookEvent.Outcome outcome,
+                                                 Pageable pageable) {
+    return events.searchWebhookEvents(outcome, pageable).map(WebhookEventDto::of);
   }
 
   private WebhookEvent.Outcome reconcile(String type, String reference) {
