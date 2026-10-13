@@ -24,7 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Micrometer Prometheus registry export (backlog #57). The liveness /
  * readiness health groups (backlog #128) are public on the same terms:
  * liveness carries livenessState only (never db — a DB outage must not
- * restart-loop the app), readiness carries readinessState + db.
+ * restart-loop the app), readiness carries readinessState + db +
+ * uploadStorage (backlog #154 — the upload directory is readiness-only
+ * on the same terms: a full disk stops routing, never restarts; its
+ * details stay hidden under the show-details=never disclosure rule).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -75,7 +78,10 @@ class ActuatorSecurityTest {
         // The whole point of the group split: no db (or any other)
         // component may leak into liveness.
         .andExpect(jsonPath("$.components.db").doesNotExist())
-        .andExpect(jsonPath("$.components.readinessState").doesNotExist());
+        .andExpect(jsonPath("$.components.readinessState").doesNotExist())
+        // Upload storage (backlog #154) is readiness-only: it must
+        // never leak into liveness either.
+        .andExpect(jsonPath("$.components.uploadStorage").doesNotExist());
   }
 
   @Test
@@ -86,6 +92,19 @@ class ActuatorSecurityTest {
         .andExpect(jsonPath("$.components.readinessState.status").value("UP"))
         .andExpect(jsonPath("$.components.db.status").value("UP"))
         .andExpect(jsonPath("$.components.livenessState").doesNotExist());
+  }
+
+  @Test
+  void readinessGroupCarriesUploadStorageWithoutDetails() throws Exception {
+    // Backlog #154: the upload directory joins readiness (the test
+    // context's ./uploads root is creatable + writable with far more
+    // than the 10 MB floor free). Only its status is disclosed —
+    // show-details stays never, so the path / free-bytes details the
+    // indicator carries internally never reach an anonymous caller.
+    mockMvc.perform(get("/actuator/health/readiness"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.components.uploadStorage.status").value("UP"))
+        .andExpect(jsonPath("$.components.uploadStorage.details").doesNotExist());
   }
 
   @Test

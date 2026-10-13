@@ -108,6 +108,12 @@ app:
     # only once its mtime is older than this, so a just-written pre-commit
     # file (stored before its transaction commits) is never swept.
     orphan-grace: 24h
+    # Free-space floor for the upload-storage health indicator
+    # (UploadStorageHealthIndicator, backlog #154): readiness reports
+    # DOWN when the upload directory's file store has less usable space
+    # than this, so a full disk stops traffic before uploads start
+    # failing user-visibly. Readiness only — never liveness.
+    health-min-free: 10MB
   auth:
     # Refresh-cookie Secure flag (AuthController, backlog #130): the
     # httpOnly refresh_token cookie is a 7-day credential, so behind
@@ -320,7 +326,9 @@ management:
       # polls the two groups separately. Liveness is livenessState ONLY —
       # never the database: a DB outage must fail readiness (stop routing
       # traffic) without restart-looping the app. Readiness is
-      # readinessState + db. Probes are enabled explicitly so the groups
+      # readinessState + db + uploadStorage (backlog #154 — the upload
+      # directory is a readiness concern on the same terms: a full or
+      # unwritable disk stops routing, never restarts). Probes are enabled explicitly so the groups
       # exist outside Kubernetes too (Boot otherwise only auto-creates
       # them on k8s). show-details stays at its default (never): the group
       # endpoints disclose only UP/DOWN component status.
@@ -337,7 +345,7 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState,db,uploadStorage
   info:
     # Exposes info.* application properties on /actuator/info (the env info
     # contributor is opt-in since Spring Boot 3.2 — it defaults to off).
