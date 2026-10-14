@@ -69,6 +69,8 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByRole('heading', { name: /something went wrong/i })).toBeTruthy();
     expect(screen.getByRole('link', { name: /back to home/i })).toBeTruthy();
+    // the fallback is an alert region (#167) so the page swap is announced
+    expect(screen.getByRole('alert').textContent).toContain('Something went wrong');
     // the boundary logged the caught error via console.error
     expect(console.error).toHaveBeenCalled();
     const logged = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls

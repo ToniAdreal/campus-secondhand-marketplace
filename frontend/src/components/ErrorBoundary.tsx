@@ -45,7 +45,10 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   render(): ReactNode {
     if (this.state.hasError) {
       return (
-        <div className="mx-auto max-w-md py-16 text-center">
+        // role="alert" (#167): the fallback replaces the page content, so
+        // assistive tech must announce it instead of leaving the user on
+        // a page that silently vanished.
+        <div role="alert" className="mx-auto max-w-md py-16 text-center">
           <h1 className="text-3xl font-bold">Something went wrong</h1>
           <p className="mt-3 text-neutral-600">
             This page hit an unexpected error. The rest of the marketplace is

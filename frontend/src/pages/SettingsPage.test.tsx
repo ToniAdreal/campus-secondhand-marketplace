@@ -61,6 +61,17 @@ describe('SettingsPage', () => {
     vi.clearAllMocks();
   });
 
+  it('settings form fields are reachable by their labels (backlog #167)', () => {
+    // Regression net for the accessibility pass, same pattern as the
+    // create-listing page: fields must stay bound to their labels.
+    renderAt('/settings');
+
+    expect(screen.getByLabelText('Current password')).toBeTruthy();
+    expect(screen.getByLabelText('New password')).toBeTruthy();
+    expect(screen.getByLabelText('Confirm new password')).toBeTruthy();
+    expect(screen.getByLabelText('New email address')).toBeTruthy();
+  });
+
   it('posts the change-password payload and stores the fresh credential + note on success', async () => {
     postSpy.mockResolvedValueOnce(
       envelope({

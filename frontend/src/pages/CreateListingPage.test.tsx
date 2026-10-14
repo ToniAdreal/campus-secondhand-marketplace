@@ -94,6 +94,21 @@ describe('CreateListingPage', () => {
     setAccessToken(null);
   });
 
+  it('every form field is reachable by its programmatic label (backlog #167)', async () => {
+    // Regression net for the accessibility pass: a future field added
+    // without a bound <label htmlFor> fails here instead of shipping
+    // as a placeholder-only input.
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    expect(screen.getByLabelText(/title/i)).toBeTruthy();
+    expect(screen.getByLabelText(/description/i)).toBeTruthy();
+    expect(screen.getByLabelText(/price \(usd\)/i)).toBeTruthy();
+    expect(screen.getByLabelText(/category/i)).toBeTruthy();
+    expect(screen.getByLabelText(/photo/i)).toBeTruthy();
+  });
+
   it('redirects unauthenticated visitors to /login', async () => {
     renderCreate();
     await waitFor(() => expect(currentPath).toBe('/login'));

@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
+import RouteFocusManager from './components/RouteFocusManager';
 import { useUnreadMessageCount } from './api/messages';
 import { useUnreadNotificationCount } from './api/notifications';
 import { useAuthStore } from './store/useAuthStore';
@@ -119,6 +120,8 @@ export default function App() {
         </nav>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-6">
+        {/* Route changes move focus to the new page's heading (#167). */}
+        <RouteFocusManager />
         {/* A crashed route renders the boundary's fallback inside the shell
             instead of unmounting the whole tree into a blank page. Routes
             are lazy (see main.tsx), so the Suspense fallback covers the

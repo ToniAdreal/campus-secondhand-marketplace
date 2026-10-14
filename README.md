@@ -248,6 +248,15 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - `cd backend && mvn verify -Pintegration` — Testcontainers integration tests against real
   MySQL 8. Requires Docker; runs in GitHub Actions on every push.
 - `cd frontend && npm test` — Vitest + React Testing Library.
+- Frontend accessibility (backlog #167): form fields on the core flows
+  (browse, detail, create, auth, settings) are bound to programmatic
+  labels and the page tests query them by label/role, so an unlabeled
+  field fails its page test; toggle-style icon buttons expose
+  `aria-label` + `aria-pressed`; route changes move focus to the new
+  page's heading (`RouteFocusManager`); the error-boundary fallback is
+  a `role="alert"` region. Honest scope: this is label/focus/name
+  correctness, not a WCAG audit — no contrast, motion, or full
+  screen-reader pass has been done.
 - `cd frontend && npm run build && npm run size` — bundle-size budget
   (backlog #165): a dependency-free node script prints the per-chunk table
   and fails when the entry chunk or total JS exceeds the ratchet budgets in

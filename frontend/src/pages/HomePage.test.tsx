@@ -149,6 +149,31 @@ describe('HomePage debounced URL-synced search', () => {
   });
 });
 
+describe('HomePage accessible filter names (backlog #167)', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    currentSearch = '';
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('every browse control is reachable by its label', () => {
+    // The browse controls carry sr-only labels (visible labels would
+    // break the toolbar layout) — they must stay programmatically
+    // bound, or role/label queries (and screen readers) lose them.
+    renderHome('/');
+
+    expect(screen.getByLabelText(/search listings/i)).toBeTruthy();
+    expect(screen.getByLabelText(/filter by category/i)).toBeTruthy();
+    expect(screen.getByLabelText(/minimum price/i)).toBeTruthy();
+    expect(screen.getByLabelText(/maximum price/i)).toBeTruthy();
+    expect(screen.getByLabelText(/sort listings/i)).toBeTruthy();
+  });
+});
+
 describe('HomePage category filter', () => {
   beforeEach(() => {
     vi.useFakeTimers();
