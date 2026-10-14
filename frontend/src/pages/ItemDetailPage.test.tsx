@@ -13,6 +13,7 @@ import OrderConfirmationPage from './OrderConfirmationPage';
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
 const patchSpy = vi.spyOn(api, 'patch');
+const putSpy = vi.spyOn(api, 'put');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 const seller: AuthUser = { id: 3, username: 'seller', email: 'seller@example.com', roles: ['USER'] };
@@ -505,6 +506,46 @@ describe('ItemDetailPage photo gallery', () => {
     })) as HTMLImageElement;
     expect(main.getAttribute('src')).toBe('/uploads/legacy.png');
     expect(screen.queryByRole('button', { name: /show photo/i })).toBeNull();
+  });
+
+  it('the seller gets the gallery order editor; saving PUTs the new order', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const galleryItem: Item = {
+      ...fakeItem,
+      photos: [
+        { id: 1, url: '/uploads/a.png', position: 0 },
+        { id: 2, url: '/uploads/b.png', position: 1 },
+      ],
+    };
+    getSpy.mockResolvedValueOnce(envelope(galleryItem));
+    putSpy.mockResolvedValue(envelope(galleryItem));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    fireEvent.click(await screen.findByRole('button', { name: 'Move photo 1 down' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save photo order' }));
+
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(1));
+    expect(putSpy).toHaveBeenCalledWith('/items/7/photos/order', { photoIds: [2, 1] });
+  });
+
+  it('a buyer sees the gallery but no order editor', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(
+      envelope({
+        ...fakeItem,
+        photos: [
+          { id: 1, url: '/uploads/a.png', position: 0 },
+          { id: 2, url: '/uploads/b.png', position: 1 },
+        ],
+      }),
+    );
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Save photo order' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /move photo/i })).toBeNull();
+    expect(putSpy).not.toHaveBeenCalled();
   });
 
   it('renders the placeholder and no broken img for a photo-less listing', async () => {

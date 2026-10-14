@@ -87,6 +87,7 @@ class OpenApiContractTest {
       "/api/items/{id}",
       "/api/items/{id}/photo",
       "/api/items/{id}/photos",
+      "/api/items/{id}/photos/order",
       "/api/items/{id}/photos/{photoId}",
       "/api/items/{id}/report",
       "/api/items/{id}/status",
@@ -237,5 +238,9 @@ class OpenApiContractTest {
         .contains("403", "404", "422");
     assertThat(responseCodes(docs, "/api/admin/reports/{id}/action", "post"))
         .contains("403", "404", "422");
+    // Gallery reorder (#162): pins its not-a-permutation 400 and its
+    // concurrent-edit 409 alongside the ownership matrix.
+    assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))
+        .contains("400", "401", "403", "404", "409");
   }
 }

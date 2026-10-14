@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -138,6 +139,34 @@ public class ItemController {
                                        @PathVariable Long photoId) {
     itemService.deletePhoto(id, photoId);
     return ApiResponse.ok(null);
+  }
+
+  /**
+   * Reorders a listing's gallery (backlog #162). The body is the
+   * complete ordered photo-id list for the listing and must be an
+   * exact permutation of the current gallery — a missing, extra or
+   * foreign id is 400 with the JSON envelope and nothing moves; the
+   * first id becomes the primary photo. Same ownership as the other
+   * gallery endpoints: the listing's seller or an ADMIN; everyone
+   * else gets 403 and anonymous callers get 401. A concurrent gallery
+   * edit landing mid-reorder loses its {@code @Version} race to 409.
+   */
+  @PutMapping("/{id}/photos/order")
+  @PreAuthorize("@itemSecurity.canAttachPhoto(authentication, #id)")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "photoIds is not an exact permutation of the gallery (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the listing's seller or an ADMIN (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+          description = "version conflict with a concurrent gallery edit (envelope)")})
+  public ApiResponse<ItemDto> reorderPhotos(@PathVariable Long id,
+                                            @Valid @RequestBody ItemPhotoOrderRequest request) {
+    return ApiResponse.ok(itemService.reorderPhotos(id, request.photoIds()));
   }
 
   /**

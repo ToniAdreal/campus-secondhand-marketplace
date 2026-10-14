@@ -15,6 +15,7 @@ import {
 } from '../api/reports';
 import { useAuthStore } from '../store/useAuthStore';
 import FavoriteButton from '../components/FavoriteButton';
+import GalleryOrderEditor from '../components/GalleryOrderEditor';
 import ListingGallery from '../components/ListingGallery';
 import MessageThread from '../components/MessageThread';
 
@@ -50,6 +51,11 @@ export default function ItemDetailPage() {
     user !== null &&
     (isSeller || isAdmin) &&
     (data.status === 'AVAILABLE' || data.status === 'RESERVED');
+  // Mirrors the backend's ItemSecurity.canAttachPhoto (which guards the
+  // reorder endpoint): the listing's seller or an ADMIN may reorder the
+  // gallery — and only when there is an order to change (2+ photos).
+  const canReorderPhotos =
+    user !== null && (isSeller || isAdmin) && data.photos.length > 1;
 
   const handleBuy = () => {
     setErrorMessage(null);
@@ -92,6 +98,7 @@ export default function ItemDetailPage() {
       <div className="mt-4">
         <ListingGallery title={data.title} photoUrls={listingPhotoUrls(data)} />
       </div>
+      {canReorderPhotos && <GalleryOrderEditor itemId={data.id} photos={data.photos} />}
       <p className="mt-2 text-lg">¥{(data.priceCents / 100).toFixed(2)}</p>
       <p className="mt-4 whitespace-pre-wrap text-neutral-700">{data.description}</p>
       <span className="mt-4 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">

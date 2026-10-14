@@ -193,6 +193,59 @@ export function uploadItemPhoto(itemId: number, file: File): Promise<Item> {
 }
 
 /**
+ * Maps a failed PUT /api/items/{id}/photos/order to a user-facing
+ * message (backlog #162). The backend speaks the {code,message,data}
+ * envelope; a 400 means the saved list was not an exact permutation
+ * of the current gallery (the gallery changed under the editor), and
+ * a 409 means a concurrent gallery edit won the @Version race.
+ */
+export function describeReorderPhotosError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 400 || /exactly once/i.test(message)) {
+    return 'The gallery changed since this page loaded — reload and try again.';
+  }
+  if (code === 409) {
+    return 'This gallery was just changed elsewhere — reload to see the latest order.';
+  }
+  if (code === 403) {
+    return 'Only the seller (or an admin) can reorder these photos.';
+  }
+  if (code === 401) {
+    return 'Please log in to reorder these photos.';
+  }
+  if (code === 404) {
+    return 'This listing no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * PUT /api/items/{id}/photos/order — saves the gallery's display order
+ * (backlog #162). `photoIds` is the complete gallery in its new order;
+ * the first id becomes the primary photo. On success the whole `items`
+ * subtree is invalidated rather than patched: the primary photo feeds
+ * browse cards and the detail gallery alike, and a refetch is the only
+ * source of truth for position values.
+ */
+export function useReorderPhotos() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { itemId: number; photoIds: number[] }) =>
+      api
+        .put<ApiResponse<Item>>(`/items/${input.itemId}/photos/order`, {
+          photoIds: input.photoIds,
+        })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
  * Maps a failed PATCH /api/items/{id}/status to a user-facing message. The
  * backend speaks the {code,message,data} envelope; a 422 means the listing
  * is already SOLD (no onward transition exists) or the requested status was

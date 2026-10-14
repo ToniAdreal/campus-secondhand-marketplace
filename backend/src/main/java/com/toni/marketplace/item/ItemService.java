@@ -5,6 +5,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -517,6 +518,55 @@ public class ItemService {
     itemPhotos.delete(photo);
     itemPhotos.flush();
     deletePhotoBestEffort(url);
+  }
+
+  /**
+   * Reorders a listing's gallery (backlog #162): {@code photoIds} must
+   * be an exact permutation of the gallery's current photo ids — a
+   * missing, extra, duplicated, null or foreign (another listing's)
+   * id is answered 400 with the JSON envelope and nothing moves, so a
+   * stale editor can never silently drop a photo by saving an old
+   * list. Positions are rewritten {@code 0..n-1} in request order (the
+   * first id becomes the primary photo) in this one transaction.
+   *
+   * <p>The rows carry {@code ItemPhoto.@Version} (Flyway V32), and the
+   * flush below is deliberate, mirroring {@link #updateItem}: a
+   * concurrent reorder (or photo delete) of the same gallery landing
+   * between the read and this write surfaces here as
+   * {@code ObjectOptimisticLockingFailureException}, which
+   * {@code GlobalExceptionHandler} maps to 409 "listing was modified —
+   * reload and retry" (backlog #147). Ownership/role checks live on
+   * the controller's {@code @PreAuthorize} ({@link ItemSecurity});
+   * the service stays role-agnostic.
+   */
+  @Transactional
+  public ItemDto reorderPhotos(Long itemId, List<Long> photoIds) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    List<ItemPhoto> current = itemPhotos.findByItemIdOrderByPositionAsc(itemId);
+    Map<Long, ItemPhoto> byId = current.stream()
+        .collect(Collectors.toMap(ItemPhoto::getId, Function.identity()));
+    if (photoIds == null
+        || photoIds.size() != current.size()
+        || photoIds.stream().anyMatch(Objects::isNull)
+        || !new HashSet<>(photoIds).equals(byId.keySet())) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "photoIds must list every photo in the gallery exactly once");
+    }
+    for (int i = 0; i < photoIds.size(); i++) {
+      byId.get(photoIds.get(i)).setPosition(i);
+    }
+    // Flush deliberately inside the transaction (not at commit), so a
+    // lost @Version race surfaces here and is mapped to 409 — see the
+    // javadoc above.
+    itemPhotos.flush();
+    ItemDto base = mapper.toDto(item);
+    List<ItemPhotoDto> ordered = photoIds.stream()
+        .map(id -> mapper.toPhotoDto(byId.get(id)))
+        .toList();
+    return new ItemDto(base.id(), base.title(), base.description(), base.priceCents(),
+        base.status(), base.sellerId(), base.sellerUsername(), base.categoryId(),
+        base.categoryName(), base.photoUrl(), base.createdAt(), base.updatedAt(), ordered);
   }
 
   /**
