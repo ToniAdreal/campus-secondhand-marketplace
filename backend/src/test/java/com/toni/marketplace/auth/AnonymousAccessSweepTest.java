@@ -152,7 +152,10 @@ class AnonymousAccessSweepTest {
       "GET /api/seller/sales/export.csv",
       "GET /api/users/me/favorites",
       "PUT /api/users/me/favorites/{itemId}",
-      "DELETE /api/users/me/favorites/{itemId}");
+      "DELETE /api/users/me/favorites/{itemId}",
+      "POST /api/users/me/saved-searches",
+      "GET /api/users/me/saved-searches",
+      "DELETE /api/users/me/saved-searches/{id}");
 
   /**
    * The public operations and the exact status the anonymous probe in

@@ -1,6 +1,12 @@
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useFavorites } from '../api/favorites';
 import { listingPhotoUrls } from '../api/items';
+import {
+  describeSavedSearch,
+  savedSearchBrowsePath,
+  useDeleteSavedSearch,
+  useSavedSearches,
+} from '../api/savedSearches';
 import FavoriteButton from '../components/FavoriteButton';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -17,6 +23,8 @@ export default function FavoritesPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const favorites = useFavorites(user !== null);
+  const savedSearches = useSavedSearches(user !== null);
+  const deleteSavedSearch = useDeleteSavedSearch();
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -72,6 +80,47 @@ export default function FavoritesPage() {
               </li>
             );
           })}
+        </ul>
+      )}
+      <h2 className="mb-4 mt-10 text-xl font-bold">Saved searches</h2>
+      {savedSearches.isLoading && <p>Loading saved searches…</p>}
+      {savedSearches.isError && (
+        <p role="alert" className="text-red-600">
+          Failed to load saved searches.
+        </p>
+      )}
+      {savedSearches.isSuccess && savedSearches.data.length === 0 && (
+        <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+          <p className="text-neutral-600">You haven&apos;t saved any searches yet.</p>
+          <p className="mt-1 text-sm text-neutral-500">
+            Filter the browse page, then use “Save this search” to keep the filter set here.
+          </p>
+        </div>
+      )}
+      {savedSearches.data && savedSearches.data.length > 0 && (
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {savedSearches.data.map((search) => (
+            <li key={search.id} className="rounded-lg bg-white p-4 shadow-sm">
+              <Link
+                to={savedSearchBrowsePath(search)}
+                className="font-semibold hover:underline"
+              >
+                {describeSavedSearch(search)}
+              </Link>
+              <p className="mt-1 text-sm text-neutral-500">
+                {search.matchCount} matching {search.matchCount === 1 ? 'listing' : 'listings'}
+              </p>
+              <button
+                type="button"
+                aria-label={`Delete saved search ${describeSavedSearch(search)}`}
+                disabled={deleteSavedSearch.isLoading}
+                onClick={() => deleteSavedSearch.mutate(search.id)}
+                className="mt-2 inline-block rounded bg-neutral-100 px-2 py-0.5 text-sm hover:bg-neutral-200 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
         </ul>
       )}
     </div>

@@ -40,7 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code ItemController}, {@code MessageController},
  * {@code NotificationController}, {@code OrderController},
  * {@code ReportController}, {@code AdminReportController},
- * {@code SellerOrderController} and {@code SellerSalesExportController}.
+ * {@code SellerOrderController}, {@code SellerSalesExportController},
+ * {@code FavoriteController} and {@code SavedSearchController}.
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
@@ -108,7 +109,9 @@ class OpenApiContractTest {
       "/api/seller/orders/summary",
       "/api/seller/sales/export.csv",
       "/api/users/me/favorites",
-      "/api/users/me/favorites/{itemId}");
+      "/api/users/me/favorites/{itemId}",
+      "/api/users/me/saved-searches",
+      "/api/users/me/saved-searches/{id}");
 
   @Autowired
   private MockMvc mockMvc;
@@ -246,5 +249,11 @@ class OpenApiContractTest {
     // concurrent-edit 409 alongside the ownership matrix.
     assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))
         .contains("400", "401", "403", "404", "409");
+    // Saved searches (#164): creation pins its browse-validation 400 and
+    // its per-user cap 422; delete pins the no-existence-leak 404.
+    assertThat(responseCodes(docs, "/api/users/me/saved-searches", "post"))
+        .contains("200", "400", "401", "422");
+    assertThat(responseCodes(docs, "/api/users/me/saved-searches/{id}", "delete"))
+        .contains("200", "401", "404");
   }
 }

@@ -1,8 +1,10 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { listingPhotoUrls, useItems } from '../api/items';
 import FavoriteButton from '../components/FavoriteButton';
+import SaveSearchButton from '../components/SaveSearchButton';
 import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
+import { useAuthStore } from '../store/useAuthStore';
 
 /**
  * Parses the `categoryId` URL parameter. Anything that is not a positive
@@ -134,6 +136,11 @@ export default function HomePage() {
     categoryId !== null ||
     minPriceCents !== null ||
     maxPriceCents !== null;
+  // "Save this search" (backlog #164): offered to signed-in visitors
+  // whenever the current filter set differs from the default browse —
+  // any of the #96 filters, or a non-default sort on its own.
+  const user = useAuthStore((s) => s.user);
+  const showSaveSearch = user !== null && (anyFilter || sort !== 'newest');
   const emptyMessage = !anyFilter
     ? 'No items yet.'
     : searchQuery !== ''
@@ -230,6 +237,17 @@ export default function HomePage() {
           </select>
         </div>
       </div>
+      {showSaveSearch && (
+        <SaveSearchButton
+          filters={{
+            keyword: searchQuery !== '' ? searchQuery : null,
+            categoryId,
+            minPriceCents,
+            maxPriceCents,
+            sort,
+          }}
+        />
+      )}
       {isLoading && <p>Loading listings…</p>}
       {isError && <p className="text-red-600">Failed to load listings.</p>}
       {data && (

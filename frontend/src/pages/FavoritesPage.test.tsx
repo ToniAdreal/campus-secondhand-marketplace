@@ -24,6 +24,17 @@ vi.mock('../api/favorites', () => ({
   }),
 }));
 
+vi.mock('../api/savedSearches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/savedSearches')>();
+  return {
+    ...actual,
+    // The saved-searches section (#164) has its own page tests; here it
+    // only needs to render its empty state without a QueryClient.
+    useSavedSearches: () => ({ data: [], isLoading: false, isError: false, isSuccess: true }),
+    useDeleteSavedSearch: () => ({ mutate: () => undefined, isLoading: false }),
+  };
+});
+
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 
 const savedBike: Item = {
