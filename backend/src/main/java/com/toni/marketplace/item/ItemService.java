@@ -289,6 +289,25 @@ public class ItemService {
     return withPhotos(List.of(dto)).get(0);
   }
 
+  /** A detail read plus the entity state its ETag validator derives from. */
+  public record ItemDetailView(ItemDto dto, long version, java.time.Instant updatedAt) {}
+
+  /**
+   * Detail read for the conditional-GET endpoint (backlog #166): the DTO
+   * plus the row's optimistic-lock version and updatedAt, so the
+   * controller's validator is derived from (id, version, updatedAt) —
+   * every write path bumps the version, so a stale validator can never
+   * match a changed listing.
+   */
+  @Transactional(readOnly = true)
+  public ItemDetailView getItemView(Long id) {
+    ItemDto dto = getItem(id);
+    Item entity = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    long version = entity.getVersion() == null ? 0L : entity.getVersion();
+    return new ItemDetailView(dto, version, entity.getUpdatedAt());
+  }
+
   /**
    * Creates a listing for the authenticated user. The seller id is the JWT
    * principal ({@link Long}), never a request parameter — a client cannot

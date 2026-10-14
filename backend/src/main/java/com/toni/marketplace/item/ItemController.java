@@ -1,6 +1,7 @@
 package com.toni.marketplace.item;
 
 import com.toni.marketplace.common.ApiResponse;
+import com.toni.marketplace.common.EtagSupport;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.data.domain.Page;
@@ -78,9 +79,35 @@ public class ItemController {
         pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort, sellerId));
   }
 
+  /**
+   * Listing detail with a strong ETag / conditional GET (backlog #166,
+   * extending #145's category pattern). The validator is the SHA-256 of
+   * (id, version, updatedAt, full DTO): every write path — edit, status
+   * flip, photo add/delete/reorder, order-driven RESERVED/SOLD flips —
+   * bumps the entity's {@code @Version} (and changes the DTO), so a
+   * stale validator can never 304 a changed listing; the DTO component
+   * additionally covers gallery changes on paths that touch only the
+   * photo rows. A matching {@code If-None-Match} (weak and {@code *}
+   * forms included, via the shared {@link EtagSupport} parser) answers
+   * 304 with an empty body and the ETag echoed. The LIST endpoint
+   * deliberately stays validator-free (per-user filtered, rapidly
+   * changing — the #145 scope decision).
+   */
   @GetMapping("/{id}")
-  public ApiResponse<ItemDto> get(@PathVariable Long id) {
-    return ApiResponse.ok(itemService.getItem(id));
+  public org.springframework.http.ResponseEntity<ApiResponse<ItemDto>> get(
+      @PathVariable Long id,
+      @org.springframework.web.bind.annotation.RequestHeader(
+              value = org.springframework.http.HttpHeaders.IF_NONE_MATCH, required = false)
+          String ifNoneMatch) {
+    ItemService.ItemDetailView view = itemService.getItemView(id);
+    String etag = EtagSupport.sha256Hex(
+        view.dto().id() + ":" + view.version() + ":" + view.updatedAt() + ":" + view.dto());
+    if (EtagSupport.matchesIfNoneMatch(ifNoneMatch, etag)) {
+      return org.springframework.http.ResponseEntity
+          .status(org.springframework.http.HttpStatus.NOT_MODIFIED).eTag(etag).build();
+    }
+    return org.springframework.http.ResponseEntity.ok().eTag(etag)
+        .body(ApiResponse.ok(view.dto()));
   }
 
   /**

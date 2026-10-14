@@ -1,11 +1,8 @@
 package com.toni.marketplace.item;
 
 import com.toni.marketplace.common.ApiResponse;
+import com.toni.marketplace.common.EtagSupport;
 import jakarta.validation.Valid;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -77,42 +74,12 @@ class CategoryController {
    * always hash identically and any field change rehashes.
    */
   static String etagFor(List<CategoryDto> payload) {
-    try {
-      MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
-      byte[] digest = sha256.digest(payload.toString().getBytes(StandardCharsets.UTF_8));
-      return HexFormat.of().formatHex(digest);
-    } catch (NoSuchAlgorithmException e) {
-      // SHA-256 is guaranteed on every Java platform; this never happens.
-      throw new IllegalStateException("SHA-256 unavailable", e);
-    }
+    return EtagSupport.sha256Hex(payload.toString());
   }
 
-  /**
-   * Whether an {@code If-None-Match} header value matches the current
-   * validator: the header may be a comma-separated list, entries may be
-   * weak ({@code W/} prefix — stripped, because this header compares
-   * weakly) or quoted, and {@code *} matches any current representation.
-   */
+  /** Delegates to the shared {@link EtagSupport} parser (backlog #166 extraction). */
   static boolean matchesIfNoneMatch(String ifNoneMatch, String etag) {
-    if (ifNoneMatch == null || ifNoneMatch.isBlank()) {
-      return false;
-    }
-    for (String candidate : ifNoneMatch.split(",")) {
-      String value = candidate.trim();
-      if (value.equals("*")) {
-        return true;
-      }
-      if (value.startsWith("W/")) {
-        value = value.substring(2).trim();
-      }
-      if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-        value = value.substring(1, value.length() - 1);
-      }
-      if (value.equals(etag)) {
-        return true;
-      }
-    }
-    return false;
+    return EtagSupport.matchesIfNoneMatch(ifNoneMatch, etag);
   }
 
   /**
