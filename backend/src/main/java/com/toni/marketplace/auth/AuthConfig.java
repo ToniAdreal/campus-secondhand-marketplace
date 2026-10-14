@@ -124,6 +124,22 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for listing reports
+   * ({@code POST /api/items/{id}/report}, backlog #160; default 10
+   * reports/minute per authenticated user). Keyed on the JWT principal
+   * id like the message bucket — report spam is a per-user abuse surface
+   * aimed at the ADMIN moderation queue, and keying by IP would let one
+   * NAT address starve every reporter behind it.
+   */
+  @Bean
+  public AuthRateLimiter reportRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties reportProps = new AuthRateLimitProperties();
+    reportProps.setEnabled(props.isEnabled());
+    reportProps.setAttemptsPerMinute(props.getReportAttemptsPerMinute());
+    return new AuthRateLimiter(clock, reportProps);
+  }
+
+  /**
    * AES-256-GCM cipher for TOTP secrets at rest (backlog #89). Constructing
    * it validates the configured key (Base64, exactly 32 bytes), so a
    * malformed {@code APP_TOTP_ENCRYPTION_KEY} fails the boot on every

@@ -150,4 +150,28 @@ public class AuthRateLimitProperties {
   public void setEmailVerificationAttemptsPerMinute(int emailVerificationAttemptsPerMinute) {
     this.emailVerificationAttemptsPerMinute = emailVerificationAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for listing reports
+   * ({@code POST /api/items/{id}/report}, backlog #160). Keyed on the
+   * user rather than the IP, mirroring the message bucket: the endpoint
+   * is authenticated, so one spammer behind a NAT address must not
+   * starve everyone else (and anonymous requests, which the security
+   * chain 401s anyway, fall back to a per-IP bucket). Sized below the
+   * message bucket (10/min): a legitimate user reports a handful of
+   * listings, so the ceiling only bites automation flooding the ADMIN
+   * moderation queue. Like the message bucket it never resets on
+   * success — a filed report must not refill the spam allowance.
+   * Must be &ge; 1.
+   */
+  private int reportAttemptsPerMinute = 10;
+
+  public int getReportAttemptsPerMinute() {
+    return reportAttemptsPerMinute;
+  }
+
+  public void setReportAttemptsPerMinute(int reportAttemptsPerMinute) {
+    this.reportAttemptsPerMinute = reportAttemptsPerMinute;
+  }
 }

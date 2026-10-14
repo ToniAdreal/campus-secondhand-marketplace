@@ -15,7 +15,7 @@ export interface Item {
   title: string;
   description: string | null;
   priceCents: number;
-  status: 'AVAILABLE' | 'RESERVED' | 'SOLD';
+  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'WITHDRAWN';
   sellerId: number;
   /** Resolved by the backend's read projections (join on the sellerId FK);
    * null when the seller row no longer exists. */

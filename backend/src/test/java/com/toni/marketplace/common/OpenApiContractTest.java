@@ -39,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code CategoryController},
  * {@code ItemController}, {@code MessageController},
  * {@code NotificationController}, {@code OrderController},
+ * {@code ReportController}, {@code AdminReportController},
  * {@code SellerOrderController} and {@code SellerSalesExportController}.
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
@@ -52,6 +53,9 @@ class OpenApiContractTest {
   /** Every path the nine controllers expose, as springdoc renders them. */
   private static final Set<String> EXPECTED_PATHS = Set.of(
       "/api/admin/audit-log",
+      "/api/admin/reports",
+      "/api/admin/reports/{id}/action",
+      "/api/admin/reports/{id}/dismiss",
       "/api/admin/payments/settlement",
       "/api/admin/payments/webhooks",
       "/api/payments/webhooks/mock-psp",
@@ -84,6 +88,7 @@ class OpenApiContractTest {
       "/api/items/{id}/photo",
       "/api/items/{id}/photos",
       "/api/items/{id}/photos/{photoId}",
+      "/api/items/{id}/report",
       "/api/items/{id}/status",
       "/api/messages",
       "/api/messages/unread-count",
@@ -223,5 +228,14 @@ class OpenApiContractTest {
     // Seller sales CSV export (#159) pins its inverted-window 400.
     assertThat(responseCodes(docs, "/api/seller/sales/export.csv", "get"))
         .contains("400", "401");
+    // Listing reports (#160): creation pins its own-listing 422 and its
+    // per-user rate-limit 429; the ADMIN transitions pin unknown-id 404
+    // and the cross-terminal 422.
+    assertThat(responseCodes(docs, "/api/items/{id}/report", "post"))
+        .contains("404", "422", "429");
+    assertThat(responseCodes(docs, "/api/admin/reports/{id}/dismiss", "post"))
+        .contains("403", "404", "422");
+    assertThat(responseCodes(docs, "/api/admin/reports/{id}/action", "post"))
+        .contains("403", "404", "422");
   }
 }

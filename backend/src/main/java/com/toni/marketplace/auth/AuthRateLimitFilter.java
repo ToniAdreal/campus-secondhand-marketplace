@@ -63,6 +63,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * with a missing/invalid token falls back to a per-IP bucket (the security
  * chain 401s it anyway, but anonymous hammering is still throttled).
  *
+ * <p>Listing reports ({@code POST /api/items/{id}/report}, backlog #160)
+ * have a seventh, per-<em>user</em> bucket (default 10/minute) on the
+ * same keying as messages, for the same reason: the abuse surface is a
+ * signed-in account flooding the ADMIN moderation queue, not an IP.
+ * The path carries the listing id, so it is matched by shape
+ * ({@code /api/items/<digits>/report}) rather than by equality.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -135,6 +142,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter passwordResetLimiter;
   private final AuthRateLimiter totpLimiter;
   private final AuthRateLimiter emailVerificationLimiter;
+  private final AuthRateLimiter reportLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -147,6 +155,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("totpRateLimiter") AuthRateLimiter totpLimiter,
                              @Qualifier("emailVerificationRateLimiter")
                                  AuthRateLimiter emailVerificationLimiter,
+                             @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -156,6 +165,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.passwordResetLimiter = passwordResetLimiter;
     this.totpLimiter = totpLimiter;
     this.emailVerificationLimiter = emailVerificationLimiter;
+    this.reportLimiter = reportLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -169,6 +179,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     String path = pathOf(request);
     if (MESSAGE_PATH.equals(path)) {
       return !messageLimiter.isEnabled();
+    }
+    if (isReportPath(path)) {
+      return !reportLimiter.isEnabled();
     }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       return !passwordResetLimiter.isEnabled();
@@ -193,6 +206,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {
         writeTooManyRequests(response, messageLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (isReportPath(path)) {
+      // Listing reports (backlog #160): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset on
+      // success — a filed report must not refill the queue-flooding
+      // allowance.
+      String key = messageKey(request);
+      if (!reportLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, reportLimiter.retryAfterSeconds(key));
         return;
       }
       chain.doFilter(request, response);
@@ -273,6 +299,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       }
     }
     return "ip:" + clientIp(request);
+  }
+
+  /**
+   * True for the report-creation path {@code POST /api/items/{id}/report}
+   * (backlog #160): the id segment is numeric (listing ids are), which
+   * keeps the sibling item POSTs ({@code /photo}, {@code /photos}) and
+   * the collection POST ({@code /api/items}) out of this bucket.
+   */
+  private static boolean isReportPath(String path) {
+    return path != null && path.matches("/api/items/\\d+/report");
   }
 
   private void writeTooManyRequests(HttpServletResponse response, long retryAfterSeconds)

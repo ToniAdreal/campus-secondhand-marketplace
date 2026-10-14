@@ -30,6 +30,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SellerOrdersPage = lazy(() => import('./pages/SellerOrdersPage'));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminAuditLogPage = lazy(() => import('./pages/AdminAuditLogPage'));
+const AdminReportsPage = lazy(() => import('./pages/AdminReportsPage'));
 const AdminPaymentsPage = lazy(() => import('./pages/AdminPaymentsPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: 'settings/sessions', element: <SessionsPage /> },
       { path: 'admin/users', element: <AdminUsersPage /> },
       { path: 'admin/audit-log', element: <AdminAuditLogPage /> },
+      { path: 'admin/reports', element: <AdminReportsPage /> },
       { path: 'admin/payments', element: <AdminPaymentsPage /> },
       // catch-all — unknown paths render the 404 inside the app shell
       { path: '*', element: <NotFoundPage /> },

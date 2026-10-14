@@ -355,6 +355,109 @@ describe('ItemDetailPage mark-as-sold', () => {
   });
 });
 
+describe('ItemDetailPage report dialog (backlog #160)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation(() =>
+      Promise.resolve(
+        envelope({ content: [], totalElements: 0, totalPages: 0, number: 0 }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  const fakeReport = {
+    id: 42,
+    reporterId: 5,
+    itemId: 7,
+    reason: 'SCAM',
+    note: 'wire me money first',
+    status: 'OPEN',
+    createdAt: '2026-10-06T17:00:00Z',
+  };
+
+  it('a signed-in non-seller sees the report button; the dialog submits reason + note and confirms', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    postSpy.mockResolvedValue(envelope(fakeReport));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Report this listing' }));
+
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'SCAM' } });
+    fireEvent.change(screen.getByLabelText(/details \(optional\)/i), {
+      target: { value: 'wire me money first' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/items/7/report', {
+      reason: 'SCAM',
+      note: 'wire me money first',
+    });
+    // Success swaps the dialog for the honest confirmation (no auto-hide claim).
+    await waitFor(() =>
+      expect(screen.getByText(/Report submitted — a moderator will review/)).toBeTruthy(),
+    );
+    expect(screen.queryByRole('button', { name: 'Submit report' })).toBeNull();
+  });
+
+  it('the seller never sees a report button on their own listing', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Report this listing' })).toBeNull();
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('anonymous visitors see no report button', async () => {
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Report this listing' })).toBeNull();
+  });
+
+  it('cancel closes the dialog without posting', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Report this listing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('button', { name: 'Submit report' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Report this listing' })).toBeTruthy();
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('a 429 maps to friendly copy and the raw envelope message never leaks', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    postSpy.mockRejectedValue(axiosFailure(429, 'too many requests'));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Report this listing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit report' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe(
+      'You are reporting too quickly — please wait a moment and try again.',
+    );
+    expect(screen.queryByText(/too many requests/)).toBeNull();
+  });
+});
+
 describe('ItemDetailPage photo gallery', () => {
   beforeEach(() => {
     currentPath = '';
