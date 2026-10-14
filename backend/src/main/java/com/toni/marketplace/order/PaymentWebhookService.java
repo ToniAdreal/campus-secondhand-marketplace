@@ -61,10 +61,20 @@ import org.springframework.web.server.ResponseStatusException;
  * </ul>
  *
  * <p>Idempotency: the delivery is recorded in the {@code webhook_event}
- * ledger (Flyway V28) keyed on the PSP event id inside the same
- * transaction as the reconciliation count. A replay finds its row and
- * returns the stored outcome with {@code duplicate=true} — no second
- * row, no second matched/mismatched count.
+ * ledger (Flyway V28) keyed on the PSP event id. {@link #handle} itself
+ * is deliberately NOT transactional — it orchestrates
+ * {@link WebhookEventRecorder}, whose lookup, reconcile and record
+ * steps each run in their own {@code REQUIRES_NEW} transaction
+ * (backlog #161, the {@link IdempotencyKeyService} pattern). A replay
+ * finds its row and returns the stored outcome with
+ * {@code duplicate=true} — no second row, no second
+ * matched/mismatched count. Two deliveries racing on one event id are
+ * arbitrated by the ledger's unique key: the loser's insert fails
+ * inside its own throwaway transaction, the failure is caught HERE,
+ * outside that transaction, and the winner's committed row is
+ * re-read for the deduped answer — catching the duplicate-key error
+ * inside the inserting transaction instead (the pre-#161 shape)
+ * surfaced as a rollback-only 500, never as this 200.
  */
 @Service
 public class PaymentWebhookService {
@@ -81,20 +91,20 @@ public class PaymentWebhookService {
   public record WebhookAck(String eventId, String outcome, boolean duplicate) {}
 
   private final WebhookEventRepository events;
-  private final OrderRepository orders;
+  private final WebhookEventRecorder recorder;
   private final WebhookProperties properties;
   private final WebhookSignatureProperties signatureProperties;
   private final WebhookMetrics metrics;
   private final ObjectMapper mapper;
   private final Clock clock;
 
-  public PaymentWebhookService(WebhookEventRepository events, OrderRepository orders,
+  public PaymentWebhookService(WebhookEventRepository events, WebhookEventRecorder recorder,
                                WebhookProperties properties,
                                WebhookSignatureProperties signatureProperties,
                                WebhookMetrics metrics,
                                ObjectMapper mapper, Clock clock) {
     this.events = events;
-    this.orders = orders;
+    this.recorder = recorder;
     this.properties = properties;
     this.signatureProperties = signatureProperties;
     this.metrics = metrics;
@@ -200,8 +210,15 @@ public class PaymentWebhookService {
    * Applies one signature-verified delivery. The controller has already
    * rejected bad signatures with 401; a malformed payload after a valid
    * signature is the sender's bug and answers 400 in the envelope.
+   *
+   * <p>Deliberately NOT {@code @Transactional}: the ledger work runs
+   * through {@link WebhookEventRecorder}'s {@code REQUIRES_NEW}
+   * transactions so the duplicate-key failure of a lost insert race is
+   * caught here — outside the transaction that failed — and answered
+   * by re-reading the winner's committed row (backlog #161; see the
+   * class javadoc's idempotency paragraph for why the in-transaction
+   * catch answered 500 instead).
    */
-  @Transactional
   public WebhookAck handle(byte[] rawBody) {
     JsonNode root;
     try {
@@ -216,7 +233,7 @@ public class PaymentWebhookService {
           "webhook payload requires id and type");
     }
 
-    var existing = events.findByEventId(eventId);
+    var existing = recorder.findRecorded(eventId);
     if (existing.isPresent()) {
       metrics.replayed();
       log.info("webhook replay ignored: eventId={} type={}", eventId, type);
@@ -225,15 +242,22 @@ public class PaymentWebhookService {
 
     String reference = TYPE_CAPTURE_SUCCEEDED.equals(type)
         ? text(root, "captureId") : text(root, "refundId");
-    WebhookEvent.Outcome outcome = reconcile(type, reference);
+    WebhookEvent.Outcome outcome = recorder.reconcile(type, reference);
     try {
-      events.saveAndFlush(new WebhookEvent(eventId, type, reference, outcome));
+      recorder.record(eventId, type, reference, outcome);
     } catch (DataIntegrityViolationException race) {
       // A concurrent delivery of the same event id won the insert; the
-      // unique key on event_id is the final arbiter (the #140 replay
-      // contract under races, mirroring the order guard-column pattern).
+      // unique key on event_id is the final arbiter. The winner's row
+      // is committed by the time the loser's insert fails against it,
+      // so the deduped answer replays the STORED outcome — and because
+      // the failed insert ran in the recorder's own transaction, this
+      // catch is not sitting inside a rollback-only transaction (the
+      // pre-#161 shape, which answered this race with a 500).
       metrics.replayed();
-      return new WebhookAck(eventId, outcome.name(), true);
+      String stored = recorder.findRecorded(eventId)
+          .map(row -> row.getOutcome().name())
+          .orElse(outcome.name());
+      return new WebhookAck(eventId, stored, true);
     }
     if (outcome == WebhookEvent.Outcome.MATCHED) {
       metrics.matched();
@@ -258,27 +282,6 @@ public class PaymentWebhookService {
   public Page<WebhookEventDto> listWebhookEvents(WebhookEvent.Outcome outcome,
                                                  Pageable pageable) {
     return events.searchWebhookEvents(outcome, pageable).map(WebhookEventDto::of);
-  }
-
-  private WebhookEvent.Outcome reconcile(String type, String reference) {
-    if (reference == null) {
-      return WebhookEvent.Outcome.MISMATCH;
-    }
-    if (TYPE_CAPTURE_SUCCEEDED.equals(type)) {
-      return orders.findByCaptureId(reference)
-          .filter(o -> o.getStatus() == OrderStatus.PAID
-              || o.getStatus() == OrderStatus.COMPLETED
-              || o.getStatus() == OrderStatus.REFUNDED)
-          .map(o -> WebhookEvent.Outcome.MATCHED)
-          .orElse(WebhookEvent.Outcome.MISMATCH);
-    }
-    if (TYPE_REFUND_SUCCEEDED.equals(type)) {
-      return orders.findByRefundId(reference)
-          .filter(o -> o.getStatus() == OrderStatus.REFUNDED)
-          .map(o -> WebhookEvent.Outcome.MATCHED)
-          .orElse(WebhookEvent.Outcome.MISMATCH);
-    }
-    return WebhookEvent.Outcome.MISMATCH;
   }
 
   private static String text(JsonNode root, String field) {

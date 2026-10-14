@@ -15,10 +15,12 @@ import org.hibernate.type.SqlTypes;
 
 /**
  * One accepted mock-PSP webhook delivery (backlog #140, Flyway V28).
- * Appended by {@link PaymentWebhookService} inside the transaction that
- * reconciles it, keyed on the unique {@code eventId}: a replayed delivery
- * finds this row and is answered 200 without re-applying or re-counting
- * anything. Rows are never updated.
+ * Appended by {@link WebhookEventRecorder} in its own {@code REQUIRES_NEW}
+ * transaction (backlog #161 — the split is what lets a concurrent
+ * duplicate's insert failure be answered with the deduped 200 instead of
+ * a rollback-only 500), keyed on the unique {@code eventId}: a replayed
+ * delivery finds this row and is answered 200 without re-applying or
+ * re-counting anything. Rows are never updated.
  *
  * <p>The webhook never moves money state by itself — {@code outcome} only
  * records whether the PSP reference it carried named an order already in

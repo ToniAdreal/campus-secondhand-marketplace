@@ -14,6 +14,7 @@ import com.toni.marketplace.item.ItemStatus;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +22,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Mock-PSP webhook receiver (backlog #140, timestamped signatures
@@ -36,7 +36,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
 class PaymentWebhookTest {
 
   private static final AtomicLong SEQ = new AtomicLong();
@@ -57,11 +56,32 @@ class PaymentWebhookTest {
   @BeforeEach
   void seedUsers() {
     assertThat(properties.getWebhookSecret()).isEqualTo(SECRET);
+    // Backlog #161: deliberately NOT @Transactional. The receiver now
+    // works through WebhookEventRecorder's REQUIRES_NEW transactions,
+    // whose separate connection cannot see this class's uncommitted
+    // seeds — so fixtures commit for real and are cleaned explicitly,
+    // the OrderIdempotencyTest pattern. The ledger cleanup also runs
+    // here (not only in @AfterEach) because recorder rows outlive any
+    // single test by design.
+    cleanAll();
     String tag = "wh-" + SEQ.incrementAndGet() + "-" + UUID.randomUUID().toString().substring(0, 8);
     seller = users.save(new User(tag + "-seller", tag + "-seller@example.com",
         passwords.encode("seller-password")));
     buyer = users.save(new User(tag + "-buyer", tag + "-buyer@example.com",
         passwords.encode("buyer-password")));
+  }
+
+  @AfterEach
+  void cleanUp() {
+    cleanAll();
+  }
+
+  /** FK-safe order: webhook rows carry no FKs; orders precede items/users. */
+  private void cleanAll() {
+    events.deleteAll();
+    orders.deleteAll();
+    items.deleteAll();
+    users.deleteAll();
   }
 
   private Order seedOrder(OrderStatus status, String captureId, String refundId) {
