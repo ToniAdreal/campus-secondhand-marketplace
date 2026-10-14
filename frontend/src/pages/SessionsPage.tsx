@@ -1,7 +1,12 @@
 import axios from 'axios';
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { useRevokeSession, useSessions, type AuthSession } from '../api/auth';
+import {
+  useRevokeOtherSessions,
+  useRevokeSession,
+  useSessions,
+  type AuthSession,
+} from '../api/auth';
 import { setAccessToken } from '../api/client';
 import { queryClient } from '../queryClient';
 import { useAuthStore } from '../store/useAuthStore';
@@ -14,7 +19,11 @@ import { useAuthStore } from '../store/useAuthStore';
  * presented is flagged "This device".
  *
  * Revoking a row calls DELETE /api/auth/sessions/{id}, which kills only
- * that session's refresh-token family. Revoking the CURRENT session signs
+ * that session's refresh-token family. When more than one session exists,
+ * a "Revoke all other sessions" button (POST
+ * /api/auth/sessions/revoke-others, backlog #163) kills every other
+ * family at once and reports the server's revoked count; this device
+ * stays signed in. Revoking the CURRENT session signs
  * this tab out (its refresh cookie is dead), so it asks for confirmation
  * first and then clears local auth state and bounces to /login — without
  * calling POST /api/auth/logout, which would revoke every session.
@@ -50,7 +59,9 @@ export default function SessionsPage() {
   // the credential-died-after-login case.
   const sessions = useSessions(user !== null);
   const revoke = useRevokeSession();
+  const revokeOthers = useRevokeOtherSessions();
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [revokedOthersNote, setRevokedOthersNote] = useState<string | null>(null);
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -61,6 +72,23 @@ export default function SessionsPage() {
   }
 
   const list = sessions.data ?? [];
+
+  function onRevokeOthers() {
+    setRevokeError(null);
+    setRevokedOthersNote(null);
+    revokeOthers.mutate(undefined, {
+      onSuccess: (count) => {
+        // The list refetches via the mutation's invalidation; the note
+        // carries the server's count so the user sees exactly what died.
+        setRevokedOthersNote(
+          count === 1
+            ? 'Revoked 1 other session. This device stays signed in.'
+            : `Revoked ${count} other sessions. This device stays signed in.`,
+        );
+      },
+      onError: (err) => setRevokeError(describeSessionError(err)),
+    });
+  }
 
   function onRevoke(session: AuthSession) {
     setRevokeError(null);
@@ -104,6 +132,23 @@ export default function SessionsPage() {
         <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {revokeError}
         </p>
+      )}
+      {revokedOthersNote && (
+        <p role="status" className="mb-4 rounded bg-green-50 px-3 py-2 text-sm text-green-700">
+          {revokedOthersNote}
+        </p>
+      )}
+      {list.length > 1 && (
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={onRevokeOthers}
+            disabled={revokeOthers.isLoading}
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            Revoke all other sessions
+          </button>
+        </div>
       )}
       {sessions.isLoading && <p>Loading sessions…</p>}
       {sessions.isError && (

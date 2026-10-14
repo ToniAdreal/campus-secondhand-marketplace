@@ -467,6 +467,22 @@ export async function revokeSession(id: string): Promise<void> {
 }
 
 /**
+ * POST /api/auth/sessions/revoke-others. Revokes every session of the
+ * caller EXCEPT the one behind this browser's httpOnly refresh cookie
+ * (backlog #163) — the "sign out everywhere else" action. The current
+ * session is identified by the cookie server-side, never by an id this
+ * client supplies. Resolves with how many sessions were revoked.
+ *
+ * Throws the Axios error on failure.
+ */
+export async function revokeOtherSessions(): Promise<number> {
+  const res = await api.post<ApiResponse<{ revokedCount: number }>>(
+    '/auth/sessions/revoke-others',
+  );
+  return res.data.data.revokedCount;
+}
+
+/**
  * Query keys for the sessions subtree. Everything hangs off `['sessions']`
  * so a single prefix invalidation refetches the list after a revoke.
  */
@@ -498,6 +514,22 @@ export function useRevokeSession() {
       queryClient.setQueryData<AuthSession[]>(sessionKeys.list(), (old) =>
         old?.filter((session) => session.id !== id),
       );
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/auth/sessions/revoke-others as a mutation (backlog #163).
+ * On success the list is invalidated so it refetches the server's truth —
+ * only the current session's row survives; the mutation result carries
+ * the revoked count for the page's confirmation copy.
+ */
+export function useRevokeOtherSessions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => revokeOtherSessions(),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     },
   });

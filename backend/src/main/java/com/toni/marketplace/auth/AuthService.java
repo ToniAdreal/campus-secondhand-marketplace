@@ -1192,6 +1192,41 @@ public class AuthService {
   }
 
   /**
+   * Revoke-all-other-sessions (backlog #163): deletes every live
+   * refresh-token family of the caller EXCEPT the family behind the
+   * presented refresh cookie — the "sign out everywhere else" action the
+   * one-at-a-time {@link #revokeSession} list lacked, for a user who spots
+   * a suspicious session and wants every other device cut off at once.
+   * The current session is identified by the cookie only, never by a
+   * client-supplied id, which would let a stolen access token choose
+   * which session counts as "current". An absent or unknown cookie
+   * identifies no current family, so every family is revoked.
+   *
+   * <p>Deliberately does NOT bump tokenVersion: the bump is logout's
+   * global semantics (backlog #148 — no session is meant to survive a
+   * logout), while this action is scoped — the current session's access
+   * token must keep working. The honest limit, mirroring #62's caveat:
+   * the revoked sessions' already-issued access tokens live out their
+   * remaining ≤15-minute TTL; their refresh cookies 401 immediately.
+   *
+   * @return how many families were revoked (the current one never counts)
+   */
+  @Transactional
+  public int revokeOtherSessions(long userId, String presentedRefreshToken) {
+    Instant now = clock.instant();
+    String currentFamily = (presentedRefreshToken == null || presentedRefreshToken.isBlank())
+        ? null
+        : jwt.sessionFamilyOfToken(presentedRefreshToken).orElse(null);
+    List<String> otherFamilies = jwt.liveSessionTokens(userId, now).stream()
+        .map(RefreshToken::getFamilyJti)
+        .distinct()
+        .filter(family -> !family.equals(currentFamily))
+        .toList();
+    otherFamilies.forEach(jwt::revokeFamily);
+    return otherFamilies.size();
+  }
+
+  /**
    * ADMIN user management (backlog #88): disables an account. The flag is
    * enforced at login (identical 401) and on every authenticated request
    * ({@link JwtAuthenticationFilter}); disabling also revokes every

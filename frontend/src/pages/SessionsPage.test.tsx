@@ -160,6 +160,54 @@ describe('SessionsPage', () => {
     expect(postSpy).not.toHaveBeenCalled();
   });
 
+  it('hides the revoke-all-others button when only one session exists', async () => {
+    getSpy.mockResolvedValue(envelope([currentSession]));
+    renderAt('/settings/sessions');
+
+    await waitFor(() =>
+      expect(screen.getByText('Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0')).toBeTruthy(),
+    );
+    expect(screen.queryByRole('button', { name: 'Revoke all other sessions' })).toBeNull();
+  });
+
+  it('revoke-all-others posts, reports the count and refetches the surviving list', async () => {
+    getSpy.mockResolvedValueOnce(envelope([currentSession, otherSession]));
+    // the post-revoke refetch (invalidation) sees only the current session
+    getSpy.mockResolvedValue(envelope([currentSession]));
+    postSpy.mockResolvedValue(envelope({ revokedCount: 1 }));
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/auth/sessions/revoke-others'),
+    );
+    // the server's count is reported and the revoked row disappears after
+    // the refetch; this device stays signed in (no logout, user intact)
+    await waitFor(() =>
+      expect(
+        screen.getByText('Revoked 1 other session. This device stays signed in.'),
+      ).toBeTruthy(),
+    );
+    await waitFor(() => expect(screen.queryByText('Unknown device')).toBeNull());
+    expect(screen.getByText('Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0')).toBeTruthy();
+    expect(useAuthStore.getState().user).toEqual(user);
+  });
+
+  it('revoke-all-others failure shows the envelope message and keeps the list', async () => {
+    getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
+    postSpy.mockRejectedValue(axiosFailure(500, 'revoke failed'));
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('revoke failed'));
+    expect(screen.getByText('Unknown device')).toBeTruthy();
+    expect(useAuthStore.getState().user).toEqual(user);
+  });
+
   it('bounces anonymous users to /login without firing any request', () => {
     useAuthStore.setState({ user: null });
     renderAt('/settings/sessions');

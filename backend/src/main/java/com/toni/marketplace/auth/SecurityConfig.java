@@ -33,8 +33,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       except {@code POST /api/auth/logout}, {@code POST /api/auth/password},
  *       {@code POST /api/auth/email-change},
  *       {@code GET /api/auth/me}, {@code DELETE /api/auth/me} (account
- *       closure, backlog #158), {@code GET /api/auth/sessions} and
- *       {@code DELETE /api/auth/sessions/**},
+ *       closure, backlog #158), {@code GET /api/auth/sessions},
+ *       {@code DELETE /api/auth/sessions/**} and
+ *       {@code POST /api/auth/sessions/revoke-others} (backlog #163),
  *       which need a Bearer access token because they act on the caller's own
  *       session(s).</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
@@ -187,6 +188,7 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.DELETE, "/api/auth/me").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/sessions").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/sessions/revoke-others").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/enable").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/disable").authenticated()

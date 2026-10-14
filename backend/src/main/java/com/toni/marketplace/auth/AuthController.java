@@ -373,6 +373,29 @@ public class AuthController {
   }
 
   /**
+   * Revokes every session of the caller EXCEPT the current one (backlog
+   * #163, authenticated): the "sign out everywhere else" counterpart of
+   * the one-at-a-time {@code DELETE /api/auth/sessions/{id}}. The current
+   * session is the family behind the presented {@code refresh_token}
+   * cookie — identified by the cookie only, never by a client-supplied
+   * id. The response reports how many families were revoked. Unlike
+   * {@code POST /api/auth/logout} this does NOT bump tokenVersion, so the
+   * current session's access token keeps working; the revoked sessions'
+   * already-issued access tokens live out their ≤15-minute TTL (their
+   * refresh cookies 401 at once) — the honest limit stated in the README.
+   * An absent or unknown cookie identifies no current family, so every
+   * family is revoked.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "every other session revoked; the count is in the envelope (the current session survives)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)")})
+  @PostMapping("/sessions/revoke-others")
+  public ResponseEntity<ApiResponse<RevokeOtherSessionsResponse>> revokeOtherSessions(
+      @AuthenticationPrincipal Long userId,
+      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
+    return ResponseEntity.ok(ApiResponse.ok(
+        new RevokeOtherSessionsResponse(auth.revokeOtherSessions(userId, refreshToken))));
+  }
+
+  /**
    * Logs out the caller (identified by the Bearer access token — the
    * SecurityConfig requires authentication for this route): every refresh
    * token of the user is revoked server-side, the user's tokenVersion is

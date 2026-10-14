@@ -8,6 +8,7 @@ import {
   closeAccount,
   listSessions,
   revokeSession,
+  revokeOtherSessions,
   requestPasswordReset,
   confirmPasswordReset,
   register,
@@ -287,6 +288,28 @@ describe('sessions', () => {
     deleteSpy.mockRejectedValueOnce(failure);
 
     await expect(revokeSession('family-foreign')).rejects.toBe(failure);
+  });
+
+  it('POSTs /auth/sessions/revoke-others and returns the revoked count', async () => {
+    postSpy.mockResolvedValueOnce(envelope({ revokedCount: 2 }));
+
+    const result = await revokeOtherSessions();
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/sessions/revoke-others');
+    expect(result).toBe(2);
+    // no client-supplied "current" id is ever sent — the server identifies
+    // the surviving session from the httpOnly cookie alone
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it('propagates the 401 from revoke-others when no session exists', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(revokeOtherSessions()).rejects.toBe(failure);
   });
 });
 
