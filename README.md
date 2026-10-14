@@ -248,6 +248,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - `cd backend && mvn verify -Pintegration` — Testcontainers integration tests against real
   MySQL 8. Requires Docker; runs in GitHub Actions on every push.
 - `cd frontend && npm test` — Vitest + React Testing Library.
+- `cd frontend && npm run build && npm run size` — bundle-size budget
+  (backlog #165): a dependency-free node script prints the per-chunk table
+  and fails when the entry chunk or total JS exceeds the ratchet budgets in
+  `frontend/scripts/check-bundle-size.mjs` (measured from the real build at
+  the commit that set them; bumps are deliberate and explained in the commit
+  message). The same check runs in CI right after the frontend build.
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat

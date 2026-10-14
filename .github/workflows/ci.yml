@@ -37,6 +37,9 @@ jobs:
           cache-dependency-path: frontend/package.json
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
+      # Bundle-size budget (backlog #165): fail if the entry chunk or the
+      # total JS outgrows the ratchet in frontend/scripts/check-bundle-size.mjs.
+      - run: npm run size --prefix frontend
       - run: npm test --prefix frontend -- --run --passWithNoTests
 
   docker-compose-smoke:
