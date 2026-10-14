@@ -12,9 +12,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.toni.marketplace.auth.JwtTokenService;
 import com.toni.marketplace.auth.PasswordService;
+import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.auth.User;
 import com.toni.marketplace.auth.UserRepository;
+import com.toni.marketplace.notification.NotificationRepository;
+import com.toni.marketplace.order.IdempotencyKeyRepository;
+import com.toni.marketplace.order.OrderRepository;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,10 +40,16 @@ import org.springframework.transaction.annotation.Transactional;
  * the suite pins invalidation per write path — edit, SOLD flip,
  * order-driven RESERVED flip, and gallery photo add — instead of merely
  * asserting it. The list endpoint stays validator-free (pinned absence).
+ *
+ * <p>Transaction discipline mirrors OrderCreateItemStatusTest: most
+ * tests roll back via method-level {@code @Transactional}, but the
+ * order-creation test must NOT — order creation reserves its
+ * idempotency key in a REQUIRES_NEW transaction, which cannot see the
+ * test transaction's uncommitted user rows (FK violation → 500). That
+ * one test commits and cleans up after itself in {@link #cleanUp()}.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
 class ItemConditionalGetTest {
 
   /** Minimal valid PNG (1x1 pixel), same fixture as ItemPhotoGalleryTest. */
@@ -67,6 +78,29 @@ class ItemConditionalGetTest {
 
   @Autowired
   private JwtTokenService jwt;
+
+  @Autowired
+  private OrderRepository orderRepo;
+
+  @Autowired
+  private IdempotencyKeyRepository keyRepo;
+
+  @Autowired
+  private RefreshTokenRepository refreshTokenRepo;
+
+  @Autowired
+  private NotificationRepository notificationRepo;
+
+  /** Cleanup for the one non-transactional (order-creation) test. */
+  @AfterEach
+  void cleanUp() {
+    notificationRepo.deleteAll();
+    keyRepo.deleteAll();
+    orderRepo.deleteAll();
+    refreshTokenRepo.deleteAll();
+    itemRepo.deleteAll();
+    users.deleteAll();
+  }
 
   private User seller;
   private String sellerToken;
@@ -99,6 +133,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void firstGetServesEtagAndMatchingValidatorAnswers304() throws Exception {
     Item item = seedItem();
 
@@ -116,6 +151,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void weakStarAndListFormsMatchAndStaleValidatorDoesNot() throws Exception {
     Item item = seedItem();
     String etag = etagOf(getDetail(item.getId(), null));
@@ -137,6 +173,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void editInvalidatesTheValidator() throws Exception {
     Item item = seedItem();
     String etag = etagOf(getDetail(item.getId(), null));
@@ -153,6 +190,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void soldFlipInvalidatesTheValidator() throws Exception {
     Item item = seedItem();
     String etag = etagOf(getDetail(item.getId(), null));
@@ -186,6 +224,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void photoAddInvalidatesTheValidator() throws Exception {
     Item item = seedItem();
     String etag = etagOf(getDetail(item.getId(), null));
@@ -201,6 +240,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void listEndpointStaysValidatorFree() throws Exception {
     seedItem();
     mockMvc.perform(get("/api/items").header("Authorization", "Bearer " + buyerToken))
@@ -209,6 +249,7 @@ class ItemConditionalGetTest {
   }
 
   @Test
+  @Transactional
   void unknownIdStillAnswers404Envelope() throws Exception {
     mockMvc.perform(get("/api/items/{id}", 999_999L)
             .header("Authorization", "Bearer " + buyerToken))
