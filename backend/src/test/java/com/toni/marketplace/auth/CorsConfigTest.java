@@ -90,6 +90,17 @@ class CorsConfigTest {
   }
 
   @Test
+  void crossOriginResponsesExposeContentDispositionForTheDataExport() throws Exception {
+    // The data-export download (#172) reads the server filename out of
+    // Content-Disposition in the browser; cross-origin that header is
+    // only visible when the CORS config exposes it.
+    mockMvc.perform(get("/api/items").header("Origin", VITE_ORIGIN))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().string("Access-Control-Expose-Headers",
+            org.hamcrest.Matchers.containsString("Content-Disposition")));
+  }
+
+  @Test
   void simpleRequestFromUnlistedOriginIsRejectedWithoutEchoHeader() throws Exception {
     // Spring's DefaultCorsProcessor fail-closes an actual request from an
     // unlisted origin with 403 ("Invalid CORS request") instead of letting

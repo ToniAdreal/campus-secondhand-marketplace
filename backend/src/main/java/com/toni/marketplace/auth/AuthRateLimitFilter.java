@@ -70,6 +70,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * The path carries the listing id, so it is matched by shape
  * ({@code /api/items/<digits>/report}) rather than by equality.
  *
+ * <p>The account data export ({@code GET /api/users/me/export}, backlog
+ * #172) has an eighth, per-<em>user</em> bucket (default 5/minute) on
+ * the same keying as messages. It is the one throttled GET in this
+ * filter: the export is the heaviest read in the app (every section of
+ * the caller's data in one document), so repeated downloads are a
+ * usage throttle, never a mistake budget — a completed export does not
+ * reset it.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -134,6 +142,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String VERIFY_RESEND_PATH = "/api/auth/email-verification/resend";
   private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
+  private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
@@ -143,6 +152,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter totpLimiter;
   private final AuthRateLimiter emailVerificationLimiter;
   private final AuthRateLimiter reportLimiter;
+  private final AuthRateLimiter dataExportLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -156,6 +166,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("emailVerificationRateLimiter")
                                  AuthRateLimiter emailVerificationLimiter,
                              @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
+                             @Qualifier("dataExportRateLimiter")
+                                 AuthRateLimiter dataExportLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -166,6 +178,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.totpLimiter = totpLimiter;
     this.emailVerificationLimiter = emailVerificationLimiter;
     this.reportLimiter = reportLimiter;
+    this.dataExportLimiter = dataExportLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -173,10 +186,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
+    String path = pathOf(request);
+    if ("GET".equalsIgnoreCase(request.getMethod()) && EXPORT_PATH.equals(path)) {
+      // The one throttled GET (backlog #172): see the class javadoc.
+      return !dataExportLimiter.isEnabled();
+    }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
-    String path = pathOf(request);
     if (MESSAGE_PATH.equals(path)) {
       return !messageLimiter.isEnabled();
     }
@@ -202,6 +219,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                   FilterChain chain) throws ServletException, IOException {
     String path = pathOf(request);
+    if (EXPORT_PATH.equals(path)) {
+      // Account data export (backlog #172): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset on
+      // success — a completed download must not refill the allowance
+      // for the heaviest read in the app.
+      String key = messageKey(request);
+      if (!dataExportLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, dataExportLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (MESSAGE_PATH.equals(path)) {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {

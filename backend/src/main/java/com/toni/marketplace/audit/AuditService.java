@@ -25,7 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code PasswordResetService} (backlog #110 — attribution decision:
  * the reset token resolves to exactly one account, so actor and target
  * are both that account; the row evidences a credential change via the
- * reset path, distinct from the authenticated {@code PASSWORD_CHANGED}).
+ * reset path, distinct from the authenticated {@code PASSWORD_CHANGED}),
+ * and {@code DATA_EXPORTED} from {@code AccountDataExportService}
+ * (backlog #172 — the one audited READ: the export hands the caller
+ * every section of their own data, so the read itself is recorded,
+ * actor = target = the account holder).
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}.
  *

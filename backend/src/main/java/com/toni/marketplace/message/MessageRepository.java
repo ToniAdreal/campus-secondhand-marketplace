@@ -38,6 +38,17 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
   long countByReceiverIdAndReadAtIsNull(Long receiverId);
 
   /**
+   * Every message the user sent or received, for the account data
+   * export (backlog #172): chronological ({@code createdAt} asc,
+   * {@code id} asc tie-break), so the archive reads in conversation
+   * order. Rows between two other users are never matched — the
+   * participant predicate is the same one the thread read uses.
+   */
+  @Query("SELECT m FROM Message m WHERE m.senderId = :userId OR m.receiverId = :userId "
+      + "ORDER BY m.createdAt ASC, m.id ASC")
+  List<Message> findExportByParticipant(@Param("userId") Long userId);
+
+  /**
    * Whether any message already exists on this listing between the two
    * users, in either direction — the thread-existence check behind the
    * seller-reply send guard (backlog #112): a seller may only write to a

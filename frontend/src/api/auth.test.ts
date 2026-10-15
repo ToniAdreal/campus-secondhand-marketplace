@@ -20,6 +20,7 @@ import {
   enableTotp,
   recoveryCodeCount,
   disableTotp,
+  downloadMyData,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -600,5 +601,44 @@ describe('email verification (backlog #138)', () => {
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(confirmEmailVerification({ token: 'stale' })).rejects.toBe(failure);
+  });
+});
+
+describe('downloadMyData (backlog #172)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('GETs /users/me/export as a blob and returns the server filename from Content-Disposition', async () => {
+    const blob = new Blob(['{"profile":{}}'], { type: 'application/json' });
+    getSpy.mockResolvedValueOnce({
+      data: blob,
+      headers: {
+        'content-disposition':
+          'attachment; filename="marketplace-data-user-5-2026-10-15.json"',
+      },
+    } as never);
+
+    const result = await downloadMyData();
+
+    expect(getSpy).toHaveBeenCalledWith('/users/me/export', { responseType: 'blob' });
+    expect(result.blob).toBe(blob);
+    expect(result.filename).toBe('marketplace-data-user-5-2026-10-15.json');
+  });
+
+  it('falls back to a generic filename when the disposition header is missing', async () => {
+    const blob = new Blob(['{}'], { type: 'application/json' });
+    getSpy.mockResolvedValueOnce({ data: blob, headers: {} } as never);
+
+    const result = await downloadMyData();
+
+    expect(result.filename).toBe('marketplace-data-export.json');
+  });
+
+  it('propagates failures (e.g. the 429 throttle) so the page can map them by status', async () => {
+    const failure = { isAxiosError: true, response: { status: 429, data: new Blob([]) } };
+    getSpy.mockRejectedValueOnce(failure);
+
+    await expect(downloadMyData()).rejects.toBe(failure);
   });
 });

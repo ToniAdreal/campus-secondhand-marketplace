@@ -598,3 +598,41 @@ export function useRevokeOtherSessions() {
     },
   });
 }
+
+/** A downloaded account data export: the blob plus the server's filename. */
+export interface AccountDataDownload {
+  blob: Blob;
+  filename: string;
+}
+
+/** Reads one header from an Axios response (AxiosHeaders or plain object). */
+function readResponseHeader(headers: unknown, name: string): string | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const bag = headers as { get?: (n: string) => unknown } & Record<string, unknown>;
+  if (typeof bag.get === 'function') {
+    const value = bag.get(name);
+    return value == null ? undefined : String(value);
+  }
+  const value = bag[name] ?? bag[name.toLowerCase()];
+  return value == null ? undefined : String(value);
+}
+
+/**
+ * GET /api/users/me/export (backlog #172). Downloads the caller's own
+ * data — profile, listings, orders on both sides, messages, favorites
+ * and saved searches — as a single JSON file. The success answer is the
+ * document itself (no envelope), served as an attachment whose
+ * filename carries the user id and export date; the caller saves the
+ * blob under exactly that server filename (the fallback below only
+ * fires if a proxy stripped the header). The export is rate-limited
+ * per user server-side (429 envelope) and audit-logged there.
+ *
+ * Throws the Axios error on failure; with responseType 'blob' the
+ * error body is a Blob too, so callers map by status, not by body.
+ */
+export async function downloadMyData(): Promise<AccountDataDownload> {
+  const res = await api.get<Blob>('/users/me/export', { responseType: 'blob' });
+  const disposition = readResponseHeader(res.headers, 'content-disposition');
+  const match = disposition?.match(/filename="([^"]+)"/);
+  return { blob: res.data, filename: match?.[1] ?? 'marketplace-data-export.json' };
+}

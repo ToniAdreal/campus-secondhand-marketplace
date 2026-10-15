@@ -174,4 +174,28 @@ public class AuthRateLimitProperties {
   public void setReportAttemptsPerMinute(int reportAttemptsPerMinute) {
     this.reportAttemptsPerMinute = reportAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the account data
+   * export ({@code GET /api/users/me/export}, backlog #172). Keyed on
+   * the user rather than the IP, mirroring the message/report buckets
+   * (anonymous requests, which the security chain 401s anyway, fall
+   * back to a per-IP bucket). Sized at 5/min: the export is the
+   * heaviest read in the app — every section of the caller's data in
+   * one document — so the ceiling is deliberately the tightest of the
+   * per-user buckets, while a legitimate user downloading their data
+   * a few times in a row never meets it. Like the other usage buckets
+   * it never resets on success — a completed export must not refill
+   * the allowance. Must be &ge; 1.
+   */
+  private int dataExportAttemptsPerMinute = 5;
+
+  public int getDataExportAttemptsPerMinute() {
+    return dataExportAttemptsPerMinute;
+  }
+
+  public void setDataExportAttemptsPerMinute(int dataExportAttemptsPerMinute) {
+    this.dataExportAttemptsPerMinute = dataExportAttemptsPerMinute;
+  }
 }

@@ -103,6 +103,16 @@ public enum AuditAction {
    * no second row.
    */
   ORDER_DISPUTE_RESOLVED_RELEASE,
+  /**
+   * The account holder downloaded their self-service data export
+   * ({@code AccountDataExportService.export}, backlog #172). Actor and
+   * target are both the account holder, mirroring
+   * {@link #PASSWORD_CHANGED}: the export is the broadest read of one
+   * account's data in the app, so the read itself is the auditable
+   * event — the row is evidence it happened, and it stores none of the
+   * exported data (the audit table carries no payload column).
+   */
+  DATA_EXPORTED,
   /** An ADMIN disabled an account ({@code AuthService.disableUser}). */
   USER_DISABLED,
   /** An ADMIN re-enabled an account ({@code AuthService.enableUser}). */

@@ -41,7 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code NotificationController}, {@code OrderController},
  * {@code ReportController}, {@code AdminReportController},
  * {@code SellerOrderController}, {@code SellerSalesExportController},
- * {@code FavoriteController} and {@code SavedSearchController}.
+ * {@code FavoriteController}, {@code SavedSearchController} and
+ * {@code AccountDataExportController}.
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
@@ -120,6 +121,7 @@ class OpenApiContractTest {
       "/api/seller/orders/{id}",
       "/api/seller/orders/summary",
       "/api/seller/sales/export.csv",
+      "/api/users/me/export",
       "/api/users/me/favorites",
       "/api/users/me/favorites/{itemId}",
       "/api/users/me/saved-searches",
@@ -260,6 +262,10 @@ class OpenApiContractTest {
     // Login history (#171) pins its success + anonymous codes.
     assertThat(responseCodes(docs, "/api/auth/login-history", "get"))
         .contains("200", "401");
+    // Account data export (#172) pins its success + anonymous codes and
+    // its own per-user rate-limit 429.
+    assertThat(responseCodes(docs, "/api/users/me/export", "get"))
+        .contains("200", "401", "429");
     // Gallery reorder (#162): pins its not-a-permutation 400 and its
     // concurrent-edit 409 alongside the ownership matrix.
     assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))

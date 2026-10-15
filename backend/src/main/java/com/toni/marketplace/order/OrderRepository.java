@@ -13,6 +13,25 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
   List<Order> findByBuyerId(Long buyerId);
 
+  /**
+   * The buyer's full order history for the account data export
+   * (backlog #172), newest first ({@code createdAt} desc, {@code id}
+   * desc tie-break) — the export's orders-as-buyer section.
+   */
+  List<Order> findByBuyerIdOrderByCreatedAtDescIdDesc(Long buyerId);
+
+  /**
+   * Every order placed on one seller's listings for the account data
+   * export (backlog #172), newest first — the export's
+   * orders-as-seller section. The item is fetch-joined because every
+   * row's DTO mapping reads the item id, so the export never degrades
+   * into one lazy load per row (the #159 export-rows pattern).
+   */
+  @Query("select o from Order o join fetch o.item "
+      + "where o.item.sellerId = :sellerId "
+      + "order by o.createdAt desc, o.id desc")
+  List<Order> findExportRowsBySellerId(@Param("sellerId") Long sellerId);
+
   /** Paginated variant of {@code findByBuyerId} for the buyer's order list. */
   Page<Order> findByBuyerId(Long buyerId, Pageable pageable);
 

@@ -224,7 +224,11 @@ public class SecurityConfig {
    * (the httpOnly refresh cookie) are allowed only for the origins listed in
    * {@link CorsProperties}. Allowed methods/headers cover what the API and
    * the SPA actually use; {@code X-Request-ID} and {@code Retry-After} are
-   * exposed so the frontend's error handling can read them.
+   * exposed so the frontend's error handling can read them, and
+   * {@code Content-Disposition} is exposed so the data-export download
+   * (#172) can read the server filename cross-origin — without it the
+   * browser hides the header and the SPA would save under a fallback
+   * name instead of the server's.
    */
   @Bean
   public CorsConfigurationSource corsConfigurationSource(CorsProperties props) {
@@ -234,7 +238,7 @@ public class SecurityConfig {
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of(
         "Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key", "X-Requested-With"));
-    config.setExposedHeaders(List.of("X-Request-ID", "Retry-After"));
+    config.setExposedHeaders(List.of("X-Request-ID", "Retry-After", "Content-Disposition"));
     config.setMaxAge(3600L);
     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
     source.registerCorsConfiguration("/**", config);

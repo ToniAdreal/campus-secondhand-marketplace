@@ -395,4 +395,54 @@ describe('SettingsPage', () => {
     expect(screen.getByText('login page stub')).toBeTruthy();
     expect(postSpy).not.toHaveBeenCalled();
   });
+
+  it('downloads the data export as a blob saved under the server filename (backlog #172)', async () => {
+    const createObjectURL = vi.fn(() => 'blob:mock-export');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    const blob = new Blob(['{"profile":{}}'], { type: 'application/json' });
+    // The mount-time recovery-code count keeps failing (the beforeEach
+    // default); the export GET is the one that resolves.
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/users/me/export')
+        ? Promise.resolve({
+            data: blob,
+            headers: {
+              'content-disposition':
+                'attachment; filename="marketplace-data-user-5-2026-10-15.json"',
+            },
+          } as never)
+        : Promise.reject(new Error('count unavailable')),
+    );
+    renderAt('/settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
+
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe(
+      'Your data was downloaded as marketplace-data-user-5-2026-10-15.json.',
+    );
+    expect(getSpy).toHaveBeenCalledWith('/users/me/export', { responseType: 'blob' });
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-export');
+    anchorClick.mockRestore();
+  });
+
+  it('maps a data-export 429 to the wait-a-minute copy (backlog #172)', async () => {
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/users/me/export')
+        ? Promise.reject(axiosFailure(429, 'too many requests'))
+        : Promise.reject(new Error('count unavailable')),
+    );
+    renderAt('/settings');
+    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(
+      'Too many downloads in a row — wait a minute, then try again.',
+    );
+  });
 });

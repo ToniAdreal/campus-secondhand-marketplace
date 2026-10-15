@@ -6,6 +6,7 @@ import {
   changePassword,
   closeAccount,
   disableTotp,
+  downloadMyData,
   enableTotp,
   recoveryCodeCount,
   setupTotp,
@@ -78,6 +79,22 @@ function describeCloseAccountError(err: unknown): string {
     if (!err.response) return 'Network error — is the backend running?';
   }
   return 'Account closure failed';
+}
+
+/**
+ * Maps a failed data-export download to UI copy (backlog #172). The
+ * export is rate-limited per user, so a 429 gets its own honest copy;
+ * the error body arrives as a Blob (the request asks for a blob), so
+ * nothing else can be read out of it — every other failure is generic.
+ */
+function describeDataExportError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.response?.status === 429) {
+      return 'Too many downloads in a row — wait a minute, then try again.';
+    }
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Downloading your data failed';
 }
 
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
@@ -155,6 +172,13 @@ export default function SettingsPage() {
   const [closureError, setClosureError] = useState<string | null>(null);
   const [closureDone, setClosureDone] = useState(false);
   const [closurePending, setClosurePending] = useState(false);
+
+  // Account data export (backlog #172). The download is a blob saved
+  // under the server's filename — the page never renders the contents,
+  // so nothing sensitive lands in the DOM or in component state.
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportDone, setExportDone] = useState<string | null>(null);
+  const [exportPending, setExportPending] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -264,6 +288,30 @@ export default function SettingsPage() {
       setClosureError(describeCloseAccountError(err));
     } finally {
       setClosurePending(false);
+    }
+  }
+
+  async function onDownloadMyData() {
+    setExportPending(true);
+    setExportError(null);
+    setExportDone(null);
+    try {
+      const { blob, filename } = await downloadMyData();
+      // Save the blob under the server filename (it carries the user id
+      // and export date) through a throwaway object URL + anchor click.
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setExportDone(filename);
+    } catch (err) {
+      setExportError(describeDataExportError(err));
+    } finally {
+      setExportPending(false);
     }
   }
 
@@ -627,6 +675,33 @@ export default function SettingsPage() {
           </Link>{' '}
           page.
         </p>
+      </div>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Your data</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Download a copy of your data as one JSON file: your profile, listings,
+          orders, messages, saved listings and saved searches. It never contains
+          your password or two-factor secret. This is a personal copy — it cannot
+          be imported back or used to move your account.
+        </p>
+        {exportError && (
+          <p role="alert" className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+            {exportError}
+          </p>
+        )}
+        {exportDone && (
+          <p role="status" className="mb-3 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+            Your data was downloaded as {exportDone}.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={onDownloadMyData}
+          disabled={exportPending}
+          className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {exportPending ? 'Preparing…' : 'Download my data'}
+        </button>
       </div>
       <div className="mt-6 border-t border-red-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold text-red-700">Danger zone</h2>

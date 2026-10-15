@@ -140,6 +140,22 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the account data export
+   * ({@code GET /api/users/me/export}, backlog #172; default 5
+   * downloads/minute per authenticated user). Keyed on the JWT
+   * principal id like the message bucket — the export is the heaviest
+   * read in the app, and keying by IP would let one NAT address starve
+   * every downloader behind it.
+   */
+  @Bean
+  public AuthRateLimiter dataExportRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties exportProps = new AuthRateLimitProperties();
+    exportProps.setEnabled(props.isEnabled());
+    exportProps.setAttemptsPerMinute(props.getDataExportAttemptsPerMinute());
+    return new AuthRateLimiter(clock, exportProps);
+  }
+
+  /**
    * AES-256-GCM cipher for TOTP secrets at rest (backlog #89). Constructing
    * it validates the configured key (Base64, exactly 32 bytes), so a
    * malformed {@code APP_TOTP_ENCRYPTION_KEY} fails the boot on every
