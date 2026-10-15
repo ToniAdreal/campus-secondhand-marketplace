@@ -121,10 +121,11 @@ export const AUDIT_ACTIONS = [
   'CATEGORY_CREATED',
   'CATEGORY_UPDATED',
   'CATEGORY_DELETED',
+  'WEBHOOK_EVENT_REPLAYED',
 ] as const;
 
 /** Allowlisted AuditTargetType values (backend enum, source of truth). */
-export const AUDIT_TARGET_TYPES = ['USER', 'ORDER', 'CATEGORY'] as const;
+export const AUDIT_TARGET_TYPES = ['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT'] as const;
 
 export interface AuditLogFilters {
   actorUserId?: number | null;

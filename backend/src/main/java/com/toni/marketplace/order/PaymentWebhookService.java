@@ -2,6 +2,9 @@ package com.toni.marketplace.order;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -90,6 +93,17 @@ public class PaymentWebhookService {
   /** Acknowledgement returned for every accepted (200) delivery. */
   public record WebhookAck(String eventId, String outcome, boolean duplicate) {}
 
+  /**
+   * Acknowledgement returned for an ADMIN replay (backlog #170):
+   * {@code duplicate=true} means the event was already applied and the
+   * replay was the recorded no-op (the stored outcome is returned
+   * verbatim); {@code applied=true} means this replay re-reconciled a
+   * previously mismatched event and stored the new verdict.
+   */
+  public record WebhookReplayAck(long id, String eventId, String outcome,
+                                 boolean duplicate, boolean applied,
+                                 int replayCount, Instant lastReplayAt) {}
+
   private final WebhookEventRepository events;
   private final WebhookEventRecorder recorder;
   private final WebhookProperties properties;
@@ -97,12 +111,15 @@ public class PaymentWebhookService {
   private final WebhookMetrics metrics;
   private final ObjectMapper mapper;
   private final Clock clock;
+  private final AuditService audit;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public PaymentWebhookService(WebhookEventRepository events, WebhookEventRecorder recorder,
                                WebhookProperties properties,
                                WebhookSignatureProperties signatureProperties,
                                WebhookMetrics metrics,
-                               ObjectMapper mapper, Clock clock) {
+                               ObjectMapper mapper, Clock clock,
+                               AuditService audit) {
     this.events = events;
     this.recorder = recorder;
     this.properties = properties;
@@ -110,6 +127,21 @@ public class PaymentWebhookService {
     this.metrics = metrics;
     this.mapper = mapper;
     this.clock = clock != null ? clock : Clock.systemUTC();
+    this.audit = audit;
+  }
+
+  /** Legacy constructor for direct unit tests — audit writes are no-ops. */
+  public PaymentWebhookService(WebhookEventRepository events, WebhookEventRecorder recorder,
+                               WebhookProperties properties,
+                               WebhookSignatureProperties signatureProperties,
+                               WebhookMetrics metrics,
+                               ObjectMapper mapper, Clock clock) {
+    this(events, recorder, properties, signatureProperties, metrics, mapper, clock,
+        AuditService.noop());
+  }
+
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -190,11 +222,7 @@ public class PaymentWebhookService {
     if (timestamp <= 0) {
       return false;
     }
-    Duration tolerance = signatureProperties == null
-        ? Duration.ofMinutes(5) : signatureProperties.getSignatureTolerance();
-    if (tolerance == null || tolerance.isNegative() || tolerance.isZero()) {
-      tolerance = Duration.ofMinutes(5);
-    }
+    Duration tolerance = signatureTolerance();
     Duration skew = Duration.between(Instant.ofEpochSecond(timestamp), clock.instant()).abs();
     if (skew.compareTo(tolerance) > 0) {
       return false;
@@ -267,6 +295,85 @@ public class PaymentWebhookService {
           eventId, type, reference);
     }
     return new WebhookAck(eventId, outcome.name(), false);
+  }
+
+  /** The configured #149 freshness window, with its documented default. */
+  private Duration signatureTolerance() {
+    Duration tolerance = signatureProperties == null
+        ? Duration.ofMinutes(5) : signatureProperties.getSignatureTolerance();
+    if (tolerance == null || tolerance.isNegative() || tolerance.isZero()) {
+      tolerance = Duration.ofMinutes(5);
+    }
+    return tolerance;
+  }
+
+  /**
+   * ADMIN webhook-event replay (backlog #170): re-runs one recorded
+   * event through the SAME seams as a live delivery — never a second
+   * code path. In live order:
+   *
+   * <ol>
+   *   <li><b>The attempt is recorded first.</b> {@code noteReplay}
+   *       (REQUIRES_NEW) bumps the row's replay count /
+   *       last-replay-at and an audit row is written, so the attempt
+   *       survives even when a later step refuses it — a refused
+   *       replay is evidence, exactly like a refused delivery.</li>
+   *   <li><b>Freshness is re-verified.</b> The #149 check runs against
+   *       the recorded timestamp ({@code createdAt} — the ledger
+   *       stores no signature header, by the #156 design): a row
+   *       outside {@code app.webhooks.signature-tolerance} answers
+   *       the same 401 envelope as a stale live delivery. Replay is
+   *       for handler/state failures, not a signature amnesty.</li>
+   *   <li><b>Dedupe is inherited verbatim.</b> An already-applied
+   *       (MATCHED) row returns its stored outcome with
+   *       {@code duplicate=true} — no re-reconcile, no order state
+   *       touched, no second PSP-side effect of any kind.</li>
+   *   <li><b>A mismatched row re-reconciles once.</b>
+   *       {@link WebhookEventRecorder#reconcile} runs again against
+   *       current order state; if it now matches, the verdict is
+   *       stored via {@code applyOutcome} so the next replay takes
+   *       the no-op path — the event applies exactly once. A replay
+   *       that still mismatches stores nothing new (its delivery was
+   *       already counted at first pass) and answers 200 with the
+   *       stored outcome, like a live mismatch. A webhook still
+   *       never moves money state by itself, so replaying cannot
+   *       create, pay or refund an order either.</li>
+   * </ol>
+   */
+  public WebhookReplayAck replayWebhookEvent(long rowId, long adminId) {
+    WebhookEvent row = recorder.findById(rowId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "webhook event not found"));
+    Instant now = clock.instant();
+    WebhookEvent noted = recorder.noteReplay(rowId, now);
+    audit().record(adminId, AuditAction.WEBHOOK_EVENT_REPLAYED,
+        AuditTargetType.WEBHOOK_EVENT, rowId);
+
+    Instant recordedAt = row.getCreatedAt();
+    if (recordedAt == null
+        || Duration.between(recordedAt, now).abs().compareTo(signatureTolerance()) > 0) {
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+          "stale webhook event: replay re-verifies the recorded timestamp"
+              + " against the signature freshness window and does not bypass it");
+    }
+
+    if (row.getOutcome() == WebhookEvent.Outcome.MATCHED) {
+      metrics.replayed();
+      return new WebhookReplayAck(rowId, row.getEventId(), row.getOutcome().name(),
+          true, false, noted.getReplayCount(), noted.getLastReplayAt());
+    }
+
+    WebhookEvent.Outcome fresh = recorder.reconcile(row.getEventType(), row.getPspReference());
+    if (fresh == WebhookEvent.Outcome.MATCHED) {
+      WebhookEvent applied = recorder.applyOutcome(rowId, fresh);
+      log.info("webhook replay applied: eventId={} type={}", row.getEventId(), row.getEventType());
+      return new WebhookReplayAck(rowId, row.getEventId(), fresh.name(),
+          false, true, applied.getReplayCount(), applied.getLastReplayAt());
+    }
+    log.warn("webhook replay still mismatched: eventId={} type={} reference={}",
+        row.getEventId(), row.getEventType(), row.getPspReference());
+    return new WebhookReplayAck(rowId, row.getEventId(), row.getOutcome().name(),
+        false, false, noted.getReplayCount(), noted.getLastReplayAt());
   }
 
   /**

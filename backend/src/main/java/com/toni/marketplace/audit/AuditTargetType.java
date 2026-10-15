@@ -11,5 +11,7 @@ package com.toni.marketplace.audit;
 public enum AuditTargetType {
   USER,
   ORDER,
-  CATEGORY
+  CATEGORY,
+  /** A {@code webhook_event} ledger row (ADMIN replay, backlog #170). */
+  WEBHOOK_EVENT
 }

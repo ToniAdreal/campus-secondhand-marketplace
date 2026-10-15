@@ -8,7 +8,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -82,5 +85,26 @@ class AdminPaymentController {
       @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
       Pageable pageable) {
     return ApiResponse.ok(webhooks.listWebhookEvents(outcome, pageable));
+  }
+
+  /**
+   * Webhook-event replay (backlog #170): re-runs one recorded event
+   * through the live delivery's own seams (freshness re-check against
+   * the recorded timestamp, then the #161 dedupe / reconcile path) —
+   * an already-applied event is a recorded no-op returning its stored
+   * outcome, a mismatched event applies exactly once, and a stale
+   * event still answers the 401 envelope. Every attempt is counted
+   * on the ledger row and audit-logged. The acting ADMIN is the JWT
+   * principal — there is no actor parameter anywhere.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope), or the recorded event is outside the freshness window (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown webhook event id (envelope)")})
+  @PostMapping("/webhooks/{id}/replay")
+  public ApiResponse<PaymentWebhookService.WebhookReplayAck> replayWebhook(
+      @PathVariable long id) {
+    long adminId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(webhooks.replayWebhookEvent(id, adminId));
   }
 }

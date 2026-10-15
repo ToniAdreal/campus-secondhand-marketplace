@@ -143,8 +143,9 @@ describe('admin query keys', () => {
       'CATEGORY_CREATED',
       'CATEGORY_UPDATED',
       'CATEGORY_DELETED',
+      'WEBHOOK_EVENT_REPLAYED',
     ]);
-    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER', 'CATEGORY']);
+    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT']);
   });
 });
 

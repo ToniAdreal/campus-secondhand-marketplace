@@ -1,7 +1,10 @@
 package com.toni.marketplace.order;
 
+import java.time.Instant;
 import java.util.Optional;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -90,5 +93,42 @@ public class WebhookEventRecorder {
   public WebhookEvent record(String eventId, String type, String reference,
                              WebhookEvent.Outcome outcome) {
     return events.saveAndFlush(new WebhookEvent(eventId, type, reference, outcome));
+  }
+
+  /** One ledger row by its surrogate id (ADMIN replay, backlog #170). */
+  @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+  public Optional<WebhookEvent> findById(long id) {
+    return events.findById(id);
+  }
+
+  /**
+   * Counts one ADMIN replay attempt on the row (backlog #170), in its
+   * own transaction on purpose: the attempt is evidence and must commit
+   * even when the replay itself is then refused (the freshness re-check
+   * answers 401) — recording it inside the caller's transaction would
+   * let that refusal roll the count back with everything else.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public WebhookEvent noteReplay(long id, Instant at) {
+    WebhookEvent row = events.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "webhook event not found"));
+    row.recordReplay(at);
+    return events.saveAndFlush(row);
+  }
+
+  /**
+   * Stores the verdict of a replay that applied the event (backlog
+   * #170): the row's outcome flips to the reconciled value so the next
+   * replay takes the deduped no-op path. Same {@code REQUIRES_NEW}
+   * discipline as {@link #record} — the flip commits on its own.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public WebhookEvent applyOutcome(long id, WebhookEvent.Outcome outcome) {
+    WebhookEvent row = events.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "webhook event not found"));
+    row.applyOutcome(outcome);
+    return events.saveAndFlush(row);
   }
 }

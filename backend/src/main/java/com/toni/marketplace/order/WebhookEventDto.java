@@ -11,7 +11,9 @@ import java.time.Instant;
  * <p>What is exposed: the row id, the PSP event id, the event type, the
  * PSP reference the delivery carried (a capture or refund id, #114),
  * the reconciliation {@link WebhookEvent.Outcome} and the received-at
- * timestamp ({@code createdAt}).
+ * timestamp ({@code createdAt}), plus the ADMIN replay bookkeeping
+ * (backlog #170: {@code replayCount} / {@code lastReplayAt}, Flyway
+ * V38) so an operator can see whether a row has already been retried.
  *
  * <p>What is NOT exposed, by design: there is no order id on this row —
  * the ledger deliberately carries no order FK (see {@link WebhookEvent});
@@ -21,10 +23,12 @@ import java.time.Instant;
  */
 public record WebhookEventDto(long id, String eventId, String eventType,
                               String pspReference, WebhookEvent.Outcome outcome,
-                              Instant createdAt) {
+                              Instant createdAt, int replayCount,
+                              Instant lastReplayAt) {
 
   public static WebhookEventDto of(WebhookEvent row) {
     return new WebhookEventDto(row.getId(), row.getEventId(), row.getEventType(),
-        row.getPspReference(), row.getOutcome(), row.getCreatedAt());
+        row.getPspReference(), row.getOutcome(), row.getCreatedAt(),
+        row.getReplayCount(), row.getLastReplayAt());
   }
 }

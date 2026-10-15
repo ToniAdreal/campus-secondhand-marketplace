@@ -62,6 +62,7 @@ class OpenApiContractTest {
       "/api/admin/reports/{id}/dismiss",
       "/api/admin/payments/settlement",
       "/api/admin/payments/webhooks",
+      "/api/admin/payments/webhooks/{id}/replay",
       "/api/payments/webhooks/mock-psp",
       "/api/admin/users",
       "/api/admin/users/{id}/disable",
@@ -289,5 +290,10 @@ class OpenApiContractTest {
         .contains("401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-release", "post"))
         .contains("401", "403", "404", "409", "422");
+    // Webhook replay (#170): pins the ADMIN matrix plus the stale
+    // event's 401 (the freshness re-check shares the unauthenticated
+    // code, as on the live receiver) and the unknown-id 404.
+    assertThat(responseCodes(docs, "/api/admin/payments/webhooks/{id}/replay", "post"))
+        .contains("401", "403", "404");
   }
 }

@@ -129,5 +129,16 @@ public enum AuditAction {
    * audit table carries no foreign keys. A delete rejected as in-use
    * (409) writes no row.
    */
-  CATEGORY_DELETED
+  CATEGORY_DELETED,
+  /**
+   * An ADMIN replayed a recorded webhook event
+   * ({@code PaymentWebhookService.replayWebhookEvent}, backlog #170).
+   * Actor is the replaying ADMIN; target is the webhook_event row.
+   * Unlike the transition actions above, EVERY replay attempt writes a
+   * row — including a deduped no-op and an attempt the freshness
+   * re-check refuses with 401 — because the attempt itself is the
+   * auditable event here (mirrored on the ledger row by its
+   * replay_count / last_replay_at columns).
+   */
+  WEBHOOK_EVENT_REPLAYED
 }
