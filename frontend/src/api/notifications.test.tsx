@@ -35,6 +35,7 @@ const paidNotification: Notification = {
   id: 11,
   type: 'ORDER_PAID',
   orderId: 42,
+  offerId: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };

@@ -98,6 +98,12 @@ class OpenApiContractTest {
       "/api/notifications",
       "/api/notifications/unread-count",
       "/api/notifications/{id}/read",
+      "/api/items/{itemId}/offers",
+      "/api/offers/made",
+      "/api/offers/received",
+      "/api/offers/{id}/accept",
+      "/api/offers/{id}/decline",
+      "/api/offers/{id}/withdraw",
       "/api/orders",
       "/api/orders/{id}",
       "/api/orders/{id}/cancel",
@@ -255,5 +261,17 @@ class OpenApiContractTest {
         .contains("200", "400", "401", "422");
     assertThat(responseCodes(docs, "/api/users/me/saved-searches/{id}", "delete"))
         .contains("200", "401", "404");
+    // Price offers (#168): creation pins its not-available / duplicate
+    // 409 pair and its own-listing 422; the decisions pin the
+    // no-existence-leak 404 and the not-PENDING 422, and accept the
+    // buy-now race 409.
+    assertThat(responseCodes(docs, "/api/items/{itemId}/offers", "post"))
+        .contains("400", "401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/offers/{id}/accept", "post"))
+        .contains("401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/offers/{id}/decline", "post"))
+        .contains("401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/offers/{id}/withdraw", "post"))
+        .contains("401", "404", "409", "422");
   }
 }

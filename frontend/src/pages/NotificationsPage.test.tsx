@@ -36,6 +36,7 @@ const unreadPaid: Notification = {
   id: 11,
   type: 'ORDER_PAID',
   orderId: 42,
+  offerId: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -44,6 +45,7 @@ const readCompleted: Notification = {
   id: 12,
   type: 'ORDER_COMPLETED',
   orderId: 43,
+  offerId: null,
   createdAt: '2026-10-13T07:00:00Z',
   readAt: '2026-10-13T07:30:00Z',
 };

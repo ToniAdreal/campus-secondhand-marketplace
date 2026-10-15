@@ -71,6 +71,20 @@ public class NotificationService {
     notifications.save(new Notification(recipientId, type, orderId));
   }
 
+  /**
+   * Offer-lifecycle variant of {@link #record} (backlog #168): the row
+   * carries the offer id and, on acceptance, the created order's id; a
+   * decline passes a null order id (no order exists). Same transaction
+   * contract as {@link #record} — the save joins the caller's
+   * transaction, so a rolled-back accept/decline leaves no row.
+   */
+  public void recordOffer(Long recipientId, NotificationType type, Long offerId, Long orderId) {
+    if (notifications == null) {
+      return;
+    }
+    notifications.save(new Notification(recipientId, type, orderId, offerId));
+  }
+
   /** The caller's own notifications, paginated (controller supplies newest-first). */
   @Transactional(readOnly = true)
   public Page<NotificationDto> list(Long recipientId, Pageable pageable) {

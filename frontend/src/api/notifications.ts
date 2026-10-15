@@ -7,12 +7,17 @@ export type NotificationType =
   | 'ORDER_COMPLETED'
   | 'ORDER_REFUNDED'
   | 'ORDER_CANCELLED'
-  | 'ORDER_EXPIRED';
+  | 'ORDER_EXPIRED'
+  | 'OFFER_ACCEPTED'
+  | 'OFFER_DECLINED';
 
 export interface Notification {
   id: number;
   type: NotificationType;
-  orderId: number;
+  /** Null on OFFER_DECLINED rows — declining creates no order (#168). */
+  orderId: number | null;
+  /** The offer the row is about; null on pure order rows (#168). */
+  offerId: number | null;
   createdAt: string;
   /** When the recipient marked it read; null while unread (#157). */
   readAt: string | null;
@@ -37,6 +42,10 @@ export function describeNotification(type: NotificationType): string {
       return 'An order for your listing was cancelled.';
     case 'ORDER_EXPIRED':
       return 'Your order expired before payment.';
+    case 'OFFER_ACCEPTED':
+      return 'The seller accepted your offer — an order was created at your price.';
+    case 'OFFER_DECLINED':
+      return 'The seller declined your offer.';
     default:
       return 'Order update.';
   }

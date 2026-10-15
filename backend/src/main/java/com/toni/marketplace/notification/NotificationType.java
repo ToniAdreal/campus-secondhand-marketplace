@@ -11,5 +11,9 @@ public enum NotificationType {
   ORDER_COMPLETED,
   ORDER_REFUNDED,
   ORDER_CANCELLED,
-  ORDER_EXPIRED
+  ORDER_EXPIRED,
+  /** The caller's price offer was accepted; an order exists (backlog #168). */
+  OFFER_ACCEPTED,
+  /** The caller's price offer was declined; no order exists (backlog #168). */
+  OFFER_DECLINED
 }

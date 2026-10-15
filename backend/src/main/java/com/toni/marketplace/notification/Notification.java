@@ -43,8 +43,21 @@ public class Notification {
   @Column(nullable = false, length = 24)
   private NotificationType type;
 
-  @Column(name = "order_id", nullable = false)
+  /**
+   * The order this notification is about. Nullable since backlog #168
+   * (Flyway V35): an OFFER_DECLINED notification has no order — declining
+   * an offer never creates one — while every ORDER_* row and every
+   * OFFER_ACCEPTED row carries the id.
+   */
+  @Column(name = "order_id")
   private Long orderId;
+
+  /**
+   * The price offer this notification is about (backlog #168, Flyway
+   * V34); null on pure order-lifecycle rows.
+   */
+  @Column(name = "offer_id")
+  private Long offerId;
 
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -56,9 +69,14 @@ public class Notification {
   protected Notification() {}
 
   public Notification(Long recipientId, NotificationType type, Long orderId) {
+    this(recipientId, type, orderId, null);
+  }
+
+  public Notification(Long recipientId, NotificationType type, Long orderId, Long offerId) {
     this.recipientId = recipientId;
     this.type = type;
     this.orderId = orderId;
+    this.offerId = offerId;
   }
 
   @PrePersist
@@ -70,6 +88,7 @@ public class Notification {
   public Long getRecipientId() { return recipientId; }
   public NotificationType getType() { return type; }
   public Long getOrderId() { return orderId; }
+  public Long getOfferId() { return offerId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
 

@@ -58,6 +58,25 @@ public class OrderCreationService {
    */
   @Transactional
   public OrderDto create(Long buyerId, Long itemId) {
+    return create(buyerId, itemId, null);
+  }
+
+  /**
+   * {@link #create(Long, Long)} at an explicitly agreed price instead of
+   * the listing's current price (backlog #168): the price-offer accept
+   * path creates the order at the OFFERED price the seller accepted, so
+   * the order's {@code amountCents} snapshot is the agreed figure, never
+   * the asking price. A null {@code amountCents} keeps the buy-now
+   * behaviour (snapshot the listing price). Every guard — unknown item
+   * 404, not-AVAILABLE 409, own-listing 422, active-order 409 — and the
+   * atomic RESERVED flip are shared verbatim: there is exactly one
+   * order-creation dialect in this codebase, offers included. Called
+   * from {@code OfferService.accept}'s transaction, this method joins it
+   * (REQUIRED propagation), so the offer flip, the listing flip and the
+   * order insert commit — or roll back — together.
+   */
+  @Transactional
+  public OrderDto create(Long buyerId, Long itemId, Long amountCents) {
     Item item = items.findById(itemId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
     if (item.getStatus() != ItemStatus.AVAILABLE) {
@@ -72,7 +91,8 @@ public class OrderCreationService {
     }
     item.setStatus(ItemStatus.RESERVED);
     items.save(item);
-    OrderDto created = OrderDto.from(orders.save(new Order(item, buyerId, item.getPriceCents())));
+    OrderDto created = OrderDto.from(orders.save(
+        new Order(item, buyerId, amountCents != null ? amountCents : item.getPriceCents())));
     // Flush deliberately inside the transaction (not at commit), mirroring
     // pay()/cancel(): a constraint violation on the insert (e.g. the
     // uq_order_active_item race) or a stale-version flip surfaces here and

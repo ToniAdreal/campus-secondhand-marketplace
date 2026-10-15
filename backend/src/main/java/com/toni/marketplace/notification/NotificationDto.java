@@ -11,6 +11,7 @@ public record NotificationDto(
     Long id,
     NotificationType type,
     Long orderId,
+    Long offerId,
     Instant createdAt,
     Instant readAt) {
 
@@ -19,6 +20,7 @@ public record NotificationDto(
         notification.getId(),
         notification.getType(),
         notification.getOrderId(),
+        notification.getOfferId(),
         notification.getCreatedAt(),
         notification.getReadAt());
   }

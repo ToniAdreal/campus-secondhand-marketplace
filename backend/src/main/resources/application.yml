@@ -244,6 +244,16 @@ app:
     # is the 5-minute cadence, so a stale order holds its listing at most
     # TTL + one cadence.
     pending-ttl: 30m
+  offers:
+    # Pending-offer expiry (OfferExpiryService, @Scheduled every 5
+    # minutes server-local; decision endpoints also check the deadline
+    # lazily). A buyer who proposes a price and is never answered holds
+    # nothing hostage — an unanswered offer reserves no listing — so
+    # this TTL is a response window for the seller, not a release
+    # valve: PENDING offers older than this flip to EXPIRED and the
+    # (buyer, item) live pair frees up for a fresh offer. Default 48
+    # hours; expiry granularity is the 5-minute cadence.
+    pending-ttl: 48h
   payments:
     # Mock-PSP webhook receiver (PaymentWebhookService, backlog #140):
     # POST /api/payments/webhooks/mock-psp is a public route authenticated

@@ -6,6 +6,7 @@ import {
   useItem,
   useMarkSold,
 } from '../api/items';
+import { describeOfferError, useCreateOffer } from '../api/offers';
 import { describeOrderError, useCreateOrder } from '../api/orders';
 import {
   REPORT_REASONS,
@@ -37,6 +38,14 @@ export default function ItemDetailPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportDone, setReportDone] = useState(false);
   const createReport = useCreateReport();
+  // Price offer (backlog #168): the amount is typed in yuan and sent in
+  // cents, mirroring the create-listing form's money handling. One live
+  // offer per buyer+listing server-side — a second submit answers 409
+  // and the copy says so; success swaps the form for a plain note.
+  const [offerYuan, setOfferYuan] = useState('');
+  const [offerError, setOfferError] = useState<string | null>(null);
+  const [offerDone, setOfferDone] = useState(false);
+  const createOffer = useCreateOffer();
 
   if (isLoading) return <p>Loading…</p>;
   if (isError || !data) return <p className="text-red-600">Item not found.</p>;
@@ -68,6 +77,22 @@ export default function ItemDetailPage() {
   // Mirrors the backend rule: any signed-in user except the seller may
   // report (the seller reporting their own listing is a 422 server-side).
   const canReport = user !== null && !isSeller;
+
+  const handleOffer = () => {
+    setOfferError(null);
+    const priceCents = Math.round(Number(offerYuan) * 100);
+    if (!Number.isFinite(priceCents) || priceCents <= 0) {
+      setOfferError('Please enter a price above ¥0.');
+      return;
+    }
+    createOffer.mutate(
+      { itemId: data.id, priceCents },
+      {
+        onSuccess: () => setOfferDone(true),
+        onError: (error) => setOfferError(describeOfferError(error)),
+      },
+    );
+  };
 
   const handleReport = () => {
     setReportError(null);
@@ -126,6 +151,46 @@ export default function ItemDetailPage() {
               Log in
             </Link>{' '}
             to buy this item.
+          </p>
+        )}
+        {canBuy && !offerDone && (
+          <div className="mt-4">
+            <label htmlFor="offer-price" className="mb-1 block text-sm font-medium">
+              Make an offer (¥)
+            </label>
+            <div className="flex gap-3">
+              <input
+                id="offer-price"
+                type="number"
+                min="0"
+                step="0.01"
+                value={offerYuan}
+                onChange={(e) => setOfferYuan(e.target.value)}
+                className="w-40 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleOffer}
+                disabled={createOffer.isLoading}
+                className="rounded bg-neutral-800 px-5 py-2 font-medium text-white hover:bg-neutral-900 disabled:opacity-50"
+              >
+                {createOffer.isLoading ? 'Sending…' : 'Make an offer'}
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-neutral-500">
+              The seller can accept or decline; accepting creates your order at the
+              offered price.
+            </p>
+            {offerError && (
+              <p role="alert" className="mt-2 text-sm text-red-600">
+                {offerError}
+              </p>
+            )}
+          </div>
+        )}
+        {canBuy && offerDone && (
+          <p className="mt-4 text-sm text-neutral-600">
+            Offer sent — the seller can accept or decline it. Track it under Offers.
           </p>
         )}
         {canMarkSold && (
