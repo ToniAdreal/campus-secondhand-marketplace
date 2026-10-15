@@ -5,6 +5,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -36,15 +40,18 @@ public class AuthController {
   private final EmailVerificationService emailVerification;
   private final JwtProperties jwtProps;
   private final RefreshCookieProperties cookieProps;
+  private final TrustedProxiesProperties trustedProxies;
 
   public AuthController(AuthService auth, PasswordResetService passwordReset,
                         EmailVerificationService emailVerification,
-                        JwtProperties jwtProps, RefreshCookieProperties cookieProps) {
+                        JwtProperties jwtProps, RefreshCookieProperties cookieProps,
+                        TrustedProxiesProperties trustedProxies) {
     this.auth = auth;
     this.passwordReset = passwordReset;
     this.emailVerification = emailVerification;
     this.jwtProps = jwtProps;
     this.cookieProps = cookieProps;
+    this.trustedProxies = trustedProxies;
   }
 
   /**
@@ -110,8 +117,12 @@ public class AuthController {
   @PostMapping("/login")
   public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest http) {
-    AuthService.LoginResult result =
-        auth.login(request.usernameOrEmail(), request.password(), SessionMeta.of(http));
+    // Backlog #171: this meta feeds both the login-history row and the
+    // new session's refresh-token row, so both capture the client IP
+    // resolved through the #104 trusted-proxy set (with the default
+    // empty set that is exactly the remote address, as before).
+    AuthService.LoginResult result = auth.login(request.usernameOrEmail(), request.password(),
+        SessionMeta.of(http, trustedProxies.trustedProxySet()));
     if (result instanceof AuthService.LoginResult.Pair pair) {
       return ok(pair.result());
     }
@@ -217,7 +228,10 @@ public class AuthController {
   @PostMapping("/2fa/authenticate")
   public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
       @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {
-    return ok(auth.authenticateTotp(request.challenge(), request.code(), SessionMeta.of(http)));
+    // Backlog #171: same trusted-proxy capture as the password stage, so
+    // the second-factor rows carry the resolved client IP too.
+    return ok(auth.authenticateTotp(request.challenge(), request.code(),
+        SessionMeta.of(http, trustedProxies.trustedProxySet())));
   }
 
   /**
@@ -355,6 +369,26 @@ public class AuthController {
       @AuthenticationPrincipal Long userId,
       @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
     return ResponseEntity.ok(ApiResponse.ok(auth.sessions(userId, refreshToken)));
+  }
+
+  /**
+   * The caller's own login history (backlog #171, authenticated —
+   * SecurityConfig): every recorded login outcome for the caller's
+   * account — successes, bad passwords, lockouts, TOTP stages and the
+   * #138 unverified refusal — newest first, paginated (default page
+   * size 20, sorted by {@code createdAt} desc with {@code id} desc as
+   * the tie-break; the #75 global cap clamps oversized {@code size}).
+   * Rows recorded against unknown identifiers belong to no account and
+   * are never returned here. Rows are {@link LoginEventDto} projections
+   * — never the entity.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "the caller's own login history, newest first (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)")})
+  @GetMapping("/login-history")
+  public ResponseEntity<ApiResponse<Page<LoginEventDto>>> loginHistory(
+      @AuthenticationPrincipal Long userId,
+      @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
+      Pageable pageable) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.loginHistory(userId, pageable)));
   }
 
   /**

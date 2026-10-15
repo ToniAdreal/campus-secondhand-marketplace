@@ -111,6 +111,7 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/email-verification/confirm",
       "POST /api/auth/email-verification/resend",
       "POST /api/auth/login",
+      "GET /api/auth/login-history",
       "POST /api/auth/logout",
       "GET /api/auth/me",
       "DELETE /api/auth/me",

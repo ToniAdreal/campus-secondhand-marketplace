@@ -77,6 +77,7 @@ class OpenApiContractTest {
       "/api/auth/email-verification/confirm",
       "/api/auth/email-verification/resend",
       "/api/auth/login",
+      "/api/auth/login-history",
       "/api/auth/logout",
       "/api/auth/me",
       "/api/auth/password",
@@ -255,6 +256,9 @@ class OpenApiContractTest {
         .contains("403", "404", "422");
     // Revoke-other-sessions (#163) pins its success + anonymous codes.
     assertThat(responseCodes(docs, "/api/auth/sessions/revoke-others", "post"))
+        .contains("200", "401");
+    // Login history (#171) pins its success + anonymous codes.
+    assertThat(responseCodes(docs, "/api/auth/login-history", "get"))
         .contains("200", "401");
     // Gallery reorder (#162): pins its not-a-permutation 400 and its
     // concurrent-edit 409 alongside the ownership matrix.

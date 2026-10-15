@@ -2,6 +2,7 @@ package com.toni.marketplace.job;
 
 import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.auth.EmailVerificationTokenRepository;
+import com.toni.marketplace.auth.LoginEventRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
@@ -52,7 +53,13 @@ import org.springframework.transaction.annotation.Transactional;
  *   token or it expires unused, and neither is ever deleted by the
  *   verification flow itself, so dead rows would otherwise accumulate
  *   forever. Kept 30 days after creation by default, aligned with the
- *   password-reset window.</li>
+ *   password-reset window;</li>
+ *   <li>{@code login_event} rows past the retention window (backlog
+ *   #171) — every recorded login outcome since #171 is sign-in evidence
+ *   for the account holder's history view, but its value decays, so
+ *   rows age out by {@code created_at} only (180 days by default),
+ *   never by outcome or user: the purge must not become a way to erase
+ *   one specific attempt.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
@@ -93,6 +100,7 @@ public class DataRetentionService {
   private final AuditLogRepository auditLog;
   private final WebhookEventRepository webhookEvents;
   private final EmailVerificationTokenRepository emailVerificationTokens;
+  private final LoginEventRepository loginEvents;
   private final CleanupProperties props;
   private final Clock clock;
 
@@ -102,6 +110,7 @@ public class DataRetentionService {
                               AuditLogRepository auditLog,
                               WebhookEventRepository webhookEvents,
                               EmailVerificationTokenRepository emailVerificationTokens,
+                              LoginEventRepository loginEvents,
                               CleanupProperties props,
                               Clock clock) {
     this.refreshTokens = refreshTokens;
@@ -110,6 +119,7 @@ public class DataRetentionService {
     this.auditLog = auditLog;
     this.webhookEvents = webhookEvents;
     this.emailVerificationTokens = emailVerificationTokens;
+    this.loginEvents = loginEvents;
     this.props = props;
     this.clock = clock;
   }
@@ -117,7 +127,8 @@ public class DataRetentionService {
   /** How many rows of each kind one purge run removed. */
   public record PurgeCounts(int refreshTokens, int idempotencyKeys,
                             int passwordResetTokens, int auditLogRows,
-                            int webhookEvents, int emailVerificationTokens) {}
+                            int webhookEvents, int emailVerificationTokens,
+                            int loginEvents) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -133,11 +144,13 @@ public class DataRetentionService {
     int audit = purgeAuditLog(now);
     int webhooks = purgeWebhookEvents(now);
     int verifications = purgeEmailVerificationTokens(now);
+    int loginEventsCount = purgeLoginEvents(now);
     log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
-        + "{} password_reset_token, {} audit_log, {} webhook_event and "
-        + "{} email_verification_token rows",
-        tokens, keys, resets, audit, webhooks, verifications);
-    return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications);
+        + "{} password_reset_token, {} audit_log, {} webhook_event, "
+        + "{} email_verification_token and {} login_event rows",
+        tokens, keys, resets, audit, webhooks, verifications, loginEventsCount);
+    return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications,
+        loginEventsCount);
   }
 
   private int purgeRefreshTokens(Instant now) {
@@ -210,6 +223,24 @@ public class DataRetentionService {
       ids = webhookEvents.findPurgeableIds(createdBefore, PageRequest.of(0, BATCH_SIZE));
       if (!ids.isEmpty()) {
         webhookEvents.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeLoginEvents(Instant now) {
+    // Login history is judged by age alone: created_at past the retention
+    // window. There is deliberately no outcome or user predicate —
+    // SUCCESS and BAD_PASSWORD rows age out together, so the purge can
+    // never erase one specific attempt (see the class javadoc).
+    Instant createdBefore = now.minus(Duration.ofDays(props.getLoginEventRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = loginEvents.findPurgeableIds(createdBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        loginEvents.deleteAllByIdInBatch(ids);
         deleted += ids.size();
       }
     } while (ids.size() == BATCH_SIZE);

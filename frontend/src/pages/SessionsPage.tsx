@@ -2,10 +2,12 @@ import axios from 'axios';
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
+  useLoginHistory,
   useRevokeOtherSessions,
   useRevokeSession,
   useSessions,
   type AuthSession,
+  type LoginEvent,
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
 import { queryClient } from '../queryClient';
@@ -27,6 +29,13 @@ import { useAuthStore } from '../store/useAuthStore';
  * this tab out (its refresh cookie is dead), so it asks for confirmation
  * first and then clears local auth state and bounces to /login — without
  * calling POST /api/auth/logout, which would revoke every session.
+ *
+ * Below the sessions list, a "Login history" section (backlog #171)
+ * renders the caller's recorded login outcomes from
+ * GET /api/auth/login-history — outcome, device, IP and time, newest
+ * first, first page only. It is the user's own sign-in evidence:
+ * failed attempts appear here even though they answered 401/423,
+ * because the backend records them in their own transaction.
  *
  * Auth: anonymous visitors bounce to /login before any request fires,
  * and a 401 mid-session (credential + cookie both died) bounces too,
@@ -51,6 +60,10 @@ function deviceLabel(session: AuthSession): string {
   return session.userAgent ?? 'Unknown device';
 }
 
+function loginEventDeviceLabel(event: LoginEvent): string {
+  return event.userAgent ?? 'Unknown device';
+}
+
 export default function SessionsPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
@@ -58,6 +71,7 @@ export default function SessionsPage() {
   // /login on this render; the mid-session 401 path below still handles
   // the credential-died-after-login case.
   const sessions = useSessions(user !== null);
+  const loginHistory = useLoginHistory(user !== null);
   const revoke = useRevokeSession();
   const revokeOthers = useRevokeOtherSessions();
   const [revokeError, setRevokeError] = useState<string | null>(null);
@@ -196,6 +210,40 @@ export default function SessionsPage() {
               >
                 Revoke
               </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h2 className="mb-1 mt-8 text-xl font-bold">Login history</h2>
+      <p className="mb-4 text-sm text-neutral-500">
+        Recent sign-in attempts for your account, newest first — including failed
+        attempts, so you can spot sign-ins you do not recognize.
+      </p>
+      {loginHistory.isLoading && <p>Loading login history…</p>}
+      {loginHistory.isError && (
+        <p role="alert" className="text-red-600">
+          {describeSessionError(loginHistory.error)}
+        </p>
+      )}
+      {loginHistory.isSuccess && (loginHistory.data.content ?? []).length === 0 && (
+        <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+          <p className="text-neutral-600">No login history yet.</p>
+        </div>
+      )}
+      {(loginHistory.data?.content ?? []).length > 0 && (
+        <ul className="space-y-3">
+          {(loginHistory.data?.content ?? []).map((event) => (
+            <li key={event.id} className="rounded-lg bg-white p-4 shadow-sm">
+              <p className="font-medium">{event.outcome}</p>
+              <p className="mt-1 text-sm text-neutral-500">
+                Device: {loginEventDeviceLabel(event)}
+              </p>
+              <p className="text-sm text-neutral-500">
+                IP: {event.ipAddress ?? 'Unknown IP'}
+              </p>
+              <p className="text-sm text-neutral-500">
+                Time: {new Date(event.createdAt).toLocaleString()}
+              </p>
             </li>
           ))}
         </ul>

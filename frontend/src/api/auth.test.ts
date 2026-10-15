@@ -9,6 +9,7 @@ import {
   listSessions,
   revokeSession,
   revokeOtherSessions,
+  getLoginHistory,
   requestPasswordReset,
   confirmPasswordReset,
   register,
@@ -310,6 +311,54 @@ describe('sessions', () => {
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(revokeOtherSessions()).rejects.toBe(failure);
+  });
+
+  it('GETs /auth/login-history with the page params and returns the page from the envelope', async () => {
+    const page = {
+      content: [
+        {
+          id: 11,
+          outcome: 'SUCCESS',
+          identifier: 'toni',
+          ipAddress: '203.0.113.7',
+          userAgent: 'Mozilla/5.0',
+          createdAt: '2026-10-09T02:00:00Z',
+        },
+        {
+          id: 10,
+          outcome: 'BAD_PASSWORD',
+          identifier: 'toni',
+          ipAddress: null,
+          userAgent: null,
+          createdAt: '2026-10-09T01:00:00Z',
+        },
+      ],
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    };
+    getSpy.mockResolvedValueOnce(envelope(page));
+
+    const result = await getLoginHistory();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/login-history', {
+      params: { page: 0, size: 20 },
+    });
+    expect(result).toEqual(page);
+    // outcomes and the null device/IP captures pass through untouched —
+    // rendering fallbacks live in the page
+    expect(result.content[0].outcome).toBe('SUCCESS');
+    expect(result.content[1].userAgent).toBeNull();
+  });
+
+  it('propagates the 401 from login-history when no session exists', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
+    };
+    getSpy.mockRejectedValueOnce(failure);
+
+    await expect(getLoginHistory()).rejects.toBe(failure);
   });
 });
 

@@ -60,6 +60,8 @@ public class AuthService {
   private final EmailVerificationProperties emailVerificationProps;
   private final PasswordHistoryService passwordHistory;
   private final ItemRepository items;
+  private final LoginHistoryRecorder loginHistory;
+  private final LoginEventRepository loginEvents;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -71,7 +73,9 @@ public class AuthService {
                      EmailVerificationService emailVerification,
                      EmailVerificationProperties emailVerificationProps,
                      PasswordHistoryService passwordHistory,
-                     ItemRepository items) {
+                     ItemRepository items,
+                     LoginHistoryRecorder loginHistory,
+                     LoginEventRepository loginEvents) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -88,6 +92,8 @@ public class AuthService {
     this.emailVerificationProps = emailVerificationProps;
     this.passwordHistory = passwordHistory;
     this.items = items;
+    this.loginHistory = loginHistory;
+    this.loginEvents = loginEvents;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -97,7 +103,7 @@ public class AuthService {
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
-        null, new EmailVerificationProperties(), null, null);
+        null, new EmailVerificationProperties(), null, null, null, null);
   }
 
   /**
@@ -167,6 +173,23 @@ public class AuthService {
    */
   private AuditService audit() {
     return audit != null ? audit : AuditService.noop();
+  }
+
+  /**
+   * Login-history seam (backlog #171) with the same null-tolerant
+   * rationale as {@link #audit()}: a hand-built instance without the
+   * recorder (the legacy constructor, Mockito {@code @InjectMocks})
+   * records nothing, so direct unit tests keep their exact pre-#171
+   * semantics. Production always gets the bean. When present, recording
+   * is strict — the recorder's own {@code REQUIRES_NEW} transaction is
+   * what lets the row survive the response the attempt produces (see
+   * {@link LoginHistoryRecorder}).
+   */
+  private void recordLogin(Long userIdOrNull, String identifier, LoginOutcome outcome,
+                           SessionMeta meta) {
+    if (loginHistory != null) {
+      loginHistory.record(userIdOrNull, identifier, outcome, meta, clock.instant());
+    }
   }
 
   /**
@@ -360,6 +383,11 @@ public class AuthService {
           return null;
         });
     if (user == null) {
+      // Login history (backlog #171): an unknown identifier is recorded
+      // with a NULL user id and the identifier exactly as typed — the row
+      // is never exposed by the read API (it has no owner), it exists as
+      // enumeration-attempt evidence for the retention-bounded table.
+      recordLogin(null, usernameOrEmail, LoginOutcome.UNKNOWN_USER, meta);
       throw new InvalidCredentialsException();
     }
     if (user.isDisabled()) {
@@ -368,6 +396,11 @@ public class AuthService {
       // no signal about its password's validity either. Not lockout-tracked
       // — the account is already fully off.
       metrics().loginFailure();
+      // Backlog #171: the history folds this into BAD_PASSWORD, exactly
+      // like the response — the row is visible only to the account
+      // holder, and a distinct value would hand the disabled state a
+      // second, greppable name for no reader benefit.
+      recordLogin(user.getId(), usernameOrEmail, LoginOutcome.BAD_PASSWORD, meta);
       throw new InvalidCredentialsException();
     }
     Instant now = clock.instant();
@@ -375,6 +408,7 @@ public class AuthService {
       Instant lockedUntil = user.getLockedUntil();
       if (lockedUntil != null) {
         if (now.isBefore(lockedUntil)) {
+          recordLogin(user.getId(), usernameOrEmail, LoginOutcome.LOCKED, meta);
           throw new AccountLockedException(retryAfterSeconds(now, lockedUntil));
         }
         // Expired lock: the account gets a fresh allowance.
@@ -391,9 +425,14 @@ public class AuthService {
           Instant until = now.plus(lockout.getLockDuration());
           user.setLockedUntil(until);
           metrics().lockoutTriggered();
+          // Backlog #171: the failure that trips the lock is recorded as
+          // LOCKED, not BAD_PASSWORD — it is the attempt the lock starts
+          // from, and the history should show the lock engaging.
+          recordLogin(user.getId(), usernameOrEmail, LoginOutcome.LOCKED, meta);
           throw new AccountLockedException(lockout.getLockDuration().getSeconds());
         }
       }
+      recordLogin(user.getId(), usernameOrEmail, LoginOutcome.BAD_PASSWORD, meta);
       throw new InvalidCredentialsException();
     }
     if (emailVerificationEnabled() && !user.isEmailVerified()) {
@@ -406,6 +445,7 @@ public class AuthService {
       // verification state leaks only to someone who already holds the
       // password. A wrong password above still counts toward the lockout;
       // this refusal does not (it is not a credential guess).
+      recordLogin(user.getId(), usernameOrEmail, LoginOutcome.EMAIL_UNVERIFIED, meta);
       throw new com.toni.marketplace.common.EmailNotVerifiedException();
     }
     // Password verified: the login succeeded at this stage — for a
@@ -420,9 +460,11 @@ public class AuthService {
     if (user.isTotpEnabled()) {
       // Password correct, second factor still outstanding: issue a
       // short-lived signed challenge, never a token pair.
+      recordLogin(user.getId(), usernameOrEmail, LoginOutcome.TOTP_REQUIRED, meta);
       Instant expiresAt = now.plus(jwt.getTotpChallengeTtl());
       return new LoginResult.Challenge(jwt.createTotpChallenge(user), expiresAt);
     }
+    recordLogin(user.getId(), usernameOrEmail, LoginOutcome.SUCCESS, meta);
     return new LoginResult.Pair(new AuthResult(user, jwt.createTokenPair(user, meta)));
   }
 
@@ -814,9 +856,15 @@ public class AuthService {
       AccountLockedException.class})
   public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta) {
     long userId = jwt.parseTotpChallenge(challenge);
+    // Backlog #171: an unknown user id here means the account vanished
+    // between challenge and exchange — there is no username to record
+    // the row against, so this one failure leaves no history row.
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String stored = user.getTotpSecret();
     if (user.isDisabled() || !user.isTotpEnabled() || stored == null) {
+      // Backlog #171: account-state failures fold into the identical 401
+      // and into TOTP_FAILED alike (see LoginOutcome).
+      recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
       throw new InvalidCredentialsException();
     }
     TotpLockoutProperties totpLockout = totpLockout();
@@ -828,6 +876,7 @@ public class AuthService {
           // Locked: even a correct code under a fresh challenge is
           // refused until the window passes. This attempt does not
           // extend the lock or feed the counter.
+          recordLogin(user.getId(), user.getUsername(), LoginOutcome.LOCKED, meta);
           throw new AccountLockedException(retryAfterSeconds(now, totpLockedUntil));
         }
         // Expired lock: the account gets a fresh allowance.
@@ -842,6 +891,7 @@ public class AuthService {
     try {
       secret = resolveTotpSecret(stored);
     } catch (TotpSecretCipher.DecryptionException e) {
+      recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
       throw new InvalidCredentialsException();
     }
     if (!totp.verify(secret, code)) {
@@ -858,9 +908,13 @@ public class AuthService {
           user.setFailedTotpAttempts(attempts);
           if (attempts >= totpLockout.getMaxAttempts()) {
             user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
+            // Backlog #171: the failure that trips the exchange lock is
+            // LOCKED, mirroring the password stage.
+            recordLogin(user.getId(), user.getUsername(), LoginOutcome.LOCKED, meta);
             throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
           }
         }
+        recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
         throw new InvalidCredentialsException();
       }
     }
@@ -877,6 +931,7 @@ public class AuthService {
       user.setTotpSecret(cipher().encrypt(secret));
       users.save(user);
     }
+    recordLogin(user.getId(), user.getUsername(), LoginOutcome.SUCCESS, meta);
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }
 
@@ -1174,6 +1229,24 @@ public class AuthService {
             row.getFamilyJti().equals(currentFamily)))
         .sorted(Comparator.comparing(SessionDto::lastActiveAt).reversed())
         .toList();
+  }
+
+  /**
+   * Login history (backlog #171): the caller's own recorded login
+   * outcomes, paginated newest first (the controller's
+   * {@code @PageableDefault} supplies createdAt/id DESC). Own rows only
+   * by construction — the repository query keys on the caller's id, so
+   * unknown-identifier rows (NULL {@code user_id}) and other accounts'
+   * rows can never appear here. A hand-built instance without the
+   * repository (the legacy constructor) reads as an empty page.
+   */
+  @Transactional(readOnly = true)
+  public Page<LoginEventDto> loginHistory(long userId, Pageable pageable) {
+    if (loginEvents == null) {
+      return Page.empty(pageable);
+    }
+    return loginEvents.findByUserIdOrderByCreatedAtDesc(userId, pageable)
+        .map(LoginEventDto::of);
   }
 
   /**

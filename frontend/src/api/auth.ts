@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { ApiResponse } from './items';
+import type { ApiResponse, Page } from './items';
 
 export interface AuthUser {
   id: number;
@@ -483,13 +483,77 @@ export async function revokeOtherSessions(): Promise<number> {
 }
 
 /**
+ * The verdict of one recorded login attempt, mirroring the backend's
+ * LoginOutcome enum (backlog #171): SUCCESS — a token pair was issued;
+ * BAD_PASSWORD — the account exists but the password did not match (a
+ * disabled account folds into this value, exactly like the 401);
+ * UNKNOWN_USER — no account matched (recorded with no owner and never
+ * returned by the history API, so it cannot appear here in practice);
+ * LOCKED — refused by a lockout, or the failure that tripped one;
+ * TOTP_REQUIRED — password verified, second factor outstanding;
+ * TOTP_FAILED — the second-factor exchange failed; EMAIL_UNVERIFIED —
+ * password verified but the address is not confirmed yet (#138's 403).
+ */
+export type LoginEventOutcome =
+  | 'SUCCESS'
+  | 'BAD_PASSWORD'
+  | 'UNKNOWN_USER'
+  | 'LOCKED'
+  | 'TOTP_REQUIRED'
+  | 'TOTP_FAILED'
+  | 'EMAIL_UNVERIFIED';
+
+/**
+ * One row of the caller's own login history, mirroring the backend's
+ * LoginEventDto (GET /api/auth/login-history, backlog #171).
+ * `identifier` is the attempted identifier as typed (the account's
+ * username on second-factor rows); `userAgent`/`ipAddress` are the
+ * device label and client IP captured at the attempt — null when the
+ * client sent no User-Agent / the address was unknown.
+ */
+export interface LoginEvent {
+  id: number;
+  outcome: LoginEventOutcome;
+  identifier: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
+/**
+ * GET /api/auth/login-history. The caller's own recorded login outcomes,
+ * newest first, as one page of the shared Page envelope. Only rows that
+ * belong to the caller are ever returned — unknown-identifier rows have
+ * no owner and are never exposed here. The page renders the first page
+ * (20 rows) only; there is deliberately no "load more" in v1.
+ *
+ * Throws the Axios error on failure (401 when no session exists).
+ */
+export async function getLoginHistory(page = 0, size = 20): Promise<Page<LoginEvent>> {
+  const res = await api.get<ApiResponse<Page<LoginEvent>>>('/auth/login-history', {
+    params: { page, size },
+  });
+  return res.data.data;
+}
+
+/**
  * Query keys for the sessions subtree. Everything hangs off `['sessions']`
  * so a single prefix invalidation refetches the list after a revoke.
  */
 export const sessionKeys = {
   all: ['sessions'] as const,
   list: () => [...sessionKeys.all, 'list'] as const,
+  loginHistory: () => [...sessionKeys.all, 'login-history'] as const,
 };
+
+/** GET /api/auth/login-history as a query (first page only — see getLoginHistory); disabled for anonymous visitors so no request fires before the login bounce. */
+export function useLoginHistory(enabled = true) {
+  return useQuery({
+    queryKey: sessionKeys.loginHistory(),
+    queryFn: () => getLoginHistory(),
+    enabled,
+  });
+}
 
 /** GET /api/auth/sessions as a query; disabled for anonymous visitors so no request fires before the login bounce. */
 export function useSessions(enabled = true) {

@@ -17,10 +17,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * is the security record, so its window is materially longer than the
  * token windows), {@code webhook_event} rows are kept 180 days after
  * creation (backlog #152 — delivery evidence for PSP reconciliation,
- * longer than the token windows, shorter than the audit trail), and
+ * longer than the token windows, shorter than the audit trail),
  * used-or-expired {@code email_verification_token} rows are kept 30
  * days after creation (backlog #152 — aligned with the password-reset
- * window; the two token tables are siblings). Override with e.g.
+ * window; the two token tables are siblings), and {@code login_event}
+ * rows are kept 180 days after creation (backlog #171 — sign-in
+ * evidence aligned with the webhook window). Override with e.g.
  * {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -75,6 +77,14 @@ public class CleanupProperties {
    */
   private long emailVerificationTokenRetention = 30;
 
+  /**
+   * Days a {@code login_event} row is kept after its creation before
+   * the purge may delete it. Must be &ge; 1. Deletion is by
+   * {@code created_at} only — never filtered by outcome or user, so no
+   * specific sign-in attempt can be selectively erased (backlog #171).
+   */
+  private long loginEventRetention = 180;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -121,5 +131,13 @@ public class CleanupProperties {
 
   public void setEmailVerificationTokenRetention(long emailVerificationTokenRetention) {
     this.emailVerificationTokenRetention = emailVerificationTokenRetention;
+  }
+
+  public long getLoginEventRetention() {
+    return loginEventRetention;
+  }
+
+  public void setLoginEventRetention(long loginEventRetention) {
+    this.loginEventRetention = loginEventRetention;
   }
 }

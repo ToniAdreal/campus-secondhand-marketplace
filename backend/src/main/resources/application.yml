@@ -229,12 +229,17 @@ app:
     #   email_verification_token rows kept after creation, default 30
     #   (backlog #152, aligned with password-reset-retention).
     #   Still-valid unused tokens are never purged.
+    # login-event-retention: login_event rows (per-user login history,
+    #   backlog #171) kept after creation, default 180 — aligned with
+    #   webhook-event-retention. Deletion is by created_at only (never
+    #   by outcome or user).
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30
     audit-log-retention: 365
     webhook-event-retention: 180
     email-verification-token-retention: 30
+    login-event-retention: 180
   orders:
     # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
     # minutes server-local). A buyer who creates an order and never pays

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, getAccessToken, setAccessToken } from '../api/client';
-import type { AuthSession, AuthUser } from '../api/auth';
+import type { AuthSession, AuthUser, LoginEvent } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 import SessionsPage from './SessionsPage';
 
@@ -34,8 +34,42 @@ const otherSession: AuthSession = {
   current: false,
 };
 
+const successEvent: LoginEvent = {
+  id: 11,
+  outcome: 'SUCCESS',
+  identifier: 'toni',
+  ipAddress: '203.0.113.7',
+  userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0',
+  createdAt: '2026-10-09T02:00:00Z',
+};
+
+// a failed attempt whose client sent no User-Agent and whose IP was not
+// captured: the history row must fall back like the session rows do
+const failedEvent: LoginEvent = {
+  id: 10,
+  outcome: 'BAD_PASSWORD',
+  identifier: 'toni',
+  ipAddress: null,
+  userAgent: null,
+  createdAt: '2026-10-09T01:00:00Z',
+};
+
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
+}
+
+function historyPage(content: LoginEvent[]) {
+  return { content, totalElements: content.length, totalPages: 1, number: 0 };
+}
+
+/** Routes the two GETs of the page: sessions list vs login-history page. */
+function mockGets(history: LoginEvent[]) {
+  getSpy.mockImplementation(((path: string) => {
+    if (path === '/auth/login-history') {
+      return Promise.resolve(envelope(historyPage(history)));
+    }
+    return Promise.resolve(envelope([currentSession, otherSession]));
+  }) as never);
 }
 
 function axiosFailure(status: number, message: string) {
@@ -229,5 +263,48 @@ describe('SessionsPage', () => {
     renderAt('/settings/sessions');
 
     await waitFor(() => expect(screen.getByText('No active sessions.')).toBeTruthy());
+  });
+
+  it('renders the login history section with outcome, device, IP and time', async () => {
+    mockGets([successEvent, failedEvent]);
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('Login history')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('SUCCESS')).toBeTruthy());
+    expect(screen.getByText('BAD_PASSWORD')).toBeTruthy();
+    // the failed attempt's row falls back to "Unknown device" / "Unknown IP"
+    // (the sessions list's other row accounts for the second occurrence —
+    // its label is the bare text, the history row's carries a "Device:" prefix)
+    expect(
+      screen.getAllByText((content) => content.includes('Unknown device')),
+    ).toHaveLength(2);
+    expect(screen.getByText((content) => content.includes('Unknown IP'))).toBeTruthy();
+    expect(screen.getAllByText((content) => content.startsWith('Time:'))).toHaveLength(2);
+
+    // the first page is requested with the documented page params
+    expect(getSpy).toHaveBeenCalledWith('/auth/login-history', {
+      params: { page: 0, size: 20 },
+    });
+  });
+
+  it('shows the login-history empty state when no attempt was recorded', async () => {
+    mockGets([]);
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('No login history yet.')).toBeTruthy());
+  });
+
+  it('a login-history failure shows the envelope message and keeps the sessions list', async () => {
+    getSpy.mockImplementation(((path: string) => {
+      if (path === '/auth/login-history') {
+        return Promise.reject(axiosFailure(500, 'history failed'));
+      }
+      return Promise.resolve(envelope([currentSession, otherSession]));
+    }) as never);
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('history failed'));
+    expect(screen.getByText('Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0')).toBeTruthy();
+    expect(useAuthStore.getState().user).toEqual(user);
   });
 });
