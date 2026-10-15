@@ -81,6 +81,28 @@ public enum AuditAction {
   ORDER_COMPLETED,
   /** A seller (or ADMIN) refunded a PAID order ({@code OrderService.refund}). */
   ORDER_REFUNDED,
+  /**
+   * The buyer opened a dispute on a PAID/COMPLETED order
+   * ({@code DisputeService.openDispute}, backlog #169). Actor is the
+   * disputing buyer. An idempotent re-open writes no second row.
+   */
+  ORDER_DISPUTED,
+  /**
+   * An ADMIN resolved a dispute by refunding the order
+   * ({@code DisputeService.resolveRefund}, backlog #169). Actor is the
+   * resolving ADMIN — deliberately distinct from {@link #ORDER_REFUNDED},
+   * whose actor is the seller/ADMIN caller of the voluntary refund: the
+   * trail keeps "seller chose to refund" and "dispute forced a refund"
+   * apart. An idempotent re-resolve writes no second row.
+   */
+  ORDER_DISPUTE_RESOLVED_REFUND,
+  /**
+   * An ADMIN resolved a dispute by releasing the order back to its
+   * pre-dispute status ({@code DisputeService.resolveRelease}, backlog
+   * #169). Actor is the resolving ADMIN. An idempotent re-resolve writes
+   * no second row.
+   */
+  ORDER_DISPUTE_RESOLVED_RELEASE,
   /** An ADMIN disabled an account ({@code AuthService.disableUser}). */
   USER_DISABLED,
   /** An ADMIN re-enabled an account ({@code AuthService.enableUser}). */

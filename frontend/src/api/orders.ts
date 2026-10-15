@@ -6,9 +6,10 @@ export interface Order {
   id: number;
   itemId: number;
   buyerId: number;
-  // 'REFUNDED' landed on the backend with the mock refund endpoint; this
-  // union mirrors the server-side OrderStatus enum.
-  status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
+  // 'REFUNDED' landed on the backend with the mock refund endpoint and
+  // 'DISPUTED' with the dispute flow (backlog #169); this union mirrors
+  // the server-side OrderStatus enum.
+  status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED' | 'DISPUTED';
   amountCents: number;
   createdAt: string;
   // Mock PSP references (backend backlog #114): `null` until the pay /

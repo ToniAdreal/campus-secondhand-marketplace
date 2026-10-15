@@ -15,5 +15,11 @@ public enum NotificationType {
   /** The caller's price offer was accepted; an order exists (backlog #168). */
   OFFER_ACCEPTED,
   /** The caller's price offer was declined; no order exists (backlog #168). */
-  OFFER_DECLINED
+  OFFER_DECLINED,
+  /** A buyer disputed an order on the caller's listing (backlog #169). */
+  ORDER_DISPUTED,
+  /** An ADMIN resolved a dispute by refunding the order (backlog #169). */
+  DISPUTE_RESOLVED_REFUND,
+  /** An ADMIN resolved a dispute by releasing the order (backlog #169). */
+  DISPUTE_RESOLVED_RELEASE
 }

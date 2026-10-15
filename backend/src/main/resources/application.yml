@@ -254,6 +254,14 @@ app:
     # (buyer, item) live pair frees up for a fresh offer. Default 48
     # hours; expiry granularity is the 5-minute cadence.
     pending-ttl: 48h
+  disputes:
+    # Order-dispute window (DisputeService, backlog #169): how long after
+    # an order's PAID / COMPLETED transition its buyer may still open a
+    # dispute. Orders carry no paidAt/completedAt column, so the window
+    # is measured from the order's updatedAt — the last status change,
+    # which for a PAID or COMPLETED order is exactly that transition.
+    # Default 7 days.
+    window: 7d
   payments:
     # Mock-PSP webhook receiver (PaymentWebhookService, backlog #140):
     # POST /api/payments/webhooks/mock-psp is a public route authenticated

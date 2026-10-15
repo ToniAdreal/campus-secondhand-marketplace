@@ -604,7 +604,9 @@ public class OrderService {
    *       caller could have paid.</li>
    *   <li>Paying an already-PAID order is idempotent: it returns the order
    *       without a second capture (no double-charge).</li>
-   *   <li>Terminal orders (COMPLETED/CANCELLED) cannot be paid → 422.</li>
+   *   <li>Terminal orders (COMPLETED/CANCELLED/REFUNDED) cannot be paid
+   *       → 422; a DISPUTED order is frozen pending its ADMIN resolution
+   *       (backlog #169) and likewise answers 422.</li>
    *   <li>The listing flips AVAILABLE → RESERVED in the same transaction, so
    *       the list view stops offering an item that has just been paid for.
    *       (Since order creation now reserves the listing, this is usually a
@@ -659,7 +661,12 @@ public class OrderService {
       return OrderDto.from(order);
     }
     if (order.getStatus() == OrderStatus.COMPLETED
-        || order.getStatus() == OrderStatus.CANCELLED) {
+        || order.getStatus() == OrderStatus.CANCELLED
+        || order.getStatus() == OrderStatus.REFUNDED
+        || order.getStatus() == OrderStatus.DISPUTED) {
+      // DISPUTED is frozen pending its ADMIN resolution (backlog #169 —
+      // no transition may race a resolution); REFUNDED joins the same
+      // terminal guard — before #169 it fell through to a fresh capture.
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "order is " + order.getStatus() + ", payment is not allowed");
     }

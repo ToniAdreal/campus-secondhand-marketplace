@@ -14,6 +14,7 @@ const CHIP_CLASSES: Record<Order['status'], string> = {
   COMPLETED: 'bg-sky-100 text-sky-800',
   CANCELLED: 'bg-neutral-200 text-neutral-600',
   REFUNDED: 'bg-purple-100 text-purple-800',
+  DISPUTED: 'bg-red-100 text-red-800',
 };
 
 export default function OrderStatusChip({ status }: { status: Order['status'] }) {

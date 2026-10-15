@@ -9,7 +9,10 @@ export type NotificationType =
   | 'ORDER_CANCELLED'
   | 'ORDER_EXPIRED'
   | 'OFFER_ACCEPTED'
-  | 'OFFER_DECLINED';
+  | 'OFFER_DECLINED'
+  | 'ORDER_DISPUTED'
+  | 'DISPUTE_RESOLVED_REFUND'
+  | 'DISPUTE_RESOLVED_RELEASE';
 
 export interface Notification {
   id: number;
@@ -46,6 +49,12 @@ export function describeNotification(type: NotificationType): string {
       return 'The seller accepted your offer — an order was created at your price.';
     case 'OFFER_DECLINED':
       return 'The seller declined your offer.';
+    case 'ORDER_DISPUTED':
+      return 'A buyer disputed an order for your listing.';
+    case 'DISPUTE_RESOLVED_REFUND':
+      return 'A dispute was resolved with a refund.';
+    case 'DISPUTE_RESOLVED_RELEASE':
+      return 'A dispute was resolved and the order was released.';
     default:
       return 'Order update.';
   }
