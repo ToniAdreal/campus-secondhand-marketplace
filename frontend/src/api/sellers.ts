@@ -5,14 +5,19 @@ import type { ApiResponse, Item, Page } from './items';
 /**
  * Public seller profile (backlog #174) — mirrors the backend's
  * PublicSellerDto exactly: username, member-since, live-listing count
- * and completed-sales count. There is deliberately no email or other
- * account field: the backend excludes them by construction.
+ * and completed-sales count, plus the review aggregate folded in by
+ * backlog #175 (review count and the average rating computed from the
+ * review rows on every read; `averageRating` is null until the seller
+ * has a first review). There is deliberately no email or other account
+ * field: the backend excludes them by construction.
  */
 export interface SellerProfile {
   username: string;
   memberSince: string;
   availableListingCount: number;
   completedSalesCount: number;
+  reviewCount: number;
+  averageRating: number | null;
 }
 
 export const sellerKeys = {

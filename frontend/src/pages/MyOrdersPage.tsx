@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { describeDisputeError, useOpenDispute } from '../api/disputes';
 import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders';
+import { describeReviewError, useCreateReview } from '../api/reviews';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
@@ -119,6 +120,106 @@ function OrderDisputeControl({ order }: { order: Order }) {
   );
 }
 
+/**
+ * Per-order review control (backlog #175). Only COMPLETED rows can be
+ * reviewed: the button reveals a rating form (1–5 select + optional
+ * text), and submitting posts the trade's one review — reviews are
+ * append-only, so there is no edit affordance afterwards. The SPA
+ * cannot know whether this order was already reviewed (the order shape
+ * carries no review flag), so a repeat attempt maps the server's 409
+ * to plain copy via describeReviewError.
+ */
+function OrderReviewControl({ order }: { order: Order }) {
+  const [open, setOpen] = useState(false);
+  const [rating, setRating] = useState(5);
+  const [body, setBody] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const createReview = useCreateReview();
+
+  if (order.status !== 'COMPLETED') {
+    return null;
+  }
+  if (createReview.isSuccess) {
+    return (
+      <p className="mt-2 text-sm text-neutral-600">
+        Review submitted — thanks for helping other buyers.
+      </p>
+    );
+  }
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 ml-4 text-sm text-blue-600 hover:underline"
+      >
+        Leave a review
+      </button>
+    );
+  }
+  return (
+    <form
+      className="mt-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setError(null);
+        createReview.mutate(
+          { orderId: order.id, rating, body: body.trim() || undefined },
+          { onError: (err) => setError(describeReviewError(err)) },
+        );
+      }}
+    >
+      <label htmlFor={`review-rating-${order.id}`} className="text-sm font-medium">
+        Your rating
+      </label>
+      <select
+        id={`review-rating-${order.id}`}
+        value={rating}
+        onChange={(e) => setRating(Number(e.target.value))}
+        className="mt-1 ml-2 rounded-lg border border-neutral-300 px-2 py-1 text-sm shadow-sm focus:border-sky-500 focus:outline-none"
+      >
+        {[5, 4, 3, 2, 1].map((value) => (
+          <option key={value} value={value}>
+            {value} star{value === 1 ? '' : 's'}
+          </option>
+        ))}
+      </select>
+      <label htmlFor={`review-body-${order.id}`} className="mt-2 block text-sm font-medium">
+        Anything to add? (optional)
+      </label>
+      <textarea
+        id={`review-body-${order.id}`}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        maxLength={500}
+        rows={3}
+        className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none"
+      />
+      {error && (
+        <p role="alert" className="mt-1 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+      <div className="mt-2 flex gap-2">
+        <button
+          type="submit"
+          disabled={createReview.isLoading}
+          className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {createReview.isLoading ? 'Submitting…' : 'Submit review'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded bg-neutral-200 px-4 py-1.5 text-sm font-medium text-neutral-800 hover:bg-neutral-300"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function MyOrdersPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
@@ -173,6 +274,7 @@ export default function MyOrdersPage() {
                 </div>
                 <OrderPspReferences order={order} />
                 <OrderDisputeControl order={order} />
+                <OrderReviewControl order={order} />
               </li>
             ))}
           </ul>

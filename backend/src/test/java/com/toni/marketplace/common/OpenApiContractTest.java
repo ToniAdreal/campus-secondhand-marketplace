@@ -117,6 +117,7 @@ class OpenApiContractTest {
       "/api/orders/{id}/cancel",
       "/api/orders/{id}/complete",
       "/api/orders/{id}/dispute",
+      "/api/orders/{id}/review",
       "/api/orders/{id}/pay",
       "/api/orders/{id}/refund",
       "/api/seller/orders",
@@ -129,7 +130,8 @@ class OpenApiContractTest {
       "/api/users/me/saved-searches",
       "/api/users/me/saved-searches/{id}",
       "/api/users/{id}/listings",
-      "/api/users/{id}/profile");
+      "/api/users/{id}/profile",
+      "/api/users/{id}/reviews");
 
   @Autowired
   private MockMvc mockMvc;
@@ -285,6 +287,13 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/users/{id}/profile", "get"))
         .contains("200", "401", "404");
     assertThat(responseCodes(docs, "/api/users/{id}/listings", "get"))
+        .contains("200", "401", "404");
+    // Seller reviews (#175): creation pins the buyer-only 403, the
+    // not-COMPLETED 422 and the duplicate 409; the list pins the same
+    // anonymous 401 and unknown/disabled-seller 404 as the profile.
+    assertThat(responseCodes(docs, "/api/orders/{id}/review", "post"))
+        .contains("400", "401", "403", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/users/{id}/reviews", "get"))
         .contains("200", "401", "404");
     // Price offers (#168): creation pins its not-available / duplicate
     // 409 pair and its own-listing 422; the decisions pin the

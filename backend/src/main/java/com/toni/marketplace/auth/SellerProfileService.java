@@ -6,6 +6,7 @@ import com.toni.marketplace.item.ItemDto;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.order.OrderRepository;
 import com.toni.marketplace.order.OrderStatus;
+import com.toni.marketplace.review.SellerReviewRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -33,23 +34,33 @@ public class SellerProfileService {
   private final ItemRepository items;
   private final OrderRepository orders;
   private final ItemService itemService;
+  private final SellerReviewRepository reviews;
 
   public SellerProfileService(UserRepository users, ItemRepository items,
-                              OrderRepository orders, ItemService itemService) {
+                              OrderRepository orders, ItemService itemService,
+                              SellerReviewRepository reviews) {
     this.users = users;
     this.items = items;
     this.orders = orders;
     this.itemService = itemService;
+    this.reviews = reviews;
   }
 
   @Transactional(readOnly = true)
   public PublicSellerDto profile(Long sellerId) {
     User seller = requireVisibleSeller(sellerId);
+    // The review aggregate (#175) is computed from the review rows on
+    // every read — never stored — so it cannot drift from the list the
+    // profile page renders below the header.
+    SellerReviewRepository.RatingAggregate aggregate =
+        reviews.summarizeBySellerId(sellerId);
     return new PublicSellerDto(
         seller.getUsername(),
         seller.getCreatedAt(),
         items.countBySellerIdAndStatus(sellerId, ItemStatus.AVAILABLE),
-        orders.countByItem_SellerIdAndStatus(sellerId, OrderStatus.COMPLETED));
+        orders.countByItem_SellerIdAndStatus(sellerId, OrderStatus.COMPLETED),
+        aggregate.getReviewCount(),
+        aggregate.getAverageRating());
   }
 
   /**

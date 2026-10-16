@@ -1,0 +1,126 @@
+package com.toni.marketplace.review;
+
+import com.toni.marketplace.auth.User;
+import com.toni.marketplace.auth.UserRepository;
+import com.toni.marketplace.order.Order;
+import com.toni.marketplace.order.OrderRepository;
+import com.toni.marketplace.order.OrderStatus;
+import java.util.List;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+/**
+ * Post-completion seller reviews (backlog #175): completed trades leave
+ * a trust signal the public seller profile (#174) can display.
+ *
+ * <p>Create rules ({@link #createReview}):
+ * <ul>
+ *   <li>Buyer only — anyone else gets 403, checked before any state
+ *       guard, mirroring {@code DisputeService}, so an order id never
+ *       leaks what the caller may do with it. Unknown order → 404;
+ *       anonymous → the chain's 401 envelope.</li>
+ *   <li>COMPLETED orders only — any other status is 422. A PAID order
+ *       is not yet a completed trade; a DISPUTED one is frozen.</li>
+ *   <li>One review per trade: a second review of the same order is
+ *       409. The V40 {@code uq_review_order} unique key is the
+ *       database-level arbiter under races.</li>
+ *   <li>The seller is copied from the listing at write time; the
+ *       rating is 1–5 and the text optional (blank normalises to null),
+ *       both validated at the controller boundary.</li>
+ * </ul>
+ *
+ * <p>Read rules: a seller's reviews are paginated, newest first. The
+ * seller-visibility gate mirrors #174 exactly — an unknown id is 404
+ * and a disabled account reads as 404 — so the reviews can never
+ * disagree with the profile about whether the seller exists. The
+ * aggregate (average + count) is computed from the rows on every read
+ * (see {@link SellerReviewRepository#summarizeBySellerId}); the
+ * profile folds it in, nothing stores an average.
+ *
+ * <p>Append-only in v1: no edit, no delete, no moderation surface —
+ * the #160 report flow remains the abuse path.
+ */
+@Service
+public class ReviewService {
+
+  private final SellerReviewRepository reviews;
+  private final OrderRepository orders;
+  private final UserRepository users;
+
+  public ReviewService(SellerReviewRepository reviews, OrderRepository orders,
+                       UserRepository users) {
+    this.reviews = reviews;
+    this.orders = orders;
+    this.users = users;
+  }
+
+  @Transactional
+  public SellerReviewDto createReview(Long buyerId, Long orderId, Integer rating,
+                                      String body) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!order.getBuyerId().equals(buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the buyer can review this order");
+    }
+    if (order.getStatus() != OrderStatus.COMPLETED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", only COMPLETED orders can be reviewed");
+    }
+    if (reviews.findByOrderId(orderId).isPresent()) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "this order already has a review");
+    }
+    String text = body == null || body.isBlank() ? null : body.trim();
+    try {
+      SellerReview review = new SellerReview(orderId, buyerId,
+          order.getItem().getSellerId(), rating, text);
+      SellerReviewDto dto = SellerReviewDto.from(reviews.save(review), usernameOf(buyerId));
+      reviews.flush();
+      return dto;
+    } catch (DataIntegrityViolationException e) {
+      // Lost the uq_review_order race: a concurrent create inserted the
+      // order's one review first — the same client outcome as the
+      // friendly check above.
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "this order already has a review");
+    }
+  }
+
+  /** One seller's reviews, paginated (the controller supplies newest-first). */
+  @Transactional(readOnly = true)
+  public Page<SellerReviewDto> listReviews(Long sellerId, Pageable pageable) {
+    requireVisibleSeller(sellerId);
+    Page<SellerReview> page = reviews.findBySellerId(sellerId, pageable);
+    List<Long> buyerIds = page.getContent().stream().map(SellerReview::getBuyerId).toList();
+    var usernames = new java.util.HashMap<Long, String>();
+    users.findAllById(buyerIds).forEach(u -> usernames.put(u.getId(), u.getUsername()));
+    return page.map(r -> SellerReviewDto.from(r, usernames.get(r.getBuyerId())));
+  }
+
+  /** The aggregate the public profile folds in: computed, never stored. */
+  @Transactional(readOnly = true)
+  public SellerReviewRepository.RatingAggregate aggregateFor(Long sellerId) {
+    return reviews.summarizeBySellerId(sellerId);
+  }
+
+  private String usernameOf(Long userId) {
+    return users.findById(userId).map(User::getUsername).orElse(null);
+  }
+
+  /** The #174 visibility gate, mirrored: unknown or disabled seller → 404. */
+  private void requireVisibleSeller(Long sellerId) {
+    User seller = users.findById(sellerId)
+        .orElseThrow(() -> new ResponseStatusException(
+            HttpStatus.NOT_FOUND, "seller not found"));
+    if (seller.isDisabled()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "seller not found");
+    }
+  }
+}

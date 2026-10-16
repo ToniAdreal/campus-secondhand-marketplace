@@ -29,6 +29,8 @@ const profile: SellerProfile = {
   memberSince: '2026-09-01T00:00:00Z',
   availableListingCount: 2,
   completedSalesCount: 5,
+  reviewCount: 3,
+  averageRating: 4.3,
 };
 
 const liveItem: Item = {

@@ -158,6 +158,7 @@ class AnonymousAccessSweepTest {
       "POST /api/orders/{id}/cancel",
       "POST /api/orders/{id}/complete",
       "POST /api/orders/{id}/dispute",
+      "POST /api/orders/{id}/review",
       "POST /api/orders/{id}/pay",
       "POST /api/orders/{id}/refund",
       "GET /api/seller/orders",
@@ -172,7 +173,8 @@ class AnonymousAccessSweepTest {
       "GET /api/users/me/saved-searches",
       "DELETE /api/users/me/saved-searches/{id}",
       "GET /api/users/{id}/profile",
-      "GET /api/users/{id}/listings");
+      "GET /api/users/{id}/listings",
+      "GET /api/users/{id}/reviews");
 
   /**
    * The public operations and the exact status the anonymous probe in

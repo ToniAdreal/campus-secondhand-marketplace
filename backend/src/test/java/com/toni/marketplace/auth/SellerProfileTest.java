@@ -28,12 +28,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Public seller profiles (backlog #174): GET /api/users/{id}/profile
- * carries exactly four fields (username, member-since, live-listing
- * count, completed-sales count — the email and every other User field
- * are excluded by construction and the key set is pinned here), GET
- * /api/users/{id}/listings is the AVAILABLE-only storefront, and an
- * unknown or disabled seller is 404 on both reads. Anonymous callers
- * are 401 (the sweep pins the same routes).
+ * carries exactly the public fields (username, member-since,
+ * live-listing count, completed-sales count — the email and every
+ * other User field are excluded by construction and the key set is
+ * pinned here; backlog #175 folded the review aggregate — count +
+ * computed average — into the same DTO, growing the pinned set to
+ * six), GET /api/users/{id}/listings is the AVAILABLE-only storefront,
+ * and an unknown or disabled seller is 404 on both reads. Anonymous
+ * callers are 401 (the sweep pins the same routes).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -91,7 +93,7 @@ class SellerProfileTest {
   }
 
   @Test
-  void profileCarriesExactlyTheFourPublicFieldsWithLiveCounts() throws Exception {
+  void profileCarriesExactlyThePublicFieldsWithLiveCounts() throws Exception {
     MvcResult result = mockMvc.perform(get("/api/users/{id}/profile", seller.getId())
             .header("Authorization", "Bearer " + buyerToken))
         .andExpect(status().isOk())
@@ -99,6 +101,10 @@ class SellerProfileTest {
         .andExpect(jsonPath("$.data.username").value(seller.getUsername()))
         .andExpect(jsonPath("$.data.availableListingCount").value(2))
         .andExpect(jsonPath("$.data.completedSalesCount").value(2))
+        // No reviews seeded in this suite: the #175 aggregate reads 0 / null.
+        .andExpect(jsonPath("$.data.reviewCount").value(0))
+        .andExpect(jsonPath("$.data.averageRating")
+            .value(org.hamcrest.Matchers.nullValue()))
         .andReturn();
 
     JsonNode data = objectMapper
@@ -106,7 +112,8 @@ class SellerProfileTest {
     Set<String> keys = new TreeSet<>();
     data.fieldNames().forEachRemaining(keys::add);
     assertThat(keys).isEqualTo(Set.of(
-        "username", "memberSince", "availableListingCount", "completedSalesCount"));
+        "username", "memberSince", "availableListingCount", "completedSalesCount",
+        "reviewCount", "averageRating"));
     assertThat(data.path("memberSince").asText())
         .isEqualTo(objectMapper.writeValueAsString(seller.getCreatedAt()).replace("\"", ""));
     // The seller's email must not appear anywhere in the payload.
