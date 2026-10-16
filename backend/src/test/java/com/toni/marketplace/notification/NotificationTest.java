@@ -1,6 +1,7 @@
 package com.toni.marketplace.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -285,5 +286,73 @@ class NotificationTest {
             Instant.parse(firstReadAt), Instant.parse(secondReadAt)).toNanos()))
         .isLessThanOrEqualTo(1000);
     expectUnreadCount(seller, 0);
+  }
+
+  @Test
+  void markAllReadStampsOnlyCallersUnreadRows_andDeleteIsScoped() throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    // Seed directly: three unread + one already-read row for the seller,
+    // one unread row for the buyer (isolation probe).
+    Notification a = notifications.save(
+        new Notification(seller.getId(), NotificationType.ORDER_PAID, 101L));
+    notifications.save(new Notification(seller.getId(), NotificationType.ORDER_CANCELLED, 102L));
+    notifications.save(new Notification(seller.getId(), NotificationType.ORDER_PAID, 103L));
+    Notification alreadyRead = notifications.save(
+        new Notification(seller.getId(), NotificationType.ORDER_PAID, 104L));
+    alreadyRead.markRead(Instant.now().minusSeconds(60));
+    notifications.save(alreadyRead);
+    Notification buyersRow = notifications.save(
+        new Notification(buyer.getId(), NotificationType.ORDER_COMPLETED, 105L));
+    expectUnreadCount(seller, 3);
+    expectUnreadCount(buyer, 1);
+
+    // Anonymous callers get 401 on both new routes.
+    mockMvc.perform(post("/api/notifications/read-all"))
+        .andExpect(status().isUnauthorized());
+    mockMvc.perform(delete("/api/notifications/{id}", a.getId()))
+        .andExpect(status().isUnauthorized());
+
+    // Mark-all stamps exactly the caller's 3 unread rows and returns 3;
+    // the buyer's row is untouched.
+    mockMvc.perform(post("/api/notifications/read-all")
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").value(3));
+    expectUnreadCount(seller, 0);
+    expectUnreadCount(buyer, 1);
+    assertThat(notifications.findById(a.getId()).orElseThrow().getReadAt()).isNotNull();
+
+    // Idempotent: a second mark-all returns 0, never an error.
+    mockMvc.perform(post("/api/notifications/read-all")
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").value(0));
+
+    // Delete: the buyer cannot delete the seller's row — 404, no
+    // existence leak, and the row survives.
+    mockMvc.perform(delete("/api/notifications/{id}", a.getId())
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isNotFound());
+    assertThat(notifications.findById(a.getId())).isPresent();
+    // Unknown id is the same 404.
+    mockMvc.perform(delete("/api/notifications/{id}", 999999L)
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isNotFound());
+
+    // Deleting an unread row (the buyer's own) drops the unread count.
+    mockMvc.perform(delete("/api/notifications/{id}", buyersRow.getId())
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk());
+    assertThat(notifications.findById(buyersRow.getId())).isEmpty();
+    expectUnreadCount(buyer, 0);
+
+    // Deleting a read row works too; a repeat delete is 404.
+    mockMvc.perform(delete("/api/notifications/{id}", a.getId())
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk());
+    mockMvc.perform(delete("/api/notifications/{id}", a.getId())
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isNotFound());
   }
 }

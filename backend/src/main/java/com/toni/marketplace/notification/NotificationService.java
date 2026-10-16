@@ -120,4 +120,37 @@ public class NotificationService {
     notification.markRead(Instant.now(clock));
     return NotificationDto.from(notifications.save(notification));
   }
+
+  /**
+   * Marks every unread notification of the caller read in one update
+   * (backlog #173) and returns how many rows were stamped. Idempotent:
+   * a second call stamps nothing and returns 0, never an error. On the
+   * no-op instance there is nothing to stamp, so it returns 0.
+   */
+  @Transactional
+  public int markAllRead(Long recipientId) {
+    if (notifications == null) {
+      return 0;
+    }
+    return notifications.markAllRead(recipientId, Instant.now(clock));
+  }
+
+  /**
+   * Deletes one of the caller's own notifications (backlog #173).
+   * Someone else's row — or an unknown id — is 404, never 403: the
+   * endpoint is no existence oracle, mirroring {@link #markRead}.
+   * Deleting an unread row removes it from the unread count, which is
+   * a plain count over live rows, so the bell stays consistent.
+   */
+  @Transactional
+  public void delete(Long recipientId, Long notificationId) {
+    if (notifications == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "notification not found");
+    }
+    Notification notification = notifications
+        .findByIdAndRecipientId(notificationId, recipientId)
+        .orElseThrow(() -> new ResponseStatusException(
+            HttpStatus.NOT_FOUND, "notification not found"));
+    notifications.delete(notification);
+  }
 }

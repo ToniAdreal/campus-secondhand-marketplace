@@ -94,6 +94,41 @@ export function useUnreadNotificationCount(enabled = true) {
 }
 
 /**
+ * POST /api/notifications/read-all (backlog #173) — stamps every unread
+ * row of the caller's in one call; the response is the stamped count.
+ * Success invalidates the whole notifications subtree, so the bell
+ * count refreshes from the server.
+ */
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post<ApiResponse<number>>('/notifications/read-all')
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+}
+
+/**
+ * DELETE /api/notifications/{id} (backlog #173) — removes one of the
+ * caller's own rows (someone else's id is 404 server-side). Success
+ * invalidates the list and the bell count.
+ */
+export function useDeleteNotification() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: number) =>
+      api.delete(`/notifications/${notificationId}`).then(() => undefined),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+}
+
+/**
  * POST /api/notifications/{id}/read. Success invalidates the list and
  * the bell count — the read stamp comes from the server, never a local
  * cache hand-edit (same doctrine as #16).

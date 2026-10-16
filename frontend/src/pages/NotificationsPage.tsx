@@ -1,8 +1,11 @@
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
   describeNotification,
+  useDeleteNotification,
+  useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotifications,
+  useUnreadNotificationCount,
 } from '../api/notifications';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -19,7 +22,10 @@ export default function NotificationsPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const notifications = useNotifications(user !== null);
+  const unreadCount = useUnreadNotificationCount(user !== null);
   const markRead = useMarkNotificationRead();
+  const markAllRead = useMarkAllNotificationsRead();
+  const deleteNotification = useDeleteNotification();
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -29,7 +35,19 @@ export default function NotificationsPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-bold">Notifications</h1>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Notifications</h1>
+        {(unreadCount.data ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => markAllRead.mutate()}
+            disabled={markAllRead.isLoading}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Mark all read
+          </button>
+        )}
+      </div>
       {notifications.isLoading && <p>Loading notifications…</p>}
       {notifications.isError && (
         <p role="alert" className="text-red-600">
@@ -60,18 +78,29 @@ export default function NotificationsPage() {
                   · {new Date(notification.createdAt).toLocaleString()}
                 </p>
               </div>
-              {notification.readAt === null ? (
+              <div className="flex items-center gap-2">
+                {notification.readAt === null ? (
+                  <button
+                    type="button"
+                    onClick={() => markRead.mutate(notification.id)}
+                    disabled={markRead.isLoading}
+                    className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Mark read
+                  </button>
+                ) : (
+                  <span className="text-sm text-neutral-500">Read</span>
+                )}
                 <button
                   type="button"
-                  onClick={() => markRead.mutate(notification.id)}
-                  disabled={markRead.isLoading}
-                  className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                  aria-label={`Delete notification ${notification.id}`}
+                  onClick={() => deleteNotification.mutate(notification.id)}
+                  disabled={deleteNotification.isLoading}
+                  className="rounded bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-200 disabled:opacity-50"
                 >
-                  Mark read
+                  Delete
                 </button>
-              ) : (
-                <span className="text-sm text-neutral-500">Read</span>
-              )}
+              </div>
             </li>
           ))}
         </ul>

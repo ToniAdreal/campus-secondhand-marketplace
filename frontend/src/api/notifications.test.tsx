@@ -5,6 +5,8 @@ import type { ReactNode } from 'react';
 import { api } from './client';
 import {
   describeNotification,
+  useDeleteNotification,
+  useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotifications,
   useUnreadNotificationCount,
@@ -14,6 +16,7 @@ import type { Page } from './items';
 
 const getSpy = vi.spyOn(api, 'get');
 const postSpy = vi.spyOn(api, 'post');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -100,6 +103,37 @@ describe('notifications api hooks (#157)', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/notifications/11/read');
     expect(result.current.data).toEqual(readNotification);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+  });
+
+  it('mark-all-read POSTs to /notifications/read-all, returns the stamped count and invalidates', async () => {
+    postSpy.mockResolvedValueOnce(envelope(3));
+    const client = makeClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+
+    const { result } = renderHook(() => useMarkAllNotificationsRead(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postSpy).toHaveBeenCalledWith('/notifications/read-all');
+    expect(result.current.data).toBe(3);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+  });
+
+  it('delete DELETEs /notifications/{id} and invalidates the notifications subtree', async () => {
+    deleteSpy.mockResolvedValueOnce({} as never);
+    const client = makeClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+
+    const { result } = renderHook(() => useDeleteNotification(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate(11);
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(deleteSpy).toHaveBeenCalledWith('/notifications/11');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
   });
 

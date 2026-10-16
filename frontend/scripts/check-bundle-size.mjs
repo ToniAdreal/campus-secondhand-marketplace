@@ -15,6 +15,11 @@
 //   414,003 bytes across 32 chunks.
 //   ENTRY_MAX_BYTES = 316,000  (measured + ~5%, rounded up)
 //   TOTAL_MAX_BYTES = 435,000  (measured + ~5%, rounded up)
+//   Bump 2026-10-15 (backlog #173): total measured 435,964 bytes on the
+//   #173 tree (notifications mark-all-read + delete: two new mutation
+//   hooks in the shared notifications module + the page controls) —
+//   TOTAL_MAX_BYTES = 458,000 (measured + ~5%, rounded up). The entry
+//   chunk (303,580 bytes) stays inside its unchanged budget.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -29,7 +34,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 316_000;
-export const TOTAL_MAX_BYTES = 435_000;
+export const TOTAL_MAX_BYTES = 458_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module

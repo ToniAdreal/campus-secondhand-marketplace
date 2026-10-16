@@ -103,6 +103,8 @@ class OpenApiContractTest {
       "/api/messages/unread-count",
       "/api/notifications",
       "/api/notifications/unread-count",
+      "/api/notifications/read-all",
+      "/api/notifications/{id}",
       "/api/notifications/{id}/read",
       "/api/items/{itemId}/offers",
       "/api/offers/made",

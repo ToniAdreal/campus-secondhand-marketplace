@@ -9,7 +9,10 @@ import { useAuthStore } from '../store/useAuthStore';
 
 let mockPage: Page<Notification> | undefined;
 let mockIsSuccess = true;
+let mockUnreadCount = 0;
 const markReadCalls: number[] = [];
+const markAllReadCalls: number[] = [];
+const deleteCalls: number[] = [];
 
 vi.mock('../api/notifications', async (importOriginal) => {
   const original = await importOriginal<typeof import('../api/notifications')>();
@@ -24,6 +27,19 @@ vi.mock('../api/notifications', async (importOriginal) => {
     useMarkNotificationRead: () => ({
       mutate: (id: number) => {
         markReadCalls.push(id);
+      },
+      isLoading: false,
+    }),
+    useUnreadNotificationCount: () => ({ data: mockUnreadCount }),
+    useMarkAllNotificationsRead: () => ({
+      mutate: () => {
+        markAllReadCalls.push(1);
+      },
+      isLoading: false,
+    }),
+    useDeleteNotification: () => ({
+      mutate: (id: number) => {
+        deleteCalls.push(id);
       },
       isLoading: false,
     }),
@@ -75,6 +91,9 @@ describe('NotificationsPage (#157)', () => {
     mockPage = pageOf([]);
     mockIsSuccess = true;
     markReadCalls.length = 0;
+    markAllReadCalls.length = 0;
+    deleteCalls.length = 0;
+    mockUnreadCount = 0;
     useAuthStore.setState({ user: buyer });
   });
 
@@ -107,6 +126,31 @@ describe('NotificationsPage (#157)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
 
     expect(markReadCalls).toEqual([11]);
+  });
+
+  it('Mark all read shows only while unread remain and fires the mutation (#173)', () => {
+    mockPage = pageOf([unreadPaid]);
+    mockUnreadCount = 1;
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+    expect(markAllReadCalls).toEqual([1]);
+  });
+
+  it('hides Mark all read when the unread count is 0 (#173)', () => {
+    mockPage = pageOf([readCompleted]);
+    mockUnreadCount = 0;
+    renderPage();
+
+    expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull();
+  });
+
+  it('a row Delete control fires the delete mutation with that id (#173)', () => {
+    mockPage = pageOf([unreadPaid]);
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete notification 11' }));
+    expect(deleteCalls).toEqual([11]);
   });
 
   it('bounces anonymous visitors to /login', () => {

@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -54,6 +55,24 @@ public class NotificationController {
   @PostMapping("/{id}/read")
   public ApiResponse<NotificationDto> markRead(@PathVariable Long id) {
     return ApiResponse.ok(notificationService.markRead(currentUserId(), id));
+  }
+
+  /**
+   * Marks all of the caller's unread notifications read in one call
+   * (backlog #173); the body is the number stamped (0 on a repeat).
+   * Declared before the {@code /{id}} routes so the literal segment
+   * always wins over the path variable.
+   */
+  @PostMapping("/read-all")
+  public ApiResponse<Integer> markAllRead() {
+    return ApiResponse.ok(notificationService.markAllRead(currentUserId()));
+  }
+
+  /** Deletes one of the caller's own notifications; someone else's id is 404. */
+  @DeleteMapping("/{id}")
+  public ApiResponse<Void> delete(@PathVariable Long id) {
+    notificationService.delete(currentUserId(), id);
+    return ApiResponse.ok(null);
   }
 
   private static Long currentUserId() {
