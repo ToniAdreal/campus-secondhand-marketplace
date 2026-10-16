@@ -57,6 +57,15 @@ const unreadPaid: Notification = {
   readAt: null,
 };
 
+const newDeviceAlert: Notification = {
+  id: 13,
+  type: 'LOGIN_NEW_DEVICE',
+  orderId: null,
+  offerId: null,
+  createdAt: '2026-10-13T06:00:00Z',
+  readAt: null,
+};
+
 const readCompleted: Notification = {
   id: 12,
   type: 'ORDER_COMPLETED',
@@ -111,6 +120,19 @@ describe('NotificationsPage (#157)', () => {
     expect(screen.getByText('Your order was completed.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Order #42' }).getAttribute('href')).toBe('/orders/42');
     expect(screen.getByText('Read')).toBeTruthy();
+  });
+
+  it('a new-device alert links to sessions, never to an order (#178)', () => {
+    mockPage = pageOf([newDeviceAlert]);
+    renderPage();
+
+    expect(screen.getByText(/New sign-in from a device or network/)).toBeTruthy();
+    expect(
+      screen
+        .getByRole('link', { name: 'Review your sessions and login history' })
+        .getAttribute('href'),
+    ).toBe('/settings/sessions');
+    expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
   });
 
   it('shows the empty state when there are no notifications', () => {

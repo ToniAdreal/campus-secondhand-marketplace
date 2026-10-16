@@ -12,7 +12,8 @@ export type NotificationType =
   | 'OFFER_DECLINED'
   | 'ORDER_DISPUTED'
   | 'DISPUTE_RESOLVED_REFUND'
-  | 'DISPUTE_RESOLVED_RELEASE';
+  | 'DISPUTE_RESOLVED_RELEASE'
+  | 'LOGIN_NEW_DEVICE';
 
 export interface Notification {
   id: number;
@@ -55,6 +56,10 @@ export function describeNotification(type: NotificationType): string {
       return 'A dispute was resolved with a refund.';
     case 'DISPUTE_RESOLVED_RELEASE':
       return 'A dispute was resolved and the order was released.';
+    case 'LOGIN_NEW_DEVICE':
+      // Backlog #178: an alert, not a block — the sign-in succeeded.
+      // The copy points at the remedy without claiming anything was stopped.
+      return "New sign-in from a device or network you haven't used before. Wasn't you? Revoke your sessions and change your password.";
     default:
       return 'Order update.';
   }

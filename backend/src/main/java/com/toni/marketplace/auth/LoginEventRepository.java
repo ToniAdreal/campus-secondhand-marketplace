@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface LoginEventRepository extends JpaRepository<LoginEvent, Long> {
 
@@ -16,6 +17,31 @@ public interface LoginEventRepository extends JpaRepository<LoginEvent, Long> {
    * construction — there is no query shape here that could return them.
    */
   Page<LoginEvent> findByUserIdOrderByCreatedAtDesc(Long userId, Pageable pageable);
+
+  /**
+   * Whether the account has any recorded login with the given outcome
+   * (backlog #178): the new-device check first asks this for
+   * {@link LoginOutcome#SUCCESS} — an account with no prior successful
+   * login has nothing to compare a device against, so its very first
+   * login can never be "new".
+   */
+  boolean existsByUserIdAndOutcome(Long userId, LoginOutcome outcome);
+
+  /**
+   * How many of the account's recorded logins with the given outcome
+   * carry exactly this (IP, User-Agent) pair (backlog #178). NULL-safe
+   * on both columns: a capture with no User-Agent sent stores NULL, and
+   * two such captures are the same pair. Written as an explicit query
+   * because a derived query cannot express the NULL-equality.
+   */
+  @Query("select count(e) from LoginEvent e where e.userId = :userId"
+      + " and e.outcome = :outcome"
+      + " and ((e.ipAddress = :ipAddress) or (e.ipAddress is null and :ipAddress is null))"
+      + " and ((e.userAgent = :userAgent) or (e.userAgent is null and :userAgent is null))")
+  long countByUserIdAndOutcomeAndDevicePair(@Param("userId") Long userId,
+                                            @Param("outcome") LoginOutcome outcome,
+                                            @Param("ipAddress") String ipAddress,
+                                            @Param("userAgent") String userAgent);
 
   /**
    * Ids of rows created before {@code createdBefore} — the retention

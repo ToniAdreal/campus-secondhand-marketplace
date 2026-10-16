@@ -24,6 +24,8 @@ import com.toni.marketplace.common.PasswordReuseException;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationService;
+import com.toni.marketplace.notification.NotificationType;
 import io.micrometer.core.instrument.Timer;
 
 /**
@@ -62,6 +64,7 @@ public class AuthService {
   private final ItemRepository items;
   private final LoginHistoryRecorder loginHistory;
   private final LoginEventRepository loginEvents;
+  private final NotificationService notifications;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -75,7 +78,8 @@ public class AuthService {
                      PasswordHistoryService passwordHistory,
                      ItemRepository items,
                      LoginHistoryRecorder loginHistory,
-                     LoginEventRepository loginEvents) {
+                     LoginEventRepository loginEvents,
+                     NotificationService notifications) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -94,6 +98,7 @@ public class AuthService {
     this.items = items;
     this.loginHistory = loginHistory;
     this.loginEvents = loginEvents;
+    this.notifications = notifications;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -103,7 +108,7 @@ public class AuthService {
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
-        null, new EmailVerificationProperties(), null, null, null, null);
+        null, new EmailVerificationProperties(), null, null, null, null, null);
   }
 
   /**
@@ -189,6 +194,58 @@ public class AuthService {
                            SessionMeta meta) {
     if (loginHistory != null) {
       loginHistory.record(userIdOrNull, identifier, outcome, meta, clock.instant());
+    }
+  }
+
+  /**
+   * Notification accessor with a no-op fallback, same rationale as
+   * {@link #audit()}: a hand-built instance without the notification
+   * service (the legacy constructor, Mockito {@code @InjectMocks}) drops
+   * the alert instead of failing the login. Production always gets the
+   * shared bean.
+   */
+  private NotificationService notifications() {
+    return notifications != null ? notifications : NotificationService.noop();
+  }
+
+  /**
+   * New-device login alert (backlog #178). Called on a SUCCESS outcome
+   * only — and BEFORE {@link #recordLogin} writes this login's own
+   * SUCCESS row, so the comparison set is exactly the account's prior
+   * successful logins: the current pair must not match itself.
+   *
+   * <p>The pair is the (client IP, User-Agent) the login-history capture
+   * recorded — the same two values the owner can inspect on the
+   * login-history read, and nothing beyond them is stored: the
+   * notification row carries only the recipient and the type, no IP and
+   * no device string. The account's very first successful login never
+   * alerts (there is no prior pair to be new against, and alerting on
+   * every signup's first sign-in would train users to ignore it), and a
+   * repeat login from a once-new pair matches that pair's SUCCESS row,
+   * so each new pair alerts exactly once. Failed logins never reach
+   * this method — they are already login-history evidence, and alerting
+   * on them would fire for every mistyped password from a new cafe.
+   *
+   * <p>The row is written through {@link NotificationService#record},
+   * so it joins this login's transaction exactly like an order
+   * transition's notification (#157): a login that rolls back after
+   * this point leaves no alert. Live sessions are not a second
+   * comparison source: a session row is created by one of these same
+   * logins (or by a refresh of one), so its pair set is a subset of the
+   * SUCCESS rows' pair set.
+   */
+  private void alertIfNewDevice(Long userId, SessionMeta meta) {
+    if (loginEvents == null || userId == null) {
+      return;
+    }
+    SessionMeta safeMeta = meta != null ? meta : SessionMeta.unknown();
+    if (!loginEvents.existsByUserIdAndOutcome(userId, LoginOutcome.SUCCESS)) {
+      return;
+    }
+    long samePair = loginEvents.countByUserIdAndOutcomeAndDevicePair(
+        userId, LoginOutcome.SUCCESS, safeMeta.ipAddress(), safeMeta.userAgent());
+    if (samePair == 0) {
+      notifications().record(userId, NotificationType.LOGIN_NEW_DEVICE, null);
     }
   }
 
@@ -464,6 +521,10 @@ public class AuthService {
       Instant expiresAt = now.plus(jwt.getTotpChallengeTtl());
       return new LoginResult.Challenge(jwt.createTotpChallenge(user), expiresAt);
     }
+    // Backlog #178: a successful sign-in from a never-seen (IP, device)
+    // pair alerts the account holder — checked BEFORE this login's own
+    // SUCCESS row is recorded, so the pair cannot match itself.
+    alertIfNewDevice(user.getId(), meta);
     recordLogin(user.getId(), usernameOrEmail, LoginOutcome.SUCCESS, meta);
     return new LoginResult.Pair(new AuthResult(user, jwt.createTokenPair(user, meta)));
   }
@@ -931,6 +992,11 @@ public class AuthService {
       user.setTotpSecret(cipher().encrypt(secret));
       users.save(user);
     }
+    // Backlog #178: the TOTP exchange is where this login completes, so
+    // the new-device check runs here too — the password stage above only
+    // recorded TOTP_REQUIRED, never a SUCCESS. Same before-recording
+    // order as on the plain login path.
+    alertIfNewDevice(user.getId(), meta);
     recordLogin(user.getId(), user.getUsername(), LoginOutcome.SUCCESS, meta);
     return new AuthResult(user, jwt.createTokenPair(user, meta));
   }

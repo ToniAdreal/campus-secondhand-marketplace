@@ -143,5 +143,9 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('ORDER_REFUNDED')).toMatch(/refunded/i);
     expect(describeNotification('ORDER_CANCELLED')).toMatch(/cancelled/i);
     expect(describeNotification('ORDER_EXPIRED')).toMatch(/expired/i);
+    // #178: the alert copy names the remedy and never claims a block.
+    expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/new sign-in/i);
+    expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/revoke your sessions/i);
+    expect(describeNotification('LOGIN_NEW_DEVICE')).not.toMatch(/blocked/i);
   });
 });

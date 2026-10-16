@@ -21,5 +21,10 @@ public enum NotificationType {
   /** An ADMIN resolved a dispute by refunding the order (backlog #169). */
   DISPUTE_RESOLVED_REFUND,
   /** An ADMIN resolved a dispute by releasing the order (backlog #169). */
-  DISPUTE_RESOLVED_RELEASE
+  DISPUTE_RESOLVED_RELEASE,
+  /**
+   * A successful login from an (IP, device) pair the account has never
+   * signed in from before (backlog #178). Carries no order or offer id.
+   */
+  LOGIN_NEW_DEVICE
 }

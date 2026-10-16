@@ -69,12 +69,21 @@ export default function NotificationsPage() {
               <div>
                 <p className="font-medium">{describeNotification(notification.type)}</p>
                 <p className="mt-1 text-sm text-neutral-500">
-                  <Link
-                    to={`/orders/${notification.orderId}`}
-                    className="text-blue-600 hover:underline"
-                  >
-                    Order #{notification.orderId}
-                  </Link>{' '}
+                  {notification.type === 'LOGIN_NEW_DEVICE' ? (
+                    <Link
+                      to="/settings/sessions"
+                      className="text-blue-600 hover:underline"
+                    >
+                      Review your sessions and login history
+                    </Link>
+                  ) : notification.orderId !== null ? (
+                    <Link
+                      to={`/orders/${notification.orderId}`}
+                      className="text-blue-600 hover:underline"
+                    >
+                      Order #{notification.orderId}
+                    </Link>
+                  ) : null}{' '}
                   · {new Date(notification.createdAt).toLocaleString()}
                 </p>
               </div>
