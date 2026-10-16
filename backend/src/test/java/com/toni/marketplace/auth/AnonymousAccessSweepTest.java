@@ -134,6 +134,7 @@ class AnonymousAccessSweepTest {
       "POST /api/items/{id}/photos",
       "PUT /api/items/{id}/photos/order",
       "DELETE /api/items/{id}/photos/{photoId}",
+      "POST /api/items/{id}/renew",
       "POST /api/items/{id}/report",
       "PATCH /api/items/{id}",
       "PATCH /api/items/{id}/status",

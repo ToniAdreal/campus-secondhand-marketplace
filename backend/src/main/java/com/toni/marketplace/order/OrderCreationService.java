@@ -82,6 +82,14 @@ public class OrderCreationService {
     if (item.getStatus() != ItemStatus.AVAILABLE) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "item is not available");
     }
+    // Listing expiry (backlog #177): an AVAILABLE listing past its
+    // lifetime deadline is expired even before the nightly job flips
+    // its stored status — the same lazy-on-read definition the browse
+    // and detail reads use, so a direct order POST cannot buy a
+    // listing every read path already treats as gone.
+    if (item.isExpiredAt(java.time.Instant.now())) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "item is not available");
+    }
     if (item.getSellerId().equals(buyerId)) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "cannot order your own listing");

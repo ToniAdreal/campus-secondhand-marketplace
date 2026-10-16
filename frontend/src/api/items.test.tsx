@@ -3,7 +3,16 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
-import { itemKeys, listingPhotoUrls, useItems, type ItemPhoto } from './items';
+import {
+  describeRenewError,
+  isListingExpired,
+  isListingExpiringSoon,
+  itemKeys,
+  listingPhotoUrls,
+  useItems,
+  type Item,
+  type ItemPhoto,
+} from './items';
 
 const getSpy = vi.spyOn(api, 'get');
 
@@ -171,5 +180,46 @@ describe('listingPhotoUrls', () => {
 
   it('is empty when the listing has no photo at all', () => {
     expect(listingPhotoUrls({ photoUrl: null, photos: [] })).toEqual([]);
+  });
+});
+
+describe('listing expiry helpers (backlog #177)', () => {
+  const now = new Date('2026-10-16T00:00:00.000Z');
+  const base: Item = {
+    id: 1,
+    title: 'Lamp',
+    description: null,
+    priceCents: 100,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  it('treats the stored EXPIRED status as expired regardless of the deadline', () => {
+    expect(isListingExpired({ ...base, status: 'EXPIRED', expiresAt: '2999-01-01T00:00:00.000Z' }, now)).toBe(true);
+  });
+
+  it('treats an AVAILABLE listing past its deadline as expired (not yet flipped by the job)', () => {
+    expect(isListingExpired({ ...base, expiresAt: '2026-10-15T00:00:00.000Z' }, now)).toBe(true);
+    expect(isListingExpired({ ...base, expiresAt: '2026-10-20T00:00:00.000Z' }, now)).toBe(false);
+    expect(isListingExpired({ ...base, status: 'RESERVED', expiresAt: '2026-10-15T00:00:00.000Z' }, now)).toBe(false);
+    expect(isListingExpired({ ...base, expiresAt: null }, now)).toBe(false);
+  });
+
+  it('flags a live listing inside the 7-day renew window as expiring soon', () => {
+    expect(isListingExpiringSoon({ ...base, expiresAt: '2026-10-20T00:00:00.000Z' }, now)).toBe(true);
+    expect(isListingExpiringSoon({ ...base, expiresAt: '2026-11-20T00:00:00.000Z' }, now)).toBe(false);
+    expect(isListingExpiringSoon({ ...base, expiresAt: '2026-10-15T00:00:00.000Z' }, now)).toBe(false);
+  });
+
+  it('maps renew failures to friendly copy', () => {
+    const err = (code: number) => ({ response: { data: { code, message: 'raw' } } });
+    expect(describeRenewError(err(422))).toMatch(/cannot be renewed yet/i);
+    expect(describeRenewError(err(403))).toMatch(/only the seller/i);
+    expect(describeRenewError(err(404))).toMatch(/no longer exists/i);
   });
 });

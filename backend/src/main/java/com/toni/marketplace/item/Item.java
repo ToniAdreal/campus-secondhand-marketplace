@@ -87,6 +87,19 @@ public class Item {
   @OrderBy("position ASC")
   private List<ItemPhoto> photos = new ArrayList<>();
 
+  /**
+   * Listing lifetime deadline (Flyway V41, backlog #177): an AVAILABLE
+   * listing at or past this instant is expired — the public reads treat
+   * it as gone immediately and the nightly job flips its stored status
+   * to {@code EXPIRED}. Set at creation to {@code now + app.listings.ttl}
+   * (default 30 days) by the service layer and reset by renew. Nullable
+   * in the schema only so rows predating V41 can be backfilled by the
+   * vendor migrations (V42); every row written by the application
+   * carries a value, and a null is read as "no deadline" defensively.
+   */
+  @Column(name = "expires_at")
+  private Instant expiresAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -130,6 +143,19 @@ public class Item {
   public String getPhotoUrl() { return photoUrl; }
   public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
   public List<ItemPhoto> getPhotos() { return photos; }
+  public Instant getExpiresAt() { return expiresAt; }
+  public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+
+  /**
+   * True when this listing's lifetime has run out at {@code now}: only an
+   * AVAILABLE listing can be expired — a RESERVED listing is mid-order
+   * (its own lifecycle, #51, governs it) and terminal states are final.
+   * The single definition both read paths (lazy-on-read) and the nightly
+   * flip job use, so the two can never disagree on the same row.
+   */
+  public boolean isExpiredAt(Instant now) {
+    return status == ItemStatus.AVAILABLE && expiresAt != null && !expiresAt.isAfter(now);
+  }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

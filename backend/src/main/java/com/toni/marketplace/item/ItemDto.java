@@ -39,7 +39,16 @@ public record ItemDto(
      * when the listing has no gallery photos); legacy listings that only
      * carry {@link #photoUrl()} show an empty gallery.
      */
-    List<ItemPhotoDto> photos) {
+    List<ItemPhotoDto> photos,
+    /**
+     * Listing lifetime deadline (backlog #177): an AVAILABLE listing at
+     * or past this instant is expired — excluded from the public browse
+     * list, 404 on the detail read, and flipped to the EXPIRED status by
+     * the nightly job. The seller's own listings view still carries the
+     * row (with this date) so the seller can renew it. Null only on
+     * DTOs built from rows that predate the deadline's backfill.
+     */
+    Instant expiresAt) {
 
   /**
    * Legacy 11-arg form without the seller username, kept for callers that
@@ -59,7 +68,7 @@ public record ItemDto(
       Instant createdAt,
       Instant updatedAt) {
     this(id, title, description, priceCents, status, sellerId, null, categoryId,
-        categoryName, photoUrl, createdAt, updatedAt, List.of());
+        categoryName, photoUrl, createdAt, updatedAt, List.of(), null);
   }
 
   /**
@@ -81,6 +90,30 @@ public record ItemDto(
       Instant createdAt,
       Instant updatedAt) {
     this(id, title, description, priceCents, status, sellerId, sellerUsername,
-        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of());
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), null);
+  }
+
+  /**
+   * Projection constructor carrying the listing's expiry deadline
+   * (backlog #177): the JPQL read projections that feed expiry-aware
+   * views (browse list, detail, seller storefront) call this 13-arg
+   * form (photos = empty, merged in afterwards by the service).
+   */
+  public ItemDto(
+      Long id,
+      String title,
+      String description,
+      Long priceCents,
+      ItemStatus status,
+      Long sellerId,
+      String sellerUsername,
+      Long categoryId,
+      String categoryName,
+      String photoUrl,
+      Instant createdAt,
+      Instant updatedAt,
+      Instant expiresAt) {
+    this(id, title, description, priceCents, status, sellerId, sellerUsername,
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), expiresAt);
   }
 }

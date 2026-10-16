@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { listingPhotoUrls, useMyListings } from '../api/items';
+import {
+  describeRenewError,
+  isListingExpired,
+  isListingExpiringSoon,
+  listingPhotoUrls,
+  useMyListings,
+  useRenewListing,
+} from '../api/items';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -18,6 +25,8 @@ export default function MyListingsPage() {
   const user = useAuthStore((s) => s.user);
   const [page, setPage] = useState(0);
   const listings = useMyListings(page);
+  const renew = useRenewListing();
+  const [renewError, setRenewError] = useState<string | null>(null);
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -32,6 +41,11 @@ export default function MyListingsPage() {
       {listings.isError && (
         <p role="alert" className="text-red-600">
           Failed to load your listings.
+        </p>
+      )}
+      {renewError && (
+        <p role="alert" className="text-red-600">
+          {renewError}
         </p>
       )}
       {listings.isSuccess && data && data.content.length === 0 && (
@@ -72,6 +86,32 @@ export default function MyListingsPage() {
                   <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
                     {item.status}
                   </span>{' '}
+                  {isListingExpired(item) && (
+                    <span className="mt-2 inline-block rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                      Expired
+                    </span>
+                  )}{' '}
+                  {item.expiresAt && (
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {isListingExpired(item) ? 'Expired on ' : 'Expires '}
+                      {new Date(item.expiresAt).toLocaleDateString()}
+                    </p>
+                  )}
+                  {(isListingExpired(item) || isListingExpiringSoon(item)) && (
+                    <button
+                      type="button"
+                      disabled={renew.isLoading}
+                      onClick={() => {
+                        setRenewError(null);
+                        renew.mutate(item.id, {
+                          onError: (error) => setRenewError(describeRenewError(error)),
+                        });
+                      }}
+                      className="mt-2 block rounded bg-neutral-800 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+                    >
+                      Renew listing
+                    </button>
+                  )}
                   <Link
                     to={`/items/${item.id}`}
                     className="text-sm text-blue-600 hover:underline"

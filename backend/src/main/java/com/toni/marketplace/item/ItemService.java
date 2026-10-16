@@ -2,6 +2,9 @@ package com.toni.marketplace.item;
 
 import java.io.IOException;
 import java.sql.Connection;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -37,6 +40,8 @@ public class ItemService {
   private final ItemMapper mapper;
   private final ImageStorageService imageStorage;
   private final DataSource dataSource;
+  private final ListingExpiryProperties listingProps;
+  private final Clock clock;
 
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
@@ -50,13 +55,33 @@ public class ItemService {
 
   public ItemService(ItemRepository items, CategoryRepository categories,
                      ItemPhotoRepository itemPhotos, ItemMapper mapper,
-                     ImageStorageService imageStorage, DataSource dataSource) {
+                     ImageStorageService imageStorage, DataSource dataSource,
+                     ListingExpiryProperties listingProps, Clock clock) {
     this.items = items;
     this.categories = categories;
     this.itemPhotos = itemPhotos;
     this.mapper = mapper;
     this.imageStorage = imageStorage;
     this.dataSource = dataSource;
+    this.listingProps = listingProps;
+    this.clock = clock;
+  }
+
+  /** Clock with a system fallback, mirroring OrderService's pattern. */
+  private Clock clock() {
+    return clock != null ? clock : Clock.systemUTC();
+  }
+
+  /** Listing TTL with the documented 30-day default as fallback. */
+  private Duration listingTtl() {
+    return listingProps != null && listingProps.getTtl() != null
+        ? listingProps.getTtl() : Duration.ofDays(30);
+  }
+
+  /** Renew window with the documented 7-day default as fallback. */
+  private Duration renewWindow() {
+    return listingProps != null && listingProps.getRenewWindow() != null
+        ? listingProps.getRenewWindow() : Duration.ofDays(7);
   }
 
   /**
@@ -216,7 +241,7 @@ public class ItemService {
             d.id(), d.title(), d.description(), d.priceCents(), d.status(),
             d.sellerId(), d.sellerUsername(), d.categoryId(), d.categoryName(),
             d.photoUrl(), d.createdAt(), d.updatedAt(),
-            byItem.getOrDefault(d.id(), List.of())))
+            byItem.getOrDefault(d.id(), List.of()), d.expiresAt()))
         .toList();
   }
 
@@ -305,6 +330,20 @@ public class ItemService {
   public ItemDto getItem(Long id) {
     ItemDto dto = items.findDetailViewById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    // Listing expiry (backlog #177), lazy-on-read: a past-deadline
+    // AVAILABLE listing is gone on the public detail read the moment
+    // its deadline passes — the documented choice is 404 (identical
+    // envelope to an unknown id), not an explicit EXPIRED body: the
+    // detail page is a buyer surface, and the seller's own view of the
+    // expired row lives on the My-listings list, which still shows it.
+    // The nightly ListingExpiryService flips the stored status to
+    // EXPIRED; both paths use Item.isExpiredAt semantics, so they can
+    // never disagree on the same row.
+    if (dto.status() == ItemStatus.EXPIRED
+        || (dto.status() == ItemStatus.AVAILABLE && dto.expiresAt() != null
+            && !dto.expiresAt().isAfter(clock().instant()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
     return withPhotos(List.of(dto)).get(0);
   }
 
@@ -340,8 +379,11 @@ public class ItemService {
       category = categories.findById(request.categoryId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "category not found"));
     }
-    Item item = items.save(mapper.toEntity(request, sellerId, category));
-    return mapper.toDto(item);
+    Item item = mapper.toEntity(request, sellerId, category);
+    // Listing lifetime (backlog #177): every application-written row
+    // carries a deadline — now + app.listings.ttl (default 30 days).
+    item.setExpiresAt(clock().instant().plus(listingTtl()));
+    return mapper.toDto(items.save(item));
   }
 
   /**
@@ -604,7 +646,71 @@ public class ItemService {
         .toList();
     return new ItemDto(base.id(), base.title(), base.description(), base.priceCents(),
         base.status(), base.sellerId(), base.sellerUsername(), base.categoryId(),
-        base.categoryName(), base.photoUrl(), base.createdAt(), base.updatedAt(), ordered);
+        base.categoryName(), base.photoUrl(), base.createdAt(), base.updatedAt(), ordered,
+        base.expiresAt());
+  }
+
+  /**
+   * Renews a listing's lifetime (backlog #177): resets
+   * {@code expiresAt} to {@code now + app.listings.ttl} and, for a
+   * listing the nightly job already flipped, moves EXPIRED back to
+   * AVAILABLE. Only an expired listing (stored EXPIRED, or AVAILABLE
+   * past its deadline) or a live AVAILABLE listing whose deadline is
+   * inside the renew window ({@code app.listings.renew-window},
+   * default 7 days) may renew — a live listing with a distant deadline
+   * is 422, as are RESERVED / SOLD / WITHDRAWN listings (a live order
+   * or a terminal state is never a renewal candidate). Ownership/role
+   * checks live on the controller's {@code @PreAuthorize}
+   * ({@link ItemSecurity#canRenew}); the service stays role-agnostic.
+   *
+   * <p>The write is optimistic-locked via {@code Item.@Version} with a
+   * deliberate flush, mirroring {@link #updateItem}: a concurrent
+   * transition between read and write surfaces here as
+   * {@code ObjectOptimisticLockingFailureException} and is mapped to
+   * 409 by {@code GlobalExceptionHandler}.
+   */
+  @Transactional
+  public ItemDto renewItem(Long id) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    Instant now = clock().instant();
+    boolean expired = item.getStatus() == ItemStatus.EXPIRED || item.isExpiredAt(now);
+    boolean expiring = item.getStatus() == ItemStatus.AVAILABLE
+        && item.getExpiresAt() != null
+        && !item.getExpiresAt().isAfter(now.plus(renewWindow()));
+    if (!expired && !expiring) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          item.getStatus() == ItemStatus.AVAILABLE
+              ? "listing is not expired or expiring yet"
+              : "only an expired or expiring AVAILABLE listing can be renewed");
+    }
+    item.setStatus(ItemStatus.AVAILABLE);
+    item.setExpiresAt(now.plus(listingTtl()));
+    items.flush();
+    return mapper.toDto(item);
+  }
+
+  /**
+   * Flips one past-deadline AVAILABLE listing to EXPIRED (backlog
+   * #177) — the per-row half of {@link ListingExpiryService}, in its
+   * own transaction through the service proxy so one row's failure
+   * cannot roll back the batch. The re-check uses
+   * {@link Item#isExpiredAt} — the same definition the lazy read paths
+   * use — so the job and the reads never disagree on a row: a listing
+   * renewed between the worklist scan and this transaction is no
+   * longer expired here and is skipped (returns false), and a
+   * concurrent transition mid-flush loses its {@code @Version} race
+   * to the caller's skip handling.
+   */
+  @Transactional
+  public boolean expireListing(Long id, Instant now) {
+    Item item = items.findById(id).orElse(null);
+    if (item == null || !item.isExpiredAt(now)) {
+      return false;
+    }
+    item.setStatus(ItemStatus.EXPIRED);
+    items.flush();
+    return true;
   }
 
   /**

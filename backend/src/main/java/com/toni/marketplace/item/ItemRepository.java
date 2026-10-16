@@ -1,5 +1,6 @@
 package com.toni.marketplace.item;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -32,12 +33,16 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId "
-          + "where i.sellerId = :sellerId and i.status = :status",
+          + "where i.sellerId = :sellerId and i.status = :status "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp)",
       countQuery = "select count(i) from Item i "
-          + "where i.sellerId = :sellerId and i.status = :status")
+          + "where i.sellerId = :sellerId and i.status = :status "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp)")
   Page<ItemDto> findListViewBySellerAndStatus(@Param("sellerId") Long sellerId,
                                               @Param("status") ItemStatus status,
                                               Pageable pageable);
@@ -49,6 +54,20 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   @Query("select i.photoUrl from Item i where i.photoUrl is not null")
   List<String> findAllPhotoUrls();
+
+  /**
+   * Worklist for the listing-expiry job (backlog #177): ids of listings
+   * in the given status whose lifetime deadline has passed. Projects
+   * only the id so the nightly scan stays narrow; the per-row flip
+   * re-checks {@link Item#isExpiredAt} under its own transaction, so a
+   * row renewed between the scan and the flip is skipped, never
+   * wrongly expired.
+   */
+  @Query("select i.id from Item i where i.status = :status "
+      + "and i.expiresAt is not null and i.expiresAt <= :now")
+  List<Long> findIdsByStatusAndExpiresAtBefore(@Param("status") ItemStatus status,
+                                               @Param("now") Instant now,
+                                               Pageable pageable);
 
   /** True when at least one listing references the category (via the item.category association). */
   boolean existsByCategoryId(Long categoryId);
@@ -101,12 +120,15 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId "
           + "where (:categoryId is null or i.category.id = :categoryId) "
           + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
           + "and (:keyword is null "
           + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
           + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')",
@@ -114,6 +136,9 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "where (:categoryId is null or i.category.id = :categoryId) "
           + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
           + "and (:keyword is null "
           + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
           + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')")
@@ -137,7 +162,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId "
           + "where i.sellerId = :sellerId "
@@ -182,7 +207,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId where i.id = :id")
   Optional<ItemDto> findDetailViewById(@Param("id") Long id);
@@ -196,7 +221,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId where i.id in :ids")
   List<ItemDto> findListViewsByIds(@Param("ids") List<Long> ids);
@@ -220,6 +245,9 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode) "
           + "order by match(i.title, i.description) against (:keyword in natural language mode) desc, "
           + "i.id desc",
@@ -227,6 +255,9 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode)",
       nativeQuery = true)
   Page<Long> findIdsByFulltext(@Param("categoryId") Long categoryId,
@@ -245,12 +276,18 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode) "
           + "order by i.price_cents asc, i.id asc",
       countQuery = "select count(*) from item i "
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode)",
       nativeQuery = true)
   Page<Long> findIdsByFulltextPriceAsc(@Param("categoryId") Long categoryId,
@@ -265,12 +302,18 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode) "
           + "order by i.price_cents desc, i.id desc",
       countQuery = "select count(*) from item i "
           + "where (:categoryId is null or i.category_id = :categoryId) "
           + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
           + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
           + "and match(i.title, i.description) against (:keyword in natural language mode)",
       nativeQuery = true)
   Page<Long> findIdsByFulltextPriceDesc(@Param("categoryId") Long categoryId,

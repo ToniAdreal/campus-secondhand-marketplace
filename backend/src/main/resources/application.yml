@@ -240,6 +240,19 @@ app:
     webhook-event-retention: 180
     email-verification-token-retention: 30
     login-event-retention: 180
+  listings:
+    # Listing lifetime (ItemService + ListingExpiryService, backlog #177):
+    # a listing stays live for ttl after creation (or renew) — default
+    # 30 days — then expires: the public browse/detail reads treat a
+    # past-deadline AVAILABLE listing as gone immediately (detail 404),
+    # order creation refuses it, and the nightly job (03:20) flips its
+    # stored status to EXPIRED so the seller view and reports can name
+    # the state. The seller renews via POST /api/items/{id}/renew once
+    # the deadline is inside renew-window (default 7 days) or after it
+    # passes; renewing resets the deadline to now + ttl. Rows predating
+    # Flyway V41 were backfilled to created_at + 30 days by V42.
+    ttl: 30d
+    renew-window: 7d
   orders:
     # Pending-order expiry (PendingOrderExpiryService, @Scheduled every 5
     # minutes server-local). A buyer who creates an order and never pays

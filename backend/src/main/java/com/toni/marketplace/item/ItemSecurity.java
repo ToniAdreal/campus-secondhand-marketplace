@@ -62,4 +62,19 @@ public class ItemSecurity {
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return admin || item.getSellerId().equals(auth.getPrincipal());
   }
+
+  /**
+   * A listing's lifetime may be renewed by its seller or by an ADMIN
+   * (backlog #177). Same ownership semantics as {@link #canEdit}: a
+   * missing listing is 404, not a misleading 403. Guards
+   * {@code POST /api/items/{id}/renew}; whether the listing is in a
+   * renewable state at all is the service's 422 decision.
+   */
+  public boolean canRenew(Authentication auth, Long itemId) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    boolean admin = auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return admin || item.getSellerId().equals(auth.getPrincipal());
+  }
 }

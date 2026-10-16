@@ -236,4 +236,29 @@ public class ItemController {
     itemService.deleteItem(id);
     return ApiResponse.ok(null);
   }
+
+  /**
+   * Renews a listing's lifetime (backlog #177): resets its expiry
+   * deadline to now + {@code app.listings.ttl} and returns an EXPIRED
+   * listing to AVAILABLE. The listing's seller — or an ADMIN — may
+   * renew; everyone else gets 403 and anonymous callers get 401. Only
+   * an expired listing or a live AVAILABLE listing inside the renew
+   * window may renew — RESERVED / SOLD / WITHDRAWN listings and live
+   * listings with a distant deadline are answered 422 with the JSON
+   * envelope; an unknown id is 404.
+   */
+  @PostMapping("/{id}/renew")
+  @PreAuthorize("@itemSecurity.canRenew(authentication, #id)")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the listing's seller or an ADMIN (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "listing is not expired or expiring (envelope)")})
+  public ApiResponse<ItemDto> renew(@PathVariable Long id) {
+    return ApiResponse.ok(itemService.renewItem(id));
+  }
 }

@@ -97,6 +97,7 @@ class OpenApiContractTest {
       "/api/items/{id}/photos",
       "/api/items/{id}/photos/order",
       "/api/items/{id}/photos/{photoId}",
+      "/api/items/{id}/renew",
       "/api/items/{id}/report",
       "/api/items/{id}/status",
       "/api/messages",

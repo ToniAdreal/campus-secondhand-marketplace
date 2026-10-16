@@ -15,7 +15,7 @@ export interface Item {
   title: string;
   description: string | null;
   priceCents: number;
-  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'WITHDRAWN';
+  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'WITHDRAWN' | 'EXPIRED';
   sellerId: number;
   /** Resolved by the backend's read projections (join on the sellerId FK);
    * null when the seller row no longer exists. */
@@ -30,6 +30,45 @@ export interface Item {
    * endpoint carry only {@link Item.photoUrl} and an empty gallery.
    */
   photos: ItemPhoto[];
+  /** ISO-8601 creation timestamp (backend ItemDto). */
+  createdAt?: string;
+  /** ISO-8601 last-update timestamp (backend ItemDto). */
+  updatedAt?: string;
+  /**
+   * Listing lifetime deadline (backlog #177): an AVAILABLE listing at
+   * or past this instant is expired — gone from the public browse and
+   * detail views, but still shown (flagged) in the seller's own
+   * My-listings view, where it can be renewed. Null when the backend
+   * row predates the deadline's backfill.
+   */
+  expiresAt?: string | null;
+}
+
+/**
+ * True when a listing's lifetime has run out at `now` (backlog #177):
+ * the stored EXPIRED status, or an AVAILABLE listing past its
+ * deadline that the nightly job has not flipped yet — the seller view
+ * flags both, matching the backend's single isExpiredAt definition.
+ */
+export function isListingExpired(item: Pick<Item, 'status' | 'expiresAt'>, now = new Date()): boolean {
+  if (item.status === 'EXPIRED') {
+    return true;
+  }
+  return (
+    item.status === 'AVAILABLE' &&
+    item.expiresAt != null &&
+    new Date(item.expiresAt).getTime() <= now.getTime()
+  );
+}
+
+/** True when a live listing's deadline is close enough to renew (7-day window, mirroring the backend default). */
+export function isListingExpiringSoon(item: Pick<Item, 'status' | 'expiresAt'>, now = new Date()): boolean {
+  return (
+    item.status === 'AVAILABLE' &&
+    item.expiresAt != null &&
+    !isListingExpired(item, now) &&
+    new Date(item.expiresAt).getTime() <= now.getTime() + 7 * 24 * 60 * 60 * 1000
+  );
 }
 
 /**
@@ -238,6 +277,53 @@ export function useReorderPhotos() {
         .put<ApiResponse<Item>>(`/items/${input.itemId}/photos/order`, {
           photoIds: input.photoIds,
         })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/items/{id}/renew to a user-facing message
+ * (backlog #177). The backend speaks the {code,message,data} envelope;
+ * a 422 means the listing is not expired or expiring (a live listing
+ * with a distant deadline, or a RESERVED/SOLD/WITHDRAWN one).
+ */
+export function describeRenewError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422) {
+    return 'This listing cannot be renewed yet — only expired or expiring listings can.';
+  }
+  if (code === 403) {
+    return 'Only the seller (or an admin) can renew this listing.';
+  }
+  if (code === 401) {
+    return 'Please log in to renew this listing.';
+  }
+  if (code === 404) {
+    return 'This listing no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/items/{id}/renew — resets the listing's expiry deadline to
+ * now + the backend TTL and returns an EXPIRED listing to AVAILABLE
+ * (backlog #177). On success the whole `items` subtree is invalidated:
+ * the renewed listing re-enters the browse lists and its seller view
+ * row changes status, neither of which can be patched locally with
+ * certainty.
+ */
+export function useRenewListing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (itemId: number) =>
+      api
+        .post<ApiResponse<Item>>(`/items/${itemId}/renew`)
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });
