@@ -131,7 +131,12 @@ export default function ItemDetailPage() {
       </span>{' '}
       <FavoriteButton itemId={data.id} />
       {data.sellerUsername && (
-        <p className="mt-2 text-sm text-neutral-600">Sold by {data.sellerUsername}</p>
+        <p className="mt-2 text-sm text-neutral-600">
+          Sold by{' '}
+          <Link to={`/seller/${data.sellerId}`} className="text-blue-600 hover:underline">
+            {data.sellerUsername}
+          </Link>
+        </p>
       )}
 
       <div className="mt-6">

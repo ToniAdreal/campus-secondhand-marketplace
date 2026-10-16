@@ -19,6 +19,29 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   List<Item> findBySellerIdAndStatus(Long sellerId, ItemStatus status);
 
+  /** Count of one seller's listings in one status — the public profile's live-stock count (#174). */
+  long countBySellerIdAndStatus(Long sellerId, ItemStatus status);
+
+  /**
+   * Public storefront projection (backlog #174): one seller's AVAILABLE
+   * listings only, same constructor projection as {@link #findListView}
+   * (single SELECT, seller username via the ad-hoc join). Unlike the
+   * #146 seller management view there IS a status predicate — RESERVED /
+   * SOLD / WITHDRAWN stock is not a storefront.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where i.sellerId = :sellerId and i.status = :status",
+      countQuery = "select count(i) from Item i "
+          + "where i.sellerId = :sellerId and i.status = :status")
+  Page<ItemDto> findListViewBySellerAndStatus(@Param("sellerId") Long sellerId,
+                                              @Param("status") ItemStatus status,
+                                              Pageable pageable);
+
   /**
    * Every non-null primary photo URL across all listings — the reference
    * set the orphan-upload sweeper (backlog #103) checks disk files

@@ -107,8 +107,10 @@ describe('ItemDetailPage buy-now', () => {
     await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
     expect(screen.queryByRole('button', { name: /buy now/i })).toBeNull();
     expect(screen.getByRole('link', { name: 'Log in' }).getAttribute('href')).toBe('/login');
-    // The detail DTO's sellerUsername is rendered as the seller identity.
-    expect(screen.getByText('Sold by seller')).toBeTruthy();
+    // The detail DTO's sellerUsername is rendered as the seller identity,
+    // linked to the seller's public profile (#174).
+    expect(screen.getByText(/Sold by/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'seller' }).getAttribute('href')).toBe('/seller/3');
     expect(getSpy).toHaveBeenCalledWith('/items/7');
   });
 

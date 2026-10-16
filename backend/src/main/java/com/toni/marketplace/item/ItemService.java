@@ -140,6 +140,25 @@ public class ItemService {
   }
 
   /**
+   * Public storefront for one seller (backlog #174): AVAILABLE listings
+   * only, newest first, through
+   * {@link ItemRepository#findListViewBySellerAndStatus} plus the same
+   * bounded gallery merge as the browse list. The seller id here is the
+   * profile being viewed (a path parameter on a public read), unlike
+   * the #146 management view above where it is resolved from the
+   * caller's token; visibility of the seller row itself (unknown /
+   * disabled → 404) is the caller's gate, in SellerProfileService.
+   */
+  @Transactional(readOnly = true)
+  public Page<ItemDto> listAvailableListingsForSeller(Long sellerId, Pageable pageable) {
+    Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+        sortFor("newest"));
+    Page<ItemDto> page = items.findListViewBySellerAndStatus(
+        sellerId, ItemStatus.AVAILABLE, sorted);
+    return new PageImpl<>(withPhotos(page.getContent()), sorted, page.getTotalElements());
+  }
+
+  /**
    * Validates the price range and resolves the sort allowlist, returning
    * the canonical sort name. Shared by both search paths so validation
    * behaves identically on H2 and MySQL.

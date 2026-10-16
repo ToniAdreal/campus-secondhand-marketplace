@@ -32,6 +32,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
       + "order by o.createdAt desc, o.id desc")
   List<Order> findExportRowsBySellerId(@Param("sellerId") Long sellerId);
 
+  /** Count of orders on one seller's listings in one status — the public profile's completed-sales count (#174). */
+  long countByItem_SellerIdAndStatus(Long sellerId, OrderStatus status);
+
   /** Paginated variant of {@code findByBuyerId} for the buyer's order list. */
   Page<Order> findByBuyerId(Long buyerId, Pageable pageable);
 
