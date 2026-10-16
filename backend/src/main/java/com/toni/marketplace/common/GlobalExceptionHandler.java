@@ -253,6 +253,22 @@ public class GlobalExceptionHandler {
         .body(ApiResponse.fail(HttpStatus.FORBIDDEN.value(), "forbidden"));
   }
 
+  /**
+   * Missing static resource (backlog #176): a {@code /uploads/**} name
+   * with no file behind it — most importantly a replaced photo's old URL,
+   * whose file was deleted when the new UUID name was minted — is thrown
+   * by Spring's resource handling as {@link NoResourceFoundException}.
+   * Without this handler it fell through to the generic 500 below, so a
+   * routine stale link looked like a server fault; answer the 404
+   * envelope instead. (Caught by #176's replaced-photo test.)
+   */
+  @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+  public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(
+      org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        .body(ApiResponse.fail(HttpStatus.NOT_FOUND.value(), "resource not found"));
+  }
+
   @ExceptionHandler(ResponseStatusException.class)
   public ResponseEntity<ApiResponse<Void>> handleStatus(ResponseStatusException ex) {
     int code = ex.getStatusCode().value();
