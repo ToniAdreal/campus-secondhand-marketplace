@@ -14,7 +14,7 @@ message sellers, and mark items sold. Monorepo with a Spring Boot backend and a 
 | Backend  | Java 17, Spring Boot 3.2.5 (Maven), Spring Data JPA (Hibernate 6), Spring Security 6, Flyway, MapStruct 1.5.5, jjwt 0.12.6 |
 | Database | MySQL 8 (Flyway-managed schema); H2 for local slice tests |
 | Frontend | React 18.3, TypeScript 5.6, Vite 5, React Router 6, TanStack Query 4, Zustand 4, Axios 1.7, Tailwind CSS 3 |
-| Testing  | JUnit 5 + Mockito (unit), Spring Boot `@DataJpaTest` slice tests, Testcontainers + MySQL 8 (integration, runs in CI), Vitest + React Testing Library, Playwright browser e2e smoke (three flows, CI only) |
+| Testing  | JUnit 5 + Mockito (unit), Spring Boot `@DataJpaTest` slice tests, Testcontainers + MySQL 8 (integration, runs in CI), Vitest + React Testing Library, axe-core accessibility checks on the key pages, Playwright browser e2e smoke (three flows, CI only) |
 | Delivery | GitHub Actions CI, Docker, docker-compose (jar + MySQL + Nginx) |
 
 ## Repo layout
@@ -275,6 +275,17 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   a `role="alert"` region. Honest scope: this is label/focus/name
   correctness, not a WCAG audit — no contrast, motion, or full
   screen-reader pass has been done.
+- Automated accessibility checks (backlog #183): `AccessibilityAxe.test.tsx`
+  runs axe-core (devDependency, test-only — never in the shipped bundle)
+  over the rendered markup of the seven key routes (Login, Register,
+  Home/browse, ItemDetail, CreateListing, Settings, Notifications) inside
+  the existing Vitest + RTL suite and asserts zero violations at the
+  serious/critical levels over the WCAG 2.0/2.1 A+AA tags; no rule is
+  disabled — the first run found no violations and needed no exceptions.
+  Honest scope: rendered markup only, not keyboard walkthroughs or
+  screen-reader QA; `color-contrast` cannot complete in jsdom (no
+  canvas/layout), so axe reports it incomplete rather than passed —
+  contrast remains un-audited here, as the #167 note above already said.
 - `cd frontend && npm run build && npm run size` — bundle-size budget
   (backlog #165): a dependency-free node script prints the per-chunk table
   and fails when the entry chunk or total JS exceeds the ratchet budgets in
@@ -386,3 +397,4 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Stale listing writes map to 409 (backlog #147 — `PATCH /api/items/{id}` and `PATCH /api/items/{id}/status` flush inside their transactions, mirroring the order seams, and `GlobalExceptionHandler` maps `ObjectOptimisticLockingFailureException` to 409 "listing was modified — reload and retry" instead of the generic 500; the handler's javadoc audits every `@Version` write path — order create/pay/cancel/complete/refund stay internally handled with their own 409s, the expiry sweep stays caller-handled per row, and the direct listing writes are the newly covered set; pinned by a MockMvc test that commits a concurrent edit between the service's read and flush so the request's stale copy loses)
 - [x] Browser e2e smoke in CI (backlog #181 — a Playwright suite (`frontend/e2e/smoke.e2e.ts`, `npm run e2e`) with exactly three flows — register lands on browse signed in, browse → listing detail renders, login → create listing → it appears in My listings — driving real Chromium against the built SPA served by `vite preview` (with a new `preview.proxy` mirroring the dev/nginx `/api` proxy) and the real backend jar on its H2 profile, both started by `frontend/playwright.config.ts`; the e2e stack stubs the email-verification gate off via its documented env knob because the default mail sender is log-only, retries are 0 and the flows run serially against the shared per-IP auth bucket, and the separate CI `e2e` job downloads the browser — the suite does not run in the local sandbox, which has no browsers)
 - [x] Saved-search background matching (backlog #182 — Flyway V45 `last_notified_item_id` watermark on saved_search (highest-seen listing id, chosen over a timestamp: monotonic, no clock ties), baselined at API creation and silently on a legacy row's first matcher run; a 15-minute job in job/ (the cross-domain package) pages the same ItemService.listItems browse projection per search — AVAILABLE only, never the owner's own listings, RESERVED/SOLD seen-but-never-alerting — and writes one batched SAVED_SEARCH_MATCH notification per search per run (notification gains saved_search_id + matched_listing_count in the same V45), advancing the watermark in the same transaction so a failed run advances nothing and a repeat run is silent; the SavedSearchDto never exposes the watermark; the /notifications page says the batched count and links to the saved search's restored browse URL, falling back to /favorites if the search was deleted; in-app only, no email)
+- [x] Automated accessibility checks (backlog #183 — axe-core as a frontend devDependency, imported only by `AccessibilityAxe.test.tsx` in the existing Vitest + RTL suite (never in the shipped bundle; the #165 size budget still guards it); the seven key routes — Login, Register, Home/browse, ItemDetail, CreateListing, Settings, Notifications — render against the same API-fixture style as the page tests and assert zero axe violations at serious/critical over the WCAG 2.0/2.1 A+AA tags, with no rule disabled and no exceptions: the first run was already clean, a direct consequence of the #167 label/name pass; honest scope — rendered markup only, `color-contrast` reports incomplete under jsdom (no canvas/layout) so contrast is not audited, and no keyboard or screen-reader QA is claimed)
