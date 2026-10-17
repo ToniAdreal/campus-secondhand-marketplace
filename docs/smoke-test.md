@@ -121,6 +121,37 @@ The backend exposes Spring Boot Actuator:
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.
 
+## Browser e2e smoke (Playwright, CI)
+
+The compose smoke above proves the API answers through the nginx proxy —
+with curl, no browser, and no SPA behaviour. The browser layer is a
+separate Playwright suite (backlog #181, `frontend/e2e/smoke.e2e.ts`,
+config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
+
+- Real Chromium drives the **built** SPA (`npm run build`, served by
+  `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
+  and nginx `/api` proxy shapes) against the real backend jar on its
+  default H2 profile (:8080) — no Docker, no MySQL.
+- Exactly three flows: (1) register lands on browse signed in;
+  (2) browse → a listing's detail page renders; (3) login → create a
+  listing → it appears in My listings. Selectors are role/label based.
+- The backend starts with the email-verification gate stubbed off via
+  its documented env knob (`APP_AUTH_EMAIL_VERIFICATION_ENABLED=false`):
+  the default mail sender is log-only with the token redacted, so no
+  test could read a verification link — the suite does not pretend a
+  mailbox exists. With the gate off, registration returns a session.
+- `retries: 0`, `workers: 1` (the flows share one backend and its
+  per-IP auth rate-limit buckets). A flaky flow is fixed or deleted,
+  never retried into green; traces/screenshots are kept on failure and
+  uploaded by the CI job.
+
+Which layer proves what: backend behaviour — unit + Testcontainers IT;
+SPA components/routes in isolation — Vitest + RTL; API-through-proxy —
+the compose curl smoke above; SPA-in-a-browser behaviour (routing,
+forms, session nav) against a live backend — this Playwright suite.
+Locally (no browsers/Docker in the dev sandbox) only the config and
+test list are checked: `cd frontend && npx playwright test --list`.
+
 ## Logging
 
 By default the backend logs the plain console pattern defined in

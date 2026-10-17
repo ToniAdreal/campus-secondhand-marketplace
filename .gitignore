@@ -25,3 +25,7 @@ Thumbs.db
 # tsc -b emit artifacts
 vite.config.js
 vite.config.d.ts
+
+# Playwright (backlog #181)
+frontend/test-results/
+frontend/playwright-report/
