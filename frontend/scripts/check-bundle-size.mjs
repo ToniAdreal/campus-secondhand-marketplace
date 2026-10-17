@@ -20,6 +20,12 @@
 //   hooks in the shared notifications module + the page controls) —
 //   TOTAL_MAX_BYTES = 458,000 (measured + ~5%, rounded up). The entry
 //   chunk (303,580 bytes) stays inside its unchanged budget.
+//   Bump 2026-10-17 (backlog #180): total measured 460,601 bytes on the
+//   #180 tree (printable order receipt: OrderReceipt component + receipt
+//   hooks in the shared orders module + print stylesheet; growth lands
+//   in the MyOrdersPage chunk, 66,189 bytes) —
+//   TOTAL_MAX_BYTES = 484,000 (measured + ~5%, rounded up). The entry
+//   chunk (303,788 bytes) stays inside its unchanged budget.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -34,7 +40,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 316_000;
-export const TOTAL_MAX_BYTES = 458_000;
+export const TOTAL_MAX_BYTES = 484_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module

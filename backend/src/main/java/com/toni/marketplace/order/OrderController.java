@@ -23,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class OrderController {
 
   private final OrderService orderService;
+  private final OrderReceiptService receipts;
 
-  public OrderController(OrderService orderService) {
+  public OrderController(OrderService orderService, OrderReceiptService receipts) {
     this.orderService = orderService;
+    this.receipts = receipts;
   }
 
   /**
@@ -62,6 +64,24 @@ public class OrderController {
     boolean admin = authentication.getAuthorities().stream()
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return ApiResponse.ok(orderService.getOrderFor(callerId, admin, id));
+  }
+
+  /**
+   * Reads the printable receipt for one order (backlog #180). The buyer,
+   * the listing's seller, or an ADMIN may read; anyone else gets 404 —
+   * the same answer as an unknown id, so a receipt URL never leaks that
+   * an order exists. The DTO is a dedicated field-by-field projection
+   * (see {@code ReceiptDto}); a PENDING order's receipt is marked unpaid.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id, or the caller is not a party to the order (envelope)")})
+  @GetMapping("/{id}/receipt")
+  public ApiResponse<ReceiptDto> receipt(@PathVariable Long id) {
+    Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = (Long) authentication.getPrincipal();
+    boolean admin = authentication.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(receipts.getReceiptFor(callerId, admin, id));
   }
 
   /**

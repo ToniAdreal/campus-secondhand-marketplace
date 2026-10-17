@@ -121,6 +121,7 @@ class OpenApiContractTest {
       "/api/orders/{id}/dispute",
       "/api/orders/{id}/review",
       "/api/orders/{id}/pay",
+      "/api/orders/{id}/receipt",
       "/api/orders/{id}/refund",
       "/api/seller/orders",
       "/api/seller/orders/{id}",

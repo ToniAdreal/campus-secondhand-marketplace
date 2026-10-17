@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Receipt printing (backlog #180): printing a page that shows a receipt
+ * prints ONLY the receipt sheet — app chrome and action buttons stay
+ * off the paper. Delivery is the browser's print-to-PDF; no PDF
+ * library is bundled.
+ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .receipt-sheet,
+  .receipt-sheet * {
+    visibility: visible;
+  }
+  .receipt-sheet {
+    position: absolute;
+    inset: 0;
+    border: none;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

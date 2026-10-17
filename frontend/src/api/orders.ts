@@ -39,7 +39,70 @@ export const orderKeys = {
   /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
   sellerList: () => [...orderKeys.all, 'seller', 'list'] as const,
   sellerSummary: () => [...orderKeys.all, 'seller', 'summary'] as const,
+  receipt: (id: number) => [...orderKeys.all, 'receipt', id] as const,
 };
+
+/**
+ * GET /api/orders/{id}/receipt shape (backlog #180). A dedicated
+ * field-by-field projection — never the order entity — tying order,
+ * listing, amount, both parties and the mock PSP references together
+ * for printing. `paid` is the explicit marker: a PENDING order's
+ * receipt has `paid: false`, `paidAt: null` and `captureId: null`.
+ * `paidAt`/`completedAt` are the real transition instants the backend
+ * stamps (orders transitioned before that landed keep `null` — never
+ * backfilled). captureId/refundId are demo references, not a real
+ * processor receipt.
+ */
+export interface OrderReceipt {
+  orderId: number;
+  status: Order['status'];
+  paid: boolean;
+  itemId: number;
+  itemTitle: string;
+  amountCents: number;
+  formattedPrice: string;
+  buyerUsername: string;
+  sellerUsername: string;
+  createdAt: string;
+  paidAt: string | null;
+  completedAt: string | null;
+  captureId: string | null;
+  refundId: string | null;
+}
+
+/**
+ * Maps a failed GET /api/orders/{id}/receipt to a user-facing message.
+ * A 404 covers both unknown ids and non-parties (the backend never
+ * leaks that someone else's order exists), so the copy stays generic.
+ */
+export function describeReceiptError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  if (code === 404) {
+    return 'This receipt is not available.';
+  }
+  if (code === 401) {
+    return 'Please log in to view this receipt.';
+  }
+  return response?.data?.message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * GET /api/orders/{id}/receipt — buyer, seller or ADMIN only. Fetched
+ * lazily (`enabled` flips when the user opens the receipt view) so
+ * listing pages make no extra fetch until the receipt is asked for.
+ */
+export function useOrderReceipt(id: number, enabled = true) {
+  return useQuery({
+    queryKey: orderKeys.receipt(id),
+    queryFn: () =>
+      api
+        .get<ApiResponse<OrderReceipt>>(`/orders/${id}/receipt`)
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
 
 /**
  * GET /api/seller/orders/summary shape (backlog #108). Gross sums the

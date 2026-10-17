@@ -142,6 +142,26 @@ public class Order {
   private Instant handoverLockedUntil;
 
   /**
+   * When the order became PAID (backlog #180, Flyway V44), stamped by
+   * {@code OrderService.pay} from the injected Clock in the same
+   * transaction as the PENDING → PAID transition. Nullable until paid;
+   * also null for orders paid before V44 landed — their transition
+   * instant was never recorded and is not backfilled from
+   * {@code updatedAt} (that would fabricate a receipt timestamp).
+   */
+  @Column(name = "paid_at")
+  private Instant paidAt;
+
+  /**
+   * When the order became COMPLETED (backlog #180, Flyway V44), stamped
+   * by {@code OrderService.complete} in the same transaction as the
+   * PAID → COMPLETED transition. Nullable until completed (and for
+   * orders completed before V44, as on {@link #paidAt}).
+   */
+  @Column(name = "completed_at")
+  private Instant completedAt;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
    * the order is active (PENDING/PAID), NULL once terminal. insertable and
@@ -204,6 +224,10 @@ public class Order {
     this.handoverFailedAttempts = handoverFailedAttempts;
   }
   public Instant getHandoverLockedUntil() { return handoverLockedUntil; }
+  public Instant getPaidAt() { return paidAt; }
+  public void setPaidAt(Instant paidAt) { this.paidAt = paidAt; }
+  public Instant getCompletedAt() { return completedAt; }
+  public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
   public void setHandoverLockedUntil(Instant handoverLockedUntil) {
     this.handoverLockedUntil = handoverLockedUntil;
   }

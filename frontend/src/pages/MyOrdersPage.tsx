@@ -5,6 +5,7 @@ import { describeDisputeError, useOpenDispute } from '../api/disputes';
 import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders';
 import { describeReviewError, useCreateReview } from '../api/reviews';
 import OrderPspReferences from '../components/OrderPspReferences';
+import OrderReceipt from '../components/OrderReceipt';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -273,6 +274,7 @@ export default function MyOrdersPage() {
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
                 <OrderPspReferences order={order} />
+                <OrderReceipt orderId={order.id} />
                 <OrderDisputeControl order={order} />
                 <OrderReviewControl order={order} />
               </li>

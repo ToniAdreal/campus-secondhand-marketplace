@@ -748,6 +748,10 @@ public class OrderService {
           payments.capture(order, captureKey, paymentToken);
       order.setCaptureId(capture.captureId());
       order.setStatus(OrderStatus.PAID);
+      // Backlog #180: stamp the real payment instant for the receipt —
+      // orders previously carried no paidAt, so receipts/dispute windows
+      // had to approximate from updatedAt.
+      order.setPaidAt(clock().instant());
       order.getItem().setStatus(ItemStatus.RESERVED);
       // Backlog #179: mint the buyer's handover code in the same
       // transaction as the transition — only its hash is stored, and
@@ -877,6 +881,8 @@ public class OrderService {
     }
     try {
       order.setStatus(OrderStatus.COMPLETED);
+      // Backlog #180: stamp the real completion instant for the receipt.
+      order.setCompletedAt(clock().instant());
       // Backlog #179: a successful completion clears the handover
       // attempt counter and any (expired) lock in the same transaction.
       order.setHandoverFailedAttempts(0);

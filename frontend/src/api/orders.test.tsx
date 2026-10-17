@@ -11,14 +11,17 @@ import {
   describePayError,
   describeRefundError,
   describeRegenerateHandoverError,
+  describeReceiptError,
   orderKeys,
   useCancelOrder,
   useCompleteOrder,
   usePayOrder,
   useRefundOrder,
   useRegenerateHandoverCode,
+  useOrderReceipt,
   useSellerSalesSummary,
   type Order,
+  type OrderReceipt,
   type SellerSalesSummary,
 } from './orders';
 
@@ -275,6 +278,57 @@ describe('order mutation invalidation', () => {
     expect(postSpy).toHaveBeenCalledWith('/orders/9/handover-code/regenerate', {});
     expect(returned.handoverCode).toBe('654321');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+  });
+
+  it('describeReceiptError maps 404/401 and keeps other server messages', () => {
+    expect(describeReceiptError(envelopeError(404, 'order not found'))).toBe(
+      'This receipt is not available.',
+    );
+    expect(describeReceiptError(envelopeError(401, 'unauthorized'))).toBe(
+      'Please log in to view this receipt.',
+    );
+    expect(describeReceiptError(envelopeError(500, 'boom'))).toBe('boom');
+    expect(describeReceiptError(new Error('x'))).toBe(
+      'Something went wrong. Please try again.',
+    );
+  });
+
+  it('useOrderReceipt fetches the receipt endpoint under its own key', async () => {
+    const receipt: OrderReceipt = {
+      orderId: 9,
+      status: 'PAID',
+      paid: true,
+      itemId: 7,
+      itemTitle: 'Film camera',
+      amountCents: 12000,
+      formattedPrice: '¥120.00',
+      buyerUsername: 'buyer-1',
+      sellerUsername: 'seller-1',
+      createdAt: '2026-10-09T08:00:00Z',
+      paidAt: '2026-10-09T08:05:00Z',
+      completedAt: null,
+      captureId: 'cap_mock_0123456789abcdef',
+      refundId: null,
+    };
+    getSpy.mockResolvedValue(envelope(receipt));
+
+    const queryClient = makeClient();
+    const { result } = renderHook(() => useOrderReceipt(9), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.data).toEqual(receipt));
+    expect(getSpy).toHaveBeenCalledWith('/orders/9/receipt');
+    expect(queryClient.getQueryState(orderKeys.receipt(9))?.data).toEqual(receipt);
+  });
+
+  it('useOrderReceipt stays idle when disabled (lazy receipt view)', async () => {
+    const { result } = renderHook(() => useOrderReceipt(9, false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
   });
 
   it('a failed complete does not invalidate anything', async () => {
