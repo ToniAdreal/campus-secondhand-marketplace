@@ -37,6 +37,30 @@ import com.toni.marketplace.common.InvalidImageException;
  *       after it still passes (full decoding would be the next step).
  *       Spring's servlet multipart limits act as a backstop and surface
  *       as 413.</li>
+ *   <li><b>Metadata stripping (backlog #185):</b> JPEG and PNG uploads
+ *       are parsed segment/chunk-wise in memory and their metadata is
+ *       stripped BEFORE any file is created, pure JDK, no new
+ *       dependency. JPEG: every APPn segment is dropped except APP0
+ *       (the JFIF header — structural, no personal metadata) and an
+ *       APP2 segment whose payload starts with {@code ICC_PROFILE\0}
+ *       (the colour profile — kept so colours render as shot; other
+ *       APP2 payloads are dropped), and COM comment segments are
+ *       dropped; SOI, quantisation/Huffman/frame/scan segments and the
+ *       entropy-coded scan data itself are copied byte-identically
+ *       (the scan is never parsed, so marker-like bytes inside it
+ *       survive). PNG: the ancillary metadata chunks {@code eXIf},
+ *       {@code tEXt}, {@code iTXt} and {@code zTXt} are dropped; every
+ *       other chunk (critical chunks and the remaining ancillary
+ *       chunks) is copied byte-identically, CRCs included — each
+ *       chunk's CRC32 is verified while parsing. GIF and WebP keep
+ *       the signature-only behaviour above for now: their bytes are
+ *       stored verbatim, metadata and all — stated honestly rather
+ *       than claiming all formats are stripped. A malformed segment
+ *       or chunk layout (truncated length, bad CRC, missing
+ *       terminator) fails closed with the same
+ *       {@link InvalidImageException} 400 as the magic gate and leaves
+ *       no file behind — stripping runs fully in memory before the
+ *       target file is opened.</li>
  *   <li><b>Serving:</b> files are served statically under
  *       {@code /uploads/**} by {@link
  *       com.toni.marketplace.common.UploadWebConfig}; the returned path is
@@ -93,24 +117,28 @@ public class ImageStorageService {
     if (!target.startsWith(dir)) {
       throw new InvalidImageException("invalid file name");
     }
+    final byte[] raw;
+    try (InputStream in = file.getInputStream()) {
+      raw = in.readAllBytes();
+    } catch (IOException e) {
+      throw new InvalidImageException("could not store image");
+    }
+    // Magic-byte gate BEFORE anything else: verify the signature header
+    // against the declared type, so a spoofed or truncated upload never
+    // leaves a file behind.
+    byte[] header = java.util.Arrays.copyOf(raw, Math.min(raw.length, HEADER_BYTES));
+    if (!matchesDeclaredType(file.getContentType(), header)) {
+      throw new InvalidImageException(
+          "image content does not match declared type: " + file.getContentType());
+    }
+    // Metadata stripping runs fully in memory (#185): a malformed
+    // segment/chunk layout throws here, before the file is created.
+    byte[] stored = stripMetadata(file.getContentType(), raw);
     try {
       // The directory is created in the constructor, but re-ensure it here:
       // an operator may have wiped it while the app was running.
       Files.createDirectories(dir);
-      try (InputStream in = file.getInputStream()) {
-        // Magic-byte gate BEFORE the file is created: read the signature
-        // header first and verify it against the declared type, so a
-        // spoofed or truncated upload never leaves a file behind.
-        byte[] header = in.readNBytes(HEADER_BYTES);
-        if (!matchesDeclaredType(file.getContentType(), header)) {
-          throw new InvalidImageException(
-              "image content does not match declared type: " + file.getContentType());
-        }
-        try (var out = Files.newOutputStream(target)) {
-          out.write(header);
-          in.transferTo(out);
-        }
-      }
+      Files.write(target, stored);
     } catch (IOException e) {
       throw new InvalidImageException("could not store image");
     }
@@ -143,6 +171,168 @@ public class ImageStorageService {
           && header[8] == 'W' && header[9] == 'E' && header[10] == 'B' && header[11] == 'P';
       default -> false;
     };
+  }
+
+  // ------------------------------------------------------------------
+  // Metadata stripping (#185). Pure byte-structure work, no decoding.
+  // ------------------------------------------------------------------
+
+  private static final java.util.Set<String> PNG_METADATA_CHUNKS =
+      java.util.Set.of("eXIf", "tEXt", "iTXt", "zTXt");
+
+  /** ICC profile identifier at the start of a kept JPEG APP2 payload. */
+  private static final byte[] ICC_PROFILE_ID = {
+      'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0};
+
+  static byte[] stripMetadata(String contentType, byte[] raw) {
+    return switch (contentType) {
+      case "image/jpeg" -> stripJpegMetadata(raw);
+      case "image/png" -> stripPngMetadata(raw);
+      // GIF/WebP: stored verbatim for now (see class javadoc).
+      default -> raw;
+    };
+  }
+
+  private static InvalidImageException malformed(String detail) {
+    return new InvalidImageException("malformed image content: " + detail);
+  }
+
+  /**
+   * Walks JPEG segments from SOI to SOS/EOI. Kept segments are copied
+   * byte-identically; the entropy-coded data after SOS is copied as one
+   * opaque tail, so marker-like bytes inside the scan are never parsed.
+   */
+  static byte[] stripJpegMetadata(byte[] raw) {
+    var out = new java.io.ByteArrayOutputStream(raw.length);
+    out.write(raw, 0, 2); // SOI (magic gate already proved FF D8 FF)
+    int pos = 2;
+    while (true) {
+      if (pos + 1 >= raw.length) {
+        throw malformed("jpeg ends before EOI/SOS");
+      }
+      if (raw[pos] != (byte) 0xFF) {
+        throw malformed("jpeg segment does not start with 0xFF");
+      }
+      int segmentStart = pos;
+      // Skip padding 0xFF fill bytes before the marker code.
+      int markerPos = pos + 1;
+      while (markerPos < raw.length && raw[markerPos] == (byte) 0xFF) {
+        markerPos++;
+      }
+      if (markerPos >= raw.length) {
+        throw malformed("jpeg truncated marker");
+      }
+      int marker = raw[markerPos] & 0xFF;
+      pos = markerPos + 1;
+      if (marker == 0x00 || marker == 0xD8) {
+        throw malformed("jpeg unexpected marker 0x" + Integer.toHexString(marker));
+      }
+      if (marker == 0xD9) { // EOI: copy it and finish.
+        out.write(raw, segmentStart, pos - segmentStart);
+        return out.toByteArray();
+      }
+      if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+        // Standalone markers carry no length field.
+        out.write(raw, segmentStart, pos - segmentStart);
+        continue;
+      }
+      if (pos + 1 >= raw.length) {
+        throw malformed("jpeg truncated segment length");
+      }
+      int length = ((raw[pos] & 0xFF) << 8) | (raw[pos + 1] & 0xFF);
+      if (length < 2) {
+        throw malformed("jpeg segment length < 2");
+      }
+      int segmentEnd = pos + length; // length counts its own 2 bytes
+      if (segmentEnd > raw.length) {
+        throw malformed("jpeg segment extends past end of file");
+      }
+      if (marker == 0xDA) { // SOS: header + the whole scan, verbatim.
+        out.write(raw, segmentStart, raw.length - segmentStart);
+        return out.toByteArray();
+      }
+      if (!isStrippedJpegSegment(marker, raw, pos + 2, segmentEnd)) {
+        out.write(raw, segmentStart, segmentEnd - segmentStart);
+      }
+      pos = segmentEnd;
+    }
+  }
+
+  private static boolean isStrippedJpegSegment(
+      int marker, byte[] raw, int dataStart, int segmentEnd) {
+    if (marker == 0xFE) { // COM comment
+      return true;
+    }
+    if (marker < 0xE0 || marker > 0xEF) { // not APPn
+      return false;
+    }
+    if (marker == 0xE0) { // APP0 JFIF header: structural, kept.
+      return false;
+    }
+    if (marker == 0xE2 && segmentEnd - dataStart >= ICC_PROFILE_ID.length
+        && startsWith(
+            java.util.Arrays.copyOfRange(raw, dataStart, segmentEnd), ICC_PROFILE_ID)) {
+      return false; // APP2 carrying the ICC colour profile: kept.
+    }
+    return true; // APP1 (EXIF/XMP), other APPn, non-ICC APP2
+  }
+
+  /**
+   * Walks PNG chunks from the signature to IEND, verifying each chunk's
+   * CRC32 (over type + data) and dropping the metadata chunk types.
+   * Kept chunks are copied byte-identically, CRCs included.
+   */
+  static byte[] stripPngMetadata(byte[] raw) {
+    var out = new java.io.ByteArrayOutputStream(raw.length);
+    out.write(raw, 0, 8); // signature (magic gate already proved it)
+    int pos = 8;
+    boolean firstChunk = true;
+    while (true) {
+      if (pos + 8 > raw.length) {
+        throw malformed("png truncated chunk header");
+      }
+      long lengthLong =
+          ((long) (raw[pos] & 0xFF) << 24) | ((raw[pos + 1] & 0xFF) << 16)
+              | ((raw[pos + 2] & 0xFF) << 8) | (raw[pos + 3] & 0xFF);
+      if (lengthLong > Integer.MAX_VALUE) {
+        throw malformed("png chunk too large");
+      }
+      int length = (int) lengthLong;
+      String type = new String(raw, pos + 4, 4, java.nio.charset.StandardCharsets.US_ASCII);
+      for (int i = 0; i < 4; i++) {
+        byte b = raw[pos + 4 + i];
+        if (!((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z'))) {
+          throw malformed("png chunk type is not ASCII letters");
+        }
+      }
+      if (firstChunk && !"IHDR".equals(type)) {
+        throw malformed("png first chunk is not IHDR");
+      }
+      firstChunk = false;
+      long chunkEndLong = (long) pos + 8 + length + 4;
+      if (chunkEndLong > raw.length) {
+        throw malformed("png chunk extends past end of file");
+      }
+      int chunkEnd = (int) chunkEndLong;
+      var crc = new java.util.zip.CRC32();
+      crc.update(raw, pos + 4, 4 + length);
+      long storedCrc =
+          ((long) (raw[chunkEnd - 4] & 0xFF) << 24) | ((raw[chunkEnd - 3] & 0xFF) << 16)
+              | ((raw[chunkEnd - 2] & 0xFF) << 8) | (raw[chunkEnd - 1] & 0xFF);
+      if (crc.getValue() != storedCrc) {
+        throw malformed("png chunk CRC mismatch");
+      }
+      if (!PNG_METADATA_CHUNKS.contains(type)) {
+        out.write(raw, pos, chunkEnd - pos);
+      }
+      pos = chunkEnd;
+      if ("IEND".equals(type)) {
+        if (pos != raw.length) {
+          throw malformed("png trailing bytes after IEND");
+        }
+        return out.toByteArray();
+      }
+    }
   }
 
   private static boolean startsWith(byte[] header, byte[] signature) {
