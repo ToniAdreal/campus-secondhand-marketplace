@@ -50,6 +50,18 @@ public class SavedSearch {
   @Column(name = "sort", nullable = false, length = 16)
   private String sort;
 
+  /**
+   * Background-matching watermark (backlog #182, Flyway V45): the
+   * highest listing id the matcher has seen for this search. Only
+   * listings with a greater id can ever be "new" for this search.
+   * Null means "not baselined yet" (a row predating the matcher) —
+   * the matcher's first run for such a row sets the baseline and
+   * notifies nothing. Never exposed on {@link SavedSearchDto}: the
+   * watermark is matcher bookkeeping, not user data.
+   */
+  @Column(name = "last_notified_item_id")
+  private Long lastNotifiedItemId;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -77,5 +89,17 @@ public class SavedSearch {
   public Long getMinPriceCents() { return minPriceCents; }
   public Long getMaxPriceCents() { return maxPriceCents; }
   public String getSort() { return sort; }
+  public Long getLastNotifiedItemId() { return lastNotifiedItemId; }
   public Instant getCreatedAt() { return createdAt; }
+
+  /**
+   * Advances the match watermark (backlog #182). Monotonic by
+   * construction: a stale or repeated matcher pass can never move it
+   * backwards and re-notify listings that were already seen.
+   */
+  public void advanceLastNotifiedItemId(long seenItemId) {
+    if (this.lastNotifiedItemId == null || seenItemId > this.lastNotifiedItemId) {
+      this.lastNotifiedItemId = seenItemId;
+    }
+  }
 }

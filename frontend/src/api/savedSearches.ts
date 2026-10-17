@@ -7,8 +7,9 @@ import type { ApiResponse } from './items';
  * SavedSearchDto: the discrete browse filter set — never a serialized
  * query string — plus `matchCount`, how many listings the browse page
  * returns for exactly these filters right now (computed by the backend
- * on read through the browse projection itself; there is no email
- * alert and no background matching job in v1).
+ * on read through the browse projection itself). Background matching
+ * (backlog #182) alerts through in-app notifications only — still no
+ * email alert — and its watermark is never part of this shape.
  */
 export interface SavedSearch {
   id: number;

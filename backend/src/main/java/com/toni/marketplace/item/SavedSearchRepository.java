@@ -9,6 +9,13 @@ public interface SavedSearchRepository extends JpaRepository<SavedSearch, Long> 
   /** The caller's own saved searches, newest save first (id tiebreak). */
   List<SavedSearch> findByUserIdOrderByCreatedAtDescIdDesc(Long userId);
 
+  /**
+   * Every saved search, oldest first — the background matcher's
+   * worklist (backlog #182, in {@code job/}, the cross-domain package).
+   * Deterministic order keeps a run reproducible and testable.
+   */
+  List<SavedSearch> findAllByOrderByIdAsc();
+
   long countByUserId(Long userId);
 
   /**

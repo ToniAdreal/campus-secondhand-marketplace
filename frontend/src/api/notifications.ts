@@ -13,7 +13,8 @@ export type NotificationType =
   | 'ORDER_DISPUTED'
   | 'DISPUTE_RESOLVED_REFUND'
   | 'DISPUTE_RESOLVED_RELEASE'
-  | 'LOGIN_NEW_DEVICE';
+  | 'LOGIN_NEW_DEVICE'
+  | 'SAVED_SEARCH_MATCH';
 
 export interface Notification {
   id: number;
@@ -22,6 +23,10 @@ export interface Notification {
   orderId: number | null;
   /** The offer the row is about; null on pure order rows (#168). */
   offerId: number | null;
+  /** The saved search a SAVED_SEARCH_MATCH row names; null otherwise (#182). */
+  savedSearchId: number | null;
+  /** Batched new-match count on a SAVED_SEARCH_MATCH row; null otherwise (#182). */
+  matchedListingCount: number | null;
   createdAt: string;
   /** When the recipient marked it read; null while unread (#157). */
   readAt: string | null;
@@ -33,8 +38,15 @@ export const notificationKeys = {
   unreadCount: ['notifications', 'unread-count'] as const,
 };
 
-/** Human-readable line for one notification type. */
-export function describeNotification(type: NotificationType): string {
+/**
+ * Human-readable line for one notification type. The optional match
+ * count only matters for SAVED_SEARCH_MATCH (#182): the row is
+ * batched, so its line says how many new listings matched.
+ */
+export function describeNotification(
+  type: NotificationType,
+  matchedListingCount?: number | null,
+): string {
   switch (type) {
     case 'ORDER_PAID':
       return 'An order for your listing was paid.';
@@ -60,6 +72,14 @@ export function describeNotification(type: NotificationType): string {
       // Backlog #178: an alert, not a block — the sign-in succeeded.
       // The copy points at the remedy without claiming anything was stopped.
       return "New sign-in from a device or network you haven't used before. Wasn't you? Revoke your sessions and change your password.";
+    case 'SAVED_SEARCH_MATCH': {
+      // Backlog #182: one batched row per saved search per run — the
+      // count is part of the message, never one row per listing.
+      const count = matchedListingCount ?? 0;
+      return count === 1
+        ? '1 new listing matches your saved search.'
+        : `${count} new listings match your saved search.`;
+    }
     default:
       return 'Order update.';
   }

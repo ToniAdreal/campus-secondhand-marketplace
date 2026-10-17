@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import NotificationsPage from './NotificationsPage';
 import type { Notification } from '../api/notifications';
+import type { SavedSearch } from '../api/savedSearches';
 import type { Page } from '../api/items';
 import type { AuthUser } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
@@ -46,13 +47,43 @@ vi.mock('../api/notifications', async (importOriginal) => {
   };
 });
 
+let mockSavedSearches: SavedSearch[] = [];
+
+vi.mock('../api/savedSearches', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../api/savedSearches')>();
+  return {
+    ...original,
+    // Keep the real savedSearchBrowsePath — the link assertion below
+    // pins the exact restored browse URL it builds (#182/#164).
+    useSavedSearches: () => ({
+      data: mockSavedSearches,
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+    }),
+  };
+});
+
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
+
+const vintageSearch: SavedSearch = {
+  id: 9,
+  keyword: 'vintage',
+  categoryId: null,
+  minPriceCents: null,
+  maxPriceCents: null,
+  sort: 'newest',
+  matchCount: 5,
+  createdAt: '2026-10-13T05:00:00Z',
+};
 
 const unreadPaid: Notification = {
   id: 11,
   type: 'ORDER_PAID',
   orderId: 42,
   offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -62,6 +93,8 @@ const newDeviceAlert: Notification = {
   type: 'LOGIN_NEW_DEVICE',
   orderId: null,
   offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
   createdAt: '2026-10-13T06:00:00Z',
   readAt: null,
 };
@@ -71,8 +104,21 @@ const readCompleted: Notification = {
   type: 'ORDER_COMPLETED',
   orderId: 43,
   offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
   createdAt: '2026-10-13T07:00:00Z',
   readAt: '2026-10-13T07:30:00Z',
+};
+
+const savedSearchMatch: Notification = {
+  id: 14,
+  type: 'SAVED_SEARCH_MATCH',
+  orderId: null,
+  offerId: null,
+  savedSearchId: 9,
+  matchedListingCount: 5,
+  createdAt: '2026-10-13T09:00:00Z',
+  readAt: null,
 };
 
 function pageOf(content: Notification[]): Page<Notification> {
@@ -98,6 +144,7 @@ function renderPage() {
 describe('NotificationsPage (#157)', () => {
   beforeEach(() => {
     mockPage = pageOf([]);
+    mockSavedSearches = [];
     mockIsSuccess = true;
     markReadCalls.length = 0;
     markAllReadCalls.length = 0;
@@ -133,6 +180,28 @@ describe('NotificationsPage (#157)', () => {
         .getAttribute('href'),
     ).toBe('/settings/sessions');
     expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
+  });
+
+  it('a saved-search match says its batched count and links to the restored browse URL (#182)', () => {
+    mockSavedSearches = [vintageSearch];
+    mockPage = pageOf([savedSearchMatch]);
+    renderPage();
+
+    expect(screen.getByText('5 new listings match your saved search.')).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: 'View matching listings' }).getAttribute('href'),
+    ).toBe('/?q=vintage');
+    expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
+  });
+
+  it('a saved-search match whose search was deleted falls back to the saved-searches list (#182)', () => {
+    mockSavedSearches = [];
+    mockPage = pageOf([savedSearchMatch]);
+    renderPage();
+
+    expect(
+      screen.getByRole('link', { name: 'View saved searches' }).getAttribute('href'),
+    ).toBe('/favorites');
   });
 
   it('shows the empty state when there are no notifications', () => {

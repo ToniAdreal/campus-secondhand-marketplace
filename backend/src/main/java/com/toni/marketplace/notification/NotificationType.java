@@ -26,5 +26,12 @@ public enum NotificationType {
    * A successful login from an (IP, device) pair the account has never
    * signed in from before (backlog #178). Carries no order or offer id.
    */
-  LOGIN_NEW_DEVICE
+  LOGIN_NEW_DEVICE,
+  /**
+   * New listings matched one of the recipient's saved searches
+   * (backlog #182). One batched row per saved search per matcher run:
+   * the row carries the saved-search id and how many new listings
+   * matched — never one row per listing, and no order or offer id.
+   */
+  SAVED_SEARCH_MATCH
 }

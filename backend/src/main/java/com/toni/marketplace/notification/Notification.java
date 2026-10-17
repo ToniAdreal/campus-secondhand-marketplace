@@ -59,6 +59,23 @@ public class Notification {
   @Column(name = "offer_id")
   private Long offerId;
 
+  /**
+   * The saved search this notification is about (backlog #182, Flyway
+   * V45); only SAVED_SEARCH_MATCH rows carry it, so the SPA can link
+   * back to that search's browse filters. Null on every other type.
+   */
+  @Column(name = "saved_search_id")
+  private Long savedSearchId;
+
+  /**
+   * How many NEW listings matched in the matcher run that wrote this
+   * row (backlog #182, Flyway V45): the notification is batched — one
+   * row per saved search per run saying N, never N rows. Only
+   * SAVED_SEARCH_MATCH rows carry it.
+   */
+  @Column(name = "matched_listing_count")
+  private Integer matchedListingCount;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -79,6 +96,19 @@ public class Notification {
     this.offerId = offerId;
   }
 
+  /**
+   * Saved-search match factory (backlog #182): no order or offer —
+   * the row names the saved search and the batched match count.
+   */
+  public static Notification savedSearchMatch(Long recipientId, Long savedSearchId,
+                                              int matchedListingCount) {
+    Notification notification =
+        new Notification(recipientId, NotificationType.SAVED_SEARCH_MATCH, null, null);
+    notification.savedSearchId = savedSearchId;
+    notification.matchedListingCount = matchedListingCount;
+    return notification;
+  }
+
   @PrePersist
   void onCreate() {
     this.createdAt = Instant.now();
@@ -89,6 +119,8 @@ public class Notification {
   public NotificationType getType() { return type; }
   public Long getOrderId() { return orderId; }
   public Long getOfferId() { return offerId; }
+  public Long getSavedSearchId() { return savedSearchId; }
+  public Integer getMatchedListingCount() { return matchedListingCount; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
 

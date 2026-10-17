@@ -12,6 +12,10 @@ public record NotificationDto(
     NotificationType type,
     Long orderId,
     Long offerId,
+    /** The saved search a SAVED_SEARCH_MATCH row names (backlog #182); null otherwise. */
+    Long savedSearchId,
+    /** Batched new-match count on a SAVED_SEARCH_MATCH row (backlog #182); null otherwise. */
+    Integer matchedListingCount,
     Instant createdAt,
     Instant readAt) {
 
@@ -21,6 +25,8 @@ public record NotificationDto(
         notification.getType(),
         notification.getOrderId(),
         notification.getOfferId(),
+        notification.getSavedSearchId(),
+        notification.getMatchedListingCount(),
         notification.getCreatedAt(),
         notification.getReadAt());
   }

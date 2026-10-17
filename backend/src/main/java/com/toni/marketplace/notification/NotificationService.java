@@ -85,6 +85,22 @@ public class NotificationService {
     notifications.save(new Notification(recipientId, type, orderId, offerId));
   }
 
+  /**
+   * Saved-search match variant (backlog #182): one batched row per
+   * saved search per matcher run, carrying the search id and how many
+   * new listings matched. Same transaction contract as {@link #record}
+   * — the save joins the matcher run's transaction, so a failed run
+   * writes no row and advances no watermark.
+   */
+  public void recordSavedSearchMatch(Long recipientId, Long savedSearchId,
+                                     int matchedListingCount) {
+    if (notifications == null) {
+      return;
+    }
+    notifications.save(
+        Notification.savedSearchMatch(recipientId, savedSearchId, matchedListingCount));
+  }
+
   /** The caller's own notifications, paginated (controller supplies newest-first). */
   @Transactional(readOnly = true)
   public Page<NotificationDto> list(Long recipientId, Pageable pageable) {

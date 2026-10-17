@@ -10,6 +10,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ItemRepository extends JpaRepository<Item, Long> {
+
+  /**
+   * The highest listing id in the table (0 when empty) — the
+   * saved-search match watermark's baseline (backlog #182): a search
+   * baselined at this id can only ever match listings created after it.
+   */
+  @Query("select coalesce(max(i.id), 0) from Item i")
+  long findMaxId();
+
   List<Item> findByStatus(ItemStatus status);
 
   /**

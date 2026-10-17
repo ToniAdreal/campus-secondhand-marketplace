@@ -29,8 +29,13 @@ import org.springframework.web.server.ResponseStatusException;
  *       capped by {@link #MAX_SAVED_SEARCHES} rows per user.</li>
  * </ul>
  *
- * <p>Scope, honestly: v1 has no email alerts and no background matching
- * job — the count exists only in the moment the list is read.
+ * <p>Background matching (backlog #182): creation baselines the new
+ * row's match watermark at the current highest listing id, so the
+ * scheduled matcher in {@code job/} only ever notifies for listings
+ * created after the search itself. The read-side count is unchanged —
+ * it is still computed live on read; the watermark is matcher
+ * bookkeeping and is never exposed on {@link SavedSearchDto}. Alerts
+ * are in-app notifications only — still no email.
  */
 @Service
 public class SavedSearchService {
@@ -55,9 +60,13 @@ public class SavedSearchService {
           "saved search limit reached: a user holds at most "
               + MAX_SAVED_SEARCHES + " saved searches");
     }
-    SavedSearch saved = savedSearches.save(new SavedSearch(
+    SavedSearch row = new SavedSearch(
         userId, normalizeKeyword(request.keyword()), request.categoryId(),
-        request.minPriceCents(), request.maxPriceCents(), canonicalSort));
+        request.minPriceCents(), request.maxPriceCents(), canonicalSort);
+    // Baseline the #182 match watermark at creation: listings that
+    // already exist when the search is saved are not "new" for it.
+    row.advanceLastNotifiedItemId(itemService.highestItemId());
+    SavedSearch saved = savedSearches.save(row);
     return toDto(saved);
   }
 

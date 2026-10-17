@@ -7,8 +7,9 @@ import java.time.Instant;
  * filter set it restores, plus {@code matchCount} — how many listings
  * the browse page returns for exactly these filters right now, computed
  * on read through {@link ItemService#listItems} (see
- * {@link SavedSearchService}). There is no background matching job and
- * no stored count in v1, so the number can never go stale.
+ * {@link SavedSearchService}), so the number can never go stale. The
+ * background matcher's watermark (backlog #182) is deliberately NOT a
+ * field here: it is internal bookkeeping, never user data.
  */
 public record SavedSearchDto(
     Long id,

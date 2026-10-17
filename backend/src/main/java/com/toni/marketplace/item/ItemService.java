@@ -67,6 +67,17 @@ public class ItemService {
     this.clock = clock;
   }
 
+  /**
+   * The highest listing id currently in the table (0 when empty).
+   * The saved-search matcher (backlog #182) baselines a search's
+   * watermark at this value so only listings created afterwards can
+   * ever match as "new".
+   */
+  @Transactional(readOnly = true)
+  public long highestItemId() {
+    return items.findMaxId();
+  }
+
   /** Clock with a system fallback, mirroring OrderService's pattern. */
   private Clock clock() {
     return clock != null ? clock : Clock.systemUTC();

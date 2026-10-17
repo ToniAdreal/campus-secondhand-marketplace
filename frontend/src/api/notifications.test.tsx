@@ -39,6 +39,8 @@ const paidNotification: Notification = {
   type: 'ORDER_PAID',
   orderId: 42,
   offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -147,5 +149,12 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/new sign-in/i);
     expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/revoke your sessions/i);
     expect(describeNotification('LOGIN_NEW_DEVICE')).not.toMatch(/blocked/i);
+    // #182: the batched saved-search line carries its match count.
+    expect(describeNotification('SAVED_SEARCH_MATCH', 5)).toBe(
+      '5 new listings match your saved search.',
+    );
+    expect(describeNotification('SAVED_SEARCH_MATCH', 1)).toBe(
+      '1 new listing matches your saved search.',
+    );
   });
 });

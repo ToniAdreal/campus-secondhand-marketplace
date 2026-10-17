@@ -7,6 +7,7 @@ import {
   useNotifications,
   useUnreadNotificationCount,
 } from '../api/notifications';
+import { savedSearchBrowsePath, useSavedSearches } from '../api/savedSearches';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -26,6 +27,13 @@ export default function NotificationsPage() {
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
   const deleteNotification = useDeleteNotification();
+  // Saved-search match rows (#182) link back to the search they name:
+  // the row carries only its id, so the filter set is resolved from
+  // the caller's saved-search list and restored exactly as #164 does.
+  const savedSearches = useSavedSearches(user !== null);
+  const savedSearchById = new Map(
+    (savedSearches.data ?? []).map((search) => [search.id, search]),
+  );
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -67,7 +75,9 @@ export default function NotificationsPage() {
               className="flex items-center justify-between rounded-lg bg-white p-4 shadow-sm"
             >
               <div>
-                <p className="font-medium">{describeNotification(notification.type)}</p>
+                <p className="font-medium">
+                  {describeNotification(notification.type, notification.matchedListingCount)}
+                </p>
                 <p className="mt-1 text-sm text-neutral-500">
                   {notification.type === 'LOGIN_NEW_DEVICE' ? (
                     <Link
@@ -76,6 +86,24 @@ export default function NotificationsPage() {
                     >
                       Review your sessions and login history
                     </Link>
+                  ) : notification.type === 'SAVED_SEARCH_MATCH' ? (
+                    notification.savedSearchId !== null &&
+                    savedSearchById.has(notification.savedSearchId) ? (
+                      <Link
+                        to={savedSearchBrowsePath(
+                          savedSearchById.get(notification.savedSearchId)!,
+                        )}
+                        className="text-blue-600 hover:underline"
+                      >
+                        View matching listings
+                      </Link>
+                    ) : (
+                      // The search was deleted after the match — the
+                      // saved-searches list is the honest fallback.
+                      <Link to="/favorites" className="text-blue-600 hover:underline">
+                        View saved searches
+                      </Link>
+                    )
                   ) : notification.orderId !== null ? (
                     <Link
                       to={`/orders/${notification.orderId}`}
