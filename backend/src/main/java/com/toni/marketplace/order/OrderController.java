@@ -103,6 +103,9 @@ public class OrderController {
    * optional: {@code {"paymentToken":"tok_decline"}} deterministically
    * declines the mock capture → 402, the order stays PENDING, and a retry
    * with any other token (or no body) can still succeed (backlog #92).
+   * A successful capture's response also carries the buyer's handover
+   * code exactly once (backlog #179) — the seller must present it to
+   * complete the order.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "402", description = "mock PSP declined the capture — order stays PENDING, retry may succeed (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)")})
   @PostMapping("/{id}/pay")
@@ -121,16 +124,40 @@ public class OrderController {
    * → 422, re-completing a COMPLETED order is idempotent); the listing
    * flips RESERVED → SOLD in the same transaction, and a {@code @Version}
    * conflict surfaces as 409.
+   *
+   * <p>Backlog #179: a seller caller must present the buyer's handover
+   * code in the body ({@code {"handoverCode":"123456"}}) — missing and
+   * wrong codes are the identical 400, and repeated failures lock the
+   * code. An ADMIN caller may omit it: that completion is an explicit
+   * override, audited as such. The body is optional for exactly that
+   * ADMIN case.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "missing or wrong handover code for a seller completion (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
   @PostMapping("/{id}/complete")
-  public ApiResponse<OrderDto> complete(@PathVariable Long id) {
+  public ApiResponse<OrderDto> complete(
+      @PathVariable Long id, @RequestBody(required = false) CompleteOrderRequest request) {
     Authentication authentication =
         SecurityContextHolder.getContext().getAuthentication();
     Long callerId = (Long) authentication.getPrincipal();
     boolean admin = authentication.getAuthorities().stream()
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
-    return ApiResponse.ok(orderService.complete(callerId, admin, id));
+    return ApiResponse.ok(orderService.complete(callerId, admin, id,
+        request == null ? null : request.handoverCode()));
+  }
+
+  /**
+   * Regenerates the buyer's handover code (backlog #179): the old code
+   * is invalidated and the new plaintext is returned in this response —
+   * its one disclosure. Buyer-only (403 otherwise); only while the order
+   * is PAID (422 otherwise). The recovery path for a buyer who lost the
+   * code shown at pay time.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
+  @PostMapping("/{id}/handover-code/regenerate")
+  public ApiResponse<OrderDto> regenerateHandoverCode(@PathVariable Long id) {
+    Long buyerId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(orderService.regenerateHandoverCode(buyerId, id));
   }
 
   /**

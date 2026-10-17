@@ -155,6 +155,20 @@ class OrderDisputeTest {
     return orderId;
   }
 
+  /** Seller completion presenting the buyer's handover code (#179). */
+  private void completeWithCode(User seller, User buyer, long orderId) throws Exception {
+    String codeBody = mockMvc.perform(post("/api/orders/{id}/handover-code/regenerate", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    String code = JsonPath.read(codeBody, "$.data.handoverCode");
+    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
+        .andExpect(status().isOk());
+  }
+
   private long openDispute(User buyer, long orderId, String reason) throws Exception {
     String body = mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
             .header("Authorization", "Bearer " + token(buyer))
@@ -215,9 +229,7 @@ class OrderDisputeTest {
     User buyer = newUser();
     Item item = newItem(seller, 10_000L);
     long orderId = paidOrder(buyer, seller, item);
-    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
-        .andExpect(status().isOk());
+    completeWithCode(seller, buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
             .header("Authorization", "Bearer " + token(buyer))
@@ -420,9 +432,7 @@ class OrderDisputeTest {
     User admin = newAdmin();
     Item item = newItem(seller, 10_000L);
     long orderId = paidOrder(buyer, seller, item);
-    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
-        .andExpect(status().isOk());
+    completeWithCode(seller, buyer, orderId);
     long disputeId = openDispute(buyer, orderId, "shutter broken");
     long refundsBefore = payments.refundsIssued();
 
@@ -463,10 +473,7 @@ class OrderDisputeTest {
         .contains(AuditAction.ORDER_DISPUTE_RESOLVED_RELEASE);
 
     // The lifecycle resumes: the seller can complete the released order.
-    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.status").value("COMPLETED"));
+    completeWithCode(seller, buyer, orderId);
 
     // A resolved dispute is final: re-disputing the order is 422.
     mockMvc.perform(post("/api/orders/{id}/dispute", orderId)

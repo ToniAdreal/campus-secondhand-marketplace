@@ -10,11 +10,13 @@ import {
   describeOrderError,
   describePayError,
   describeRefundError,
+  describeRegenerateHandoverError,
   orderKeys,
   useCancelOrder,
   useCompleteOrder,
   usePayOrder,
   useRefundOrder,
+  useRegenerateHandoverCode,
   useSellerSalesSummary,
   type Order,
   type SellerSalesSummary,
@@ -88,6 +90,8 @@ describe('describeCancelError', () => {
 
 describe('describeCompleteError', () => {
   it.each([
+    ['handover code', envelopeError(400, 'invalid handover code'), 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.'],
+    ['handover wording', envelopeError(0, 'handover code locked'), 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.'],
     ['not-paid code', envelopeError(422, 'unprocessable'), 'Only a paid order can be completed — this one is not paid yet, or is already finished.'],
     ['already-completed wording', envelopeError(422, 'order is already COMPLETED'), 'This order was already completed.'],
     ['conflict code', envelopeError(409, 'conflict'), 'Someone just acted on this order — please refresh and try again.'],
@@ -117,6 +121,17 @@ describe('describeRefundError', () => {
   });
 });
 
+describe('describeRegenerateHandoverError', () => {
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'Only the buyer of this order can generate a handover code.'],
+    ['not-paid code', envelopeError(422, 'unprocessable'), 'A handover code can only be generated while the order is paid.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to generate a handover code.'],
+    ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeRegenerateHandoverError(error)).toBe(expected);
+  });
+});
+
 describe('describeOrderError', () => {
   it.each([
     ['conflict code', envelopeError(409, 'conflict'), 'Someone just grabbed this item — it is no longer available.'],
@@ -134,15 +149,15 @@ describe('order mutation invalidation', () => {
     vi.clearAllMocks();
   });
 
-  it('useCompleteOrder posts to /complete and invalidates orders + items', async () => {
+  it('useCompleteOrder posts to /complete with the handover code and invalidates orders + items', async () => {
     const queryClient = makeClient();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     postSpy.mockResolvedValueOnce(envelope(fakeOrder));
 
     const { result } = renderHook(() => useCompleteOrder(), { wrapper: wrapperFor(queryClient) });
-    const returned = await result.current.mutateAsync(9);
+    const returned = await result.current.mutateAsync({ orderId: 9, handoverCode: '123456' });
 
-    expect(postSpy).toHaveBeenCalledWith('/orders/9/complete', {});
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/complete', { handoverCode: '123456' });
     expect(returned).toEqual(fakeOrder);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
@@ -247,13 +262,28 @@ describe('order mutation invalidation', () => {
     expect(getSpy).not.toHaveBeenCalled();
   });
 
+  it('useRegenerateHandoverCode posts to the regenerate endpoint and returns the one-time code', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope({ ...fakeOrder, handoverCode: '654321' }));
+
+    const { result } = renderHook(() => useRegenerateHandoverCode(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const returned = await result.current.mutateAsync(9);
+
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/handover-code/regenerate', {});
+    expect(returned.handoverCode).toBe('654321');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+  });
+
   it('a failed complete does not invalidate anything', async () => {
     const queryClient = makeClient();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     postSpy.mockRejectedValueOnce(new Error('network down'));
 
     const { result } = renderHook(() => useCompleteOrder(), { wrapper: wrapperFor(queryClient) });
-    await expect(result.current.mutateAsync(9)).rejects.toThrow('network down');
+    await expect(result.current.mutateAsync({ orderId: 9 })).rejects.toThrow('network down');
 
     expect(invalidateSpy).not.toHaveBeenCalled();
   });

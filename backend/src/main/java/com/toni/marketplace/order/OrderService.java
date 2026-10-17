@@ -10,10 +10,15 @@ import com.toni.marketplace.item.ItemStatus;
 import com.toni.marketplace.notification.NotificationService;
 import com.toni.marketplace.notification.NotificationType;
 import io.micrometer.core.instrument.Timer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,13 +51,16 @@ public class OrderService {
   private final AuditService audit;
   private final NotificationService notifications;
   private final Clock clock;
+  private final HandoverAttemptService handoverAttempts;
+  private final HandoverProperties handoverProperties;
 
   @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
                      IdempotencyKeyService idempotency, PaymentService payments,
                      OrderCreationService creation, OrderMetrics metrics,
                      AuditService audit, NotificationService notifications,
-                     Clock clock) {
+                     Clock clock, HandoverAttemptService handoverAttempts,
+                     HandoverProperties handoverProperties) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
@@ -62,6 +70,8 @@ public class OrderService {
     this.audit = audit;
     this.notifications = notifications;
     this.clock = clock;
+    this.handoverAttempts = handoverAttempts;
+    this.handoverProperties = handoverProperties;
   }
 
   /** Constructor for direct unit tests that do not assert on notifications. */
@@ -70,7 +80,7 @@ public class OrderService {
                      OrderCreationService creation, OrderMetrics metrics,
                      AuditService audit, Clock clock) {
     this(orders, items, idempotency, payments, creation, metrics, audit,
-        NotificationService.noop(), clock);
+        NotificationService.noop(), clock, null, null);
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -116,6 +126,55 @@ public class OrderService {
    */
   private OrderMetrics metrics() {
     return metrics != null ? metrics : OrderMetrics.noop();
+  }
+
+  /**
+   * Handover policy accessor with a defaults fallback, mirroring
+   * {@link #metrics()}: direct unit tests that construct this service by
+   * hand get the documented default policy (5 attempts, 15-minute lock).
+   */
+  private HandoverProperties handoverProps() {
+    return handoverProperties != null ? handoverProperties : new HandoverProperties();
+  }
+
+  /**
+   * Records one failed handover-code presentation durably (backlog
+   * #179). Delegates to {@link HandoverAttemptService}'s REQUIRES_NEW
+   * transaction so the count survives this transaction's rollback on
+   * the 400. Hand-built unit-test services have no recorder bean; their
+   * failure counting is skipped (documented — the MockMvc suite pins
+   * the durable behaviour against the real bean).
+   */
+  private void recordHandoverFailure(Long orderId) {
+    if (handoverAttempts != null) {
+      handoverAttempts.recordFailure(orderId, handoverProps().getMaxAttempts(),
+          handoverProps().getLockDuration(), clock().instant());
+    }
+  }
+
+  /** SHA-256 hex of a handover code — the only form ever stored (backlog #179). */
+  private static String handoverHash(String code) {
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+          .digest(code.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 is not available", e);
+    }
+  }
+
+  /**
+   * Mints a fresh 6-digit handover code on the order (backlog #179):
+   * stores only its hash, resets the failed-attempt counter and any
+   * lock, and returns the plaintext for its single disclosure to the
+   * buyer. The order is managed inside the surrounding transaction, so
+   * setting the fields persists at flush — no explicit save needed.
+   */
+  private String mintHandoverCode(Order order) {
+    String code = String.format("%06d", new SecureRandom().nextInt(1_000_000));
+    order.setHandoverCodeHash(handoverHash(code));
+    order.setHandoverFailedAttempts(0);
+    order.setHandoverLockedUntil(null);
+    return code;
   }
 
   /**
@@ -632,6 +691,10 @@ public class OrderService {
    *       persisted on the row — a retry with a succeeding token captures
    *       normally. The decline itself is counted on
    *       {@code payments.declined} (#115, see {@link OrderMetrics}).</li>
+   *   <li>Backlog #179: a successful capture also mints the buyer's
+   *       6-digit handover code in this transaction — only its SHA-256
+   *       hash is stored, and the plaintext is returned in this pay
+   *       response only (see {@link #mintHandoverCode}).</li>
    * </ul>
    */
   @Transactional
@@ -686,7 +749,13 @@ public class OrderService {
       order.setCaptureId(capture.captureId());
       order.setStatus(OrderStatus.PAID);
       order.getItem().setStatus(ItemStatus.RESERVED);
-      OrderDto dto = OrderDto.from(orders.save(order));
+      // Backlog #179: mint the buyer's handover code in the same
+      // transaction as the transition — only its hash is stored, and
+      // the plaintext leaves in THIS response, its one disclosure (a
+      // declined capture threw above, so it mints nothing; the
+      // idempotent re-pay returned earlier, so it never re-mints).
+      String handoverCode = mintHandoverCode(order);
+      OrderDto dto = OrderDto.from(orders.save(order), handoverCode);
       // Flush deliberately inside the transaction (not at commit): the
       // UPDATE runs now, so a concurrent modification of the order row
       // between read and write surfaces here as
@@ -755,7 +824,21 @@ public class OrderService {
    *       whether the caller could have paid for it.</li>
    *   <li>Only PAID orders can be completed. PENDING/CANCELLED orders →
    *       422; a re-complete of an already-COMPLETED order is idempotent and
-   *       simply returns the order.</li>
+   *       simply returns the order (no code is demanded for the replay —
+   *       the transition already happened).</li>
+   *   <li>Backlog #179: a SELLER completion must present the buyer's
+   *       6-digit handover code (minted at pay time, hash-only on the
+   *       row). Missing and wrong codes are the identical 400 — no
+   *       oracle distinguishes them — and each failure is counted
+   *       durably ({@link HandoverAttemptService}); after
+   *       {@code app.orders.handover.max-attempts} consecutive failures
+   *       the code locks for {@code app.orders.handover.lock-duration}
+   *       and even the correct code gets the same 400 until it expires.
+   *       The lock gates only this exchange — never the buyer's dispute
+   *       path. An ADMIN caller needs no code: that completion is an
+   *       explicit override and is audited as
+   *       {@code ORDER_COMPLETED_ADMIN_OVERRIDE}, never as a
+   *       code-verified {@code ORDER_COMPLETED}.</li>
    *   <li>The listing flips RESERVED → SOLD in the same transaction, so the
    *       list view stops offering a paid-for item. Without this endpoint a
    *       PAID order stranded its listing in RESERVED forever — the mirror
@@ -773,7 +856,8 @@ public class OrderService {
    * </ul>
    */
   @Transactional
-  public OrderDto complete(Long callerId, boolean callerIsAdmin, Long orderId) {
+  public OrderDto complete(Long callerId, boolean callerIsAdmin, Long orderId,
+                           String handoverCode) {
     Order order = orders.findById(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
@@ -788,8 +872,15 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "order is " + order.getStatus() + ", completion is not allowed");
     }
+    if (!callerIsAdmin) {
+      verifyHandoverCode(order, handoverCode);
+    }
     try {
       order.setStatus(OrderStatus.COMPLETED);
+      // Backlog #179: a successful completion clears the handover
+      // attempt counter and any (expired) lock in the same transaction.
+      order.setHandoverFailedAttempts(0);
+      order.setHandoverLockedUntil(null);
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
               "order points at a missing item"));
@@ -809,7 +900,13 @@ public class OrderService {
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-complete above returns before this point.
-      audit().record(callerId, AuditAction.ORDER_COMPLETED, AuditTargetType.ORDER, orderId);
+      // Backlog #179: an ADMIN completion is the code-less override and
+      // is trailed as such; a seller completion reaching this line has
+      // proven the buyer's handover code.
+      audit().record(callerId,
+          callerIsAdmin ? AuditAction.ORDER_COMPLETED_ADMIN_OVERRIDE
+              : AuditAction.ORDER_COMPLETED,
+          AuditTargetType.ORDER, orderId);
       // Backlog #157: notify the buyer in the same transaction — the
       // idempotent re-complete above returns before this point.
       notifications().record(order.getBuyerId(),
@@ -819,6 +916,70 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
     }
+  }
+
+  /**
+   * Verifies a seller-presented handover code against the order's stored
+   * hash (backlog #179). Every failure — missing code, wrong code, an
+   * order whose code was never minted, a code under an active lock — is
+   * the identical 400 with the identical message, so the exchange leaks
+   * nothing about which case fired. Genuine guesses (a code was
+   * presented and did not match, or none was) feed the durable counter
+   * via {@link #recordHandoverFailure} BEFORE the throw, in that
+   * service's own transaction; a locked code refuses without counting
+   * (the lock is already engaged). The comparison is constant-time
+   * ({@link MessageDigest#isEqual} over the two hashes).
+   */
+  private void verifyHandoverCode(Order order, String handoverCode) {
+    Instant now = clock().instant();
+    Instant lockedUntil = order.getHandoverLockedUntil();
+    if (lockedUntil != null && now.isBefore(lockedUntil)) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "invalid handover code");
+    }
+    boolean matches = handoverCode != null && !handoverCode.isBlank()
+        && order.getHandoverCodeHash() != null
+        && MessageDigest.isEqual(
+            handoverHash(handoverCode.trim()).getBytes(StandardCharsets.UTF_8),
+            order.getHandoverCodeHash().getBytes(StandardCharsets.UTF_8));
+    if (!matches) {
+      recordHandoverFailure(order.getId());
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "invalid handover code");
+    }
+  }
+
+  /**
+   * Regenerates the buyer's handover code (backlog #179): mints a fresh
+   * code, replacing the stored hash — the old code is invalid from this
+   * commit on — and returns the new plaintext in this response, its one
+   * disclosure. This is the recovery path for a buyer who lost the code
+   * from the pay response (the hash-only store makes the old one
+   * unrecoverable by design), and the minting path for orders paid
+   * before #179 landed. Buyer-only (403 otherwise, mirroring
+   * {@link #pay(Long, Long)}); only a PAID order carries a live code —
+   * anything else is 422. Regeneration also clears the failed-attempt
+   * counter and any lock: the buyer must never be locked out of
+   * receiving their own item by a seller-side guessing streak.
+   */
+  @Transactional
+  public OrderDto regenerateHandoverCode(Long buyerId, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!order.getBuyerId().equals(buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the buyer can regenerate the handover code for this order");
+    }
+    if (order.getStatus() != OrderStatus.PAID) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", a handover code can only be "
+              + "regenerated while the order is PAID");
+    }
+    String code = mintHandoverCode(order);
+    OrderDto dto = OrderDto.from(orders.save(order), code);
+    orders.flush();
+    return dto;
   }
 
   /**

@@ -127,9 +127,17 @@ class SellerSalesExportTest {
         .andExpect(status().isOk());
   }
 
-  private void complete(User seller, long orderId) throws Exception {
+  private void complete(User seller, User buyer, long orderId) throws Exception {
+    // #179: fetch the buyer's handover code via the regenerate surface.
+    String codeBody = mockMvc.perform(post("/api/orders/{id}/handover-code/regenerate", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    String code = JsonPath.read(codeBody, "$.data.handoverCode");
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
         .andExpect(status().isOk());
   }
 
@@ -162,7 +170,7 @@ class SellerSalesExportTest {
     pay(buyer, paid); // PAID
     long completed = createOrder(buyer, newItem(seller, "Completed lens", 30_000L));
     pay(buyer, completed);
-    complete(seller, completed); // COMPLETED
+    complete(seller, buyer, completed); // COMPLETED
     long refunded = createOrder(buyer, newItem(seller, "Refunded radio", 40_000L));
     pay(buyer, refunded);
     refund(seller, refunded); // REFUNDED — excluded

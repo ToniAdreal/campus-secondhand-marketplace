@@ -45,6 +45,12 @@ import { useAuthStore } from '../store/useAuthStore';
  * no such wiring), and PENDING/terminal rows show none. Both transitions
  * are idempotent server-side (re-complete / re-refund return the order),
  * so a double-click cannot double-apply.
+ *
+ * Handover code (backlog #179): completing also requires the buyer's
+ * 6-digit handover code, entered in the per-row field next to the
+ * buttons — the buyer hands it over when they receive the item. A
+ * missing/wrong code is a 400 mapped to friendly copy, and repeated
+ * failures lock the code server-side (the buyer can regenerate one).
  */
 
 function isUnauthorized(error: unknown): boolean {
@@ -65,6 +71,9 @@ export default function SellerOrdersPage() {
   const completeOrder = useCompleteOrder();
   const refundOrder = useRefundOrder();
   const [actionError, setActionError] = useState<string | null>(null);
+  // Per-row handover codes (#179), keyed by order id — each row's code
+  // belongs to that row's buyer, so the inputs are independent.
+  const [handoverCodes, setHandoverCodes] = useState<Record<number, string>>({});
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -78,9 +87,12 @@ export default function SellerOrdersPage() {
 
   const handleComplete = (orderId: number) => {
     setActionError(null);
-    completeOrder.mutate(orderId, {
-      onError: (error) => setActionError(describeCompleteError(error)),
-    });
+    completeOrder.mutate(
+      { orderId, handoverCode: handoverCodes[orderId]?.trim() || undefined },
+      {
+        onError: (error) => setActionError(describeCompleteError(error)),
+      },
+    );
   };
 
   const handleRefund = (orderId: number) => {
@@ -163,17 +175,35 @@ export default function SellerOrdersPage() {
                 </div>
                 <OrderPspReferences order={order} />
                 {order.status === 'PAID' && (
-                  <div className="mt-3 flex gap-2">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm text-neutral-600">
+                      Handover code
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        placeholder="6-digit code from the buyer"
+                        value={handoverCodes[order.id] ?? ''}
+                        onChange={(event) =>
+                          setHandoverCodes((prev) => ({
+                            ...prev,
+                            [order.id]: event.target.value,
+                          }))
+                        }
+                        className="w-44 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={() => handleComplete(order.id)}
                       disabled={
-                        (completeOrder.isLoading && completeOrder.variables === order.id) ||
+                        (completeOrder.isLoading && completeOrder.variables?.orderId === order.id) ||
                         (refundOrder.isLoading && refundOrder.variables === order.id)
                       }
                       className="rounded bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                     >
-                      {completeOrder.isLoading && completeOrder.variables === order.id
+                      {completeOrder.isLoading && completeOrder.variables?.orderId === order.id
                         ? 'Completing…'
                         : 'Complete order'}
                     </button>
@@ -181,7 +211,7 @@ export default function SellerOrdersPage() {
                       type="button"
                       onClick={() => handleRefund(order.id)}
                       disabled={
-                        (completeOrder.isLoading && completeOrder.variables === order.id) ||
+                        (completeOrder.isLoading && completeOrder.variables?.orderId === order.id) ||
                         (refundOrder.isLoading && refundOrder.variables === order.id)
                       }
                       className="rounded border border-red-600 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"

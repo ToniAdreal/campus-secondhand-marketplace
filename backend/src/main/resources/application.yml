@@ -262,6 +262,16 @@ app:
     # is the 5-minute cadence, so a stale order holds its listing at most
     # TTL + one cadence.
     pending-ttl: 30m
+    handover:
+      # Handover-code lockout (backlog #179): a seller completing an
+      # order must present the buyer's 6-digit code; after max-attempts
+      # consecutive failures (missing counts too — the 400 is identical)
+      # the code locks for lock-duration and even the correct code is
+      # refused. Defaults mirror the login/TOTP lockouts (5 / 15m). The
+      # lock gates only the complete exchange — never the buyer's
+      # dispute path — and the buyer can always regenerate a fresh code.
+      max-attempts: 5
+      lock-duration: 15m
   offers:
     # Pending-offer expiry (OfferExpiryService, @Scheduled every 5
     # minutes server-local; decision endpoints also check the deadline

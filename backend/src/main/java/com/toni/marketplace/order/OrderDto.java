@@ -1,5 +1,6 @@
 package com.toni.marketplace.order;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 
 /**
@@ -8,6 +9,16 @@ import java.time.Instant;
  * the order (backlog #114) — {@code null} until the corresponding
  * transition (pay / refund) has happened; the internal PSP idempotency
  * keys on the row are never exposed.
+ *
+ * <p>{@code handoverCode} (backlog #179) is the exception to "every read
+ * carries every field": it holds the buyer's 6-digit handover-code
+ * plaintext ONLY in the two responses that mint it — the pay response
+ * and the regenerate response, both buyer-only surfaces. Every other
+ * DTO (buyer reads, seller reads, lists) is built via
+ * {@link #from(Order)} with the component {@code null}, and the
+ * component-level {@code NON_NULL} include drops the key from those
+ * payloads entirely — a seller-facing payload never carries the field,
+ * and the stored hash is never exposed anywhere.
  */
 public record OrderDto(
     Long id,
@@ -17,9 +28,15 @@ public record OrderDto(
     Long amountCents,
     Instant createdAt,
     String captureId,
-    String refundId) {
+    String refundId,
+    @JsonInclude(JsonInclude.Include.NON_NULL) String handoverCode) {
 
   public static OrderDto from(Order order) {
+    return from(order, null);
+  }
+
+  /** Builds the DTO carrying a freshly minted handover-code plaintext (buyer-only responses). */
+  public static OrderDto from(Order order, String handoverCode) {
     return new OrderDto(
         order.getId(),
         order.getItem().getId(),
@@ -28,6 +45,7 @@ public record OrderDto(
         order.getAmountCents(),
         order.getCreatedAt(),
         order.getCaptureId(),
-        order.getRefundId());
+        order.getRefundId(),
+        handoverCode);
   }
 }

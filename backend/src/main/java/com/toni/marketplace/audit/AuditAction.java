@@ -79,6 +79,17 @@ public enum AuditAction {
   ORDER_CANCELLED,
   /** A seller (or ADMIN) completed a PAID order ({@code OrderService.complete}). */
   ORDER_COMPLETED,
+  /**
+   * An ADMIN completed a PAID order WITHOUT the buyer's handover code
+   * ({@code OrderService.complete}, backlog #179). Actor is the
+   * completing ADMIN. Deliberately distinct from
+   * {@link #ORDER_COMPLETED}: since #179 a seller completion proves the
+   * buyer handed over the code, while an ADMIN completion is an
+   * explicit override of that proof — the trail keeps the two apart so
+   * an override is visible as one, never dressed as a code-verified
+   * handover.
+   */
+  ORDER_COMPLETED_ADMIN_OVERRIDE,
   /** A seller (or ADMIN) refunded a PAID order ({@code OrderService.refund}). */
   ORDER_REFUNDED,
   /**

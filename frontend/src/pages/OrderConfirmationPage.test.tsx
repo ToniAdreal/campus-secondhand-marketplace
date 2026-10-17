@@ -100,6 +100,54 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
     expect(screen.getByText('PAID')).toBeTruthy();
   });
 
+  it('a fresh pay discloses the handover code once, from the pay response', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    // the refetched read DTO never carries the code again (#179) -- the
+    // code on screen can only have come from the pay response itself
+    getSpy
+      .mockResolvedValueOnce(envelope(pendingOrder))
+      .mockResolvedValue(envelope(paidOrder));
+    postSpy.mockResolvedValueOnce(envelope({ ...paidOrder, handoverCode: '246810' }));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Pay now (demo)' }));
+
+    await waitFor(() => expect(screen.getByText('246810')).toBeTruthy());
+    expect(screen.getByText(/Give this code to the seller/)).toBeTruthy();
+    expect(screen.getByText(/shown only once/)).toBeTruthy();
+  });
+
+  it('a PAID order without a code on screen offers regeneration, which shows the new code', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(paidOrder));
+    postSpy.mockResolvedValueOnce(envelope({ ...paidOrder, handoverCode: '135790' }));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/orders/9');
+    await waitFor(() =>
+      expect(screen.getByText(/Your handover code was shown once when you paid/)).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Generate a new handover code' }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/9/handover-code/regenerate', {}),
+    );
+    await waitFor(() => expect(screen.getByText('135790')).toBeTruthy());
+    expect(confirmSpy).toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('a non-buyer sees no handover-code section on a PAID order', async () => {
+    useAuthStore.getState().login(intruder, 'tok');
+    getSpy.mockResolvedValue(envelope(paidOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Generate a new handover code' })).toBeNull();
+    expect(screen.queryByText(/handover code/i)).toBeNull();
+  });
+
   it('the button disables and reads "Paying…" while the capture is in flight', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy

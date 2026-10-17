@@ -140,6 +140,26 @@ class OrderPaymentMetricsTest {
         .andExpect(status().isOk());
   }
 
+  /** Backlog #179: completion requires the buyer-visible handover code. */
+  private String handoverCode(User buyer, long orderId) throws Exception {
+    // Reads never carry the code (hash-only store, disclosed exactly
+    // once at pay/regenerate) — fetch a fresh one via the regenerate
+    // surface, the same pattern as the other #179-updated suites.
+    String body = mockMvc.perform(post("/api/orders/{id}/handover-code/regenerate", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    return JsonPath.read(body, "$.data.handoverCode");
+  }
+
+  private void completeWithCode(User seller, long orderId, String code) throws Exception {
+    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
+        .andExpect(status().isOk());
+  }
+
   @Test
   void createdAndPaidCounters_countTransitionsNotReplays() throws Exception {
     User seller = newUser("seller");
@@ -184,8 +204,9 @@ class OrderPaymentMetricsTest {
     double completedBefore = count("orders.completed");
     double refundedBefore = count("orders.refunded");
 
-    act(seller, completedId, "complete");
-    act(seller, completedId, "complete");
+    String code = handoverCode(buyer, completedId);
+    completeWithCode(seller, completedId, code);
+    completeWithCode(seller, completedId, code);
     act(seller, refundedId, "refund");
     act(seller, refundedId, "refund");
 

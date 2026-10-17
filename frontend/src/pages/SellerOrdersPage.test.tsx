@@ -217,7 +217,7 @@ describe('SellerOrdersPage', () => {
     confirmSpy.mockRestore();
   });
 
-  it('Complete fires POST /orders/{id}/complete and refetches the seller list', async () => {
+  it('Complete fires POST /orders/{id}/complete with the typed handover code and refetches the seller list', async () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
     postSpy.mockResolvedValue({
@@ -226,10 +226,11 @@ describe('SellerOrdersPage', () => {
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Handover code/), { target: { value: '654321' } });
     fireEvent.click(screen.getByRole('button', { name: 'Complete order' }));
 
     await waitFor(() =>
-      expect(postSpy).toHaveBeenCalledWith('/orders/10/complete', {}),
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/complete', { handoverCode: '654321' }),
     );
     // success invalidates the orders subtree — the seller list refetches
     await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(1));
@@ -293,6 +294,22 @@ describe('SellerOrdersPage', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toBe('This order was already completed.');
+  });
+
+  it('a 400 from complete (wrong handover code) maps to the handover copy', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+    postSpy.mockRejectedValue(axiosFailure(400, 'invalid handover code'));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Handover code/), { target: { value: '000000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete order' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe(
+      'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.',
+    );
   });
 
   it('a 422 from refund maps to the friendly "already completed" copy', async () => {

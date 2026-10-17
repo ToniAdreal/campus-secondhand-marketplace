@@ -187,7 +187,18 @@ class NotificationTest {
     transition(buyer, orderId, "pay");
     notifications.deleteAll();
 
-    transition(seller, orderId, "complete");
+    // #179: the seller completes with the buyer's handover code,
+    // fetched through the buyer-only regenerate surface.
+    String codeBody = mockMvc.perform(post("/api/orders/{id}/handover-code/regenerate", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    String code = JsonPath.read(codeBody, "$.data.handoverCode");
+    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
+        .andExpect(status().isOk());
 
     assertThat(notifications.findAll()).singleElement().satisfies(n -> {
       assertThat(n.getRecipientId()).isEqualTo(buyer.getId());

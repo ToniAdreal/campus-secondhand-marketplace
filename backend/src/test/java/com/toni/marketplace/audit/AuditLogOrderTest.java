@@ -139,8 +139,17 @@ class AuditLogOrderTest {
     User buyer = newUser("buyer");
     long orderId = paidOrder(seller, buyer);
 
+    // #179: a seller completion presents the buyer's handover code --
+    // fetched here through the buyer-only regenerate surface.
+    String codeBody = mockMvc.perform(post("/api/orders/{id}/handover-code/regenerate", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    String code = com.jayway.jsonpath.JsonPath.read(codeBody, "$.data.handoverCode");
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
         .andExpect(status().isOk());
     // Idempotent replay: returns the order, appends no second row.
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)

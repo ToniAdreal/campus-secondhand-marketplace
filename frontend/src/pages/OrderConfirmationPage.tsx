@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { describeCancelError, describePayError, useCancelOrder, useOrder, usePayOrder } from '../api/orders';
+import {
+  describeCancelError,
+  describePayError,
+  describeRegenerateHandoverError,
+  useCancelOrder,
+  useOrder,
+  usePayOrder,
+  useRegenerateHandoverCode,
+} from '../api/orders';
 import OrderPspReferences from '../components/OrderPspReferences';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -13,14 +21,26 @@ import { useAuthStore } from '../store/useAuthStore';
  * (OrderPspReferences, backlog #119) — the pay mutation invalidates the
  * orders subtree, so the capture id arrives on the refetch with no extra
  * wiring here.
+ *
+ * Handover code (backlog #179): the pay response is the ONLY place the
+ * buyer's 6-digit code is ever shown (the backend stores just its hash),
+ * so it is captured from the mutation result into local state before the
+ * invalidation refetch replaces the order. The buyer gives the code to
+ * the seller when they receive the item; the seller cannot complete the
+ * order without it. A buyer who lost it regenerates a new one here —
+ * the old code stops working the moment a new one is minted.
  */
 export default function OrderConfirmationPage() {
   const { id } = useParams();
   const user = useAuthStore((s) => s.user);
   const { data, isLoading, isError } = useOrder(Number(id));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // The handover code disclosed by the pay / regenerate response — kept
+  // in local state because order reads never carry it again (#179).
+  const [handoverCode, setHandoverCode] = useState<string | null>(null);
   const payOrder = usePayOrder();
   const cancelOrder = useCancelOrder();
+  const regenerateCode = useRegenerateHandoverCode();
 
   if (isLoading) return <p>Loading…</p>;
   if (isError || !data) return <p className="text-red-600">Order not found.</p>;
@@ -37,7 +57,35 @@ export default function OrderConfirmationPage() {
     // The server's already-PAID idempotency makes a retry safe: the same
     // click can never trigger a second capture.
     payOrder.mutate(orderId, {
+      onSuccess: (order) => {
+        // Capture the one-time disclosure before the invalidation
+        // refetch swaps in a read DTO that never carries the code.
+        if (order.handoverCode) {
+          setHandoverCode(order.handoverCode);
+        }
+      },
       onError: (error) => setErrorMessage(describePayError(error)),
+    });
+  };
+
+  const handleRegenerate = () => {
+    setErrorMessage(null);
+    // Regenerating invalidates the previous code — ask first, mirroring
+    // the cancel flow's confirm dialog.
+    if (
+      !window.confirm(
+        'Generate a new handover code? The previous code will stop working.',
+      )
+    ) {
+      return;
+    }
+    regenerateCode.mutate(orderId, {
+      onSuccess: (order) => {
+        if (order.handoverCode) {
+          setHandoverCode(order.handoverCode);
+        }
+      },
+      onError: (error) => setErrorMessage(describeRegenerateHandoverError(error)),
     });
   };
 
@@ -100,6 +148,36 @@ export default function OrderConfirmationPage() {
         <p className="mt-4 text-sm text-green-700">
           Paid (demo capture) — the seller will now confirm the handoff.
         </p>
+      )}
+      {paid && isBuyer && (
+        <div className="mt-4 rounded border border-neutral-200 p-4">
+          {handoverCode ? (
+            <>
+              <p className="text-sm">
+                Your handover code: <strong className="text-lg tracking-widest">{handoverCode}</strong>
+              </p>
+              <p className="mt-1 text-sm text-neutral-500">
+                Give this code to the seller when you receive the item — they
+                need it to complete the order. Save it now: for your security
+                it is shown only once and cannot be displayed again.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-neutral-600">
+              Your handover code was shown once when you paid. If you no
+              longer have it, generate a new one — the seller needs it to
+              complete the order.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            disabled={regenerateCode.isLoading}
+            className="mt-2 rounded border border-neutral-600 px-4 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+          >
+            {regenerateCode.isLoading ? 'Generating…' : 'Generate a new handover code'}
+          </button>
+        </div>
       )}
       {canCancel && (
         <div className="mt-4">

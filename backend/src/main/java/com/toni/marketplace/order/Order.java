@@ -106,6 +106,42 @@ public class Order {
   private String refundId;
 
   /**
+   * SHA-256 hash of the buyer's 6-digit handover code (backlog #179,
+   * Flyway V43). Minted by {@code OrderService.pay} in the same
+   * transaction as the PENDING → PAID transition; the plaintext is
+   * returned to the buyer exactly once (the pay response, or the
+   * regenerate response) and is never stored, so a lost code can only
+   * be replaced, never recovered. {@code OrderService.complete} requires
+   * a seller caller to present the code; an ADMIN completion is an
+   * explicit override. Nullable until the order is paid (and for orders
+   * paid before #179 landed — the buyer mints one via the regenerate
+   * endpoint).
+   */
+  @Column(name = "handover_code_hash", length = 64)
+  private String handoverCodeHash;
+
+  /**
+   * Consecutive failed handover-code presentations at the complete
+   * exchange (backlog #179), mirroring the #60/#101 lockout shape.
+   * Incremented in a REQUIRES_NEW transaction by
+   * {@code HandoverAttemptService} so the 400 rollback cannot erase the
+   * count; reset by a successful completion or a buyer regeneration.
+   */
+  @Column(name = "handover_failed_attempts", nullable = false)
+  private int handoverFailedAttempts;
+
+  /**
+   * While this instant is in the future the handover code is locked:
+   * even the correct code is refused at complete with the identical
+   * 400. Set when {@link #handoverFailedAttempts} reaches
+   * {@code app.orders.handover.max-attempts}; an expired lock resets
+   * the counter on the next attempt. The lock gates only the complete
+   * exchange — never the buyer's dispute path.
+   */
+  @Column(name = "handover_locked_until")
+  private Instant handoverLockedUntil;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
    * the order is active (PENDING/PAID), NULL once terminal. insertable and
@@ -159,6 +195,18 @@ public class Order {
   public void setCaptureId(String captureId) { this.captureId = captureId; }
   public String getRefundId() { return refundId; }
   public void setRefundId(String refundId) { this.refundId = refundId; }
+  public String getHandoverCodeHash() { return handoverCodeHash; }
+  public void setHandoverCodeHash(String handoverCodeHash) {
+    this.handoverCodeHash = handoverCodeHash;
+  }
+  public int getHandoverFailedAttempts() { return handoverFailedAttempts; }
+  public void setHandoverFailedAttempts(int handoverFailedAttempts) {
+    this.handoverFailedAttempts = handoverFailedAttempts;
+  }
+  public Instant getHandoverLockedUntil() { return handoverLockedUntil; }
+  public void setHandoverLockedUntil(Instant handoverLockedUntil) {
+    this.handoverLockedUntil = handoverLockedUntil;
+  }
   public Long getActiveItemId() { return activeItemId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }

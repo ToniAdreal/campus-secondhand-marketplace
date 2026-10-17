@@ -102,9 +102,21 @@ class OrderCompleteTest {
     return ((Number) JsonPath.read(body, "$.data.id")).longValue();
   }
 
-  private void payOrder(User buyer, long orderId) throws Exception {
-    mockMvc.perform(post("/api/orders/{id}/pay", orderId)
+  /** Pays as the buyer; returns the handover code disclosed in the pay response (#179). */
+  private String payOrder(User buyer, long orderId) throws Exception {
+    String body = mockMvc.perform(post("/api/orders/{id}/pay", orderId)
             .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    return JsonPath.read(body, "$.data.handoverCode");
+  }
+
+  /** Seller completion presenting the buyer's handover code (#179). */
+  private void completeWithCode(User seller, long orderId, String code) throws Exception {
+    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
         .andExpect(status().isOk());
   }
 
@@ -121,11 +133,13 @@ class OrderCompleteTest {
     User buyer = newUser("buyer");
     Item item = newItem(seller, ItemStatus.AVAILABLE);
     long orderId = createOrder(buyer, item);
-    payOrder(buyer, orderId);
+    String code = payOrder(buyer, orderId);
     assertItemStatusInListView(buyer, "Film camera", "RESERVED");
 
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0))
         .andExpect(jsonPath("$.data.id").value(orderId))
@@ -146,11 +160,10 @@ class OrderCompleteTest {
     User buyer = newUser("buyer");
     Item item = newItem(seller, ItemStatus.AVAILABLE);
     long orderId = createOrder(buyer, item);
-    payOrder(buyer, orderId);
+    String code = payOrder(buyer, orderId);
 
-    mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
-        .andExpect(status().isOk());
+    completeWithCode(seller, orderId, code);
+    // Idempotent re-complete demands no code (#179).
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
@@ -190,7 +203,7 @@ class OrderCompleteTest {
     User buyer = newUser("buyer");
     Item item = newItem(seller, ItemStatus.AVAILABLE);
     long orderId = createOrder(buyer, item);
-    payOrder(buyer, orderId);
+    String code = payOrder(buyer, orderId);
     // Seller hand-marked the listing SOLD through PATCH
     // /api/items/{id}/status before completing the order.
     mockMvc.perform(patch("/api/items/{id}/status", item.getId())
@@ -200,7 +213,9 @@ class OrderCompleteTest {
         .andExpect(status().isOk());
 
     mockMvc.perform(post("/api/orders/{id}/complete", orderId)
-            .header("Authorization", "Bearer " + token(seller)))
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"handoverCode\":\"" + code + "\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("COMPLETED"));
 

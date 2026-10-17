@@ -117,6 +117,7 @@ class OpenApiContractTest {
       "/api/orders/{id}",
       "/api/orders/{id}/cancel",
       "/api/orders/{id}/complete",
+      "/api/orders/{id}/handover-code/regenerate",
       "/api/orders/{id}/dispute",
       "/api/orders/{id}/review",
       "/api/orders/{id}/pay",

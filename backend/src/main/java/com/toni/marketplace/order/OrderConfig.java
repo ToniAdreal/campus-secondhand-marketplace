@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
  * config only owns the order-domain property binding.
  */
 @Configuration
-@EnableConfigurationProperties({OrderExpiryProperties.class, WebhookProperties.class,
-    WebhookSignatureProperties.class})
+@EnableConfigurationProperties({OrderExpiryProperties.class, HandoverProperties.class,
+    WebhookProperties.class, WebhookSignatureProperties.class})
 public class OrderConfig {
 }

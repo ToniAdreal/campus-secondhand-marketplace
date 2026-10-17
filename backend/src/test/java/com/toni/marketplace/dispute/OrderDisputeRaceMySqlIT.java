@@ -207,7 +207,10 @@ class OrderDisputeRaceMySqlIT {
     User buyer = newUser();
     Item item = newItem(seller);
     long orderId = paidOrderId(buyer, item);
-    orderService.complete(seller.getId(), false, orderId);
+    // #179: seller completion presents the buyer's handover code,
+    // minted through the buyer-only regenerate surface.
+    var regenerated = orderService.regenerateHandoverCode(buyer.getId(), orderId);
+    orderService.complete(seller.getId(), false, orderId, regenerated.handoverCode());
     DisputeDto dispute = disputeService.openDispute(buyer.getId(), orderId, "broken");
 
     DisputeDto resolved = disputeService.resolveRefund(admin.getId(), dispute.id());

@@ -19,6 +19,12 @@ export interface Order {
   // exposed by the backend and are not part of this shape.
   captureId: string | null;
   refundId: string | null;
+  // Handover code (backend backlog #179): the buyer's 6-digit code is
+  // present ONLY in the pay and regenerate responses (its one plaintext
+  // disclosure — the backend stores just the hash, and every read DTO
+  // omits the field entirely). Optional + nullable here so read-shaped
+  // fixtures keep type-checking; never expect it on a fetched order.
+  handoverCode?: string | null;
 }
 
 /**
@@ -226,7 +232,10 @@ export function useCreateOrder() {
  * unchanged, so no second capture can happen, and a double-click only
  * resolves one capture. On success every `orders` query refetches rather
  * than being patched: the order's status flips PENDING → PAID and local
- * cache surgery cannot know which paginated pages contain it.
+ * cache surgery cannot know which paginated pages contain it. A fresh
+ * capture's response is the one place the buyer's handover code is ever
+ * disclosed (backlog #179) — callers surface it from the mutation result
+ * before the refetch replaces it, because reads never carry it again.
  */
 export function usePayOrder() {
   const queryClient = useQueryClient();
@@ -300,6 +309,9 @@ export function describeCompleteError(error: unknown): string {
     .response;
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
+  if (code === 400 || /handover/i.test(message)) {
+    return 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.';
+  }
   if (code === 422 || /completion is not allowed|not in PAID/i.test(message)) {
     if (/COMPLETED/i.test(message)) {
       return 'This order was already completed.';
@@ -324,19 +336,73 @@ export function describeCompleteError(error: unknown): string {
 /**
  * POST /api/orders/{id}/complete — the seller (or an ADMIN) confirms the
  * handoff: PAID → COMPLETED, and the listing flips RESERVED → SOLD in the
- * same transaction. Completing an already-COMPLETED order is idempotent
- * server-side, so a double-click is safe. On success both subtrees are
- * invalidated: the seller-orders subtree hangs off `orderKeys.all`, and
- * the listing subtree must refetch so the SOLD badge shows.
+ * same transaction. Since backlog #179 a seller caller must present the
+ * buyer's 6-digit handover code; a missing/wrong code is a 400 and
+ * repeated failures lock the code server-side. Completing an
+ * already-COMPLETED order is idempotent server-side, so a double-click
+ * is safe. On success both subtrees are invalidated: the seller-orders
+ * subtree hangs off `orderKeys.all`, and the listing subtree must
+ * refetch so the SOLD badge shows.
  */
 export function useCompleteOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (orderId: number) =>
-      api.post<ApiResponse<Order>>(`/orders/${orderId}/complete`, {}).then((res) => res.data.data),
+    mutationFn: ({ orderId, handoverCode }: { orderId: number; handoverCode?: string }) =>
+      api
+        .post<ApiResponse<Order>>(
+          `/orders/${orderId}/complete`,
+          handoverCode ? { handoverCode } : {},
+        )
+        .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/orders/{id}/handover-code/regenerate to a
+ * user-facing message: only the buyer can regenerate, and only while
+ * the order is PAID.
+ */
+export function describeRegenerateHandoverError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'Only the buyer of this order can generate a handover code.';
+  }
+  if (code === 422) {
+    return 'A handover code can only be generated while the order is paid.';
+  }
+  if (code === 401) {
+    return 'Please log in to generate a handover code.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/handover-code/regenerate — buyer-only (backlog
+ * #179): mints a fresh handover code, invalidating the old one, and
+ * returns the new plaintext in the response — its one disclosure, so
+ * the caller must surface it immediately. The recovery path for a buyer
+ * who lost the code shown at pay time (only its hash is stored, so the
+ * old code can never be displayed again).
+ */
+export function useRegenerateHandoverCode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api
+        .post<ApiResponse<Order>>(`/orders/${orderId}/handover-code/regenerate`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
   });
 }
