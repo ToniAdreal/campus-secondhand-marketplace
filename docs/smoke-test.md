@@ -115,8 +115,10 @@ The backend exposes Spring Boot Actuator:
         credentials: <backend-api-token>
   ```
 
-  Honest scope: metrics exist, alerting does not — no alert rules are defined
-  or bundled with this repo.
+  Honest scope: alert rules and an operator runbook are provided in
+  docs/alert-rules.yml and docs/runbook.md, for loading into an operator's
+  own Prometheus — no Prometheus or Alertmanager is deployed or bundled
+  with this repo.
 
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.

@@ -48,7 +48,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       {@code /actuator/metrics} and {@code /actuator/prometheus}) needs a
  *       Bearer access token. {@code /actuator/prometheus} exports the Micrometer
  *       registry in Prometheus text format (scrape target for an external
- *       Prometheus server); alerting rules are not configured (follow-up).</li>
+ *       Prometheus server); alert rules are provided in docs/alert-rules.yml (loaded by the
+ *       operator's own Prometheus; no Alertmanager is bundled).</li>
  *   <li>{@code /error} is public so exception-driven error pages render.</li>
  *   <li>Everything else requires a valid Bearer access token.</li>
  *   <li>CORS is an explicit allowlist ({@code app.cors.allowed-origins}):

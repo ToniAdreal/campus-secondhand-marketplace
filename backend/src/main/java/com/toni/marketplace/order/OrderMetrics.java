@@ -75,8 +75,10 @@ import org.springframework.stereotype.Component;
  * hazard and a PII leak into the metrics store. The timers carry
  * exactly one tag, {@code outcome} ({@code success} / {@code
  * failure}), for the same reason. Honest scope: these meters exist
- * and are scrapeable; alerting on them does not exist (see the README
- * observability row).
+ * and are scrapeable; alert rules over them are provided in
+ * docs/alert-rules.yml with docs/runbook.md (loaded by an operator's
+ * own Prometheus — no Alertmanager is deployed or bundled; see the
+ * README observability row).
  */
 @Component
 public class OrderMetrics {

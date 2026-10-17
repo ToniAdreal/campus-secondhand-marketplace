@@ -1,0 +1,96 @@
+# Prometheus alert rules for campus-secondhand-marketplace (backlog #184).
+#
+# Load this file from a Prometheus server that already scrapes the
+# backend's /actuator/prometheus endpoint (see docs/smoke-test.md for the
+# scrape target). This repo PROVIDES the rules and the runbook
+# (docs/runbook.md); it does not deploy or bundle Prometheus or
+# Alertmanager, and no alert fires anywhere until an operator loads this
+# file into their own Prometheus.
+#
+# Every metric referenced below is one this application actually emits:
+# - auth_* / orders_* / payments_* counters are defined in
+#   AuthMetrics / OrderMetrics / WebhookMetrics (backend, Micrometer);
+#   dots in the Micrometer names become underscores in the Prometheus
+#   export and counters carry the _total suffix.
+# - http_server_requests_seconds_count is Spring Boot's http.server.requests
+#   timer, part of the same export (documented in docs/smoke-test.md).
+# AlertRulesContractTest pins this list: a rule that references a metric
+# the app does not emit fails the backend test suite.
+#
+# Thresholds are conservative starting points for a small deployment,
+# chosen by judgement — they are not tuned against production traffic
+# (this is a portfolio/reconstruction project; there is none).
+groups:
+  - name: campus-marketplace
+    rules:
+      - alert: AuthLoginFailureRateHigh
+        expr: |
+          sum(rate(auth_login_failure_total[10m]))
+            / clamp_min(sum(rate(auth_login_failure_total[10m]))
+                        + sum(rate(auth_login_success_total[10m])), 0.001)
+          > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than half of login attempts are failing"
+          description: "Over the last 10 minutes, auth.login.failure grew faster than auth.login.success. This can be a credential-stuffing attempt, a broken client, or an auth regression."
+          runbook_url: "docs/runbook.md#authloginfailureratehigh"
+      - alert: AuthLockoutSurge
+        expr: |
+          sum(increase(auth_lockout_triggered_total[15m])) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Account lockouts are being triggered repeatedly"
+          description: "auth.lockout.triggered fired at least 3 times in 15 minutes. Lockouts fire once per lock transition, so this means several accounts crossed the failed-login threshold."
+          runbook_url: "docs/runbook.md#authlockoutsurge"
+      - alert: AuthRefreshTheftDetected
+        expr: |
+          sum(increase(auth_refresh_theft_detected_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Refresh-token theft detection revoked a user's sessions"
+          description: "auth.refresh.theft_detected incremented: a replaced refresh token was replayed after the grace window and the whole token family was revoked. Any single occurrence is worth investigating."
+          runbook_url: "docs/runbook.md#authrefreshtheftdetected"
+      - alert: PaymentDeclineRateHigh
+        expr: |
+          sum(rate(payments_declined_total[15m]))
+            / clamp_min(sum(rate(payments_declined_total[15m]))
+                        + sum(rate(orders_paid_total[15m])), 0.001)
+          > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A large share of payment captures are being declined"
+          description: "payments.declined (mock-PSP capture declines; the order stays PENDING) is growing fast relative to orders.paid (fresh PENDING to PAID transitions). The ratio is declines / (declines + paid)."
+          runbook_url: "docs/runbook.md#paymentdeclineratehigh"
+      - alert: WebhookMismatchRateHigh
+        expr: |
+          sum(rate(payments_webhook_mismatched_total[15m]))
+            / clamp_min(sum(rate(payments_webhook_mismatched_total[15m]))
+                        + sum(rate(payments_webhook_matched_total[15m])), 0.001)
+          > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mock-PSP webhook deliveries are failing to reconcile"
+          description: "payments.webhook.mismatched is growing relative to payments.webhook.matched: the synchronous payment path and the webhook path disagree about order state or references."
+          runbook_url: "docs/runbook.md#webhookmismatchratehigh"
+      - alert: Http5xxRateHigh
+        expr: |
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[10m]))
+            / clamp_min(sum(rate(http_server_requests_seconds_count[10m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of HTTP responses are 5xx"
+          description: "The http.server.requests series shows a rising share of 5xx responses. 5xx responses in this app are the {code,message,data} error envelope's server-error cases; client errors (4xx) do not count here."
+          runbook_url: "docs/runbook.md#http5xxratehigh"
