@@ -4,12 +4,48 @@ import { MemoryRouter } from 'react-router-dom';
 import MyListingsPage from './MyListingsPage';
 import type { Item, Page } from '../api/items';
 import type { AuthUser } from '../api/auth';
+import type { SellerReport } from '../api/appeals';
 import { useAuthStore } from '../store/useAuthStore';
 
 let mockPage: Page<Item> = { content: [], totalElements: 0, totalPages: 0, number: 0 };
 const requestedPages: number[] = [];
 
 const renewCalls: number[] = [];
+
+let mockSellerReports: Page<SellerReport> = {
+  content: [],
+  totalElements: 0,
+  totalPages: 0,
+  number: 0,
+};
+const appealCalls: { reportId: number; reason: string }[] = [];
+
+vi.mock('../api/appeals', () => ({
+  useSellerReports: () => ({
+    data: mockSellerReports,
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+  }),
+  useCreateAppeal: () => ({
+    mutate: (
+      input: { reportId: number; reason: string },
+      opts?: { onError?: (e: unknown) => void; onSuccess?: () => void },
+    ) => {
+      appealCalls.push(input);
+      // Mirror the server: a fresh appeal lands OPEN on the report.
+      mockSellerReports = {
+        ...mockSellerReports,
+        content: mockSellerReports.content.map((r) =>
+          r.id === input.reportId ? { ...r, appealId: 55, appealStatus: 'OPEN' as const } : r,
+        ),
+      };
+      opts?.onSuccess?.();
+    },
+    isLoading: false,
+  }),
+  describeAppealError: () => 'appeal failed',
+}));
 
 vi.mock('../api/items', () => ({
   useMyListings: (page = 0) => {
@@ -103,8 +139,10 @@ function renderPage() {
 describe('MyListingsPage (#146)', () => {
   beforeEach(() => {
     mockPage = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockSellerReports = { content: [], totalElements: 0, totalPages: 0, number: 0 };
     requestedPages.length = 0;
     renewCalls.length = 0;
+    appealCalls.length = 0;
     useAuthStore.setState({ user: seller });
   });
 
@@ -185,5 +223,90 @@ describe('MyListingsPage (#146)', () => {
     expect(screen.getByRole('link', { name: /sell an item/i }).getAttribute('href')).toBe(
       '/items/new',
     );
+  });
+
+  const withdrawnLamp: Item = {
+    id: 11,
+    title: 'Withdrawn lamp',
+    description: 'Taken down by moderation',
+    priceCents: 1500,
+    status: 'WITHDRAWN',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  const actionedReport: SellerReport = {
+    id: 21,
+    itemId: 11,
+    reason: 'SCAM',
+    status: 'ACTIONED',
+    createdAt: '2026-10-17T10:00:00Z',
+    appealId: null,
+    appealStatus: null,
+    appealListingRestored: null,
+  };
+
+  it('a withdrawn-by-report listing offers an appeal and files it with the typed reason (#190)', () => {
+    mockPage = { content: [withdrawnLamp], totalElements: 1, totalPages: 1, number: 0 };
+    mockSellerReports = {
+      content: [actionedReport],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+    renderPage();
+
+    expect(screen.getByText(/withdrawn after a report was actioned/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/appeal reason/i), {
+      target: { value: 'this is my own textbook' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /appeal withdrawal/i }));
+    expect(appealCalls).toEqual([{ reportId: 21, reason: 'this is my own textbook' }]);
+  });
+
+  it('an open appeal renders as pending and offers no second appeal form (#190)', () => {
+    mockPage = { content: [withdrawnLamp], totalElements: 1, totalPages: 1, number: 0 };
+    mockSellerReports = {
+      content: [{ ...actionedReport, appealId: 55, appealStatus: 'OPEN' }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+    renderPage();
+
+    expect(screen.getByText(/appeal pending/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /appeal withdrawal/i })).toBeNull();
+  });
+
+  it('a rejected appeal states that the withdrawal stands (#190)', () => {
+    mockPage = { content: [withdrawnLamp], totalElements: 1, totalPages: 1, number: 0 };
+    mockSellerReports = {
+      content: [{ ...actionedReport, appealId: 55, appealStatus: 'REJECTED' }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+    renderPage();
+
+    expect(screen.getByText(/appeal rejected — the withdrawal stands/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /appeal withdrawal/i })).toBeNull();
+  });
+
+  it('no appeal surface renders without an actioned report (#190)', () => {
+    mockPage = { content: [soldLamp], totalElements: 1, totalPages: 1, number: 0 };
+    mockSellerReports = {
+      content: [{ ...actionedReport, itemId: 7, status: 'OPEN' }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+    renderPage();
+
+    expect(screen.queryByText(/withdrawn after a report was actioned/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /appeal withdrawal/i })).toBeNull();
   });
 });

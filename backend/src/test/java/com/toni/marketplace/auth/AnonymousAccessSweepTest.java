@@ -87,6 +87,9 @@ class AnonymousAccessSweepTest {
 
   /** Every controller operation, as {@code "METHOD /path"}, from the OpenAPI doc. */
   private static final Set<String> EXPECTED_OPERATIONS = Set.of(
+      "GET /api/admin/appeals",
+      "POST /api/admin/appeals/{id}/uphold",
+      "POST /api/admin/appeals/{id}/reject",
       "GET /api/admin/audit-log",
       "GET /api/admin/disputes",
       "POST /api/admin/disputes/{id}/resolve-refund",
@@ -164,6 +167,10 @@ class AnonymousAccessSweepTest {
       "POST /api/orders/{id}/pay",
       "GET /api/orders/{id}/receipt",
       "POST /api/orders/{id}/refund",
+      "GET /api/seller/reports",
+      "POST /api/seller/reports/{id}/appeal",
+      "GET /api/seller/reports/{id}/appeal",
+      "GET /api/seller/appeals",
       "GET /api/seller/orders",
       "GET /api/seller/orders/{id}",
       "GET /api/seller/orders/summary",

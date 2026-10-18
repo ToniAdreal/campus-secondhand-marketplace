@@ -35,6 +35,9 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
 
   List<Item> findByStatus(ItemStatus status);
 
+  /** Every listing of one seller, any status — the seller report-appeal surface (#190). */
+  List<Item> findBySellerId(Long sellerId);
+
   /**
    * One seller's listings in one status — the account-closure sweep
    * (backlog #158) flips exactly the caller's {@code AVAILABLE} rows to

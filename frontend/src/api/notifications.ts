@@ -15,7 +15,9 @@ export type NotificationType =
   | 'DISPUTE_RESOLVED_RELEASE'
   | 'LOGIN_NEW_DEVICE'
   | 'SAVED_SEARCH_MATCH'
-  | 'FAVORITE_PRICE_DROP';
+  | 'FAVORITE_PRICE_DROP'
+  | 'REPORT_APPEAL_UPHELD'
+  | 'REPORT_APPEAL_REJECTED';
 
 export interface Notification {
   id: number;
@@ -34,6 +36,8 @@ export interface Notification {
   oldPriceCents: number | null;
   /** The listing's price after the drop on a FAVORITE_PRICE_DROP row (#189). */
   newPriceCents: number | null;
+  /** The appeal a REPORT_APPEAL_* row names; null otherwise (#190). */
+  appealId: number | null;
   createdAt: string;
   /** When the recipient marked it read; null while unread (#157). */
   readAt: string | null;
@@ -96,6 +100,13 @@ export function describeNotification(
         ? '1 new listing matches your saved search.'
         : `${count} new listings match your saved search.`;
     }
+    case 'REPORT_APPEAL_UPHELD':
+      // Backlog #190: deliberately generic — whether the listing was
+      // actually restored lives on the appeal (listingRestored), so
+      // this line never claims a restoration that did not happen.
+      return 'Your appeal was upheld.';
+    case 'REPORT_APPEAL_REJECTED':
+      return 'Your appeal was rejected — the withdrawal stands.';
     case 'FAVORITE_PRICE_DROP': {
       // Backlog #189: the row carries both prices — the copy states
       // them; without them (defensive) it still says what happened.

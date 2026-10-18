@@ -118,6 +118,21 @@ public class NotificationService {
         Notification.favoritePriceDrop(recipientId, itemId, oldPriceCents, newPriceCents));
   }
 
+  /**
+   * Report-appeal resolution variant (backlog #190): one row for the
+   * appealing seller per resolution, carrying the appeal id. Same
+   * transaction contract as {@link #record} — the save joins the
+   * resolution's transaction, so a rolled-back (or 409-losing)
+   * resolution writes no row, and the idempotent re-resolve returns
+   * before reaching here.
+   */
+  public void recordReportAppeal(Long recipientId, NotificationType type, Long appealId) {
+    if (notifications == null) {
+      return;
+    }
+    notifications.save(Notification.reportAppeal(recipientId, type, appealId));
+  }
+
   /** The caller's own notifications, paginated (controller supplies newest-first). */
   @Transactional(readOnly = true)
   public Page<NotificationDto> list(Long recipientId, Pageable pageable) {

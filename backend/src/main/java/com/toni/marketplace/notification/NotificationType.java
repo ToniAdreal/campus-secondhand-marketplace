@@ -39,5 +39,19 @@ public enum NotificationType {
    * The row carries the listing id and the old/new prices — the
    * recipient's favorite-time snapshot and the listing's new price.
    */
-  FAVORITE_PRICE_DROP
+  FAVORITE_PRICE_DROP,
+  /**
+   * An ADMIN upheld the recipient's appeal of an ACTIONED report
+   * (backlog #190). The row carries the appeal id; the copy is
+   * deliberately generic — whether the listing was actually restored
+   * lives on the appeal row ({@code listingRestored}), so the
+   * notification never claims a restoration that did not happen.
+   */
+  REPORT_APPEAL_UPHELD,
+  /**
+   * An ADMIN rejected the recipient's appeal of an ACTIONED report
+   * (backlog #190); the withdrawal stands. The row carries the
+   * appeal id.
+   */
+  REPORT_APPEAL_REJECTED
 }

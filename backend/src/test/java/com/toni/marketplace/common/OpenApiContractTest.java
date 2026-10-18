@@ -54,6 +54,9 @@ class OpenApiContractTest {
 
   /** Every path the nine controllers expose, as springdoc renders them. */
   private static final Set<String> EXPECTED_PATHS = Set.of(
+      "/api/admin/appeals",
+      "/api/admin/appeals/{id}/reject",
+      "/api/admin/appeals/{id}/uphold",
       "/api/admin/audit-log",
       "/api/admin/disputes",
       "/api/admin/disputes/{id}/resolve-refund",
@@ -123,9 +126,12 @@ class OpenApiContractTest {
       "/api/orders/{id}/pay",
       "/api/orders/{id}/receipt",
       "/api/orders/{id}/refund",
+      "/api/seller/appeals",
       "/api/seller/orders",
       "/api/seller/orders/{id}",
       "/api/seller/orders/summary",
+      "/api/seller/reports",
+      "/api/seller/reports/{id}/appeal",
       "/api/seller/sales/export.csv",
       "/api/users/me/export",
       "/api/users/me/export/confirm",
@@ -342,5 +348,18 @@ class OpenApiContractTest {
     // code, as on the live receiver) and the unknown-id 404.
     assertThat(responseCodes(docs, "/api/admin/payments/webhooks/{id}/replay", "post"))
         .contains("401", "403", "404");
+    // Report appeals (#190): filing pins its seller-only 403, unknown
+    // report 404 and the not-ACTIONED / already-resolved 422; the ADMIN
+    // queue pins 403 for non-admins and the resolutions pin the
+    // unknown-appeal 404, the version-conflict 409 and the
+    // cross-resolution 422.
+    assertThat(responseCodes(docs, "/api/seller/reports/{id}/appeal", "post"))
+        .contains("400", "401", "403", "404", "422");
+    assertThat(responseCodes(docs, "/api/admin/appeals", "get"))
+        .contains("401", "403");
+    assertThat(responseCodes(docs, "/api/admin/appeals/{id}/uphold", "post"))
+        .contains("401", "403", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/admin/appeals/{id}/reject", "post"))
+        .contains("401", "403", "404", "409", "422");
   }
 }

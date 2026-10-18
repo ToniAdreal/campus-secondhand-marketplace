@@ -44,6 +44,7 @@ const paidNotification: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -166,5 +167,10 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('SAVED_SEARCH_MATCH', 1)).toBe(
       '1 new listing matches your saved search.',
     );
+    // #190: appeal copy is generic — it never claims the listing was
+    // restored (that fact lives on the appeal's listingRestored).
+    expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');
+    expect(describeNotification('REPORT_APPEAL_UPHELD')).not.toMatch(/restored/i);
+    expect(describeNotification('REPORT_APPEAL_REJECTED')).toMatch(/withdrawal stands/i);
   });
 });

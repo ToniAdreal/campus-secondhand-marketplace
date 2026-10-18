@@ -109,6 +109,14 @@ export default function NotificationsPage() {
                         View saved searches
                       </Link>
                     )
+                  ) : notification.type === 'REPORT_APPEAL_UPHELD' ||
+                    notification.type === 'REPORT_APPEAL_REJECTED' ? (
+                    // Backlog #190: the row names the appeal, not an
+                    // order — the seller's appeal state lives on the
+                    // My listings surface.
+                    <Link to="/my-listings" className="text-blue-600 hover:underline">
+                      View your listings
+                    </Link>
                   ) : notification.type === 'FAVORITE_PRICE_DROP' ? (
                     // Backlog #189: the row names the listing, not an
                     // order — link to the listing at its new price.

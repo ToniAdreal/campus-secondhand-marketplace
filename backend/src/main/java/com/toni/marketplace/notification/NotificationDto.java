@@ -22,6 +22,8 @@ public record NotificationDto(
     Long oldPriceCents,
     /** The listing's price after the drop (backlog #189); null otherwise. */
     Long newPriceCents,
+    /** The appeal a REPORT_APPEAL_* row names (backlog #190); null otherwise. */
+    Long appealId,
     Instant createdAt,
     Instant readAt) {
 
@@ -36,6 +38,7 @@ public record NotificationDto(
         notification.getItemId(),
         notification.getOldPriceCents(),
         notification.getNewPriceCents(),
+        notification.getAppealId(),
         notification.getCreatedAt(),
         notification.getReadAt());
   }

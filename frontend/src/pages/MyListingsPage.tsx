@@ -8,6 +8,12 @@ import {
   useMyListings,
   useRenewListing,
 } from '../api/items';
+import {
+  describeAppealError,
+  useCreateAppeal,
+  useSellerReports,
+  type SellerReport,
+} from '../api/appeals';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -27,12 +33,28 @@ export default function MyListingsPage() {
   const listings = useMyListings(page);
   const renew = useRenewListing();
   const [renewError, setRenewError] = useState<string | null>(null);
+  // Report appeals (backlog #190): reports on the caller's own
+  // listings, each with its appeal state — an ACTIONED report is what
+  // withdrew a listing, and its appeal is the seller's recourse.
+  const sellerReports = useSellerReports(user !== null);
+  const createAppeal = useCreateAppeal();
+  const [appealReasons, setAppealReasons] = useState<Record<number, string>>({});
+  const [appealError, setAppealError] = useState<string | null>(null);
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
   const data = listings.data;
+  const actionedReportsByItem = new Map<number, SellerReport[]>();
+  for (const report of sellerReports.data?.content ?? []) {
+    if (report.status !== 'ACTIONED') {
+      continue;
+    }
+    const existing = actionedReportsByItem.get(report.itemId) ?? [];
+    existing.push(report);
+    actionedReportsByItem.set(report.itemId, existing);
+  }
 
   return (
     <div>
@@ -46,6 +68,11 @@ export default function MyListingsPage() {
       {renewError && (
         <p role="alert" className="text-red-600">
           {renewError}
+        </p>
+      )}
+      {appealError && (
+        <p role="alert" className="text-red-600">
+          {appealError}
         </p>
       )}
       {listings.isSuccess && data && data.content.length === 0 && (
@@ -117,6 +144,74 @@ export default function MyListingsPage() {
                       Renew listing
                     </button>
                   )}
+                  {(actionedReportsByItem.get(item.id) ?? []).map((report) => (
+                    <div key={report.id} className="mt-2 rounded bg-red-50 p-3 text-sm">
+                      <p className="text-red-700">
+                        This listing was withdrawn after a report was actioned.
+                      </p>
+                      {report.appealStatus === null && (
+                        <>
+                          <label
+                            htmlFor={`appeal-reason-${report.id}`}
+                            className="mt-2 block text-xs font-medium text-neutral-700"
+                          >
+                            Why should this decision be reconsidered?
+                          </label>
+                          <textarea
+                            id={`appeal-reason-${report.id}`}
+                            aria-label="Appeal reason"
+                            value={appealReasons[report.id] ?? ''}
+                            onChange={(e) =>
+                              setAppealReasons((prev) => ({
+                                ...prev,
+                                [report.id]: e.target.value,
+                              }))
+                            }
+                            maxLength={500}
+                            rows={3}
+                            className="mt-1 w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+                          />
+                          <button
+                            type="button"
+                            disabled={createAppeal.isLoading}
+                            onClick={() => {
+                              setAppealError(null);
+                              createAppeal.mutate(
+                                {
+                                  reportId: report.id,
+                                  reason: (appealReasons[report.id] ?? '').trim(),
+                                },
+                                {
+                                  onError: (error) =>
+                                    setAppealError(describeAppealError(error)),
+                                },
+                              );
+                            }}
+                            className="mt-2 block rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            Appeal withdrawal
+                          </button>
+                        </>
+                      )}
+                      {report.appealStatus === 'OPEN' && (
+                        <p className="mt-1 text-neutral-600">
+                          Appeal pending — an admin is reviewing this withdrawal.
+                        </p>
+                      )}
+                      {report.appealStatus === 'UPHELD' && (
+                        <p className="mt-1 text-emerald-700">
+                          {report.appealListingRestored
+                            ? 'Appeal upheld — this listing was restored.'
+                            : 'Appeal upheld — the listing had already moved on, so it was left as it was.'}
+                        </p>
+                      )}
+                      {report.appealStatus === 'REJECTED' && (
+                        <p className="mt-1 text-neutral-600">
+                          Appeal rejected — the withdrawal stands.
+                        </p>
+                      )}
+                    </div>
+                  ))}
                   <Link
                     to={`/items/${item.id}`}
                     className="text-sm text-blue-600 hover:underline"

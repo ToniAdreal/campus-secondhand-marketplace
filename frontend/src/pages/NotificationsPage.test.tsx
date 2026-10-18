@@ -87,6 +87,7 @@ const unreadPaid: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -101,6 +102,7 @@ const newDeviceAlert: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T06:00:00Z',
   readAt: null,
 };
@@ -115,6 +117,7 @@ const readCompleted: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T07:00:00Z',
   readAt: '2026-10-13T07:30:00Z',
 };
@@ -129,6 +132,7 @@ const priceDrop: Notification = {
   itemId: 77,
   oldPriceCents: 10000,
   newPriceCents: 8000,
+  appealId: null,
   createdAt: '2026-10-13T10:00:00Z',
   readAt: null,
 };
@@ -143,6 +147,7 @@ const savedSearchMatch: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T09:00:00Z',
   readAt: null,
 };

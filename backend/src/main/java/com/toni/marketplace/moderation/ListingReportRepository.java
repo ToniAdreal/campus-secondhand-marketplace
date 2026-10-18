@@ -18,4 +18,12 @@ public interface ListingReportRepository extends JpaRepository<ListingReport, Lo
 
   /** The ADMIN queue narrowed to one status; the service supplies newest-first sort. */
   Page<ListingReport> findByStatus(ReportStatus status, Pageable pageable);
+
+  /**
+   * Reports filed against a set of listings — the seller-facing list
+   * behind GET /api/seller/reports (backlog #190): the service
+   * resolves the caller's own listing ids first, so this query can
+   * never be pointed at another seller's reports.
+   */
+  Page<ListingReport> findByItemIdIn(java.util.List<Long> itemIds, Pageable pageable);
 }

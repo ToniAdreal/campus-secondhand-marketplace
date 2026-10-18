@@ -115,6 +115,25 @@ public enum AuditAction {
    */
   ORDER_DISPUTE_RESOLVED_RELEASE,
   /**
+   * The listing's seller appealed an ACTIONED report
+   * ({@code ReportAppealService.createAppeal}, backlog #190). Actor is
+   * the appealing seller. An idempotent re-file (returning the open
+   * appeal) writes no second row.
+   */
+  REPORT_APPEAL_OPENED,
+  /**
+   * An ADMIN upheld a report appeal
+   * ({@code ReportAppealService.uphold}, backlog #190). Actor is the
+   * resolving ADMIN. An idempotent re-uphold writes no second row.
+   */
+  REPORT_APPEAL_UPHELD,
+  /**
+   * An ADMIN rejected a report appeal
+   * ({@code ReportAppealService.reject}, backlog #190). Actor is the
+   * resolving ADMIN. An idempotent re-reject writes no second row.
+   */
+  REPORT_APPEAL_REJECTED,
+  /**
    * The account holder downloaded their self-service data export
    * ({@code AccountDataExportService.export}, backlog #172). Actor and
    * target are both the account holder, mirroring

@@ -97,6 +97,15 @@ public class Notification {
   @Column(name = "new_price_cents")
   private Long newPriceCents;
 
+  /**
+   * The report appeal a REPORT_APPEAL_UPHELD / REPORT_APPEAL_REJECTED
+   * row is about (backlog #190, Flyway V50); null on every other type.
+   * A dedicated column — never the order_id column, which names an
+   * order and nothing else.
+   */
+  @Column(name = "appeal_id")
+  private Long appealId;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -145,6 +154,19 @@ public class Notification {
     return notification;
   }
 
+  /**
+   * Report-appeal resolution factory (backlog #190): no order or
+   * offer — the row names the appeal, so the SPA can link to the
+   * seller's appeal state. The type is the resolution
+   * (REPORT_APPEAL_UPHELD / REPORT_APPEAL_REJECTED).
+   */
+  public static Notification reportAppeal(Long recipientId, NotificationType type,
+                                          Long appealId) {
+    Notification notification = new Notification(recipientId, type, null, null);
+    notification.appealId = appealId;
+    return notification;
+  }
+
   @PrePersist
   void onCreate() {
     this.createdAt = Instant.now();
@@ -160,6 +182,7 @@ public class Notification {
   public Long getItemId() { return itemId; }
   public Long getOldPriceCents() { return oldPriceCents; }
   public Long getNewPriceCents() { return newPriceCents; }
+  public Long getAppealId() { return appealId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
 

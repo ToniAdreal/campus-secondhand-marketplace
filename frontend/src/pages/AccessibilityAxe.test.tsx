@@ -62,6 +62,7 @@ const fakeNotification: Notification = {
   itemId: null,
   oldPriceCents: null,
   newPriceCents: null,
+  appealId: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
