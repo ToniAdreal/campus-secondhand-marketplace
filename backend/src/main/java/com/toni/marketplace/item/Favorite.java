@@ -36,14 +36,27 @@ public class Favorite {
   @Column(name = "item_id", nullable = false)
   private Long itemId;
 
+  /**
+   * The listing's price when this save was made (backlog #189, Flyway
+   * V49) — the baseline the price-drop fan-out in {@code ItemService}
+   * compares edits against. It advances to the new price whenever a
+   * drop is notified (or baselined), so a second drop notifies again
+   * while a repeat edit at the same price stays silent. Nullable only
+   * defensively: V49 backfills every pre-existing row from the item's
+   * price at migration time and application writes always carry one.
+   */
+  @Column(name = "price_snapshot_cents")
+  private Long priceSnapshotCents;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
   protected Favorite() {}
 
-  public Favorite(Long userId, Long itemId) {
+  public Favorite(Long userId, Long itemId, Long priceSnapshotCents) {
     this.userId = userId;
     this.itemId = itemId;
+    this.priceSnapshotCents = priceSnapshotCents;
   }
 
   @PrePersist
@@ -54,5 +67,16 @@ public class Favorite {
   public Long getId() { return id; }
   public Long getUserId() { return userId; }
   public Long getItemId() { return itemId; }
+  public Long getPriceSnapshotCents() { return priceSnapshotCents; }
   public Instant getCreatedAt() { return createdAt; }
+
+  /**
+   * Moves the price baseline to {@code newPriceCents} (backlog #189):
+   * called by the price-drop fan-out in the edit's own transaction,
+   * after the drop it describes has been notified (or silently
+   * baselined) — never on a rise.
+   */
+  public void advancePriceSnapshot(long newPriceCents) {
+    this.priceSnapshotCents = newPriceCents;
+  }
 }

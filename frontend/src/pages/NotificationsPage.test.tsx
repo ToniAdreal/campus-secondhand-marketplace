@@ -84,6 +84,9 @@ const unreadPaid: Notification = {
   offerId: null,
   savedSearchId: null,
   matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -95,6 +98,9 @@ const newDeviceAlert: Notification = {
   offerId: null,
   savedSearchId: null,
   matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T06:00:00Z',
   readAt: null,
 };
@@ -106,8 +112,25 @@ const readCompleted: Notification = {
   offerId: null,
   savedSearchId: null,
   matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T07:00:00Z',
   readAt: '2026-10-13T07:30:00Z',
+};
+
+const priceDrop: Notification = {
+  id: 15,
+  type: 'FAVORITE_PRICE_DROP',
+  orderId: null,
+  offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
+  itemId: 77,
+  oldPriceCents: 10000,
+  newPriceCents: 8000,
+  createdAt: '2026-10-13T10:00:00Z',
+  readAt: null,
 };
 
 const savedSearchMatch: Notification = {
@@ -117,6 +140,9 @@ const savedSearchMatch: Notification = {
   offerId: null,
   savedSearchId: 9,
   matchedListingCount: 5,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T09:00:00Z',
   readAt: null,
 };
@@ -191,6 +217,19 @@ describe('NotificationsPage (#157)', () => {
     expect(
       screen.getByRole('link', { name: 'View matching listings' }).getAttribute('href'),
     ).toBe('/?q=vintage');
+    expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
+  });
+
+  it('a price drop states both prices and links to the listing, never to an order (#189)', () => {
+    mockPage = pageOf([priceDrop]);
+    renderPage();
+
+    expect(
+      screen.getByText('A listing you saved dropped in price from ¥100.00 to ¥80.00.'),
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'View listing' }).getAttribute('href')).toBe(
+      '/items/77',
+    );
     expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
   });
 

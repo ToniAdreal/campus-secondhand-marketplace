@@ -43,6 +43,8 @@ public class ItemService {
   private final ListingExpiryProperties listingProps;
   private final Clock clock;
   private final com.toni.marketplace.auth.UserBlockRepository blocks;
+  private final FavoriteRepository favorites;
+  private final com.toni.marketplace.notification.NotificationService notifications;
 
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
@@ -58,7 +60,9 @@ public class ItemService {
                      ItemPhotoRepository itemPhotos, ItemMapper mapper,
                      ImageStorageService imageStorage, DataSource dataSource,
                      ListingExpiryProperties listingProps, Clock clock,
-                     com.toni.marketplace.auth.UserBlockRepository blocks) {
+                     com.toni.marketplace.auth.UserBlockRepository blocks,
+                     FavoriteRepository favorites,
+                     com.toni.marketplace.notification.NotificationService notifications) {
     this.items = items;
     this.categories = categories;
     this.itemPhotos = itemPhotos;
@@ -68,6 +72,8 @@ public class ItemService {
     this.listingProps = listingProps;
     this.clock = clock;
     this.blocks = blocks;
+    this.favorites = favorites;
+    this.notifications = notifications;
   }
 
   /**
@@ -582,12 +588,15 @@ public class ItemService {
     if (request.description() != null) {
       item.setDescription(request.description());
     }
+    Long oldPriceCents = item.getPriceCents();
+    boolean priceDropped = false;
     if (request.priceCents() != null && !request.priceCents().equals(item.getPriceCents())) {
       if (item.getStatus() != ItemStatus.AVAILABLE) {
         throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
             "price is locked while the listing has a buyer");
       }
       item.setPriceCents(request.priceCents());
+      priceDropped = request.priceCents() < oldPriceCents;
     }
     if (category != null) {
       item.setCategory(category);
@@ -597,7 +606,53 @@ public class ItemService {
     // read and write surfaces here as ObjectOptimisticLockingFailureException
     // and is mapped to 409 by GlobalExceptionHandler (backlog #147).
     items.flush();
+    if (priceDropped) {
+      notifyFavoritePriceDrop(item, request.priceCents());
+    }
     return mapper.toDto(item);
+  }
+
+  /**
+   * Price-drop fan-out for saved listings (backlog #189), run inside
+   * the edit's transaction AFTER the deliberate flush above — a 409
+   * race loss throws before this point, so a failed edit notifies
+   * nobody and advances no snapshot, and a rolled-back edit takes its
+   * notification rows with it.
+   *
+   * <p>Each favoriter whose favorite-time price snapshot is above the
+   * new price gets exactly one FAVORITE_PRICE_DROP row carrying their
+   * snapshot (old) and the new price, and their snapshot advances to
+   * the new price in the same transaction: a second, deeper drop
+   * notifies again, while a repeat edit at the same price — or a
+   * rise followed by a drop that stays above the snapshot — stays
+   * silent. The seller is never notified about their own listing
+   * (their snapshot still advances, so the baseline stays honest).
+   * A legacy row without a snapshot is baselined silently at the new
+   * price. Deleting the favorite removes the row, so an unsaved
+   * listing can never notify. Null-guarded like {@link
+   * #blockedSellerIds}: direct unit tests built without the favorite
+   * store or the notification service skip the fan-out.
+   */
+  private void notifyFavoritePriceDrop(Item item, long newPriceCents) {
+    if (favorites == null || notifications == null) {
+      return;
+    }
+    for (Favorite favorite : favorites.findByItemId(item.getId())) {
+      Long snapshot = favorite.getPriceSnapshotCents();
+      if (snapshot == null) {
+        favorite.advancePriceSnapshot(newPriceCents);
+        continue;
+      }
+      if (snapshot <= newPriceCents) {
+        continue;
+      }
+      favorite.advancePriceSnapshot(newPriceCents);
+      if (favorite.getUserId().equals(item.getSellerId())) {
+        continue;
+      }
+      notifications.recordFavoritePriceDrop(
+          favorite.getUserId(), item.getId(), snapshot, newPriceCents);
+    }
   }
 
   /**

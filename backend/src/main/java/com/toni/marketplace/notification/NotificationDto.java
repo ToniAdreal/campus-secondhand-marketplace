@@ -16,6 +16,12 @@ public record NotificationDto(
     Long savedSearchId,
     /** Batched new-match count on a SAVED_SEARCH_MATCH row (backlog #182); null otherwise. */
     Integer matchedListingCount,
+    /** The listing a FAVORITE_PRICE_DROP row names (backlog #189); null otherwise. */
+    Long itemId,
+    /** The favoriter's snapshot before the drop (backlog #189); null otherwise. */
+    Long oldPriceCents,
+    /** The listing's price after the drop (backlog #189); null otherwise. */
+    Long newPriceCents,
     Instant createdAt,
     Instant readAt) {
 
@@ -27,6 +33,9 @@ public record NotificationDto(
         notification.getOfferId(),
         notification.getSavedSearchId(),
         notification.getMatchedListingCount(),
+        notification.getItemId(),
+        notification.getOldPriceCents(),
+        notification.getNewPriceCents(),
         notification.getCreatedAt(),
         notification.getReadAt());
   }

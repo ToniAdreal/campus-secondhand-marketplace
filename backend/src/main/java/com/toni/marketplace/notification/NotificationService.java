@@ -101,6 +101,23 @@ public class NotificationService {
         Notification.savedSearchMatch(recipientId, savedSearchId, matchedListingCount));
   }
 
+  /**
+   * Favorite price-drop variant (backlog #189): one row per favoriter
+   * whose price snapshot is above the listing's new price, carrying
+   * the listing id and both prices. Same transaction contract as
+   * {@link #record} — the save joins the price edit's transaction, so
+   * a rolled-back (or 409-losing) edit writes no row and advances no
+   * snapshot.
+   */
+  public void recordFavoritePriceDrop(Long recipientId, Long itemId,
+                                      long oldPriceCents, long newPriceCents) {
+    if (notifications == null) {
+      return;
+    }
+    notifications.save(
+        Notification.favoritePriceDrop(recipientId, itemId, oldPriceCents, newPriceCents));
+  }
+
   /** The caller's own notifications, paginated (controller supplies newest-first). */
   @Transactional(readOnly = true)
   public Page<NotificationDto> list(Long recipientId, Pageable pageable) {

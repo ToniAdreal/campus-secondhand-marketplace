@@ -41,6 +41,9 @@ const paidNotification: Notification = {
   offerId: null,
   savedSearchId: null,
   matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };
@@ -149,6 +152,13 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/new sign-in/i);
     expect(describeNotification('LOGIN_NEW_DEVICE')).toMatch(/revoke your sessions/i);
     expect(describeNotification('LOGIN_NEW_DEVICE')).not.toMatch(/blocked/i);
+    // #189: the price-drop line states the old (snapshot) and new prices.
+    expect(describeNotification('FAVORITE_PRICE_DROP', null, 10000, 8000)).toBe(
+      'A listing you saved dropped in price from ¥100.00 to ¥80.00.',
+    );
+    expect(describeNotification('FAVORITE_PRICE_DROP')).toBe(
+      'A listing you saved dropped in price.',
+    );
     // #182: the batched saved-search line carries its match count.
     expect(describeNotification('SAVED_SEARCH_MATCH', 5)).toBe(
       '5 new listings match your saved search.',

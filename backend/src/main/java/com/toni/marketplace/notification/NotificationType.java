@@ -33,5 +33,11 @@ public enum NotificationType {
    * the row carries the saved-search id and how many new listings
    * matched — never one row per listing, and no order or offer id.
    */
-  SAVED_SEARCH_MATCH
+  SAVED_SEARCH_MATCH,
+  /**
+   * A listing the recipient saved dropped in price (backlog #189).
+   * The row carries the listing id and the old/new prices — the
+   * recipient's favorite-time snapshot and the listing's new price.
+   */
+  FAVORITE_PRICE_DROP
 }

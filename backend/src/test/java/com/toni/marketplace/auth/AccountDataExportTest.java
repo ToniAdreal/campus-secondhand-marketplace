@@ -117,8 +117,10 @@ class AccountDataExportTest {
     messages.save(new Message(thirdListing.getId(), third.getId(), fourth.getId(),
         "a thread neither user is part of"));
 
-    favorites.save(new Favorite(exporter.getId(), otherListing.getId()));
-    favorites.save(new Favorite(other.getId(), exporterListing.getId()));
+    favorites.save(new Favorite(exporter.getId(), otherListing.getId(),
+        otherListing.getPriceCents()));
+    favorites.save(new Favorite(other.getId(), exporterListing.getId(),
+        exporterListing.getPriceCents()));
 
     savedSearches.save(new SavedSearch(exporter.getId(), "road bike", null, null, null,
         "newest"));

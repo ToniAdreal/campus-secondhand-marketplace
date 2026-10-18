@@ -76,7 +76,12 @@ export default function NotificationsPage() {
             >
               <div>
                 <p className="font-medium">
-                  {describeNotification(notification.type, notification.matchedListingCount)}
+                  {describeNotification(
+                    notification.type,
+                    notification.matchedListingCount,
+                    notification.oldPriceCents,
+                    notification.newPriceCents,
+                  )}
                 </p>
                 <p className="mt-1 text-sm text-neutral-500">
                   {notification.type === 'LOGIN_NEW_DEVICE' ? (
@@ -104,6 +109,17 @@ export default function NotificationsPage() {
                         View saved searches
                       </Link>
                     )
+                  ) : notification.type === 'FAVORITE_PRICE_DROP' ? (
+                    // Backlog #189: the row names the listing, not an
+                    // order — link to the listing at its new price.
+                    notification.itemId !== null ? (
+                      <Link
+                        to={`/items/${notification.itemId}`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        View listing
+                      </Link>
+                    ) : null
                   ) : notification.orderId !== null ? (
                     <Link
                       to={`/orders/${notification.orderId}`}

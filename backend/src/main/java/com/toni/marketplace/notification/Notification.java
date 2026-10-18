@@ -76,6 +76,27 @@ public class Notification {
   @Column(name = "matched_listing_count")
   private Integer matchedListingCount;
 
+  /**
+   * The listing a FAVORITE_PRICE_DROP row is about (backlog #189,
+   * Flyway V49); null on every other type.
+   */
+  @Column(name = "item_id")
+  private Long itemId;
+
+  /**
+   * The recipient's favorite-time price snapshot before the drop
+   * (backlog #189); only FAVORITE_PRICE_DROP rows carry it.
+   */
+  @Column(name = "old_price_cents")
+  private Long oldPriceCents;
+
+  /**
+   * The listing's price after the drop (backlog #189); only
+   * FAVORITE_PRICE_DROP rows carry it.
+   */
+  @Column(name = "new_price_cents")
+  private Long newPriceCents;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -109,6 +130,21 @@ public class Notification {
     return notification;
   }
 
+  /**
+   * Favorite price-drop factory (backlog #189): no order or offer —
+   * the row names the listing and carries the favoriter's snapshot
+   * (old) and the listing's new price, so the SPA copy states both.
+   */
+  public static Notification favoritePriceDrop(Long recipientId, Long itemId,
+                                               long oldPriceCents, long newPriceCents) {
+    Notification notification =
+        new Notification(recipientId, NotificationType.FAVORITE_PRICE_DROP, null, null);
+    notification.itemId = itemId;
+    notification.oldPriceCents = oldPriceCents;
+    notification.newPriceCents = newPriceCents;
+    return notification;
+  }
+
   @PrePersist
   void onCreate() {
     this.createdAt = Instant.now();
@@ -121,6 +157,9 @@ public class Notification {
   public Long getOfferId() { return offerId; }
   public Long getSavedSearchId() { return savedSearchId; }
   public Integer getMatchedListingCount() { return matchedListingCount; }
+  public Long getItemId() { return itemId; }
+  public Long getOldPriceCents() { return oldPriceCents; }
+  public Long getNewPriceCents() { return newPriceCents; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
 

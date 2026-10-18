@@ -9,6 +9,13 @@ public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
 
   boolean existsByUserIdAndItemId(Long userId, Long itemId);
 
+  /**
+   * Every save of one listing (backlog #189): the price-drop fan-out
+   * loads the listing's favoriters inside the price edit's transaction
+   * and compares each row's price snapshot against the new price.
+   */
+  List<Favorite> findByItemId(Long itemId);
+
   /** Scoped by user on purpose: one user can never delete another's save. */
   void deleteByUserIdAndItemId(Long userId, Long itemId);
 

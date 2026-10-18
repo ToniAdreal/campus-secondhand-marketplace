@@ -14,7 +14,8 @@ export type NotificationType =
   | 'DISPUTE_RESOLVED_REFUND'
   | 'DISPUTE_RESOLVED_RELEASE'
   | 'LOGIN_NEW_DEVICE'
-  | 'SAVED_SEARCH_MATCH';
+  | 'SAVED_SEARCH_MATCH'
+  | 'FAVORITE_PRICE_DROP';
 
 export interface Notification {
   id: number;
@@ -27,6 +28,12 @@ export interface Notification {
   savedSearchId: number | null;
   /** Batched new-match count on a SAVED_SEARCH_MATCH row; null otherwise (#182). */
   matchedListingCount: number | null;
+  /** The listing a FAVORITE_PRICE_DROP row names; null otherwise (#189). */
+  itemId: number | null;
+  /** The saved-at snapshot before the drop on a FAVORITE_PRICE_DROP row (#189). */
+  oldPriceCents: number | null;
+  /** The listing's price after the drop on a FAVORITE_PRICE_DROP row (#189). */
+  newPriceCents: number | null;
   createdAt: string;
   /** When the recipient marked it read; null while unread (#157). */
   readAt: string | null;
@@ -38,14 +45,23 @@ export const notificationKeys = {
   unreadCount: ['notifications', 'unread-count'] as const,
 };
 
+/** Formats a cent amount the way the listing pages do (yuan, 2dp). */
+function formatYuan(cents: number): string {
+  return `¥${(cents / 100).toFixed(2)}`;
+}
+
 /**
  * Human-readable line for one notification type. The optional match
  * count only matters for SAVED_SEARCH_MATCH (#182): the row is
- * batched, so its line says how many new listings matched.
+ * batched, so its line says how many new listings matched. The
+ * optional prices only matter for FAVORITE_PRICE_DROP (#189): its
+ * line states the old (saved-at snapshot) and new prices.
  */
 export function describeNotification(
   type: NotificationType,
   matchedListingCount?: number | null,
+  oldPriceCents?: number | null,
+  newPriceCents?: number | null,
 ): string {
   switch (type) {
     case 'ORDER_PAID':
@@ -79,6 +95,14 @@ export function describeNotification(
       return count === 1
         ? '1 new listing matches your saved search.'
         : `${count} new listings match your saved search.`;
+    }
+    case 'FAVORITE_PRICE_DROP': {
+      // Backlog #189: the row carries both prices — the copy states
+      // them; without them (defensive) it still says what happened.
+      if (oldPriceCents != null && newPriceCents != null) {
+        return `A listing you saved dropped in price from ${formatYuan(oldPriceCents)} to ${formatYuan(newPriceCents)}.`;
+      }
+      return 'A listing you saved dropped in price.';
     }
     default:
       return 'Order update.';

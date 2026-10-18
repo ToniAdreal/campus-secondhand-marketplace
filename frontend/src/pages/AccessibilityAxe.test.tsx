@@ -59,6 +59,9 @@ const fakeNotification: Notification = {
   offerId: null,
   savedSearchId: null,
   matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
   createdAt: '2026-10-13T08:00:00Z',
   readAt: null,
 };

@@ -37,12 +37,16 @@ public class FavoriteService {
 
   @Transactional
   public void saveFavorite(Long userId, Long itemId) {
-    requireItem(itemId);
+    Item item = requireItem(itemId);
     if (favorites.existsByUserIdAndItemId(userId, itemId)) {
       return;
     }
     try {
-      favorites.saveAndFlush(new Favorite(userId, itemId));
+      // The save snapshots the listing's current price (backlog #189):
+      // the price-drop fan-out compares later edits against it. A
+      // re-save is the idempotent no-op above, so the original
+      // snapshot — the price at first save — is never refreshed.
+      favorites.saveAndFlush(new Favorite(userId, itemId, item.getPriceCents()));
     } catch (DataIntegrityViolationException race) {
       // A concurrent save of the same pair won the unique constraint —
       // the end state is exactly the idempotent one, so it is not an error.
@@ -67,10 +71,9 @@ public class FavoriteService {
     return withPhotos(favorites.findFavoriteListView(userId));
   }
 
-  private void requireItem(Long itemId) {
-    if (!items.existsById(itemId)) {
-      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
-    }
+  private Item requireItem(Long itemId) {
+    return items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
   }
 
   private List<ItemDto> withPhotos(List<ItemDto> dtos) {
