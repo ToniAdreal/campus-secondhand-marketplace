@@ -132,9 +132,11 @@ class OpenApiContractTest {
       "/api/users/me/favorites/{itemId}",
       "/api/users/me/saved-searches",
       "/api/users/me/saved-searches/{id}",
+      "/api/users/{id}/block",
       "/api/users/{id}/listings",
       "/api/users/{id}/profile",
-      "/api/users/{id}/reviews");
+      "/api/users/{id}/reviews",
+      "/api/users/me/blocks");
 
   @Autowired
   private MockMvc mockMvc;
@@ -298,6 +300,14 @@ class OpenApiContractTest {
         .contains("400", "401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/users/{id}/reviews", "get"))
         .contains("200", "401", "404");
+    // User blocking (#187): block pins unknown 404 + self-block 422,
+    // unblock pins unknown 404, and the blocked list pins anonymous 401.
+    assertThat(responseCodes(docs, "/api/users/{id}/block", "post"))
+        .contains("200", "401", "404", "422");
+    assertThat(responseCodes(docs, "/api/users/{id}/block", "delete"))
+        .contains("200", "401", "404");
+    assertThat(responseCodes(docs, "/api/users/me/blocks", "get"))
+        .contains("200", "401");
     // Price offers (#168): creation pins its not-available / duplicate
     // 409 pair and its own-listing 422; the decisions pin the
     // no-existence-leak 404 and the not-PENDING 422, and accept the

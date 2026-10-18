@@ -1,7 +1,9 @@
 import { Link, useParams } from 'react-router-dom';
+import { useBlockUser, useMyBlocks, useUnblockUser } from '../api/blocks';
 import { listingPhotoUrls } from '../api/items';
 import { useSellerReviews } from '../api/reviews';
 import { useSellerListings, useSellerProfile } from '../api/sellers';
+import { useAuthStore } from '../store/useAuthStore';
 import FavoriteButton from '../components/FavoriteButton';
 
 /**
@@ -21,6 +23,15 @@ export default function SellerProfilePage() {
   const profile = useSellerProfile(sellerId);
   const listings = useSellerListings(sellerId);
   const reviews = useSellerReviews(sellerId);
+  // Blocking (backlog #187): a signed-in visitor who is not the seller
+  // can block/unblock them from this public surface. The block state
+  // derives from the one blocks query, exactly like favorites.
+  const user = useAuthStore((s) => s.user);
+  const canBlock = user !== null && user.id !== sellerId;
+  const myBlocks = useMyBlocks(canBlock);
+  const blockUser = useBlockUser();
+  const unblockUser = useUnblockUser();
+  const isBlocked = (myBlocks.data ?? []).some((b) => b.blockedId === sellerId);
 
   if (profile.isLoading) return <p>Loading seller…</p>;
   if (profile.isError || !profile.data) {
@@ -41,6 +52,26 @@ export default function SellerProfilePage() {
           ? `★ ${profile.data.averageRating.toFixed(1)} average · ${profile.data.reviewCount} review${profile.data.reviewCount === 1 ? '' : 's'}`
           : 'No reviews yet'}
       </p>
+      {canBlock &&
+        (isBlocked ? (
+          <button
+            type="button"
+            onClick={() => unblockUser.mutate(sellerId)}
+            disabled={unblockUser.isLoading}
+            className="mt-3 rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            Unblock user
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => blockUser.mutate(sellerId)}
+            disabled={blockUser.isLoading}
+            className="mt-3 rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            Block user
+          </button>
+        ))}
 
       <h2 className="mt-6 text-lg font-semibold">Reviews</h2>
       {reviews.isLoading && <p>Loading reviews…</p>}

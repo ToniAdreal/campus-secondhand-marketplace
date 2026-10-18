@@ -64,19 +64,25 @@ public class ItemController {
       @RequestParam(required = false) String sort,
       @RequestParam(required = false, defaultValue = "false") boolean mine,
       @PageableDefault(size = 20) Pageable pageable) {
-    Long sellerId = null;
+    Object principal = SecurityContextHolder.getContext().getAuthentication() == null
+        ? null
+        : SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    Long callerId = principal instanceof Long id ? id : null;
     if (mine) {
-      Object principal = SecurityContextHolder.getContext().getAuthentication() == null
-          ? null
-          : SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-      if (!(principal instanceof Long callerId)) {
+      if (callerId == null) {
         throw new org.springframework.web.server.ResponseStatusException(
             org.springframework.http.HttpStatus.UNAUTHORIZED, "unauthorized");
       }
-      sellerId = callerId;
+      // The seller management view is never block-filtered: a seller
+      // always sees their own rows (backlog #187 exclusion is a
+      // browse/search rule for other people's listings).
+      return ApiResponse.ok(itemService.listItems(
+          pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort, callerId));
     }
-    return ApiResponse.ok(itemService.listItems(
-        pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort, sellerId));
+    // Browse/search (backlog #187): listings by sellers the caller has
+    // blocked are excluded, on both the LIKE and full-text paths.
+    return ApiResponse.ok(itemService.listItemsForCaller(
+        pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort, callerId));
   }
 
   /**

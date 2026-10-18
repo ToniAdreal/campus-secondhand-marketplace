@@ -40,6 +40,18 @@ vi.mock('../api/reviews', async (importOriginal) => {
   };
 });
 
+// The block action reads the blocks hooks; stub them out (no blocks,
+// no-op mutations) so the page renders without a query client.
+vi.mock('../api/blocks', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../api/blocks')>();
+  return {
+    ...original,
+    useMyBlocks: () => ({ data: [] }),
+    useBlockUser: () => ({ mutate: () => {}, isLoading: false }),
+    useUnblockUser: () => ({ mutate: () => {}, isLoading: false }),
+  };
+});
+
 // FavoriteButton reads the favorites hooks; stub them out so the card
 // grid renders without a query client.
 vi.mock('../api/favorites', async (importOriginal) => {

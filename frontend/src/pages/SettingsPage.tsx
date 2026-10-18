@@ -13,6 +13,7 @@ import {
   type TotpSetup,
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
+import { useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -703,6 +704,15 @@ export default function SettingsPage() {
           {exportPending ? 'Preparing…' : 'Download my data'}
         </button>
       </div>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Blocked users</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Users you block cannot message you or make you offers, and their
+          listings stop appearing in your browsing and search. Existing
+          conversations and orders are never changed.
+        </p>
+        <BlockedUsersSection />
+      </div>
       <div className="mt-6 border-t border-red-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold text-red-700">Danger zone</h2>
         <p className="mb-3 text-sm text-neutral-500">
@@ -803,5 +813,40 @@ export default function SettingsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Blocked-users list (backlog #187): the caller's blocks with an
+ * unblock action per row. A failed list load degrades to the empty
+ * copy rather than breaking the settings page — the block state can
+ * always be re-read on the next visit.
+ */
+function BlockedUsersSection() {
+  const blocks = useMyBlocks();
+  const unblock = useUnblockUser();
+  const rows = blocks.data ?? [];
+  if (rows.length === 0) {
+    return <p className="text-sm text-neutral-500">You have not blocked anyone.</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {rows.map((row) => (
+        <li
+          key={row.blockedId}
+          className="flex items-center justify-between rounded bg-neutral-50 px-3 py-2"
+        >
+          <span className="text-sm font-medium">{row.blockedUsername}</span>
+          <button
+            type="button"
+            onClick={() => unblock.mutate(row.blockedId)}
+            disabled={unblock.isLoading}
+            className="rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            Unblock
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

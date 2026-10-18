@@ -42,6 +42,7 @@ public class ItemService {
   private final DataSource dataSource;
   private final ListingExpiryProperties listingProps;
   private final Clock clock;
+  private final com.toni.marketplace.auth.UserBlockRepository blocks;
 
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
@@ -56,7 +57,8 @@ public class ItemService {
   public ItemService(ItemRepository items, CategoryRepository categories,
                      ItemPhotoRepository itemPhotos, ItemMapper mapper,
                      ImageStorageService imageStorage, DataSource dataSource,
-                     ListingExpiryProperties listingProps, Clock clock) {
+                     ListingExpiryProperties listingProps, Clock clock,
+                     com.toni.marketplace.auth.UserBlockRepository blocks) {
     this.items = items;
     this.categories = categories;
     this.itemPhotos = itemPhotos;
@@ -65,6 +67,21 @@ public class ItemService {
     this.dataSource = dataSource;
     this.listingProps = listingProps;
     this.clock = clock;
+    this.blocks = blocks;
+  }
+
+  /**
+   * The sellers {@code callerId} has blocked (backlog #187), as the
+   * browse exclusion set. Null-safe by design: internal callers (the
+   * saved-search matcher, the data export, direct unit tests built
+   * without the block store) pass no caller and exclude nobody.
+   */
+  private List<Long> blockedSellerIds(Long callerId) {
+    if (callerId == null || blocks == null) {
+      return List.of();
+    }
+    List<Long> ids = blocks.findBlockedIdsByBlockerId(callerId);
+    return ids != null ? ids : List.of();
   }
 
   /**
@@ -136,15 +153,42 @@ public class ItemService {
   @Transactional(readOnly = true)
   public Page<ItemDto> listItems(Pageable pageable, Long categoryId, String keyword,
                                  Long minPriceCents, Long maxPriceCents, String sort) {
+    return listBrowse(pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort,
+        List.of());
+  }
+
+  /**
+   * Caller-aware browse (backlog #187): like the 6-arg browse, except
+   * listings by sellers the caller has blocked are excluded — on BOTH
+   * search paths (the LIKE projection and the MySQL full-text id query
+   * carry the same seller exclusion, and the full-text hydration is
+   * filtered against the same set, so no blocked seller's listing can
+   * ride either path into the page). A null caller (internal callers)
+   * excludes nobody.
+   */
+  @Transactional(readOnly = true)
+  public Page<ItemDto> listItemsForCaller(Pageable pageable, Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 Long callerId) {
+    return listBrowse(pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort,
+        blockedSellerIds(callerId));
+  }
+
+  private Page<ItemDto> listBrowse(Pageable pageable, Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 List<Long> blockedSellerIds) {
     String canonicalSort = validatePriceRangeAndSort(minPriceCents, maxPriceCents, sort);
     if (isMySql() && keyword != null && !keyword.isBlank()) {
       return searchFulltext(pageable, categoryId, keyword.trim(),
-          minPriceCents, maxPriceCents, canonicalSort);
+          minPriceCents, maxPriceCents, canonicalSort, blockedSellerIds);
     }
     Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
         sortFor(canonicalSort));
-    Page<ItemDto> page = items.findListViewFiltered(categoryId, normalizeKeyword(keyword),
-        minPriceCents, maxPriceCents, sorted);
+    Page<ItemDto> page = blockedSellerIds.isEmpty()
+        ? items.findListViewFiltered(categoryId, normalizeKeyword(keyword),
+            minPriceCents, maxPriceCents, sorted)
+        : items.findListViewFilteredExcludingSellers(categoryId, normalizeKeyword(keyword),
+            minPriceCents, maxPriceCents, blockedSellerIds, sorted);
     return new PageImpl<>(withPhotos(page.getContent()), sorted, page.getTotalElements());
   }
 
@@ -292,15 +336,25 @@ public class ItemService {
    */
   private Page<ItemDto> searchFulltext(Pageable pageable, Long categoryId, String keyword,
                                        Long minPriceCents, Long maxPriceCents,
-                                       String canonicalSort) {
+                                       String canonicalSort, List<Long> blockedSellerIds) {
     Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+    boolean excluding = blockedSellerIds != null && !blockedSellerIds.isEmpty();
     Page<Long> ids = switch (canonicalSort) {
-      case "price-asc" -> items.findIdsByFulltextPriceAsc(
-          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
-      case "price-desc" -> items.findIdsByFulltextPriceDesc(
-          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
-      default -> items.findIdsByFulltext(
-          categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+      case "price-asc" -> excluding
+          ? items.findIdsByFulltextPriceAscExcludingSellers(
+              categoryId, keyword, minPriceCents, maxPriceCents, blockedSellerIds, unsorted)
+          : items.findIdsByFulltextPriceAsc(
+              categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+      case "price-desc" -> excluding
+          ? items.findIdsByFulltextPriceDescExcludingSellers(
+              categoryId, keyword, minPriceCents, maxPriceCents, blockedSellerIds, unsorted)
+          : items.findIdsByFulltextPriceDesc(
+              categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
+      default -> excluding
+          ? items.findIdsByFulltextExcludingSellers(
+              categoryId, keyword, minPriceCents, maxPriceCents, blockedSellerIds, unsorted)
+          : items.findIdsByFulltext(
+              categoryId, keyword, minPriceCents, maxPriceCents, unsorted);
     };
     if (ids.isEmpty()) {
       return new PageImpl<>(List.of(), pageable, ids.getTotalElements());
@@ -309,12 +363,16 @@ public class ItemService {
     // seller username rides along — the entity has no user association the
     // mapper could read. One batch SELECT for the page, relevance order
     // re-applied in memory, galleries merged by withPhotos as on the LIKE
-    // path.
+    // path. The hydration is filtered against the same exclusion set
+    // (#187): the id query already excludes blocked sellers, and this
+    // belt-and-braces filter pins that no blocked seller's DTO can
+    // survive hydration even if an id somehow slipped through.
     Map<Long, ItemDto> byId = items.findListViewsByIds(ids.getContent()).stream()
         .collect(Collectors.toMap(ItemDto::id, Function.identity()));
     List<ItemDto> dtos = ids.getContent().stream()
         .map(byId::get)
         .filter(Objects::nonNull)
+        .filter(d -> !excluding || !blockedSellerIds.contains(d.sellerId()))
         .toList();
     return new PageImpl<>(withPhotos(dtos), pageable, ids.getTotalElements());
   }

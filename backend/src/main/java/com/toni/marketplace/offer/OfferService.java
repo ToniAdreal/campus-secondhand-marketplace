@@ -1,5 +1,6 @@
 package com.toni.marketplace.offer;
 
+import com.toni.marketplace.auth.UserBlockRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
@@ -80,23 +81,25 @@ public class OfferService {
   private final NotificationService notifications;
   private final OfferProperties props;
   private final Clock clock;
+  private final UserBlockRepository blocks;
 
   @Autowired
   public OfferService(PriceOfferRepository offers, ItemRepository items,
                       OrderCreationService creation, NotificationService notifications,
-                      OfferProperties props, Clock clock) {
+                      OfferProperties props, Clock clock, UserBlockRepository blocks) {
     this.offers = offers;
     this.items = items;
     this.creation = creation;
     this.notifications = notifications;
     this.props = props;
     this.clock = clock;
+    this.blocks = blocks;
   }
 
   /** Constructor for direct unit tests that do not assert on notifications. */
   public OfferService(PriceOfferRepository offers, ItemRepository items,
                       OrderCreationService creation, OfferProperties props, Clock clock) {
-    this(offers, items, creation, NotificationService.noop(), props, clock);
+    this(offers, items, creation, NotificationService.noop(), props, clock, null);
   }
 
   private Clock clock() {
@@ -124,6 +127,14 @@ public class OfferService {
     }
     if (item.getStatus() != ItemStatus.AVAILABLE) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "item is not available");
+    }
+    // Block check (backlog #187): a buyer the seller has blocked cannot
+    // open a negotiation with that seller. The 403 copy is generic —
+    // never "you are blocked" — so the blocked buyer learns nothing a
+    // stranger would not. Offers already in flight are untouched.
+    if (blocks != null && blocks.existsByBlockerIdAndBlockedId(item.getSellerId(), buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "you cannot make an offer on this listing");
     }
     if (offers.existsByItem_IdAndBuyerIdAndStatus(itemId, buyerId, OfferStatus.PENDING)) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,

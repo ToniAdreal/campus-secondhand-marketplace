@@ -345,4 +345,142 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                @Param("maxPriceCents") Long maxPriceCents,
                                Pageable pageable);
 
+  /**
+   * Block-excluding variant of {@link #findListViewFiltered} (backlog
+   * #187): the same constructor projection and predicates, plus
+   * {@code i.sellerId not in :blockedSellerIds} — listings by users the
+   * caller has blocked disappear from the caller's browse/search.
+   * Only called with a non-empty exclusion set (the service keeps the
+   * original query for the empty case, so the unblocked browse path is
+   * byte-identical to before #187).
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "and i.sellerId not in :blockedSellerIds "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')",
+      countQuery = "select count(i) from Item i "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "and i.sellerId not in :blockedSellerIds "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\')")
+  Page<ItemDto> findListViewFilteredExcludingSellers(
+                                    @Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
+                                    @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+                                    Pageable pageable);
+
+  /**
+   * Block-excluding variant of {@link #findIdsByFulltext} (backlog
+   * #187): the same native MATCH query plus
+   * {@code i.seller_id not in (:blockedSellerIds)}, so the MySQL path
+   * excludes blocked sellers' listings exactly as the LIKE path does.
+   * Only called with a non-empty exclusion set.
+   */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by match(i.title, i.description) against (:keyword in natural language mode) desc, "
+          + "i.id desc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltextExcludingSellers(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
+                               @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+                               Pageable pageable);
+
+  /** Price-ascending block-excluding variant of {@link #findIdsByFulltextPriceAsc} (#187). */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by i.price_cents asc, i.id asc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltextPriceAscExcludingSellers(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
+                               @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+                               Pageable pageable);
+
+  /** Price-descending block-excluding variant of {@link #findIdsByFulltextPriceDesc} (#187). */
+  @Query(
+      value = "select i.id from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode) "
+          + "order by i.price_cents desc, i.id desc",
+      countQuery = "select count(*) from item i "
+          + "where (:categoryId is null or i.category_id = :categoryId) "
+          + "and (:minPriceCents is null or i.price_cents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.price_cents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' "
+          + "and not (i.status = 'AVAILABLE' and i.expires_at is not null "
+          + "and i.expires_at <= now()) "
+          + "and i.seller_id not in (:blockedSellerIds) "
+          + "and match(i.title, i.description) against (:keyword in natural language mode)",
+      nativeQuery = true)
+  Page<Long> findIdsByFulltextPriceDescExcludingSellers(@Param("categoryId") Long categoryId,
+                               @Param("keyword") String keyword,
+                               @Param("minPriceCents") Long minPriceCents,
+                               @Param("maxPriceCents") Long maxPriceCents,
+                               @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+                               Pageable pageable);
+
 }

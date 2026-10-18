@@ -1,5 +1,6 @@
 package com.toni.marketplace.message;
 
+import com.toni.marketplace.auth.UserBlockRepository;
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.ItemRepository;
 import java.time.Instant;
@@ -54,12 +55,14 @@ public class MessageService {
   private final MessageRepository messages;
   private final ItemRepository items;
   private final UserRepository users;
+  private final UserBlockRepository blocks;
 
   public MessageService(MessageRepository messages, ItemRepository items,
-                        UserRepository users) {
+                        UserRepository users, UserBlockRepository blocks) {
     this.messages = messages;
     this.items = items;
     this.users = users;
+    this.blocks = blocks;
   }
 
   @Transactional
@@ -84,6 +87,15 @@ public class MessageService {
     boolean sellerReply = senderId.equals(sellerId)
         && messages.existsThreadBetween(itemId, senderId, receiverId);
     if (!buyerToSeller && !sellerReply) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "not a participant in this conversation");
+    }
+    // Block check (backlog #187): a user the receiver has blocked cannot
+    // POST to the blocker. The answer is the participant guard's exact
+    // 403 copy — never "you are blocked" — so the blocked sender learns
+    // nothing a non-participant would not also learn. Existing threads
+    // stay readable (the read path is untouched); only new sends stop.
+    if (blocks != null && blocks.existsByBlockerIdAndBlockedId(receiverId, senderId)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "not a participant in this conversation");
     }
