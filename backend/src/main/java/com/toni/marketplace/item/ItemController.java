@@ -92,6 +92,17 @@ public class ItemController {
    * 304 with an empty body and the ETag echoed. The LIST endpoint
    * deliberately stays validator-free (per-user filtered, rapidly
    * changing — the #145 scope decision).
+   *
+   * <p>View counting (backlog #186): the read counts as one view when
+   * the caller is an authenticated non-seller, non-ADMIN user (the
+   * caller's id and role are resolved here from the security context
+   * and passed down — the counting rule itself lives in
+   * {@link ItemService#getItemView(Long, Long, boolean)}). The
+   * validator is computed over the DTO WITHOUT the view counter
+   * ({@link ItemDto#withoutViewCount()}): the counter is volatile
+   * metadata that changes on every counting read, so covering it
+   * would make the ETag change per read and 304s would never hit
+   * for exactly the buyers who send them.
    */
   @GetMapping("/{id}")
   public org.springframework.http.ResponseEntity<ApiResponse<ItemDto>> get(
@@ -99,9 +110,16 @@ public class ItemController {
       @org.springframework.web.bind.annotation.RequestHeader(
               value = org.springframework.http.HttpHeaders.IF_NONE_MATCH, required = false)
           String ifNoneMatch) {
-    ItemService.ItemDetailView view = itemService.getItemView(id);
+    org.springframework.security.core.Authentication auth =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = auth != null && auth.getPrincipal() instanceof Long principalId
+        ? principalId : null;
+    boolean callerIsAdmin = auth != null && auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    ItemService.ItemDetailView view = itemService.getItemView(id, callerId, callerIsAdmin);
     String etag = EtagSupport.sha256Hex(
-        view.dto().id() + ":" + view.version() + ":" + view.updatedAt() + ":" + view.dto());
+        view.dto().id() + ":" + view.version() + ":" + view.updatedAt() + ":"
+            + view.dto().withoutViewCount());
     if (EtagSupport.matchesIfNoneMatch(ifNoneMatch, etag)) {
       return org.springframework.http.ResponseEntity
           .status(org.springframework.http.HttpStatus.NOT_MODIFIED).eTag(etag).build();

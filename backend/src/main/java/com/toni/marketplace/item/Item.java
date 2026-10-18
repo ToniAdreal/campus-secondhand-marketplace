@@ -100,6 +100,17 @@ public class Item {
   @Column(name = "expires_at")
   private Instant expiresAt;
 
+  /**
+   * Detail-read view counter (Flyway V46, backlog #186). Never written
+   * through this entity: the detail read bumps it with one atomic
+   * {@code UPDATE … SET view_count = view_count + 1} statement
+   * ({@link ItemRepository#incrementViewCount}) so concurrent readers
+   * cannot lose increments to a {@code @Version} race. This field only
+   * carries the persisted value into read mappings.
+   */
+  @Column(name = "view_count", nullable = false)
+  private long viewCount;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -145,6 +156,7 @@ public class Item {
   public List<ItemPhoto> getPhotos() { return photos; }
   public Instant getExpiresAt() { return expiresAt; }
   public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+  public long getViewCount() { return viewCount; }
 
   /**
    * True when this listing's lifetime has run out at {@code now}: only an

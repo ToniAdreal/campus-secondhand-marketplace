@@ -97,6 +97,11 @@ export default function MyListingsPage() {
                       {new Date(item.expiresAt).toLocaleDateString()}
                     </p>
                   )}
+                  {item.viewCount != null && (
+                    <p className="mt-1 text-xs text-neutral-500">
+                      {item.viewCount} {item.viewCount === 1 ? 'view' : 'views'}
+                    </p>
+                  )}
                   {(isListingExpired(item) || isListingExpiringSoon(item)) && (
                     <button
                       type="button"

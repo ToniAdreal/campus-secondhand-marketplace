@@ -252,7 +252,7 @@ public class ItemService {
             d.id(), d.title(), d.description(), d.priceCents(), d.status(),
             d.sellerId(), d.sellerUsername(), d.categoryId(), d.categoryName(),
             d.photoUrl(), d.createdAt(), d.updatedAt(),
-            byItem.getOrDefault(d.id(), List.of()), d.expiresAt()))
+            byItem.getOrDefault(d.id(), List.of()), d.expiresAt(), d.viewCount()))
         .toList();
   }
 
@@ -336,20 +336,31 @@ public class ItemService {
    * username (ad-hoc join on the raw sellerId FK); the gallery is merged
    * with the same single batch query the list view uses — two bounded
    * SELECTs total, never a per-item lookup.
+   *
+   * <p>This is the no-count read (internal callers, unit tests): view
+   * counting lives on the caller-aware path,
+   * {@link #getItemView(Long, Long, boolean)}.
    */
   @Transactional(readOnly = true)
   public ItemDto getItem(Long id) {
+    return loadDetail(id);
+  }
+
+  /**
+   * The shared detail load: projection + expiry gate + gallery merge.
+   * Listing expiry (backlog #177), lazy-on-read: a past-deadline
+   * AVAILABLE listing is gone on the public detail read the moment
+   * its deadline passes — the documented choice is 404 (identical
+   * envelope to an unknown id), not an explicit EXPIRED body: the
+   * detail page is a buyer surface, and the seller's own view of the
+   * expired row lives on the My-listings list, which still shows it.
+   * The nightly ListingExpiryService flips the stored status to
+   * EXPIRED; both paths use Item.isExpiredAt semantics, so they can
+   * never disagree on the same row.
+   */
+  private ItemDto loadDetail(Long id) {
     ItemDto dto = items.findDetailViewById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
-    // Listing expiry (backlog #177), lazy-on-read: a past-deadline
-    // AVAILABLE listing is gone on the public detail read the moment
-    // its deadline passes — the documented choice is 404 (identical
-    // envelope to an unknown id), not an explicit EXPIRED body: the
-    // detail page is a buyer surface, and the seller's own view of the
-    // expired row lives on the My-listings list, which still shows it.
-    // The nightly ListingExpiryService flips the stored status to
-    // EXPIRED; both paths use Item.isExpiredAt semantics, so they can
-    // never disagree on the same row.
     if (dto.status() == ItemStatus.EXPIRED
         || (dto.status() == ItemStatus.AVAILABLE && dto.expiresAt() != null
             && !dto.expiresAt().isAfter(clock().instant()))) {
@@ -370,7 +381,51 @@ public class ItemService {
    */
   @Transactional(readOnly = true)
   public ItemDetailView getItemView(Long id) {
-    ItemDto dto = getItem(id);
+    return detailView(loadDetail(id), id);
+  }
+
+  /**
+   * Caller-aware detail read (backlog #186): like {@link #getItemView}
+   * but the read also counts as a view when the caller is an
+   * authenticated non-seller who is not an ADMIN — the seller checking
+   * their own listing and an ADMIN moderating it are not "views", and
+   * anonymous callers never reach this read at all (the security chain
+   * requires a token for the detail route, so {@code callerId} is only
+   * null for internal callers, who likewise do not count).
+   *
+   * <p>The count is one atomic
+   * {@link ItemRepository#incrementViewCount} UPDATE inside this
+   * transaction, executed BEFORE the DTO load, so the response carries
+   * the post-increment count and two concurrent readers each land
+   * exactly one increment — no read-modify-write, no {@code @Version}
+   * race, no 409 leaking to a reader. The expiry/404 gate runs first
+   * (on the pre-increment projection): a listing that answers 404 is
+   * never counted. The counter deliberately does not bump the entity's
+   * {@code @Version} or {@code updatedAt} — it is not a listing edit —
+   * and the ETag deliberately does NOT change per view: the
+   * controller computes its validator over the DTO without the
+   * counter (see {@link ItemDto#withoutViewCount()}), so a counting
+   * read never invalidates a buyer's cached validator.
+   */
+  @Transactional
+  public ItemDetailView getItemView(Long id, Long callerId, boolean callerIsAdmin) {
+    ItemDto probe = items.findDetailViewById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (probe.status() == ItemStatus.EXPIRED
+        || (probe.status() == ItemStatus.AVAILABLE && probe.expiresAt() != null
+            && !probe.expiresAt().isAfter(clock().instant()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    boolean counts = callerId != null && !callerIsAdmin
+        && !callerId.equals(probe.sellerId());
+    if (counts) {
+      items.incrementViewCount(id);
+    }
+    return detailView(loadDetail(id), id);
+  }
+
+  /** Pairs a loaded detail DTO with the entity state its ETag derives from. */
+  private ItemDetailView detailView(ItemDto dto, Long id) {
     Item entity = items.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
     long version = entity.getVersion() == null ? 0L : entity.getVersion();
@@ -658,7 +713,7 @@ public class ItemService {
     return new ItemDto(base.id(), base.title(), base.description(), base.priceCents(),
         base.status(), base.sellerId(), base.sellerUsername(), base.categoryId(),
         base.categoryName(), base.photoUrl(), base.createdAt(), base.updatedAt(), ordered,
-        base.expiresAt());
+        base.expiresAt(), base.viewCount());
   }
 
   /**

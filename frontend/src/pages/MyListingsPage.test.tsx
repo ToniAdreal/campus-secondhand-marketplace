@@ -159,6 +159,25 @@ describe('MyListingsPage (#146)', () => {
     expect(screen.queryByRole('button', { name: /renew listing/i })).toBeNull();
   });
 
+  it('shows the view count on a row that carries one, and no views line without one (#186)', () => {
+    const viewed: Item = { ...soldLamp, viewCount: 34 };
+    mockPage = { content: [viewed, reservedBike], totalElements: 2, totalPages: 1, number: 0 };
+    renderPage();
+
+    expect(screen.getByText('34 views')).toBeTruthy();
+    // reservedBike carries no viewCount (the backend omits the key on
+    // surfaces that do not show it) — exactly one views line renders.
+    expect(screen.getAllByText(/views$/)).toHaveLength(1);
+  });
+
+  it('uses the singular for exactly one view (#186)', () => {
+    const viewedOnce: Item = { ...soldLamp, viewCount: 1 };
+    mockPage = { content: [viewedOnce], totalElements: 1, totalPages: 1, number: 0 };
+    renderPage();
+
+    expect(screen.getByText('1 view')).toBeTruthy();
+  });
+
   it('shows the empty state when the seller has no listings', () => {
     renderPage();
 

@@ -1,5 +1,6 @@
 package com.toni.marketplace.item;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.List;
 
@@ -48,7 +49,17 @@ public record ItemDto(
      * row (with this date) so the seller can renew it. Null only on
      * DTOs built from rows that predate the deadline's backfill.
      */
-    Instant expiresAt) {
+    Instant expiresAt,
+    /**
+     * Detail-read view counter (backlog #186): how many authenticated
+     * non-seller, non-ADMIN detail reads the listing has had. Carried
+     * ONLY on the detail surface and the seller's own "My listings"
+     * surface — the browse/storefront/favorites projections build their
+     * DTOs with this component null, and the component-level
+     * {@code NON_NULL} include drops the key from those payloads
+     * entirely, so browse cards never turn into a popularity contest.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL) Long viewCount) {
 
   /**
    * Legacy 11-arg form without the seller username, kept for callers that
@@ -68,7 +79,7 @@ public record ItemDto(
       Instant createdAt,
       Instant updatedAt) {
     this(id, title, description, priceCents, status, sellerId, null, categoryId,
-        categoryName, photoUrl, createdAt, updatedAt, List.of(), null);
+        categoryName, photoUrl, createdAt, updatedAt, List.of(), null, null);
   }
 
   /**
@@ -90,7 +101,7 @@ public record ItemDto(
       Instant createdAt,
       Instant updatedAt) {
     this(id, title, description, priceCents, status, sellerId, sellerUsername,
-        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), null);
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), null, null);
   }
 
   /**
@@ -114,6 +125,49 @@ public record ItemDto(
       Instant updatedAt,
       Instant expiresAt) {
     this(id, title, description, priceCents, status, sellerId, sellerUsername,
-        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), expiresAt);
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), expiresAt,
+        null);
+  }
+
+  /**
+   * Projection constructor carrying the view counter (backlog #186):
+   * only the detail projection and the seller-scoped ("My listings")
+   * projection call this 14-arg form (photos = empty, merged in
+   * afterwards by the service). Every other projection uses one of the
+   * forms above and leaves {@code viewCount} null, which the
+   * {@code NON_NULL} include then drops from the JSON.
+   */
+  public ItemDto(
+      Long id,
+      String title,
+      String description,
+      Long priceCents,
+      ItemStatus status,
+      Long sellerId,
+      String sellerUsername,
+      Long categoryId,
+      String categoryName,
+      String photoUrl,
+      Instant createdAt,
+      Instant updatedAt,
+      Instant expiresAt,
+      Long viewCount) {
+    this(id, title, description, priceCents, status, sellerId, sellerUsername,
+        categoryId, categoryName, photoUrl, createdAt, updatedAt, List.of(), expiresAt,
+        viewCount);
+  }
+
+  /**
+   * A copy of this DTO with the view counter removed (backlog #186):
+   * the detail ETag validator (#166) is computed over this form, so a
+   * counting read — which changes nothing but the counter — never
+   * invalidates the validator and a buyer's repeat read can still be
+   * answered 304. Listing-content changes keep invalidating through
+   * {@code @Version} / {@code updatedAt} / the remaining DTO fields.
+   */
+  public ItemDto withoutViewCount() {
+    return new ItemDto(id, title, description, priceCents, status, sellerId,
+        sellerUsername, categoryId, categoryName, photoUrl, createdAt,
+        updatedAt, photos, expiresAt, null);
   }
 }

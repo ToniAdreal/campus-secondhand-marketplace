@@ -42,6 +42,13 @@ export interface Item {
    * row predates the deadline's backfill.
    */
   expiresAt?: string | null;
+  /**
+   * Detail-read view counter (backlog #186): present ONLY on the detail
+   * response and on the seller's own My-listings rows — the backend
+   * omits the key entirely on browse/storefront/favorites payloads, so
+   * an absent value means "not a surface that shows views", never 0.
+   */
+  viewCount?: number | null;
 }
 
 /**

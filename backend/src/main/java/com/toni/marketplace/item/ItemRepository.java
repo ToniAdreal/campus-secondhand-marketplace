@@ -6,6 +6,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -18,6 +19,19 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
    */
   @Query("select coalesce(max(i.id), 0) from Item i")
   long findMaxId();
+
+  /**
+   * Atomically bumps a listing's view counter (backlog #186): a single
+   * {@code UPDATE … SET view_count = view_count + 1}, never a
+   * read-modify-write on the entity, so two concurrent detail reads
+   * each land exactly one increment and neither can lose the other's
+   * to an optimistic-lock {@code @Version} race (no 409 ever leaks to
+   * a reader from counting). Returns the number of rows updated (0
+   * when the listing no longer exists).
+   */
+  @Modifying
+  @Query("update Item i set i.viewCount = i.viewCount + 1 where i.id = :id")
+  int incrementViewCount(@Param("id") Long id);
 
   List<Item> findByStatus(ItemStatus status);
 
@@ -171,7 +185,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt, i.viewCount) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId "
           + "where i.sellerId = :sellerId "
@@ -216,7 +230,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   @Query(
       value = "select new com.toni.marketplace.item.ItemDto("
           + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
-          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt, i.viewCount) "
           + "from Item i left join i.category c "
           + "left join User u on u.id = i.sellerId where i.id = :id")
   Optional<ItemDto> findDetailViewById(@Param("id") Long id);

@@ -138,6 +138,11 @@ export default function ItemDetailPage() {
           </Link>
         </p>
       )}
+      {data.viewCount != null && (
+        <p className="mt-1 text-sm text-neutral-500">
+          {data.viewCount} {data.viewCount === 1 ? 'view' : 'views'}
+        </p>
+      )}
 
       <div className="mt-6">
         {canBuy && (

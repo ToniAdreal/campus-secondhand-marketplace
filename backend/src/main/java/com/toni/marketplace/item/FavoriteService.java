@@ -88,7 +88,7 @@ public class FavoriteService {
             d.id(), d.title(), d.description(), d.priceCents(), d.status(),
             d.sellerId(), d.sellerUsername(), d.categoryId(), d.categoryName(),
             d.photoUrl(), d.createdAt(), d.updatedAt(),
-            byItem.getOrDefault(d.id(), List.of()), d.expiresAt()))
+            byItem.getOrDefault(d.id(), List.of()), d.expiresAt(), d.viewCount()))
         .toList();
   }
 }

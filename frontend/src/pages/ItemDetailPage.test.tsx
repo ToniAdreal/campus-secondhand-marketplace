@@ -559,3 +559,38 @@ describe('ItemDetailPage photo gallery', () => {
     expect(container.querySelector('img')).toBeNull();
   });
 });
+
+describe('ItemDetailPage view count (backlog #186)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation(() =>
+      Promise.resolve(
+        envelope({ content: [], totalElements: 0, totalPages: 0, number: 0 }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('renders the view count the detail DTO carries', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(envelope({ ...fakeItem, viewCount: 12 }));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.getByText('12 views')).toBeTruthy();
+  });
+
+  it('renders no views line when the DTO carries no count', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    renderAt('/items/7');
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByText(/views$/)).toBeNull();
+  });
+});
