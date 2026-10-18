@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
     TotpEncryptionProperties.class, PasswordResetProperties.class,
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
-    DataExportGrantProperties.class})
+    DataExportGrantProperties.class, SessionLimitProperties.class})
 public class AuthConfig {
 
   /**

@@ -129,6 +129,18 @@ describe('SessionsPage', () => {
     expect(getSpy).toHaveBeenCalledWith('/auth/sessions');
   });
 
+  it('states the concurrent-session cap and the oldest-session eviction (#191)', async () => {
+    getSpy.mockResolvedValue(envelope([currentSession]));
+    renderAt('/settings/sessions');
+
+    await waitFor(() =>
+      expect(screen.getByText((content) => content.includes('at most 5 devices'))).toBeTruthy(),
+    );
+    expect(
+      screen.getByText((content) => content.includes('signs out your oldest session')),
+    ).toBeTruthy();
+  });
+
   it('revoking another session fires DELETE and drops only that row', async () => {
     getSpy.mockResolvedValueOnce(envelope([currentSession, otherSession]));
     // the post-revoke refetch (invalidation) sees the surviving list

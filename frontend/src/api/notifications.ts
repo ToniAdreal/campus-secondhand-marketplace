@@ -17,7 +17,8 @@ export type NotificationType =
   | 'SAVED_SEARCH_MATCH'
   | 'FAVORITE_PRICE_DROP'
   | 'REPORT_APPEAL_UPHELD'
-  | 'REPORT_APPEAL_REJECTED';
+  | 'REPORT_APPEAL_REJECTED'
+  | 'SESSION_EVICTED';
 
 export interface Notification {
   id: number;
@@ -107,6 +108,12 @@ export function describeNotification(
       return 'Your appeal was upheld.';
     case 'REPORT_APPEAL_REJECTED':
       return 'Your appeal was rejected — the withdrawal stands.';
+    case 'SESSION_EVICTED':
+      // Backlog #191: a new sign-in past the concurrent-session cap
+      // signed the oldest session out — visible, never silent. The cap
+      // named here mirrors the backend default
+      // (app.auth.max-sessions-per-user=5).
+      return 'A new sign-in signed out your oldest session — you can be signed in on at most 5 devices at once.';
     case 'FAVORITE_PRICE_DROP': {
       // Backlog #189: the row carries both prices — the copy states
       // them; without them (defensive) it still says what happened.

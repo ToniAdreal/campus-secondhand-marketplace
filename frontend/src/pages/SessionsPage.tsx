@@ -142,6 +142,13 @@ export default function SessionsPage() {
         <span className="font-medium text-neutral-700">{user.username}</span>. Revoking a
         session signs that device out; your other sessions are not affected.
       </p>
+      <p className="mb-4 text-sm text-neutral-500">
+        {/* Backlog #191: the cap named here mirrors the backend default
+            (app.auth.max-sessions-per-user=5). */}
+        You can be signed in on at most 5 devices at once. Signing in on a new device
+        beyond that limit signs out your oldest session, and a notification tells you
+        when that happens.
+      </p>
       {revokeError && (
         <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {revokeError}

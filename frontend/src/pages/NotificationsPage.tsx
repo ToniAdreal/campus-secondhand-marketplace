@@ -91,6 +91,15 @@ export default function NotificationsPage() {
                     >
                       Review your sessions and login history
                     </Link>
+                  ) : notification.type === 'SESSION_EVICTED' ? (
+                    // Backlog #191: the row names no order — what
+                    // remains signed in lives on the sessions page.
+                    <Link
+                      to="/settings/sessions"
+                      className="text-blue-600 hover:underline"
+                    >
+                      Review your sessions
+                    </Link>
                   ) : notification.type === 'SAVED_SEARCH_MATCH' ? (
                     notification.savedSearchId !== null &&
                     savedSearchById.has(notification.savedSearchId) ? (

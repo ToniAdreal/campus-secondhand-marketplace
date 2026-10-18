@@ -53,5 +53,12 @@ public enum NotificationType {
    * (backlog #190); the withdrawal stands. The row carries the
    * appeal id.
    */
-  REPORT_APPEAL_REJECTED
+  REPORT_APPEAL_REJECTED,
+  /**
+   * A successful login exceeded the account's concurrent-session cap
+   * and the oldest live session was signed out to make room (backlog
+   * #191). Carries no order, offer or device data — the sessions page
+   * is where the holder reviews what remains signed in.
+   */
+  SESSION_EVICTED
 }

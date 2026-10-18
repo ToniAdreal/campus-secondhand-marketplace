@@ -167,6 +167,11 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('SAVED_SEARCH_MATCH', 1)).toBe(
       '1 new listing matches your saved search.',
     );
+    // #191: the eviction line names the cap and the oldest session —
+    // it is a sign-out notice, never a block claim.
+    expect(describeNotification('SESSION_EVICTED')).toMatch(/oldest session/i);
+    expect(describeNotification('SESSION_EVICTED')).toMatch(/at most 5 devices/i);
+    expect(describeNotification('SESSION_EVICTED')).not.toMatch(/blocked/i);
     // #190: appeal copy is generic — it never claims the listing was
     // restored (that fact lives on the appeal's listingRestored).
     expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');

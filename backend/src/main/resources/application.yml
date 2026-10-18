@@ -142,6 +142,16 @@ app:
     # previously had no reuse guard at all) enforces identically. The
     # window slides: the sixth-oldest password is allowed again.
     password-history-size: ${APP_AUTH_PASSWORD_HISTORY_SIZE:5}
+    # Concurrent-session limit (AuthService, backlog #191): one account
+    # may hold at most this many live refresh-token families (sessions).
+    # A successful login — password or TOTP completion — that would
+    # exceed the cap revokes the OLDEST live family in the login's own
+    # transaction (family-scoped, no token_version bump: the evicted
+    # session's access token lives out its ≤15-minute TTL, its refresh
+    # cookie 401s at once) and records a SESSION_EVICTED notification
+    # for the account holder, so the sign-out is visible, never silent.
+    # A value below 1 disables enforcement.
+    max-sessions-per-user: ${APP_AUTH_MAX_SESSIONS_PER_USER:5}
     email-verification:
       # Email verification for new accounts (EmailVerificationService,
       # backlog #138): while enabled (the default), registration creates

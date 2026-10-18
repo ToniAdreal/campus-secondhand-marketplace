@@ -65,6 +65,7 @@ public class AuthService {
   private final LoginHistoryRecorder loginHistory;
   private final LoginEventRepository loginEvents;
   private final NotificationService notifications;
+  private final SessionLimitProperties sessionLimit;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -79,7 +80,8 @@ public class AuthService {
                      ItemRepository items,
                      LoginHistoryRecorder loginHistory,
                      LoginEventRepository loginEvents,
-                     NotificationService notifications) {
+                     NotificationService notifications,
+                     SessionLimitProperties sessionLimit) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -99,6 +101,7 @@ public class AuthService {
     this.loginHistory = loginHistory;
     this.loginEvents = loginEvents;
     this.notifications = notifications;
+    this.sessionLimit = sessionLimit;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -108,7 +111,8 @@ public class AuthService {
         new TotpSecretCipher(TotpEncryptionKeyStartupCheck.DEV_PLACEHOLDER_KEY),
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
-        null, new EmailVerificationProperties(), null, null, null, null, null);
+        null, new EmailVerificationProperties(), null, null, null, null, null,
+        new SessionLimitProperties());
   }
 
   /**
@@ -206,6 +210,73 @@ public class AuthService {
    */
   private NotificationService notifications() {
     return notifications != null ? notifications : NotificationService.noop();
+  }
+
+  /**
+   * Session-limit accessor with a defaults fallback, same rationale as
+   * {@link #notifications()}: a hand-built instance without the
+   * properties bean (the legacy constructor passes explicit defaults;
+   * a Mockito {@code @InjectMocks} instance may leave the field null)
+   * enforces the documented default cap of 5. Production always gets
+   * the configured bean.
+   */
+  private SessionLimitProperties sessionLimit() {
+    return sessionLimit != null ? sessionLimit : new SessionLimitProperties();
+  }
+
+  /**
+   * Concurrent-session limit with oldest-session eviction (backlog
+   * #191). Called AFTER a successful login — the password path of
+   * {@link #loginAttempt} or the TOTP exchange {@link
+   * #authenticateTotp} — has minted its new token pair, inside that
+   * login's own transaction: when the account now holds more live
+   * refresh-token families than {@code app.auth.max-sessions-per-user}
+   * (default 5), the OLDEST families are revoked until the cap holds
+   * again, through the same family-scoped {@link
+   * JwtTokenService#revokeFamily} seam as {@link #revokeOtherSessions}
+   * — deliberately no {@code tokenVersion} bump, so the evicted
+   * sessions' already-issued access tokens live out their remaining
+   * &le;15-minute TTL while their refresh cookies 401 at once.
+   *
+   * <p>Families are ordered by their founding instant
+   * ({@code familyIssuedAt}, carried across rotations), with the live
+   * row's id as the tie-break for logins minted inside the same clock
+   * tick. The just-founded family is never a candidate: a login must
+   * not sign itself out, whatever the clock did. Each eviction writes
+   * exactly one {@code SESSION_EVICTED} notification inside this
+   * transaction (the #157 write discipline — a login that rolls back
+   * leaves neither eviction nor row), carrying no IP or device data:
+   * what remains signed in is the sessions page's business. A cap
+   * below 1 disables enforcement — a misconfigured cap must never
+   * sign everybody out.
+   */
+  private void enforceSessionLimit(Long userId, JwtTokenService.TokenPair pair) {
+    int cap = sessionLimit().getMaxSessionsPerUser();
+    if (cap < 1 || jwt == null || pair == null || userId == null) {
+      return;
+    }
+    String newFamily = jwt.sessionFamilyOfToken(pair.refreshToken()).orElse(null);
+    List<RefreshToken> live = jwt.liveSessionTokens(userId, clock.instant());
+    if (live == null) {
+      return;
+    }
+    List<String> familiesOldestFirst = live.stream()
+        .sorted(Comparator.comparing(RefreshToken::getFamilyIssuedAt)
+            .thenComparing(row -> row.getId() == null ? Long.MAX_VALUE : row.getId()))
+        .map(RefreshToken::getFamilyJti)
+        .distinct()
+        .toList();
+    int excess = familiesOldestFirst.size() - cap;
+    if (excess <= 0) {
+      return;
+    }
+    List<String> candidates = familiesOldestFirst.stream()
+        .filter(family -> !family.equals(newFamily))
+        .toList();
+    for (String family : candidates.subList(0, Math.min(excess, candidates.size()))) {
+      jwt.revokeFamily(family);
+      notifications().record(userId, NotificationType.SESSION_EVICTED, null);
+    }
   }
 
   /**
@@ -526,7 +597,11 @@ public class AuthService {
     // SUCCESS row is recorded, so the pair cannot match itself.
     alertIfNewDevice(user.getId(), meta);
     recordLogin(user.getId(), usernameOrEmail, LoginOutcome.SUCCESS, meta);
-    return new LoginResult.Pair(new AuthResult(user, jwt.createTokenPair(user, meta)));
+    JwtTokenService.TokenPair pair = jwt.createTokenPair(user, meta);
+    // Backlog #191: the new family counts toward the concurrent-session
+    // cap — founding it may evict the account's oldest live family.
+    enforceSessionLimit(user.getId(), pair);
+    return new LoginResult.Pair(new AuthResult(user, pair));
   }
 
   /**
@@ -998,7 +1073,11 @@ public class AuthService {
     // order as on the plain login path.
     alertIfNewDevice(user.getId(), meta);
     recordLogin(user.getId(), user.getUsername(), LoginOutcome.SUCCESS, meta);
-    return new AuthResult(user, jwt.createTokenPair(user, meta));
+    JwtTokenService.TokenPair pair = jwt.createTokenPair(user, meta);
+    // Backlog #191: a TOTP-completed login founds a session exactly like
+    // the password path, so it counts toward (and can trigger) the cap.
+    enforceSessionLimit(user.getId(), pair);
+    return new AuthResult(user, pair);
   }
 
   /** Whole seconds until the lock expires, never below 1 (the header must be meaningful). */

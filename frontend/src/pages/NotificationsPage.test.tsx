@@ -107,6 +107,21 @@ const newDeviceAlert: Notification = {
   readAt: null,
 };
 
+const sessionEvicted: Notification = {
+  id: 16,
+  type: 'SESSION_EVICTED',
+  orderId: null,
+  offerId: null,
+  savedSearchId: null,
+  matchedListingCount: null,
+  itemId: null,
+  oldPriceCents: null,
+  newPriceCents: null,
+  appealId: null,
+  createdAt: '2026-10-13T11:00:00Z',
+  readAt: null,
+};
+
 const readCompleted: Notification = {
   id: 12,
   type: 'ORDER_COMPLETED',
@@ -209,6 +224,17 @@ describe('NotificationsPage (#157)', () => {
       screen
         .getByRole('link', { name: 'Review your sessions and login history' })
         .getAttribute('href'),
+    ).toBe('/settings/sessions');
+    expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
+  });
+
+  it('a session eviction links to sessions, never to an order (#191)', () => {
+    mockPage = pageOf([sessionEvicted]);
+    renderPage();
+
+    expect(screen.getByText(/signed out your oldest session/)).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: 'Review your sessions' }).getAttribute('href'),
     ).toBe('/settings/sessions');
     expect(screen.queryByRole('link', { name: /Order #/ })).toBeNull();
   });
