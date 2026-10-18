@@ -21,6 +21,7 @@ import {
   recoveryCodeCount,
   disableTotp,
   downloadMyData,
+  confirmDataExport,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -604,6 +605,33 @@ describe('email verification (backlog #138)', () => {
   });
 });
 
+describe('confirmDataExport (backlog #188)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts the step-up proof to /users/me/export/confirm and unwraps the grant', async () => {
+    postSpy.mockResolvedValueOnce(
+      envelope({ grant: 'grant-abc', expiresAt: '2026-10-18T05:00:00Z' }),
+    );
+
+    const result = await confirmDataExport({ currentPassword: 's3cret-pass', code: '123456' });
+
+    expect(postSpy).toHaveBeenCalledWith('/users/me/export/confirm', {
+      currentPassword: 's3cret-pass',
+      code: '123456',
+    });
+    expect(result).toEqual({ grant: 'grant-abc', expiresAt: '2026-10-18T05:00:00Z' });
+  });
+
+  it('propagates the identical 401 so the page can map a failed proof', async () => {
+    const failure = { isAxiosError: true, response: { status: 401, data: { code: 401 } } };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(confirmDataExport({ currentPassword: 'wr0ng' })).rejects.toBe(failure);
+  });
+});
+
 describe('downloadMyData (backlog #172)', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -619,9 +647,12 @@ describe('downloadMyData (backlog #172)', () => {
       },
     } as never);
 
-    const result = await downloadMyData();
+    const result = await downloadMyData('grant-abc');
 
-    expect(getSpy).toHaveBeenCalledWith('/users/me/export', { responseType: 'blob' });
+    expect(getSpy).toHaveBeenCalledWith('/users/me/export', {
+      responseType: 'blob',
+      headers: { 'X-Export-Grant': 'grant-abc' },
+    });
     expect(result.blob).toBe(blob);
     expect(result.filename).toBe('marketplace-data-user-5-2026-10-15.json');
   });
@@ -630,7 +661,7 @@ describe('downloadMyData (backlog #172)', () => {
     const blob = new Blob(['{}'], { type: 'application/json' });
     getSpy.mockResolvedValueOnce({ data: blob, headers: {} } as never);
 
-    const result = await downloadMyData();
+    const result = await downloadMyData('grant-abc');
 
     expect(result.filename).toBe('marketplace-data-export.json');
   });
@@ -639,6 +670,6 @@ describe('downloadMyData (backlog #172)', () => {
     const failure = { isAxiosError: true, response: { status: 429, data: new Blob([]) } };
     getSpy.mockRejectedValueOnce(failure);
 
-    await expect(downloadMyData()).rejects.toBe(failure);
+    await expect(downloadMyData('grant-abc')).rejects.toBe(failure);
   });
 });

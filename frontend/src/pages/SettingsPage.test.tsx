@@ -417,14 +417,28 @@ describe('SettingsPage', () => {
           } as never)
         : Promise.reject(new Error('count unavailable')),
     );
+    // Backlog #188: the step-up confirm mints the grant the download
+    // then presents; the password field must be filled first.
+    postSpy.mockResolvedValueOnce(
+      envelope({ grant: 'grant-1', expiresAt: '2026-10-15T00:05:00Z' }),
+    );
     renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('Confirm your password'), {
+      target: { value: 's3cret-pass' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
 
     const status = await screen.findByRole('status');
     expect(status.textContent).toBe(
       'Your data was downloaded as marketplace-data-user-5-2026-10-15.json.',
     );
-    expect(getSpy).toHaveBeenCalledWith('/users/me/export', { responseType: 'blob' });
+    expect(postSpy).toHaveBeenCalledWith('/users/me/export/confirm', {
+      currentPassword: 's3cret-pass',
+    });
+    expect(getSpy).toHaveBeenCalledWith('/users/me/export', {
+      responseType: 'blob',
+      headers: { 'X-Export-Grant': 'grant-1' },
+    });
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(anchorClick).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-export');
@@ -437,12 +451,39 @@ describe('SettingsPage', () => {
         ? Promise.reject(axiosFailure(429, 'too many requests'))
         : Promise.reject(new Error('count unavailable')),
     );
+    postSpy.mockResolvedValueOnce(
+      envelope({ grant: 'grant-1', expiresAt: '2026-10-15T00:05:00Z' }),
+    );
     renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('Confirm your password'), {
+      target: { value: 's3cret-pass' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe(
       'Too many downloads in a row — wait a minute, then try again.',
     );
+  });
+
+  it('stops at the step-up confirm when the password is wrong (backlog #188)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('Confirm your password'), {
+      target: { value: 'wr0ng-pass' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe(
+      'That password or code did not check out — check it and try again.',
+    );
+    expect(postSpy).toHaveBeenCalledWith('/users/me/export/confirm', {
+      currentPassword: 'wr0ng-pass',
+    });
+    // The download itself was never attempted without a grant.
+    expect(
+      getSpy.mock.calls.some((call) => String(call[0]).includes('/users/me/export')),
+    ).toBe(false);
   });
 });

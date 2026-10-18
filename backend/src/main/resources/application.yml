@@ -173,6 +173,15 @@ app:
       # endpoints are rate-limited per IP (5/min, own bucket in
       # AuthRateLimitFilter).
       token-ttl: 30m
+    data-export:
+      # Data-export step-up grant lifetime (DataExportGrantService,
+      # backlog #188): POST /api/users/me/export/confirm re-proves the
+      # current password (plus a TOTP/recovery code when 2FA is on)
+      # and mints a single-use grant — 32 random bytes, only its
+      # SHA-256 hash stored (Flyway V48) — that GET
+      # /api/users/me/export consumes. Five minutes covers the SPA's
+      # confirm-then-download sequence and nothing more.
+      grant-ttl: 5m
     totp:
       # TOTP secret encryption at rest (TotpSecretCipher, backlog #89):
       # Base64-encoded 256-bit AES key encrypting the TOTP shared secret

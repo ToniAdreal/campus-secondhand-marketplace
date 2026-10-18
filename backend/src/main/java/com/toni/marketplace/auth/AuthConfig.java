@@ -11,7 +11,8 @@ import org.springframework.context.annotation.Configuration;
     LoginLockoutProperties.class, TotpLockoutProperties.class,
     TotpEncryptionProperties.class, PasswordResetProperties.class,
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
-    PasswordPolicyProperties.class, EmailVerificationProperties.class})
+    PasswordPolicyProperties.class, EmailVerificationProperties.class,
+    DataExportGrantProperties.class})
 public class AuthConfig {
 
   /**

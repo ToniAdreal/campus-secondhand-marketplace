@@ -71,8 +71,23 @@ class AccountDataExportRateLimitTest {
   }
 
   private void exportOnce(User asUser) throws Exception {
+    String token = jwt.createTokenPair(asUser).accessToken();
+    // Backlog #188: each successful export first mints its single-use
+    // step-up grant (the confirm route is not export-bucketed; the
+    // bucket arithmetic below is about the GET alone).
+    String confirmBody = mockMvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .post("/api/users/me/export/confirm")
+                .header("Authorization", "Bearer " + token)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"password\"}"))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    String grant = new com.fasterxml.jackson.databind.ObjectMapper()
+        .readTree(confirmBody).path("data").path("grant").asText();
     mockMvc.perform(get("/api/users/me/export")
-            .header("Authorization", "Bearer " + jwt.createTokenPair(asUser).accessToken()))
+            .header("Authorization", "Bearer " + token)
+            .header(AccountDataExportController.EXPORT_GRANT_HEADER, grant))
         .andExpect(status().isOk());
   }
 

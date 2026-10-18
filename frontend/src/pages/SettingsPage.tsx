@@ -5,6 +5,7 @@ import {
   changeEmail,
   changePassword,
   closeAccount,
+  confirmDataExport,
   disableTotp,
   downloadMyData,
   enableTotp,
@@ -93,6 +94,12 @@ function describeDataExportError(err: unknown): string {
     if (err.response?.status === 429) {
       return 'Too many downloads in a row — wait a minute, then try again.';
     }
+    if (err.response?.status === 401) {
+      return 'That password or code did not check out — check it and try again.';
+    }
+    if (err.response?.status === 423) {
+      return 'Too many wrong codes in a row — two-factor confirmation is locked for a while.';
+    }
     if (!err.response) return 'Network error — is the backend running?';
   }
   return 'Downloading your data failed';
@@ -180,6 +187,11 @@ export default function SettingsPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportDone, setExportDone] = useState<string | null>(null);
   const [exportPending, setExportPending] = useState(false);
+  // Step-up confirmation (backlog #188): the download needs a fresh
+  // proof — current password, plus a two-factor code when 2FA is on —
+  // exchanged for a single-use grant just before the download starts.
+  const [exportPassword, setExportPassword] = useState('');
+  const [exportCode, setExportCode] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -293,11 +305,29 @@ export default function SettingsPage() {
   }
 
   async function onDownloadMyData() {
+    if (exportPassword === '') {
+      setExportError('Enter your current password to confirm the download.');
+      return;
+    }
+    if (totpOn && exportCode.trim() === '') {
+      setExportError('Enter a two-factor code to confirm the download.');
+      return;
+    }
     setExportPending(true);
     setExportError(null);
     setExportDone(null);
     try {
-      const { blob, filename } = await downloadMyData();
+      // Step-up first (backlog #188): the proof mints a single-use
+      // grant, and the download consumes it — the grant never outlives
+      // this click, and the proof fields clear on success.
+      const { grant } = await confirmDataExport(
+        totpOn
+          ? { currentPassword: exportPassword, code: exportCode.trim() }
+          : { currentPassword: exportPassword },
+      );
+      const { blob, filename } = await downloadMyData(grant);
+      setExportPassword('');
+      setExportCode('');
       // Save the blob under the server filename (it carries the user id
       // and export date) through a throwaway object URL + anchor click.
       const url = URL.createObjectURL(blob);
@@ -683,7 +713,9 @@ export default function SettingsPage() {
           Download a copy of your data as one JSON file: your profile, listings,
           orders, messages, saved listings and saved searches. It never contains
           your password or two-factor secret. This is a personal copy — it cannot
-          be imported back or used to move your account.
+          be imported back or used to move your account. Because the file is the
+          most complete copy of your account that exists, downloading asks for
+          your current password again (and a two-factor code when 2FA is on).
         </p>
         {exportError && (
           <p role="alert" className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -694,6 +726,41 @@ export default function SettingsPage() {
           <p role="status" className="mb-3 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
             Your data was downloaded as {exportDone}.
           </p>
+        )}
+        <div className="mb-3">
+          <label htmlFor="settings-export-password" className="mb-1 block text-sm font-medium">
+            Confirm your password
+          </label>
+          <input
+            id="settings-export-password"
+            type="password"
+            autoComplete="current-password"
+            value={exportPassword}
+            onChange={(e) => {
+              setExportPassword(e.target.value);
+              setExportError(null);
+            }}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+          />
+        </div>
+        {totpOn && (
+          <div className="mb-3">
+            <label htmlFor="settings-export-code" className="mb-1 block text-sm font-medium">
+              Export confirmation code
+            </label>
+            <input
+              id="settings-export-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={exportCode}
+              onChange={(e) => {
+                setExportCode(e.target.value);
+                setExportError(null);
+              }}
+              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+            />
+          </div>
         )}
         <button
           type="button"

@@ -123,6 +123,16 @@ public enum AuditAction {
    * event — the row is evidence it happened, and it stores none of the
    * exported data (the audit table carries no payload column).
    */
+  /**
+   * The account holder passed the step-up confirmation for a data
+   * export and a single-use export grant was minted
+   * ({@code DataExportGrantService.confirm}, backlog #188). Actor and
+   * target are both the account holder. A failed proof writes no row
+   * (the proof transaction produces no grant); the row is evidence
+   * the fresh proof happened, and it stores neither the grant nor any
+   * exported data (the audit table carries no payload column).
+   */
+  DATA_EXPORT_GRANT_ISSUED,
   DATA_EXPORTED,
   /** An ADMIN disabled an account ({@code AuthService.disableUser}). */
   USER_DISABLED,

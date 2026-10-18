@@ -617,11 +617,47 @@ function readResponseHeader(headers: unknown, name: string): string | undefined 
   return value == null ? undefined : String(value);
 }
 
+/** Step-up proof for the data-export grant (backlog #188). */
+export interface ConfirmDataExportPayload {
+  currentPassword: string;
+  /** TOTP or recovery code — required when the account has 2FA on. */
+  code?: string;
+}
+
+/** A minted data-export grant: shown once, single-use, minutes-lived. */
+export interface DataExportGrant {
+  grant: string;
+  expiresAt: string;
+}
+
 /**
- * GET /api/users/me/export (backlog #172). Downloads the caller's own
- * data — profile, listings, orders on both sides, messages, favorites
- * and saved searches — as a single JSON file. The success answer is the
- * document itself (no envelope), served as an attachment whose
+ * POST /api/users/me/export/confirm (backlog #188). Re-proves the
+ * caller's current password (plus a two-factor code when 2FA is on —
+ * every proof failure is the identical 401, no oracle) and mints the
+ * single-use grant that authorizes exactly one download. Only the
+ * grant's SHA-256 hash is stored server-side.
+ *
+ * Throws the Axios error on failure; the backend wraps failures in
+ * the {code,message,data} envelope.
+ */
+export async function confirmDataExport(
+  payload: ConfirmDataExportPayload,
+): Promise<DataExportGrant> {
+  const res = await api.post<ApiResponse<DataExportGrant>>(
+    '/users/me/export/confirm',
+    payload,
+  );
+  return res.data.data;
+}
+
+/**
+ * GET /api/users/me/export (backlog #172; grant gate added by #188).
+ * Downloads the caller's own data — profile, listings, orders on both
+ * sides, messages, favorites and saved searches — as a single JSON
+ * file. The {@link DataExportGrant} from {@link confirmDataExport}
+ * rides as the X-Export-Grant header and is consumed by the download:
+ * a missing, expired or replayed grant is a 401. The success answer is
+ * the document itself (no envelope), served as an attachment whose
  * filename carries the user id and export date; the caller saves the
  * blob under exactly that server filename (the fallback below only
  * fires if a proxy stripped the header). The export is rate-limited
@@ -630,8 +666,11 @@ function readResponseHeader(headers: unknown, name: string): string | undefined 
  * Throws the Axios error on failure; with responseType 'blob' the
  * error body is a Blob too, so callers map by status, not by body.
  */
-export async function downloadMyData(): Promise<AccountDataDownload> {
-  const res = await api.get<Blob>('/users/me/export', { responseType: 'blob' });
+export async function downloadMyData(grant: string): Promise<AccountDataDownload> {
+  const res = await api.get<Blob>('/users/me/export', {
+    responseType: 'blob',
+    headers: { 'X-Export-Grant': grant },
+  });
   const disposition = readResponseHeader(res.headers, 'content-disposition');
   const match = disposition?.match(/filename="([^"]+)"/);
   return { blob: res.data, filename: match?.[1] ?? 'marketplace-data-export.json' };

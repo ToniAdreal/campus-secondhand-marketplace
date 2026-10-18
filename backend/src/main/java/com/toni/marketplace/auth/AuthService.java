@@ -1242,6 +1242,45 @@ public class AuthService {
   }
 
   /**
+   * The step-up proof gate for the account data export (backlog #188),
+   * factored here so the export confirm endpoint reuses the exact
+   * discipline of {@link #closeAccount} and {@link #disableTotp}
+   * instead of growing a third copy: the current password is required,
+   * and a TOTP-enabled account must additionally present a valid TOTP
+   * or recovery code through the shared seam ({@link
+   * #requireTotpUnlocked} + {@link #verifySecondFactor}) — the password
+   * is checked BEFORE the second factor is touched, so a
+   * wrong-password attempt never burns a one-time recovery code, and
+   * failed code proofs feed the shared #101 lockout (an active lock
+   * answers 423). Every proof failure is the identical 401 — no oracle
+   * reveals which proof failed.
+   *
+   * <p>{@code noRollbackFor}: same rationale as {@link #disableTotp} —
+   * the shared lockout counter increment must survive the 401 / 423 it
+   * produces; the failure paths mutate nothing else, so committing
+   * them is safe. The caller ({@code DataExportGrantService}) mints
+   * the grant only after this method returns, in its own step, so a
+   * failed proof never leaves a grant behind.
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public void requireStepUpProof(long userId, String currentPassword, String code) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (user.isTotpEnabled()) {
+      requireTotpUnlocked(user);
+    }
+    if (!passwords.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException();
+    }
+    if (user.isTotpEnabled()) {
+      if (code == null || code.isBlank()) {
+        throw new InvalidCredentialsException();
+      }
+      verifySecondFactor(user, code);
+    }
+  }
+
+  /**
    * Session restore for the SPA: resolves the caller behind a valid access
    * token to their profile. A valid token whose user row is gone (deleted
    * user) reads as invalid credentials — the session no longer exists.

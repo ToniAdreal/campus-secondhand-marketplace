@@ -128,9 +128,25 @@ class AccountDataExportTest {
     exporterToken = jwt.createTokenPair(exporter).accessToken();
   }
 
-  private MvcResult exportAs(String token) throws Exception {
+  /** Mints a step-up grant (#188) for the given credentials. */
+  private String confirmGrant(String token, String password) throws Exception {
+    MvcResult result = mockMvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .post("/api/users/me/export/confirm")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"" + password + "\"}"))
+        .andExpect(status().isOk())
+        .andReturn();
+    return objectMapper.readTree(result.getResponse().getContentAsString())
+        .path("data").path("grant").asText();
+  }
+
+  private MvcResult exportAs(String token, String password) throws Exception {
     return mockMvc.perform(get("/api/users/me/export")
-            .header("Authorization", "Bearer " + token))
+            .header("Authorization", "Bearer " + token)
+            .header(AccountDataExportController.EXPORT_GRANT_HEADER,
+                confirmGrant(token, password)))
         .andExpect(status().isOk())
         .andExpect(header().string(HttpHeaders.CONTENT_TYPE,
             org.hamcrest.Matchers.containsString(MediaType.APPLICATION_JSON_VALUE)))
@@ -154,7 +170,9 @@ class AccountDataExportTest {
     String expectedFilename = "marketplace-data-user-" + exporter.getId() + "-"
         + LocalDate.now(ZoneOffset.UTC) + ".json";
     mockMvc.perform(get("/api/users/me/export")
-            .header("Authorization", "Bearer " + exporterToken))
+            .header("Authorization", "Bearer " + exporterToken)
+            .header(AccountDataExportController.EXPORT_GRANT_HEADER,
+                confirmGrant(exporterToken, "export-password-1")))
         .andExpect(status().isOk())
         .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
             "attachment; filename=\"" + expectedFilename + "\""));
@@ -163,7 +181,7 @@ class AccountDataExportTest {
   @Test
   void exportCarriesEverySectionOfTheCallersOwnData() throws Exception {
     JsonNode doc = objectMapper.readTree(
-        exportAs(exporterToken).getResponse().getContentAsString());
+        exportAs(exporterToken, "export-password-1").getResponse().getContentAsString());
 
     assertThat(doc.has("exportedAt")).isTrue();
     JsonNode profile = doc.path("profile");
@@ -204,7 +222,7 @@ class AccountDataExportTest {
 
   @Test
   void exportNeverCarriesSensitiveFieldNamesOrSeededSecretValues() throws Exception {
-    String body = exportAs(exporterToken).getResponse().getContentAsString();
+    String body = exportAs(exporterToken, "export-password-1").getResponse().getContentAsString();
     String lower = body.toLowerCase(Locale.ROOT);
     for (String denied : List.of(
         "password", "passwordhash", "totp", "secret", "token", "refreshtoken",
@@ -220,7 +238,7 @@ class AccountDataExportTest {
   @Test
   void otherUsersExportContainsNoneOfTheExportersRows() throws Exception {
     JsonNode doc = objectMapper.readTree(
-        exportAs(jwt.createTokenPair(other).accessToken())
+        exportAs(jwt.createTokenPair(other).accessToken(), "export-password-2")
             .getResponse().getContentAsString());
     assertThat(doc.path("profile").path("id").asLong()).isEqualTo(other.getId());
     assertThat(titles(doc.path("listings"))).containsExactly("Other desk lamp");
@@ -235,7 +253,7 @@ class AccountDataExportTest {
   @Test
   void exportWritesOneDataExportedAuditRowForTheCaller() throws Exception {
     long before = auditLog.countByAction(AuditAction.DATA_EXPORTED);
-    exportAs(exporterToken);
+    exportAs(exporterToken, "export-password-1");
     assertThat(auditLog.countByAction(AuditAction.DATA_EXPORTED)).isEqualTo(before + 1);
     assertThat(auditLog.searchAuditLog(exporter.getId(), AuditAction.DATA_EXPORTED,
             com.toni.marketplace.audit.AuditTargetType.USER, exporter.getId(),

@@ -25,10 +25,12 @@ import org.springframework.web.server.ResponseStatusException;
  * Builds the caller's account data export (backlog #172). It is the
  * heaviest read in the app — every section of one user's data in a
  * single document — which is why the endpoint carries its own
- * rate-limit bucket in {@code AuthRateLimitFilter} and why every export
+ * rate-limit bucket in {@code AuthRateLimitFilter}, why every export
  * is audit-logged here, in this service's transaction, as the sensitive
  * read it is ({@link AuditAction#DATA_EXPORTED}, actor = target = the
- * account holder).
+ * account holder), and why backlog #188 additionally requires the
+ * single-use step-up grant minted by {@link DataExportGrantService}
+ * after a fresh password (+ TOTP) proof.
  *
  * <p>Section sourcing, deliberately reusing each domain's own read seam
  * so the export can never drift from what the API shows:
@@ -63,12 +65,14 @@ public class AccountDataExportService {
   private final SavedSearchService savedSearchService;
   private final AuditService audit;
   private final Clock clock;
+  private final DataExportGrantService exportGrants;
 
   public AccountDataExportService(UserRepository users, ItemService itemService,
                                   OrderRepository orders, MessageRepository messages,
                                   FavoriteService favoriteService,
                                   SavedSearchService savedSearchService,
-                                  AuditService audit, Clock clock) {
+                                  AuditService audit, Clock clock,
+                                  DataExportGrantService exportGrants) {
     this.users = users;
     this.itemService = itemService;
     this.orders = orders;
@@ -77,15 +81,22 @@ public class AccountDataExportService {
     this.savedSearchService = savedSearchService;
     this.audit = audit;
     this.clock = clock;
+    this.exportGrants = exportGrants;
   }
 
   /**
-   * The caller's full export. A principal whose row no longer exists
+   * The caller's full export. Backlog #188: the presented step-up
+   * grant is consumed FIRST, inside this transaction — a missing,
+   * unknown, expired, used or other-account grant is the identical
+   * 401 before any data is read, and a successful build commits the
+   * consumption with it (a failed build rolls it back, so the grant
+   * survives for a retry). A principal whose row no longer exists
    * (closed mid-session) is 404 — the token outlived the account, and
    * there is no data to export.
    */
   @Transactional
-  public AccountDataExportDto export(long userId) {
+  public AccountDataExportDto export(long userId, String rawGrant) {
+    exportGrants.consumeForExport(userId, rawGrant);
     User user = users.findById(userId).orElseThrow(() ->
         new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
     AccountDataExportDto dto = new AccountDataExportDto(
