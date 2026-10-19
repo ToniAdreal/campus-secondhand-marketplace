@@ -15,6 +15,32 @@ jobs:
           java-version: 17
       - run: mvn -B -q -f backend/pom.xml verify
 
+  backend-mutation:
+    # Mutation pilot (backlog #192): PIT over the auth token service and
+    # the order state machine only (see backend/pom.xml `mutation`
+    # profile + docs/mutation.md). The job fails below the profile's
+    # mutationThreshold ratchet. The threshold starts at 0 for the first
+    # run on purpose: the floor is set from that first real run's
+    # measured score (recorded in docs/mutation.md), never guessed.
+    # PIT never runs in the default local `mvn -o test` path. The PIT
+    # report is uploaded on every run so the measured score and the
+    # surviving mutants are retrievable, not just pass/fail.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: mvn -B -f backend/pom.xml verify -Pmutation
+      - name: Upload PIT mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pit-reports
+          path: backend/target/pit-reports
+          if-no-files-found: ignore
+
   backend-integration:
     # Testcontainers spins up a real MySQL 8; requires Docker (available on GH runners)
     runs-on: ubuntu-latest

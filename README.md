@@ -255,6 +255,14 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - `cd backend && mvn verify -Pintegration` — Testcontainers integration tests against real
   MySQL 8. Requires Docker; runs in GitHub Actions on every push.
 - `cd frontend && npm test` — Vitest + React Testing Library.
+- Mutation testing pilot (backlog #192): PIT (pitest) over the auth token
+  service and the order state machine only (`JwtTokenService`,
+  `OrderService`, `OrderCreationService`, driven by their pure unit
+  suites), in the CI-only `mutation` Maven profile / `backend-mutation`
+  job — never in the default local `mvn test` path. The floor is a
+  ratchet set from the first real CI run's measured score, recorded in
+  docs/mutation.md; the score covers those three classes, not the
+  codebase.
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   three flows (register lands on browse signed in; browse → listing detail
   renders; login → create listing → it appears in My listings) driving real
