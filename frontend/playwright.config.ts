@@ -25,11 +25,15 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly three flows (register, browse→detail, login→create→my-listings).
+ * - Exactly five flows (register, browse→detail, login→create→my-listings,
+ *   plus the money path from backlog #194: buy→pay→handover code→PAID, and
+ *   seller completes with the code→buyer sees COMPLETED).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
- *   retried into green, and the three flows share one backend (one H2
- *   database, per-IP auth rate-limit buckets), so they run serially.
+ *   retried into green, and the five flows share one backend (one H2
+ *   database, per-IP auth rate-limit buckets), so they run serially. The
+ *   credential-bucket arithmetic for five flows is re-derived in the
+ *   header of e2e/smoke.e2e.ts (worst run between login resets: 3 of 5).
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.

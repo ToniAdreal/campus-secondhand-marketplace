@@ -72,8 +72,8 @@ jobs:
     # Browser e2e smoke (backlog #181): Playwright drives real Chromium
     # against the built SPA (vite preview) + the real backend jar on its
     # default H2 profile — the layer the unit/build/compose-curl jobs
-    # cannot prove (routing, SPA behaviour, the /api proxy shape). Three
-    # flows only, retries 0: a flaky test is fixed or deleted, never
+    # cannot prove (routing, SPA behaviour, the /api proxy shape). Five
+    # flows only (the #194 money path included), retries 0: a flaky test is fixed or deleted, never
     # retried into green. Browsers download here only; the repo's local
     # sandbox has no browsers, so this job is where the flows run.
     # The backend jar is packaged with tests skipped ON PURPOSE — the
