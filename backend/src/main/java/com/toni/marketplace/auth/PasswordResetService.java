@@ -79,6 +79,7 @@ public class PasswordResetService {
   private final AuditService audit;
   private final PasswordPolicyProperties passwordPolicy;
   private final PasswordHistoryService passwordHistory;
+  private final BreachedPasswordChecker breachedChecker;
   private final SecureRandom random = new SecureRandom();
 
   public PasswordResetService(UserRepository users, PasswordResetTokenRepository resetTokens,
@@ -86,7 +87,7 @@ public class PasswordResetService {
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
                               Clock clock, AuditService audit) {
     this(users, resetTokens, passwords, jwt, mailSender, props, clock, audit,
-        new PasswordPolicyProperties(), null);
+        new PasswordPolicyProperties(), null, null);
   }
 
   /** Full constructor (Spring): the password policy is the configured bean. */
@@ -96,7 +97,8 @@ public class PasswordResetService {
                               PasswordResetMailSender mailSender, PasswordResetProperties props,
                               Clock clock, AuditService audit,
                               PasswordPolicyProperties passwordPolicy,
-                              PasswordHistoryService passwordHistory) {
+                              PasswordHistoryService passwordHistory,
+                              BreachedPasswordChecker breachedChecker) {
     this.users = users;
     this.resetTokens = resetTokens;
     this.passwords = passwords;
@@ -107,6 +109,19 @@ public class PasswordResetService {
     this.audit = audit;
     this.passwordPolicy = passwordPolicy;
     this.passwordHistory = passwordHistory;
+    this.breachedChecker = breachedChecker;
+  }
+
+  /**
+   * Breached-password checker (backlog #197), mirroring {@code AuthService}:
+   * production gets the shared configured bean, so the reset path enforces
+   * exactly what register and password change enforce; a hand-built
+   * instance without the bean falls back to the offline local denylist —
+   * the screen is never silently off.
+   */
+  private BreachedPasswordChecker breachedChecker() {
+    return breachedChecker != null ? breachedChecker
+        : new LocalDenylistBreachedPasswordChecker();
   }
 
   /**
@@ -195,7 +210,7 @@ public class PasswordResetService {
     // Strength is checked before consumption: a rejected password must not
     // burn the user's one live token.
     PasswordStrengthValidator.requireStrong(newPassword,
-        passwordPolicy().getPasswordMinLength());
+        passwordPolicy().getPasswordMinLength(), breachedChecker());
     // Backlog #139: the reset path enforces the password history through
     // the same shared check as the authenticated change — before #139 it
     // had no reuse guard at all. A reuse rejection is a 400 and, like a

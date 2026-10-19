@@ -66,6 +66,7 @@ public class AuthService {
   private final LoginEventRepository loginEvents;
   private final NotificationService notifications;
   private final SessionLimitProperties sessionLimit;
+  private final BreachedPasswordChecker breachedChecker;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -81,7 +82,8 @@ public class AuthService {
                      LoginHistoryRecorder loginHistory,
                      LoginEventRepository loginEvents,
                      NotificationService notifications,
-                     SessionLimitProperties sessionLimit) {
+                     SessionLimitProperties sessionLimit,
+                     BreachedPasswordChecker breachedChecker) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -102,6 +104,7 @@ public class AuthService {
     this.loginEvents = loginEvents;
     this.notifications = notifications;
     this.sessionLimit = sessionLimit;
+    this.breachedChecker = breachedChecker;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -112,7 +115,21 @@ public class AuthService {
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
         null, new EmailVerificationProperties(), null, null, null, null, null,
-        new SessionLimitProperties());
+        new SessionLimitProperties(), null);
+  }
+
+  /**
+   * Breached-password checker (backlog #197) with the same null-fallback
+   * rationale as {@link #passwordPolicy()}: a hand-built instance without
+   * the checker bean (the legacy constructor, Mockito {@code @InjectMocks})
+   * falls back to the offline local denylist — the production default —
+   * so the screen is never silently off. Production always gets the
+   * configured bean, shared with {@code PasswordResetService} so all
+   * three credential-setting paths enforce identically.
+   */
+  private BreachedPasswordChecker breachedChecker() {
+    return breachedChecker != null ? breachedChecker
+        : new LocalDenylistBreachedPasswordChecker();
   }
 
   /**
@@ -427,7 +444,7 @@ public class AuthService {
   public RegisterResult register(String username, String email, String rawPassword,
                                  SessionMeta meta) {
     PasswordStrengthValidator.requireStrong(rawPassword,
-        passwordPolicy().getPasswordMinLength());
+        passwordPolicy().getPasswordMinLength(), breachedChecker());
     String canonicalUsername = canonical(username);
     String canonicalEmail = canonical(email);
     if (users.findByUsernameIgnoreCase(canonicalUsername).isPresent()) {
@@ -1160,7 +1177,7 @@ public class AuthService {
     }
     requirePasswordNotReused(user, newPassword);
     PasswordStrengthValidator.requireStrong(newPassword,
-        passwordPolicy().getPasswordMinLength());
+        passwordPolicy().getPasswordMinLength(), breachedChecker());
     recordOutgoingPassword(user);
     user.setPasswordHash(passwords.encode(newPassword));
     user.setTokenVersion(user.getTokenVersion() + 1);

@@ -142,6 +142,24 @@ app:
     # previously had no reuse guard at all) enforces identically. The
     # window slides: the sixth-oldest password is allowed again.
     password-history-size: ${APP_AUTH_PASSWORD_HISTORY_SIZE:5}
+    breached-password:
+      # Breached-password screening (BreachedPasswordChecker, backlog
+      # #197): every credential-setting path (register, password change,
+      # reset confirm — the one shared validator) hashes the candidate
+      # with SHA-1, sends only the first 5 hex chars to the checker
+      # (k-anonymity) and rejects a suffix match with the same 400
+      # envelope as other strength failures. The DEFAULT checker is
+      # offline and honest: a small committed denylist of the most
+      # common breached passwords (exact SHA-1 hashes — a floor, not a
+      # corpus) and NO network call. Setting remote-enabled=true is the
+      # operator's explicit opt-in to a real HIBP-shaped range lookup
+      # against base-url (never silently enabled); the remote checker
+      # is fail-open-with-log (an outage must not lock registration),
+      # while the local denylist is fail-closed (it cannot be down).
+      # Neither the password nor its full hash is ever logged.
+      remote-enabled: ${APP_AUTH_BREACHED_PASSWORD_REMOTE_ENABLED:false}
+      base-url: ${APP_AUTH_BREACHED_PASSWORD_BASE_URL:https://api.pwnedpasswords.com/range}
+      timeout: 2s
     # Concurrent-session limit (AuthService, backlog #191): one account
     # may hold at most this many live refresh-token families (sessions).
     # A successful login — password or TOTP completion — that would

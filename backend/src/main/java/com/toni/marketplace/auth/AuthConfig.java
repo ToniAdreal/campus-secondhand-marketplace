@@ -12,7 +12,8 @@ import org.springframework.context.annotation.Configuration;
     TotpEncryptionProperties.class, PasswordResetProperties.class,
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
-    DataExportGrantProperties.class, SessionLimitProperties.class})
+    DataExportGrantProperties.class, SessionLimitProperties.class,
+    BreachedPasswordProperties.class})
 public class AuthConfig {
 
   /**
@@ -28,6 +29,21 @@ public class AuthConfig {
   @Bean
   public PasswordService passwordService() {
     return new PasswordService();
+  }
+
+  /**
+   * Breached-password checker (backlog #197): the offline local denylist
+   * by default — no network call, ever. Only the operator's explicit
+   * {@code app.auth.breached-password.remote-enabled=true} swaps in the
+   * HIBP-shaped remote range checker (fail-open); it is never enabled
+   * silently.
+   */
+  @Bean
+  public BreachedPasswordChecker breachedPasswordChecker(BreachedPasswordProperties props) {
+    if (props.isRemoteEnabled()) {
+      return new HttpBreachedPasswordChecker(props.getBaseUrl(), props.getTimeout());
+    }
+    return new LocalDenylistBreachedPasswordChecker();
   }
 
   /**
