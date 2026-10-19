@@ -1,5 +1,6 @@
 package com.toni.marketplace.auth;
 
+import java.time.Instant;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -31,4 +32,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
   @Query("select u from User u where lower(u.username) like concat('%', :q, '%') escape '\\'"
       + " or lower(u.email) like concat('%', :q, '%') escape '\\'")
   Page<User> searchAdminUsers(@Param("q") String q, Pageable pageable);
+
+  /** Registrations at or after {@code since} — the ADMIN dashboard's windowed user count (#196). */
+  long countByCreatedAtGreaterThanEqual(Instant since);
 }

@@ -26,4 +26,7 @@ public interface OrderDisputeRepository extends JpaRepository<OrderDispute, Long
 
   /** The ADMIN queue narrowed to one status; the service supplies newest-first sort. */
   Page<OrderDispute> findByStatus(DisputeStatus status, Pageable pageable);
+
+  /** Disputes currently in one status — the ADMIN dashboard's open-disputes snapshot (#196). */
+  long countByStatus(DisputeStatus status);
 }

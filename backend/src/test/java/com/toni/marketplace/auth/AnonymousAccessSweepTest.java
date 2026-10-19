@@ -91,6 +91,7 @@ class AnonymousAccessSweepTest {
       "POST /api/admin/appeals/{id}/uphold",
       "POST /api/admin/appeals/{id}/reject",
       "GET /api/admin/audit-log",
+      "GET /api/admin/dashboard",
       "GET /api/admin/disputes",
       "POST /api/admin/disputes/{id}/resolve-refund",
       "POST /api/admin/disputes/{id}/resolve-release",

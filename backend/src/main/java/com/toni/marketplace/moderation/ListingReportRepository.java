@@ -26,4 +26,7 @@ public interface ListingReportRepository extends JpaRepository<ListingReport, Lo
    * never be pointed at another seller's reports.
    */
   Page<ListingReport> findByItemIdIn(java.util.List<Long> itemIds, Pageable pageable);
+
+  /** Reports currently in one status — the ADMIN dashboard's open-reports snapshot (#196). */
+  long countByStatus(ReportStatus status);
 }

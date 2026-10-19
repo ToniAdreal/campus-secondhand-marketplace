@@ -49,6 +49,27 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
   /** Count of one seller's listings in one status — the public profile's live-stock count (#174). */
   long countBySellerIdAndStatus(Long sellerId, ItemStatus status);
 
+  /** Listings created at or after {@code since} — the ADMIN dashboard's windowed count (#196). */
+  long countByCreatedAtGreaterThanEqual(Instant since);
+
+  /** Listings currently in one status — the ADMIN dashboard's AVAILABLE snapshot (#196). */
+  long countByStatus(ItemStatus status);
+
+  /**
+   * Listings whose lifetime ended in {@code [since, until)} — the ADMIN
+   * dashboard's expired count (#196). The deadline ({@code expiresAt})
+   * is the durable fact: the caller passes the stored {@code EXPIRED}
+   * status plus {@code AVAILABLE}, because a past-deadline AVAILABLE
+   * row is already expired for every read (lazy-on-read, #177) and
+   * only awaits the nightly flip. SOLD/RESERVED/WITHDRAWN rows never
+   * count — their lifecycle ended (or continues) some other way.
+   */
+  @Query("select count(i) from Item i where i.expiresAt is not null "
+      + "and i.expiresAt >= :since and i.expiresAt < :until "
+      + "and i.status in :statuses")
+  long countExpiredInWindow(@Param("since") Instant since, @Param("until") Instant until,
+                            @Param("statuses") java.util.Collection<ItemStatus> statuses);
+
   /**
    * Public storefront projection (backlog #174): one seller's AVAILABLE
    * listings only, same constructor projection as {@link #findListView}

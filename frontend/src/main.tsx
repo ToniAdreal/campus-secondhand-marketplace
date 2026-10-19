@@ -36,6 +36,7 @@ const AdminReportsPage = lazy(() => import('./pages/AdminReportsPage'));
 const AdminDisputesPage = lazy(() => import('./pages/AdminDisputesPage'));
 const AdminAppealsPage = lazy(() => import('./pages/AdminAppealsPage'));
 const AdminPaymentsPage = lazy(() => import('./pages/AdminPaymentsPage'));
+const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 const router = createBrowserRouter([
@@ -67,6 +68,7 @@ const router = createBrowserRouter([
       { path: 'admin/disputes', element: <AdminDisputesPage /> },
       { path: 'admin/appeals', element: <AdminAppealsPage /> },
       { path: 'admin/payments', element: <AdminPaymentsPage /> },
+      { path: 'admin/dashboard', element: <AdminDashboardPage /> },
       // catch-all — unknown paths render the 404 inside the app shell
       { path: '*', element: <NotFoundPage /> },
     ],

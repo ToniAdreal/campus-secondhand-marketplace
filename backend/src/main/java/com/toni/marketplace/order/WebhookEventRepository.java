@@ -28,6 +28,15 @@ public interface WebhookEventRepository extends JpaRepository<WebhookEvent, Long
   long countByOutcome(WebhookEvent.Outcome outcome);
 
   /**
+   * Deliveries of one outcome received in {@code [from, to)} — the
+   * ADMIN dashboard's windowed webhook counts (#196).
+   */
+  @Query("select count(w) from WebhookEvent w where w.outcome = :outcome "
+      + "and w.createdAt >= :from and w.createdAt < :to")
+  long countByOutcomeBetween(@Param("outcome") WebhookEvent.Outcome outcome,
+                             @Param("from") Instant from, @Param("to") Instant to);
+
+  /**
    * Ids of rows created before {@code createdBefore} — the retention
    * cut-off computed by the nightly purge job (backlog #152). The
    * predicate is {@code created_at} only: never outcome, so the purge

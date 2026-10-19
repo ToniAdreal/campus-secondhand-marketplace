@@ -59,6 +59,7 @@ class OpenApiContractTest {
       "/api/admin/appeals/{id}/reject",
       "/api/admin/appeals/{id}/uphold",
       "/api/admin/audit-log",
+      "/api/admin/dashboard",
       "/api/admin/disputes",
       "/api/admin/disputes/{id}/resolve-refund",
       "/api/admin/disputes/{id}/resolve-release",
@@ -270,6 +271,10 @@ class OpenApiContractTest {
     // Seller sales CSV export (#159) pins its inverted-window 400.
     assertThat(responseCodes(docs, "/api/seller/sales/export.csv", "get"))
         .contains("400", "401");
+    // ADMIN operations dashboard (#196) pins its unknown-window 400
+    // alongside the standard ADMIN 401/403 pair.
+    assertThat(responseCodes(docs, "/api/admin/dashboard", "get"))
+        .contains("400", "401", "403");
     // Listing reports (#160): creation pins its own-listing 422 and its
     // per-user rate-limit 429; the ADMIN transitions pin unknown-id 404
     // and the cross-terminal 422.

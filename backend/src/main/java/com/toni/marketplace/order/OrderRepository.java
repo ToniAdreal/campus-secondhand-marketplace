@@ -139,6 +139,21 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
   List<StatusAggregate> summarizeAllBetween(@Param("createdFrom") Instant createdFrom,
                                             @Param("createdTo") Instant createdTo);
 
+  /**
+   * Orders created in {@code [from, to)} carrying a persisted capture
+   * id — the ADMIN dashboard's windowed capture count (#196). A count,
+   * not a sum: the dashboard reports activity volume; money totals
+   * stay with the settlement summary (#134/#155).
+   */
+  @Query("select count(o) from Order o where o.captureId is not null "
+      + "and o.createdAt >= :from and o.createdAt < :to")
+  long countCapturesBetween(@Param("from") Instant from, @Param("to") Instant to);
+
+  /** Refund mirror of {@link #countCapturesBetween} (#196), keyed on the persisted refund id. */
+  @Query("select count(o) from Order o where o.refundId is not null "
+      + "and o.createdAt >= :from and o.createdAt < :to")
+  long countRefundsBetween(@Param("from") Instant from, @Param("to") Instant to);
+
   /** Windowed variant of {@link #sumCapturedCents} (backlog #155). */
   @Query("select coalesce(sum(o.amountCents), 0) from Order o "
       + "where o.captureId is not null "

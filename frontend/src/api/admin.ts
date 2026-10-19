@@ -390,3 +390,85 @@ export function describeSettlementError(error: unknown): string {
 export function formatCents(cents: number): string {
   return `¥${(cents / 100).toFixed(2)}`;
 }
+
+/** Allowlisted dashboard windows (backend DashboardWindow, backlog #196). */
+export const DASHBOARD_WINDOWS = ['24h', '7d', '30d'] as const;
+export type DashboardWindow = (typeof DASHBOARD_WINDOWS)[number];
+
+/**
+ * ADMIN operations dashboard, mirroring the backend's DashboardDto
+ * (GET /api/admin/dashboard, backlog #196). Counts only — the backend
+ * payload carries no row data and no user identifiers. Windowed fields
+ * count rows created in the look-back window (`window`/`windowStart`
+ * echo it); `listingsAvailableNow`, `openReports` and `openDisputes`
+ * are current snapshots the window does not affect. There is
+ * deliberately no declines figure: a declined capture leaves no
+ * durable row (the only count is the JVM-local payments.declined
+ * meter), so the backend cuts it rather than estimating — see the
+ * DashboardDto contract.
+ */
+export interface AdminDashboard {
+  window: string;
+  windowStart: string;
+  usersRegistered: number;
+  listingsCreated: number;
+  listingsAvailableNow: number;
+  listingsExpiredInWindow: number;
+  ordersTotalInWindow: number;
+  ordersPending: number;
+  ordersPaid: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRefunded: number;
+  ordersDisputed: number;
+  captures: number;
+  refunds: number;
+  openReports: number;
+  openDisputes: number;
+  webhooksMatched: number;
+  webhooksMismatched: number;
+}
+
+/**
+ * Query keys for the ADMIN dashboard, sibling to the other admin
+ * subtrees under ['admin', …]; the window is part of the key so
+ * switching windows refetches under its own entry.
+ */
+export const adminDashboardKeys = {
+  all: ['admin', 'dashboard'] as const,
+  view: (window: DashboardWindow) => [...adminDashboardKeys.all, window] as const,
+};
+
+/**
+ * GET /api/admin/dashboard — ADMIN-only (the backend's @PreAuthorize
+ * is the real gate; the SPA route/nav hiding is cosmetic). The window
+ * param is always sent explicitly so the request matches the key.
+ */
+export function useAdminDashboard(window: DashboardWindow, enabled = true) {
+  return useQuery({
+    queryKey: adminDashboardKeys.view(window),
+    queryFn: () =>
+      api
+        .get<ApiResponse<AdminDashboard>>('/admin/dashboard', { params: { window } })
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed dashboard call to user-facing copy. */
+export function describeDashboardError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view the dashboard.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view the dashboard.';
+  }
+  if (code === 400) {
+    return 'That window is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
