@@ -41,7 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code NotificationController}, {@code OrderController},
  * {@code ReportController}, {@code AdminReportController},
  * {@code SellerOrderController}, {@code SellerSalesExportController},
- * {@code FavoriteController}, {@code SavedSearchController} and
+ * {@code FavoriteController}, {@code RecentlyViewedController},
+ * {@code SavedSearchController} and
  * {@code AccountDataExportController}.
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
@@ -140,6 +141,7 @@ class OpenApiContractTest {
       "/api/users/me/export/confirm",
       "/api/users/me/favorites",
       "/api/users/me/favorites/{itemId}",
+      "/api/users/me/recently-viewed",
       "/api/users/me/saved-searches",
       "/api/users/me/saved-searches/{id}",
       "/api/users/{id}/block",

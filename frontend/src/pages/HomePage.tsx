@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { listingPhotoUrls, useItems } from '../api/items';
+import { useRecentlyViewed } from '../api/recentlyViewed';
 import FavoriteButton from '../components/FavoriteButton';
 import SaveSearchButton from '../components/SaveSearchButton';
 import { useCategories } from '../api/categories';
@@ -141,6 +142,12 @@ export default function HomePage() {
   // any of the #96 filters, or a non-default sort on its own.
   const user = useAuthStore((s) => s.user);
   const showSaveSearch = user !== null && (anyFilter || sort !== 'newest');
+  // "Recently viewed" strip (backlog #195): the signed-in visitor's
+  // browsing trail, written by the detail read itself. The query is
+  // disabled signed out (the endpoint is 401 for anonymous callers),
+  // and the strip below renders only when the trail is non-empty —
+  // a new visitor's home page carries no empty section.
+  const recentlyViewed = useRecentlyViewed(user !== null);
   const emptyMessage = !anyFilter
     ? 'No items yet.'
     : searchQuery !== ''
@@ -247,6 +254,44 @@ export default function HomePage() {
             sort,
           }}
         />
+      )}
+      {user !== null && recentlyViewed.data && recentlyViewed.data.length > 0 && (
+        <section aria-label="Recently viewed" className="mb-6">
+          <h2 className="mb-3 text-xl font-bold">Recently viewed</h2>
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {recentlyViewed.data.map((item) => {
+              const photoUrls = listingPhotoUrls(item);
+              return (
+                <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
+                  {photoUrls.length > 0 ? (
+                    <img
+                      src={photoUrls[0]}
+                      alt={item.title}
+                      className="mb-3 h-40 w-full rounded object-cover"
+                    />
+                  ) : (
+                    <div
+                      data-testid="no-photo-placeholder"
+                      className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
+                    >
+                      No photo
+                    </div>
+                  )}
+                  <Link to={`/items/${item.id}`} className="font-semibold hover:underline">
+                    {item.title}
+                  </Link>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    ¥{(item.priceCents / 100).toFixed(2)}
+                  </p>
+                  <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
+                    {item.status}
+                  </span>{' '}
+                  <FavoriteButton itemId={item.id} />
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
       {isLoading && <p>Loading listings…</p>}
       {isError && <p className="text-red-600">Failed to load listings.</p>}

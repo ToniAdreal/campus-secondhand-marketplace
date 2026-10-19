@@ -20,10 +20,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * longer than the token windows, shorter than the audit trail),
  * used-or-expired {@code email_verification_token} rows are kept 30
  * days after creation (backlog #152 — aligned with the password-reset
- * window; the two token tables are siblings), and {@code login_event}
+ * window; the two token tables are siblings), {@code login_event}
  * rows are kept 180 days after creation (backlog #171 — sign-in
- * evidence aligned with the webhook window). Override with e.g.
- * {@code app.cleanup.refresh-token-retention=7}.
+ * evidence aligned with the webhook window), and
+ * {@code recently_viewed} trail rows are kept 30 days after the last
+ * view (backlog #195 — a browsing trail is short-lived by nature, and
+ * a repeat view refreshes its row, so the window runs from
+ * {@code viewed_at}, not from a separate creation time). Override
+ * with e.g. {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
 public class CleanupProperties {
@@ -85,6 +89,15 @@ public class CleanupProperties {
    */
   private long loginEventRetention = 180;
 
+  /**
+   * Days a {@code recently_viewed} trail row is kept after its last
+   * view before the purge may delete it. Must be &ge; 1. Deletion is
+   * by {@code viewed_at} only — never filtered by user or listing, so
+   * no specific person's trail can be selectively erased (backlog
+   * #195).
+   */
+  private long recentlyViewedRetention = 30;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -139,5 +152,13 @@ public class CleanupProperties {
 
   public void setLoginEventRetention(long loginEventRetention) {
     this.loginEventRetention = loginEventRetention;
+  }
+
+  public long getRecentlyViewedRetention() {
+    return recentlyViewedRetention;
+  }
+
+  public void setRecentlyViewedRetention(long recentlyViewedRetention) {
+    this.recentlyViewedRetention = recentlyViewedRetention;
   }
 }

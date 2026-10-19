@@ -100,6 +100,7 @@ function routeGet(url: string) {
   if (url === '/notifications/unread-count') return Promise.resolve(envelope(1));
   if (url === '/users/me/saved-searches') return Promise.resolve(envelope([]));
   if (url === '/users/me/favorites') return Promise.resolve(envelope([]));
+  if (url === '/users/me/recently-viewed') return Promise.resolve(envelope([]));
   if (url === '/messages') return Promise.resolve(envelope(emptyPage()));
   return Promise.reject(new Error(`no a11y fixture for GET ${url}`));
 }

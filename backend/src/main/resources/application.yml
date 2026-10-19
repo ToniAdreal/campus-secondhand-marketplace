@@ -252,6 +252,11 @@ app:
     #   backlog #171) kept after creation, default 180 — aligned with
     #   webhook-event-retention. Deletion is by created_at only (never
     #   by outcome or user).
+    # recently-viewed-retention: recently_viewed trail rows (per-user
+    #   browsing trail, backlog #195) kept after their LAST view,
+    #   default 30 — a repeat view refreshes the row, so the window
+    #   runs from viewed_at. Deletion is by viewed_at only (never by
+    #   user or listing).
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30
@@ -259,6 +264,7 @@ app:
     webhook-event-retention: 180
     email-verification-token-retention: 30
     login-event-retention: 180
+    recently-viewed-retention: 30
   listings:
     # Listing lifetime (ItemService + ListingExpiryService, backlog #177):
     # a listing stays live for ttl after creation (or renew) — default

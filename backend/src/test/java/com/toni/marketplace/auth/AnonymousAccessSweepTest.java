@@ -181,6 +181,7 @@ class AnonymousAccessSweepTest {
       "GET /api/users/me/export",
       "POST /api/users/me/export/confirm",
       "GET /api/users/me/favorites",
+      "GET /api/users/me/recently-viewed",
       "PUT /api/users/me/favorites/{itemId}",
       "DELETE /api/users/me/favorites/{itemId}",
       "POST /api/users/me/saved-searches",

@@ -5,6 +5,7 @@ import com.toni.marketplace.auth.EmailVerificationTokenRepository;
 import com.toni.marketplace.auth.LoginEventRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
+import com.toni.marketplace.item.RecentlyViewedRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.IdempotencyStatus;
 import com.toni.marketplace.order.WebhookEventRepository;
@@ -59,7 +60,13 @@ import org.springframework.transaction.annotation.Transactional;
  *   for the account holder's history view, but its value decays, so
  *   rows age out by {@code created_at} only (180 days by default),
  *   never by outcome or user: the purge must not become a way to erase
- *   one specific attempt.</li>
+ *   one specific attempt;</li>
+ *   <li>{@code recently_viewed} trail rows past the retention window
+ *   (backlog #195) — the browsing trail written by detail reads is a
+ *   convenience surface, not a record: rows age out by
+ *   {@code viewed_at} only (30 days by default), never by user or
+ *   listing, and a repeat view refreshes its row, so an actively
+ *   revisited listing never ages out from under its viewer.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
@@ -101,6 +108,7 @@ public class DataRetentionService {
   private final WebhookEventRepository webhookEvents;
   private final EmailVerificationTokenRepository emailVerificationTokens;
   private final LoginEventRepository loginEvents;
+  private final RecentlyViewedRepository recentlyViewed;
   private final CleanupProperties props;
   private final Clock clock;
 
@@ -111,6 +119,7 @@ public class DataRetentionService {
                               WebhookEventRepository webhookEvents,
                               EmailVerificationTokenRepository emailVerificationTokens,
                               LoginEventRepository loginEvents,
+                              RecentlyViewedRepository recentlyViewed,
                               CleanupProperties props,
                               Clock clock) {
     this.refreshTokens = refreshTokens;
@@ -120,6 +129,7 @@ public class DataRetentionService {
     this.webhookEvents = webhookEvents;
     this.emailVerificationTokens = emailVerificationTokens;
     this.loginEvents = loginEvents;
+    this.recentlyViewed = recentlyViewed;
     this.props = props;
     this.clock = clock;
   }
@@ -128,7 +138,7 @@ public class DataRetentionService {
   public record PurgeCounts(int refreshTokens, int idempotencyKeys,
                             int passwordResetTokens, int auditLogRows,
                             int webhookEvents, int emailVerificationTokens,
-                            int loginEvents) {}
+                            int loginEvents, int recentlyViewedRows) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -145,12 +155,15 @@ public class DataRetentionService {
     int webhooks = purgeWebhookEvents(now);
     int verifications = purgeEmailVerificationTokens(now);
     int loginEventsCount = purgeLoginEvents(now);
+    int trail = purgeRecentlyViewed(now);
     log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
         + "{} password_reset_token, {} audit_log, {} webhook_event, "
-        + "{} email_verification_token and {} login_event rows",
-        tokens, keys, resets, audit, webhooks, verifications, loginEventsCount);
+        + "{} email_verification_token, {} login_event and "
+        + "{} recently_viewed rows",
+        tokens, keys, resets, audit, webhooks, verifications, loginEventsCount,
+        trail);
     return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications,
-        loginEventsCount);
+        loginEventsCount, trail);
   }
 
   private int purgeRefreshTokens(Instant now) {
@@ -264,6 +277,24 @@ public class DataRetentionService {
           PageRequest.of(0, BATCH_SIZE));
       if (!ids.isEmpty()) {
         emailVerificationTokens.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeRecentlyViewed(Instant now) {
+    // The trail is judged by its last view alone: viewed_at past the
+    // retention window. There is deliberately no user or listing
+    // predicate — one person's trail ages out on the same terms as
+    // everyone's (see the class javadoc).
+    Instant viewedBefore = now.minus(Duration.ofDays(props.getRecentlyViewedRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = recentlyViewed.findPurgeableIds(viewedBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        recentlyViewed.deleteAllByIdInBatch(ids);
         deleted += ids.size();
       }
     } while (ids.size() == BATCH_SIZE);

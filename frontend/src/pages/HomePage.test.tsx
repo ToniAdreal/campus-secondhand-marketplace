@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import HomePage from './HomePage';
 import type { Page, Item } from '../api/items';
+import type { AuthUser } from '../api/auth';
+import { useAuthStore } from '../store/useAuthStore';
 
 const calls: Array<{
   page: number;
@@ -45,6 +47,18 @@ vi.mock('../api/favorites', () => ({
   // renders nothing — the hooks only need to exist and stay inert.
   useFavorites: () => ({ data: [], isLoading: false, isError: false, isSuccess: true }),
   useToggleFavorite: () => ({ mutate: () => undefined, isLoading: false }),
+}));
+
+/** Trail content the mocked useRecentlyViewed serves; empty unless a strip test seeds it. */
+let mockRecent: Item[] = [];
+
+vi.mock('../api/recentlyViewed', () => ({
+  useRecentlyViewed: () => ({
+    data: mockRecent,
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+  }),
 }));
 
 vi.mock('../api/categories', () => ({
@@ -494,5 +508,71 @@ describe('HomePage pagination (backlog #144)', () => {
     calls.length = 0;
     renderHome('/?page=-1');
     expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+  });
+});
+
+describe('HomePage recently viewed strip (#195)', () => {
+  const buyer: AuthUser = {
+    id: 5,
+    username: 'buyer',
+    email: 'buyer@example.com',
+    roles: ['USER'],
+  };
+  const viewedItem: Item = {
+    id: 42,
+    title: 'Trail bike',
+    description: 'Seen it before',
+    priceCents: 9900,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  beforeEach(() => {
+    calls.length = 0;
+    currentSearch = '';
+    mockRecent = [];
+    mockContent = [];
+  });
+
+  afterEach(() => {
+    cleanup();
+    useAuthStore.setState({ user: null });
+    vi.clearAllMocks();
+  });
+
+  it('renders the strip with the browse card shape for a signed-in visitor', () => {
+    useAuthStore.setState({ user: buyer });
+    mockRecent = [viewedItem];
+
+    renderHome('/');
+
+    const strip = screen.getByRole('region', { name: /recently viewed/i });
+    expect(strip).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /recently viewed/i })).toBeTruthy();
+    const link = screen.getByRole('link', { name: 'Trail bike' });
+    expect(link.getAttribute('href')).toBe('/items/42');
+  });
+
+  it('hides the strip when the trail is empty', () => {
+    useAuthStore.setState({ user: buyer });
+    mockRecent = [];
+
+    renderHome('/');
+
+    expect(screen.queryByRole('region', { name: /recently viewed/i })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /recently viewed/i })).toBeNull();
+  });
+
+  it('hides the strip for anonymous visitors even with trail data', () => {
+    mockRecent = [viewedItem];
+
+    renderHome('/');
+
+    expect(screen.queryByRole('heading', { name: /recently viewed/i })).toBeNull();
   });
 });

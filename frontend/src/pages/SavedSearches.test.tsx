@@ -28,6 +28,12 @@ vi.mock('../api/favorites', () => ({
   useToggleFavorite: () => ({ mutate: () => undefined, isLoading: false }),
 }));
 
+vi.mock('../api/recentlyViewed', () => ({
+  // HomePage renders the trail strip (#195); inert and empty here —
+  // these tests exercise saved searches, not the trail.
+  useRecentlyViewed: () => ({ data: [], isLoading: false, isError: false, isSuccess: true }),
+}));
+
 vi.mock('../api/categories', () => ({
   useCategories: () => ({
     data: [

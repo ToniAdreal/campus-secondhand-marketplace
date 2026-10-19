@@ -45,6 +45,7 @@ public class ItemService {
   private final com.toni.marketplace.auth.UserBlockRepository blocks;
   private final FavoriteRepository favorites;
   private final com.toni.marketplace.notification.NotificationService notifications;
+  private final RecentlyViewedService recentlyViewed;
 
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
@@ -62,7 +63,8 @@ public class ItemService {
                      ListingExpiryProperties listingProps, Clock clock,
                      com.toni.marketplace.auth.UserBlockRepository blocks,
                      FavoriteRepository favorites,
-                     com.toni.marketplace.notification.NotificationService notifications) {
+                     com.toni.marketplace.notification.NotificationService notifications,
+                     RecentlyViewedService recentlyViewed) {
     this.items = items;
     this.categories = categories;
     this.itemPhotos = itemPhotos;
@@ -74,6 +76,7 @@ public class ItemService {
     this.blocks = blocks;
     this.favorites = favorites;
     this.notifications = notifications;
+    this.recentlyViewed = recentlyViewed;
   }
 
   /**
@@ -470,6 +473,15 @@ public class ItemService {
    * controller computes its validator over the DTO without the
    * counter (see {@link ItemDto#withoutViewCount()}), so a counting
    * read never invalidates a buyer's cached validator.
+   *
+   * <p>Recently-viewed trail (backlog #195): the same {@code counts}
+   * decision also records the view in the caller's trail via
+   * {@link RecentlyViewedService#recordView} — same gate, same
+   * transaction, so the counter and the trail can never disagree
+   * about which reads "count", a 404 records neither, and list/browse
+   * reads (which never reach this method) record neither. Null-guarded
+   * like {@link #blockedSellerIds}: direct unit tests built without
+   * the trail service skip recording.
    */
   @Transactional
   public ItemDetailView getItemView(Long id, Long callerId, boolean callerIsAdmin) {
@@ -484,6 +496,9 @@ public class ItemService {
         && !callerId.equals(probe.sellerId());
     if (counts) {
       items.incrementViewCount(id);
+      if (recentlyViewed != null) {
+        recentlyViewed.recordView(callerId, id, clock().instant());
+      }
     }
     return detailView(loadDetail(id), id);
   }
