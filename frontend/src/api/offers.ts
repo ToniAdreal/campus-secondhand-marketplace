@@ -4,9 +4,11 @@ import type { ApiResponse, Page } from './items';
 
 /**
  * One price offer, mirroring the backend's OfferDto (backlog #168).
- * orderId is null until the seller accepts — acceptance is the only
- * outcome that creates an order, and it is created at priceCents (the
- * agreed price), never at the listing's asking price.
+ * orderId is null until an accept transition creates the order: a
+ * seller accept creates it at priceCents, a buyer counter-accept at
+ * counterPriceCents — never at the listing's asking price.
+ * counterPriceCents is null until the seller counters (backlog #193);
+ * a COUNTERED offer is the seller's one counter, awaiting the buyer.
  */
 export interface PriceOffer {
   id: number;
@@ -14,7 +16,8 @@ export interface PriceOffer {
   buyerId: number;
   sellerId: number;
   priceCents: number;
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'WITHDRAWN';
+  counterPriceCents: number | null;
+  status: 'PENDING' | 'COUNTERED' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'WITHDRAWN';
   orderId: number | null;
   expiresAt: string;
   createdAt: string;
@@ -100,6 +103,61 @@ export function useDeclineOffer() {
     mutationFn: (id: number) =>
       api
         .post<ApiResponse<PriceOffer>>(`/offers/${id}/decline`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: offerKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/offers/{id}/counter — seller side (backlog #193). The one
+ * counter moves the offer to COUNTERED at the counter price; bounds
+ * and state failures come back as 422 and surface via
+ * describeOfferError.
+ */
+export function useCounterOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: number; priceCents: number }) =>
+      api
+        .post<ApiResponse<PriceOffer>>(`/offers/${input.id}/counter`, {
+          priceCents: input.priceCents,
+        })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: offerKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/offers/{id}/counter-accept — buyer side (backlog #193).
+ * Creates the order at the COUNTER price server-side; invalidations
+ * mirror the seller accept (offer lists, orders, items).
+ */
+export function useCounterAcceptOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api
+        .post<ApiResponse<PriceOffer>>(`/offers/${id}/counter-accept`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: offerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['items'] });
+    },
+  });
+}
+
+/** POST /api/offers/{id}/counter-decline — buyer side (backlog #193); terminal, creates no order. */
+export function useCounterDeclineOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api
+        .post<ApiResponse<PriceOffer>>(`/offers/${id}/counter-decline`, {})
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: offerKeys.all });

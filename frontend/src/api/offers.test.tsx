@@ -6,6 +6,8 @@ import { api } from './client';
 import {
   describeOfferError,
   useAcceptOffer,
+  useCounterAcceptOffer,
+  useCounterOffer,
   useCreateOffer,
   useMadeOffers,
   type PriceOffer,
@@ -28,6 +30,7 @@ const fakeOffer: PriceOffer = {
   buyerId: 5,
   sellerId: 3,
   priceCents: 8000,
+  counterPriceCents: null,
   status: 'PENDING',
   orderId: null,
   expiresAt: '2026-10-12T08:00:00Z',
@@ -97,6 +100,41 @@ describe('offer hooks', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(postSpy).toHaveBeenCalledWith('/offers/4/accept', {});
+    const keys = invalidateSpy.mock.calls.map((call) =>
+      JSON.stringify((call[0] as { queryKey?: unknown } | undefined)?.queryKey),
+    );
+    expect(keys).toContain(JSON.stringify(['offers']));
+    expect(keys).toContain(JSON.stringify(['orders']));
+  });
+
+  it('useCounterOffer posts priceCents to the counter route', async () => {
+    postSpy.mockResolvedValue(
+      envelope({ ...fakeOffer, status: 'COUNTERED', counterPriceCents: 9000 }),
+    );
+    const client = makeClient();
+    const { result } = renderHook(() => useCounterOffer(), { wrapper: wrapperFor(client) });
+
+    result.current.mutate({ id: 4, priceCents: 9000 });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(postSpy).toHaveBeenCalledWith('/offers/4/counter', { priceCents: 9000 });
+    expect(result.current.data?.counterPriceCents).toBe(9000);
+  });
+
+  it('useCounterAcceptOffer posts to the counter-accept route and invalidates offers + orders', async () => {
+    postSpy.mockResolvedValue(
+      envelope({ ...fakeOffer, status: 'ACCEPTED', counterPriceCents: 9000, orderId: 12 }),
+    );
+    const client = makeClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useCounterAcceptOffer(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate(4);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(postSpy).toHaveBeenCalledWith('/offers/4/counter-accept', {});
     const keys = invalidateSpy.mock.calls.map((call) =>
       JSON.stringify((call[0] as { queryKey?: unknown } | undefined)?.queryKey),
     );

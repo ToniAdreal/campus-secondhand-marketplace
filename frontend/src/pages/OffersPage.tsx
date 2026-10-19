@@ -3,6 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   describeOfferError,
   useAcceptOffer,
+  useCounterAcceptOffer,
+  useCounterDeclineOffer,
+  useCounterOffer,
   useDeclineOffer,
   useMadeOffers,
   useReceivedOffers,
@@ -25,8 +28,27 @@ function OfferRow({
   const accept = useAcceptOffer();
   const decline = useDeclineOffer();
   const withdraw = useWithdrawOffer();
+  const counter = useCounterOffer();
+  const counterAccept = useCounterAcceptOffer();
+  const counterDecline = useCounterDeclineOffer();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [counterYuan, setCounterYuan] = useState('');
   const pending = offer.status === 'PENDING';
+  const countered = offer.status === 'COUNTERED';
+
+  const submitCounter = () => {
+    const cents = Math.round(Number.parseFloat(counterYuan) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setErrorMessage('Please enter a counter price above ¥0.');
+      return;
+    }
+    run(() =>
+      counter.mutate(
+        { id: offer.id, priceCents: cents },
+        { onError: (error) => setErrorMessage(describeOfferError(error)) },
+      ),
+    );
+  };
 
   const run = (fn: () => void) => {
     setErrorMessage(null);
@@ -47,6 +69,17 @@ function OfferRow({
       {offer.status === 'ACCEPTED' && offer.orderId !== null && (
         <p className="mt-1 text-sm text-neutral-600">
           Order #{offer.orderId} was created at the agreed price.
+        </p>
+      )}
+      {countered && offer.counterPriceCents !== null && side === 'made' && (
+        <p className="mt-1 text-sm text-neutral-600">
+          The seller countered at {yuan(offer.counterPriceCents)} — accept it to
+          create the order at that price, or decline it.
+        </p>
+      )}
+      {countered && offer.counterPriceCents !== null && side === 'received' && (
+        <p className="mt-1 text-sm text-neutral-600">
+          You countered at {yuan(offer.counterPriceCents)} — waiting for the buyer.
         </p>
       )}
       {pending && side === 'received' && (
@@ -81,6 +114,30 @@ function OfferRow({
           </button>
         </div>
       )}
+      {pending && side === 'received' && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-sm text-neutral-600">
+            Counter (¥){' '}
+            <input
+              aria-label="Counter price in yuan"
+              type="number"
+              min="0"
+              step="0.01"
+              value={counterYuan}
+              onChange={(event) => setCounterYuan(event.target.value)}
+              className="w-28 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={counter.isLoading}
+            onClick={submitCounter}
+            className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-900 disabled:opacity-50"
+          >
+            Send counter
+          </button>
+        </div>
+      )}
       {pending && side === 'made' && (
         <div className="mt-2">
           <button
@@ -99,6 +156,38 @@ function OfferRow({
           </button>
         </div>
       )}
+      {countered && side === 'made' && (
+        <div className="mt-2 flex gap-3">
+          <button
+            type="button"
+            disabled={counterAccept.isLoading}
+            onClick={() =>
+              run(() =>
+                counterAccept.mutate(offer.id, {
+                  onError: (error) => setErrorMessage(describeOfferError(error)),
+                }),
+              )
+            }
+            className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Accept counter
+          </button>
+          <button
+            type="button"
+            disabled={counterDecline.isLoading}
+            onClick={() =>
+              run(() =>
+                counterDecline.mutate(offer.id, {
+                  onError: (error) => setErrorMessage(describeOfferError(error)),
+                }),
+              )
+            }
+            className="rounded bg-neutral-200 px-4 py-1.5 text-sm font-medium text-neutral-800 hover:bg-neutral-300 disabled:opacity-50"
+          >
+            Decline counter
+          </button>
+        </div>
+      )}
       {errorMessage && (
         <p role="alert" className="mt-2 text-sm text-red-600">
           {errorMessage}
@@ -112,8 +201,12 @@ function OfferRow({
  * Offer inbox (backlog #168): two sections over the same rows — the
  * offers the caller made as a buyer (withdraw while PENDING) and the
  * offers on the caller's own listings (accept creates the order at the
- * agreed price; decline is final). Anonymous visitors bounce to login
- * and no request fires, mirroring the other account pages.
+ * agreed price; decline is final). Counter-offers (backlog #193): the
+ * seller's one counter sits on the received rows (COUNTERED at the
+ * counter price), and the buyer answers it from the made rows —
+ * counter-accept creates the order at the counter price, counter-
+ * decline ends the offer. Anonymous visitors bounce to login and no
+ * request fires, mirroring the other account pages.
  */
 export default function OffersPage() {
   const user = useAuthStore((s) => s.user);

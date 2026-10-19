@@ -32,15 +32,21 @@ import org.hibernate.type.SqlTypes;
  *       decline / withdraw on the same offer fails fast instead of
  *       silently last-writer-wins; the loser is mapped to 409.</li>
  *   <li>The DB-generated {@code live_offer_key} guard column enforces
- *       "one live PENDING offer per (buyer, item)" at the database
- *       level, so two racing creates cannot both succeed even if the
- *       application check races.</li>
+ *       "one live offer per (buyer, item)" at the database level —
+ *       PENDING since V34, PENDING or COUNTERED since V52 — so two
+ *       racing creates cannot both succeed even if the application
+ *       check races, and a countered offer keeps holding its pair
+ *       while the buyer decides.</li>
  * </ul>
  *
- * <p>{@code orderId} is set exactly once, by the accept transition, to
- * the order created at the agreed price; it stays null on every other
- * outcome — declining, withdrawing or expiring an offer never creates
- * an order and never touches the listing.
+ * <p>{@code counterPriceCents} is set exactly once, by the seller's
+ * counter transition (backlog #193, Flyway V51); the buyer's original
+ * {@code priceCents} is never rewritten, so the row keeps the whole
+ * negotiation. {@code orderId} is set exactly once, by an accept
+ * transition (the seller accepting PENDING, or the buyer accepting
+ * COUNTERED), to the order created at the agreed price; it stays null
+ * on every other outcome — declining, withdrawing or expiring an offer
+ * never creates an order and never touches the listing.
  */
 @Entity
 @Table(name = "price_offer")
@@ -63,6 +69,15 @@ public class PriceOffer {
   /** The proposed price in minor units (cents); what the buyer offers to pay. */
   @Column(name = "price_cents", nullable = false)
   private Long priceCents;
+
+  /**
+   * The seller's counter price in minor units (cents), set by the one
+   * counter transition (backlog #193); null until (and unless) the
+   * seller counters. The order a counter-acceptance creates is priced
+   * at this value, never at {@code priceCents} or the asking price.
+   */
+  @Column(name = "counter_price_cents")
+  private Long counterPriceCents;
 
   @Enumerated(EnumType.STRING)
   @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -118,6 +133,10 @@ public class PriceOffer {
   public Long getBuyerId() { return buyerId; }
   public Long getSellerId() { return sellerId; }
   public Long getPriceCents() { return priceCents; }
+  public Long getCounterPriceCents() { return counterPriceCents; }
+  public void setCounterPriceCents(Long counterPriceCents) {
+    this.counterPriceCents = counterPriceCents;
+  }
   public OfferStatus getStatus() { return status; }
   public void setStatus(OfferStatus status) { this.status = status; }
   public Long getOrderId() { return orderId; }

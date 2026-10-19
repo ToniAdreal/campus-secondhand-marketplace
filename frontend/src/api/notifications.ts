@@ -10,6 +10,9 @@ export type NotificationType =
   | 'ORDER_EXPIRED'
   | 'OFFER_ACCEPTED'
   | 'OFFER_DECLINED'
+  | 'OFFER_COUNTERED'
+  | 'OFFER_COUNTER_ACCEPTED'
+  | 'OFFER_COUNTER_DECLINED'
   | 'ORDER_DISPUTED'
   | 'DISPUTE_RESOLVED_REFUND'
   | 'DISPUTE_RESOLVED_RELEASE'
@@ -83,6 +86,12 @@ export function describeNotification(
       return 'The seller accepted your offer — an order was created at your price.';
     case 'OFFER_DECLINED':
       return 'The seller declined your offer.';
+    case 'OFFER_COUNTERED':
+      return 'The seller countered your offer — answer it in your offers inbox.';
+    case 'OFFER_COUNTER_ACCEPTED':
+      return 'The buyer accepted your counter — an order was created at your counter price.';
+    case 'OFFER_COUNTER_DECLINED':
+      return 'The buyer declined your counter.';
     case 'ORDER_DISPUTED':
       return 'A buyer disputed an order for your listing.';
     case 'DISPUTE_RESOLVED_REFUND':

@@ -104,6 +104,69 @@ public class OfferController {
     return ApiResponse.ok(offerService.decline(currentUserId(), id));
   }
 
+  /**
+   * Counters an offer on the caller's listing (backlog #193): the one
+   * counter moves the offer to COUNTERED at the counter price and the
+   * decision to the buyer. The counter must sit strictly between the
+   * buyer's offer and the asking price (outside either bound is 422);
+   * someone else's offer id is 404; a non-PENDING offer is 422.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "validation failure — priceCents missing or not positive (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown offer id, or an offer on someone else's listing (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+          description = "version conflict with a concurrent transition (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "the offer is not PENDING, or the counter price is outside "
+              + "(buyer's offer, asking price) (envelope)")})
+  @PostMapping("/api/offers/{id}/counter")
+  public ApiResponse<OfferDto> counter(@PathVariable Long id,
+                                       @Valid @RequestBody OfferCounterRequest request) {
+    return ApiResponse.ok(offerService.counter(currentUserId(), id, request.priceCents()));
+  }
+
+  /**
+   * Accepts the seller's counter on the caller's own offer (backlog
+   * #193): creates the order at the COUNTER price and reserves the
+   * listing, atomically. Someone else's offer id is 404; an offer with
+   * no live counter is 422; losing the race to a buy-now is 409.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown offer id, or someone else's offer (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+          description = "the listing already has an active order, or a version conflict (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "the offer is not COUNTERED (envelope)")})
+  @PostMapping("/api/offers/{id}/counter-accept")
+  public ApiResponse<OfferDto> counterAccept(@PathVariable Long id) {
+    return ApiResponse.ok(offerService.counterAccept(currentUserId(), id));
+  }
+
+  /**
+   * Declines the seller's counter on the caller's own offer (backlog
+   * #193). Terminal; no order is created and the listing is untouched.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown offer id, or someone else's offer (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+          description = "version conflict with a concurrent transition (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "the offer is not COUNTERED (envelope)")})
+  @PostMapping("/api/offers/{id}/counter-decline")
+  public ApiResponse<OfferDto> counterDecline(@PathVariable Long id) {
+    return ApiResponse.ok(offerService.counterDecline(currentUserId(), id));
+  }
+
   /** Withdraws the caller's own offer. Terminal; frees the live pair for a fresh offer. */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",

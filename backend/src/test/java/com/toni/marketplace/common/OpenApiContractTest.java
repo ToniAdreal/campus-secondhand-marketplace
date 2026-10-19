@@ -116,6 +116,9 @@ class OpenApiContractTest {
       "/api/offers/{id}/accept",
       "/api/offers/{id}/decline",
       "/api/offers/{id}/withdraw",
+      "/api/offers/{id}/counter",
+      "/api/offers/{id}/counter-accept",
+      "/api/offers/{id}/counter-decline",
       "/api/orders",
       "/api/orders/{id}",
       "/api/orders/{id}/cancel",
@@ -330,6 +333,15 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/offers/{id}/decline", "post"))
         .contains("401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/withdraw", "post"))
+        .contains("401", "404", "409", "422");
+    // Counter-offers (#193): counter pins its validation 400 and its
+    // bounds/not-PENDING 422 pair; the buyer's counter decisions pin
+    // the same no-existence-leak 404 and not-COUNTERED 422.
+    assertThat(responseCodes(docs, "/api/offers/{id}/counter", "post"))
+        .contains("400", "401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/offers/{id}/counter-accept", "post"))
+        .contains("401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/offers/{id}/counter-decline", "post"))
         .contains("401", "404", "409", "422");
     // Order disputes (#169): opening pins its buyer-only 403, unknown
     // order 404 and the not-disputable / window-closed 422; the ADMIN

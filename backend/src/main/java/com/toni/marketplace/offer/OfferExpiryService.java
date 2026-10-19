@@ -11,12 +11,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Expires PENDING price offers nobody answered (backlog #168). An
+ * Expires live price offers nobody answered (backlog #168; COUNTERED
+ * rows join the sweep in backlog #193 — a countered offer lapses on the
+ * same creation deadline, countering buys no extra time). An
  * unanswered offer reserves nothing — the listing stays AVAILABLE and
  * buyable the whole time — so expiry here is bookkeeping, not a release:
- * the row flips PENDING → EXPIRED so neither side's list keeps showing
- * a dead offer as live, and the (buyer, item) live pair frees up for a
- * fresh offer.
+ * the row flips PENDING / COUNTERED → EXPIRED so neither side's list
+ * keeps showing a dead offer as live, and the (buyer, item) live pair
+ * frees up for a fresh offer.
  *
  * <p>Concurrency posture, mirroring {@code PendingOrderExpiryService}:
  * the job itself is NOT transactional — each offer expires in its own
@@ -61,34 +63,39 @@ public class OfferExpiryService {
     Instant now = clock.instant();
     int expired = 0;
     int skipped = 0;
-    List<Long> ids;
-    do {
-      // Always re-read page 0: rows change status between passes
-      // (answered, or expired by this very loop), so a forward-moving
-      // page index would skip rows.
-      ids = offers.findIdsByStatusAndExpiresAtBefore(OfferStatus.PENDING, now,
-          PageRequest.of(0, BATCH_SIZE));
-      for (Long id : ids) {
-        try {
-          if (offerService.expireStaleOffer(id, now)) {
-            expired++;
-          } else {
+    // Both live states lapse on the same deadline (#193): PENDING rows
+    // the seller never answered and COUNTERED rows the buyer never
+    // answered. Each status gets its own paged sweep.
+    for (OfferStatus live : List.of(OfferStatus.PENDING, OfferStatus.COUNTERED)) {
+      List<Long> ids;
+      do {
+        // Always re-read page 0: rows change status between passes
+        // (answered, or expired by this very loop), so a forward-moving
+        // page index would skip rows.
+        ids = offers.findIdsByStatusAndExpiresAtBefore(live, now,
+            PageRequest.of(0, BATCH_SIZE));
+        for (Long id : ids) {
+          try {
+            if (offerService.expireStaleOffer(id, now)) {
+              expired++;
+            } else {
+              skipped++;
+            }
+          } catch (ObjectOptimisticLockingFailureException e) {
+            // A concurrent answer of this row committed after the row
+            // transaction's read: its transition won, the offer is no
+            // longer ours to expire. Skipped, not failed.
             skipped++;
+            log.info("offer expiry skipped offer {}: a concurrent transition won", id);
+          } catch (RuntimeException e) {
+            // Defensive: one bad row must not stop the batch (the next
+            // run retries it). Logged with the id — never swallowed.
+            skipped++;
+            log.warn("offer expiry failed for offer {}", id, e);
           }
-        } catch (ObjectOptimisticLockingFailureException e) {
-          // A concurrent answer of this row committed after the row
-          // transaction's read: its transition won, the offer is no
-          // longer ours to expire. Skipped, not failed.
-          skipped++;
-          log.info("offer expiry skipped offer {}: a concurrent transition won", id);
-        } catch (RuntimeException e) {
-          // Defensive: one bad row must not stop the batch (the next
-          // run retries it). Logged with the id — never swallowed.
-          skipped++;
-          log.warn("offer expiry failed for offer {}", id, e);
         }
-      }
-    } while (ids.size() == BATCH_SIZE);
+      } while (ids.size() == BATCH_SIZE);
+    }
     log.info("offer expiry expired {} offers, skipped {}", expired, skipped);
     return new ExpiryCounts(expired, skipped);
   }

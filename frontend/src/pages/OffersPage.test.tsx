@@ -20,6 +20,7 @@ const madeOffer: PriceOffer = {
   buyerId: 5,
   sellerId: 3,
   priceCents: 8000,
+  counterPriceCents: null,
   status: 'PENDING',
   orderId: null,
   expiresAt: '2026-10-12T08:00:00Z',
@@ -32,10 +33,18 @@ const receivedOffer: PriceOffer = {
   buyerId: 8,
   sellerId: 3,
   priceCents: 5000,
+  counterPriceCents: null,
   status: 'PENDING',
   orderId: null,
   expiresAt: '2026-10-12T08:00:00Z',
   createdAt: '2026-10-10T09:00:00Z',
+};
+
+const counteredMadeOffer: PriceOffer = {
+  ...madeOffer,
+  id: 8,
+  counterPriceCents: 9000,
+  status: 'COUNTERED',
 };
 
 function envelope(data: unknown) {
@@ -105,6 +114,42 @@ describe('OffersPage inbox', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
     await waitFor(() =>
       expect(postSpy).toHaveBeenCalledWith('/offers/6/accept', {}),
+    );
+  });
+
+  it('seller counters a received offer: the form posts the price in cents', async () => {
+    useAuthStore.setState({ user: seller });
+    postSpy.mockResolvedValue(
+      envelope({ ...receivedOffer, status: 'COUNTERED', counterPriceCents: 6000 }),
+    );
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/offered ¥50\.00/)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/counter price in yuan/i), {
+      target: { value: '60' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send counter' }));
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/offers/6/counter', { priceCents: 6000 }),
+    );
+  });
+
+  it('buyer answers a countered offer: counter price shows, accept posts counter-accept', async () => {
+    useAuthStore.setState({ user: buyer });
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/offers/made') return Promise.resolve(envelope(pageOf([counteredMadeOffer])));
+      if (url === '/offers/received') return Promise.resolve(envelope(pageOf([])));
+      return Promise.resolve(envelope(pageOf([])));
+    });
+    postSpy.mockResolvedValue(
+      envelope({ ...counteredMadeOffer, status: 'ACCEPTED', orderId: 21 }),
+    );
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/seller countered at ¥90\.00/)).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Accept counter' }));
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/offers/8/counter-accept', {}),
     );
   });
 

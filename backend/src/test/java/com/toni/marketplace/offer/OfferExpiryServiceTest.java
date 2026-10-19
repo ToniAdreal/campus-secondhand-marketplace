@@ -52,22 +52,29 @@ class OfferExpiryServiceTest {
   }
 
   @Test
-  void worklistAsksForPendingOffersAtTheCurrentInstant() {
+  void worklistAsksForPendingAndCounteredOffersAtTheCurrentInstant() {
     when(offers.findIdsByStatusAndExpiresAtBefore(any(), any(), any()))
         .thenReturn(List.of());
 
     clock.advance(Duration.ofHours(49));
     expiry.expireStaleOffers();
 
+    // Both live states are swept on the same deadline (#193).
     verify(offers, times(1)).findIdsByStatusAndExpiresAtBefore(
         eq(OfferStatus.PENDING), eq(Instant.EPOCH.plus(Duration.ofHours(49))),
+        any(Pageable.class));
+    verify(offers, times(1)).findIdsByStatusAndExpiresAtBefore(
+        eq(OfferStatus.COUNTERED), eq(Instant.EPOCH.plus(Duration.ofHours(49))),
         any(Pageable.class));
   }
 
   @Test
   void happyPath_expiresEveryRowAndCountsThem() {
-    when(offers.findIdsByStatusAndExpiresAtBefore(any(), any(), any()))
-        .thenReturn(List.of(1L, 2L));
+    // One stale PENDING row and one stale COUNTERED row (#193).
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.PENDING), any(), any()))
+        .thenReturn(List.of(1L));
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.COUNTERED), any(), any()))
+        .thenReturn(List.of(2L));
     when(offerService.expireStaleOffer(eq(1L), any())).thenReturn(true);
     when(offerService.expireStaleOffer(eq(2L), any())).thenReturn(true);
 
@@ -79,8 +86,10 @@ class OfferExpiryServiceTest {
 
   @Test
   void answeredOrRacingRowsAreSkippedNeverFailed() {
-    when(offers.findIdsByStatusAndExpiresAtBefore(any(), any(), any()))
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.PENDING), any(), any()))
         .thenReturn(List.of(1L, 2L, 3L));
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.COUNTERED), any(), any()))
+        .thenReturn(List.of());
     // Row 1 was answered between the scan and its row transaction.
     when(offerService.expireStaleOffer(eq(1L), any())).thenReturn(false);
     // Row 2 lost its @Version race to a concurrent answer.

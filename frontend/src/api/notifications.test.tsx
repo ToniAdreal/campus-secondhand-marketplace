@@ -172,6 +172,10 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('SESSION_EVICTED')).toMatch(/oldest session/i);
     expect(describeNotification('SESSION_EVICTED')).toMatch(/at most 5 devices/i);
     expect(describeNotification('SESSION_EVICTED')).not.toMatch(/blocked/i);
+    // #193: the counter-offer lines name the step each side takes next.
+    expect(describeNotification('OFFER_COUNTERED')).toMatch(/countered your offer/i);
+    expect(describeNotification('OFFER_COUNTER_ACCEPTED')).toMatch(/accepted your counter/i);
+    expect(describeNotification('OFFER_COUNTER_DECLINED')).toMatch(/declined your counter/i);
     // #190: appeal copy is generic — it never claims the listing was
     // restored (that fact lives on the appeal's listingRestored).
     expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');

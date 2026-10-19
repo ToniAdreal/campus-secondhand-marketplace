@@ -16,6 +16,12 @@ public enum NotificationType {
   OFFER_ACCEPTED,
   /** The caller's price offer was declined; no order exists (backlog #168). */
   OFFER_DECLINED,
+  /** The seller countered the caller's offer at a counter price (backlog #193). */
+  OFFER_COUNTERED,
+  /** The buyer accepted the caller's counter; an order exists at the counter price (backlog #193). */
+  OFFER_COUNTER_ACCEPTED,
+  /** The buyer declined the caller's counter; no order exists (backlog #193). */
+  OFFER_COUNTER_DECLINED,
   /** A buyer disputed an order on the caller's listing (backlog #169). */
   ORDER_DISPUTED,
   /** An ADMIN resolved a dispute by refunding the order (backlog #169). */

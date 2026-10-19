@@ -31,12 +31,26 @@ import org.springframework.web.server.ResponseStatusException;
  *       otherwise), and not be the caller's own (422 — the seller
  *       cannot offer on their own listing). The price is validated at
  *       the request boundary (@Positive → 400).</li>
- *   <li>One live PENDING offer per (buyer, item): a second POST while
- *       one is live is a documented 409 — the buyer withdraws it or
- *       waits for the seller's answer / the expiry, then submits a
- *       fresh offer. It never silently supersedes and never stores a
- *       second live row; the Flyway V34 {@code live_offer_key} guard
- *       is the database-level arbiter under races.</li>
+ *   <li>One live offer per (buyer, item): a second POST while one is
+ *       live (PENDING, or COUNTERED since #193) is a documented 409 —
+ *       the buyer withdraws it or waits for the seller's answer / the
+ *       expiry, then submits a fresh offer. It never silently
+ *       supersedes and never stores a second live row; the Flyway
+ *       V34/V52 {@code live_offer_key} guard is the database-level
+ *       arbiter under races.</li>
+ *   <li>Counter (seller side, backlog #193): the seller may answer a
+ *       PENDING offer once with a counter price strictly above the
+ *       buyer's offer and strictly below the listing's asking price
+ *       (outside either bound → 422). The offer flips PENDING →
+ *       COUNTERED carrying the counter price; a second counter is 422
+ *       (the state guard — the offer is no longer PENDING). The buyer
+ *       then accepts the counter (an order is created at the COUNTER
+ *       price through the same {@link OrderCreationService} seam and
+ *       race discipline as the seller's accept) or declines it
+ *       (terminal DECLINED, listing untouched). The seller's own
+ *       accept/decline and the buyer's withdraw stay PENDING-only —
+ *       on a COUNTERED offer they answer 422, because the decision has
+ *       moved to the buyer.</li>
  *   <li>Accept (seller side): creates the order at the AGREED price
  *       through {@link OrderCreationService} — the transactional core
  *       of the existing order path — inside this same transaction, so
@@ -53,24 +67,29 @@ import org.springframework.web.server.ResponseStatusException;
  *       and never touch the listing or any order. Side-scoped lookups:
  *       acting on someone else's offer id is 404, never 403 — the
  *       row's existence is not leaked across sides.</li>
- *   <li>Expiry: a PENDING offer carries {@code expiresAt} (creation +
+ *   <li>Expiry: a live offer carries {@code expiresAt} (creation +
  *       {@code app.offers.pending-ttl}, default 48 h). {@link
- *       OfferExpiryService} flips stale rows to EXPIRED; accept /
- *       decline / withdraw also check the deadline lazily, so a stale
- *       offer can never be accepted in the gap between deadline and
- *       job run.</li>
+ *       OfferExpiryService} flips stale PENDING and COUNTERED rows to
+ *       EXPIRED — countering does not extend the deadline; the decision
+ *       endpoints also check the deadline lazily, so a stale offer can
+ *       never be decided in the gap between deadline and job run.</li>
  *   <li>Notifications (#157 pattern): accept notifies the buyer
  *       (OFFER_ACCEPTED, carrying the created order id), decline
  *       notifies the buyer (OFFER_DECLINED, no order id — none
- *       exists). Both rows are written inside the transition's own
+ *       exists). Counter notifies the buyer (OFFER_COUNTERED, no order
+ *       id); counter-accept notifies the seller
+ *       (OFFER_COUNTER_ACCEPTED, carrying the created order id) and
+ *       counter-decline notifies the seller (OFFER_COUNTER_DECLINED,
+ *       no order id). Every row is written inside its transition's own
  *       transaction, so a rolled-back transition notifies nobody.
- *       Withdraw and expiry notify nobody in v1 — both are visible in
- *       the acting party's own offer list, and expiry's counterpart
+ *       Withdraw and expiry notify nobody — both are visible in the
+ *       acting party's own offer list, and expiry's counterpart
  *       never acted at all.</li>
  * </ul>
  *
- * <p>Honest scope: no counter-offer chain in v1 — decline is final and
- * the buyer may submit a fresh offer afterwards.
+ * <p>Honest scope: at most one counter per offer (backlog #193) — there
+ * is no back-and-forth chain; a declined offer (original or countered)
+ * is final and the buyer may submit a fresh offer afterwards.
  */
 @Service
 public class OfferService {
@@ -136,9 +155,10 @@ public class OfferService {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "you cannot make an offer on this listing");
     }
-    if (offers.existsByItem_IdAndBuyerIdAndStatus(itemId, buyerId, OfferStatus.PENDING)) {
+    if (offers.existsByItem_IdAndBuyerIdAndStatus(itemId, buyerId, OfferStatus.PENDING)
+        || offers.existsByItem_IdAndBuyerIdAndStatus(itemId, buyerId, OfferStatus.COUNTERED)) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
-          "you already have a pending offer on this item — withdraw it or wait for the "
+          "you already have a live offer on this item — withdraw it or wait for the "
               + "seller's answer before offering again");
     }
     PriceOffer offer = new PriceOffer(item, buyerId, item.getSellerId(), priceCents,
@@ -152,7 +172,7 @@ public class OfferService {
       return dto;
     } catch (DataIntegrityViolationException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
-          "you already have a pending offer on this item — withdraw it or wait for the "
+          "you already have a live offer on this item — withdraw it or wait for the "
               + "seller's answer before offering again");
     }
   }
@@ -231,6 +251,111 @@ public class OfferService {
   }
 
   /**
+   * Counters a PENDING offer (seller side, backlog #193): the offer
+   * flips to COUNTERED carrying the counter price, and the decision
+   * moves to the buyer. The counter must sit strictly between the
+   * buyer's offer and the listing's asking price — at or outside either
+   * bound the negotiation is meaningless (the seller could simply
+   * accept, or the buyer could simply buy now), so it answers 422.
+   * One counter per offer: the state guard rejects a second counter
+   * with 422, because a COUNTERED offer is no longer PENDING. The
+   * deadline is unchanged — countering buys no extra time. The buyer
+   * is notified in this transaction.
+   */
+  @Transactional
+  public OfferDto counter(Long sellerId, Long offerId, Long counterPriceCents) {
+    PriceOffer offer = offers.findByIdAndSellerId(offerId, sellerId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "offer not found"));
+    expireIfStale(offer);
+    if (offer.getStatus() != OfferStatus.PENDING) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "offer is " + offer.getStatus() + ", it cannot be countered");
+    }
+    if (counterPriceCents <= offer.getPriceCents()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "counter price must be above the buyer's offered price");
+    }
+    if (counterPriceCents >= offer.getItem().getPriceCents()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "counter price must be below the listing's asking price");
+    }
+    try {
+      offer.setStatus(OfferStatus.COUNTERED);
+      offer.setCounterPriceCents(counterPriceCents);
+      OfferDto dto = OfferDto.from(offers.save(offer));
+      offers.flush();
+      notifications().recordOffer(offer.getBuyerId(), NotificationType.OFFER_COUNTERED,
+          offer.getId(), null);
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "offer was updated concurrently, please retry");
+    }
+  }
+
+  /**
+   * Accepts the seller's counter (buyer side, backlog #193): creates
+   * the order at the COUNTER price through {@link OrderCreationService}
+   * inside this transaction — the same atomicity and race discipline as
+   * the seller's accept (see {@link #accept}). The seller is notified
+   * with the created order id.
+   */
+  @Transactional
+  public OfferDto counterAccept(Long buyerId, Long offerId) {
+    PriceOffer offer = offers.findByIdAndBuyerId(offerId, buyerId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "offer not found"));
+    expireIfStale(offer);
+    if (offer.getStatus() != OfferStatus.COUNTERED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "offer is " + offer.getStatus() + ", it has no counter to accept");
+    }
+    OrderDto order = creation.create(offer.getBuyerId(), offer.getItem().getId(),
+        offer.getCounterPriceCents());
+    try {
+      offer.setStatus(OfferStatus.ACCEPTED);
+      offer.setOrderId(order.id());
+      OfferDto dto = OfferDto.from(offers.save(offer));
+      offers.flush();
+      notifications().recordOffer(offer.getSellerId(), NotificationType.OFFER_COUNTER_ACCEPTED,
+          offer.getId(), order.id());
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "offer was updated concurrently, please retry");
+    }
+  }
+
+  /**
+   * Declines the seller's counter (buyer side, backlog #193). Terminal
+   * DECLINED — the same end state as a seller decline, with the counter
+   * price kept on the row as negotiation history; the listing is never
+   * touched and no order is created. The seller is notified in this
+   * transaction. Declining frees the live pair, so the buyer may submit
+   * a fresh offer immediately afterwards.
+   */
+  @Transactional
+  public OfferDto counterDecline(Long buyerId, Long offerId) {
+    PriceOffer offer = offers.findByIdAndBuyerId(offerId, buyerId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "offer not found"));
+    expireIfStale(offer);
+    if (offer.getStatus() != OfferStatus.COUNTERED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "offer is " + offer.getStatus() + ", it has no counter to decline");
+    }
+    try {
+      offer.setStatus(OfferStatus.DECLINED);
+      OfferDto dto = OfferDto.from(offers.save(offer));
+      offers.flush();
+      notifications().recordOffer(offer.getSellerId(), NotificationType.OFFER_COUNTER_DECLINED,
+          offer.getId(), null);
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "offer was updated concurrently, please retry");
+    }
+  }
+
+  /**
    * Withdraws a PENDING offer (buyer side). Terminal; the listing is
    * never touched. Withdrawing frees the (buyer, item) live pair, so
    * the buyer may submit a fresh offer immediately afterwards.
@@ -256,11 +381,13 @@ public class OfferService {
   }
 
   /**
-   * Expires one stale PENDING offer — the per-row step of {@link
-   * OfferExpiryService}. Status and deadline are re-checked inside this
-   * transaction: an offer answered between the job's worklist scan and
-   * this call simply returns {@code false}, never wrongly expired. A
-   * concurrent transition surfaces as
+   * Expires one stale live offer (PENDING or COUNTERED, backlog #193 —
+   * a countered offer lapses on the same deadline; countering buys no
+   * extra time) — the per-row step of {@link OfferExpiryService}.
+   * Status and deadline are re-checked inside this transaction: an
+   * offer answered between the job's worklist scan and this call simply
+   * returns {@code false}, never wrongly expired. A concurrent
+   * transition surfaces as
    * {@code ObjectOptimisticLockingFailureException} at the flush, which
    * the job catches per row and treats as "the answer won".
    *
@@ -271,7 +398,8 @@ public class OfferService {
     PriceOffer offer = offers.findById(offerId)
         .orElseThrow(() -> new IllegalStateException(
             "offer " + offerId + " vanished from the expiry worklist"));
-    if (offer.getStatus() != OfferStatus.PENDING || offer.getExpiresAt().isAfter(now)) {
+    if ((offer.getStatus() != OfferStatus.PENDING && offer.getStatus() != OfferStatus.COUNTERED)
+        || offer.getExpiresAt().isAfter(now)) {
       return false;
     }
     offer.setStatus(OfferStatus.EXPIRED);
@@ -281,16 +409,17 @@ public class OfferService {
   }
 
   /**
-   * Lazy deadline check for the decision endpoints: a PENDING offer
-   * past its deadline is flipped to EXPIRED in the caller's transaction
-   * before the state guard runs, so a stale offer answers 422 as
-   * EXPIRED instead of being decided in the gap before the expiry job's
-   * next run. The flip persists with the caller's transaction even
-   * though the decision itself is then rejected — that is the point:
-   * the row's state now matches what the job would have written.
+   * Lazy deadline check for the decision endpoints: a live offer
+   * (PENDING or COUNTERED) past its deadline is treated as EXPIRED
+   * before the state guard runs, so a stale offer answers 422 instead
+   * of being decided in the gap before the expiry job's next run. The
+   * in-transaction flip rolls back with the rejected decision — the
+   * persisted EXPIRED write is the expiry job's, at most one cadence
+   * later; the lazy check's guarantee is the decision, never the row:
+   * a stale offer can never be accepted, declined or countered.
    */
   private void expireIfStale(PriceOffer offer) {
-    if (offer.getStatus() == OfferStatus.PENDING
+    if ((offer.getStatus() == OfferStatus.PENDING || offer.getStatus() == OfferStatus.COUNTERED)
         && !offer.getExpiresAt().isAfter(clock().instant())) {
       offer.setStatus(OfferStatus.EXPIRED);
       offers.save(offer);
