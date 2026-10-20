@@ -46,6 +46,7 @@ public class ItemService {
   private final FavoriteRepository favorites;
   private final com.toni.marketplace.notification.NotificationService notifications;
   private final RecentlyViewedService recentlyViewed;
+  private final ItemPriceHistoryRepository priceHistory;
 
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
@@ -64,7 +65,8 @@ public class ItemService {
                      com.toni.marketplace.auth.UserBlockRepository blocks,
                      FavoriteRepository favorites,
                      com.toni.marketplace.notification.NotificationService notifications,
-                     RecentlyViewedService recentlyViewed) {
+                     RecentlyViewedService recentlyViewed,
+                     ItemPriceHistoryRepository priceHistory) {
     this.items = items;
     this.categories = categories;
     this.itemPhotos = itemPhotos;
@@ -77,6 +79,7 @@ public class ItemService {
     this.favorites = favorites;
     this.notifications = notifications;
     this.recentlyViewed = recentlyViewed;
+    this.priceHistory = priceHistory;
   }
 
   /**
@@ -573,7 +576,70 @@ public class ItemService {
       // row carries a deadline — now + app.listings.ttl (default 30 days).
       item.setExpiresAt(clock().instant().plus(listingTtl()));
     }
-    return mapper.toDto(items.save(item));
+    Item saved = items.save(item);
+    // Price history (backlog #201): creation seeds the first point, in
+    // this same transaction — a listing's timeline always starts with
+    // the price it was created at (drafts included: the seed is the
+    // draft's asking price, readable by its seller like the draft).
+    recordPricePoint(saved);
+    return mapper.toDto(saved);
+  }
+
+  /**
+   * Appends one point to a listing's price timeline (backlog #201) at
+   * the listing's current price, stamped from the service clock. The
+   * only callers are {@link #createItem} (the seed point) and the
+   * price-change branch of {@link #updateItem} (an actual change only
+   * — a no-op edit never reaches it), always inside the caller's
+   * transaction, so a rolled-back write takes its point with it.
+   * Status flips and photo changes never call this. Null-guarded like
+   * {@link #blockedSellerIds}: direct unit tests built without the
+   * history store skip recording.
+   */
+  private void recordPricePoint(Item item) {
+    if (priceHistory == null) {
+      return;
+    }
+    priceHistory.save(new ItemPriceHistory(
+        item.getId(), item.getPriceCents(), clock().instant()));
+  }
+
+  /**
+   * A listing's price timeline, oldest first (backlog #201) — the read
+   * behind {@code GET /api/items/{id}/price-history}. Visibility mirrors
+   * the detail read ({@link #loadDetail}) and tightens it where the
+   * backlog pins it: any authenticated caller may read a live listing's
+   * history (prices are public — the current one is on every browse
+   * card), a DRAFT answers 404 to everyone but its seller and ADMINs
+   * (never a 403 that would confirm the draft exists), a WITHDRAWN
+   * listing answers 404 to everyone (moderation took it off the
+   * market; its prices are no longer a public surface), and an expired
+   * listing answers the same 404 as the detail read. An unknown id is
+   * 404. Anonymous callers never reach this code: the security chain
+   * requires a token for the route, so they are answered 401 there.
+   */
+  @Transactional(readOnly = true)
+  public List<PriceHistoryPointDto> getPriceHistory(Long id, Long callerId,
+                                                    boolean callerIsAdmin) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (item.getStatus() == ItemStatus.WITHDRAWN) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    if (item.getStatus() == ItemStatus.DRAFT
+        && !callerIsAdmin
+        && (callerId == null || !callerId.equals(item.getSellerId()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    if (item.getStatus() == ItemStatus.EXPIRED || item.isExpiredAt(clock().instant())) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    if (priceHistory == null) {
+      return List.of();
+    }
+    return priceHistory.findByItemIdOrderByChangedAtAscIdAsc(id).stream()
+        .map(p -> new PriceHistoryPointDto(p.getPriceCents(), p.getChangedAt()))
+        .toList();
   }
 
   /**
@@ -676,6 +742,7 @@ public class ItemService {
     }
     Long oldPriceCents = item.getPriceCents();
     boolean priceDropped = false;
+    boolean priceChanged = false;
     if (request.priceCents() != null && !request.priceCents().equals(item.getPriceCents())) {
       // Price is editable on AVAILABLE and DRAFT listings (#198: a draft
       // has no buyer, so nothing snapshotted its price); RESERVED/SOLD
@@ -686,6 +753,7 @@ public class ItemService {
       }
       item.setPriceCents(request.priceCents());
       priceDropped = request.priceCents() < oldPriceCents;
+      priceChanged = true;
     }
     if (category != null) {
       item.setCategory(category);
@@ -728,6 +796,13 @@ public class ItemService {
     // read and write surfaces here as ObjectOptimisticLockingFailureException
     // and is mapped to 409 by GlobalExceptionHandler (backlog #147).
     items.flush();
+    if (priceChanged) {
+      // Price history (backlog #201): an actual price change appends
+      // exactly one point, after the flush — a 409 race loss throws
+      // before this point, so a failed edit records nothing, and a
+      // status-only or photo edit never reaches the flag at all.
+      recordPricePoint(item);
+    }
     if (priceDropped) {
       notifyFavoritePriceDrop(item, request.priceCents());
     }

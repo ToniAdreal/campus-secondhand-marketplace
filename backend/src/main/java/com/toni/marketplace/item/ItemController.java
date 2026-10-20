@@ -135,6 +135,37 @@ public class ItemController {
   }
 
   /**
+   * A listing's price history (backlog #201): every price the listing
+   * has carried — the creation price plus one point per edit that
+   * actually changed the price — oldest first, each point exactly
+   * {@code priceCents} + {@code changedAt} (no editor identity; that
+   * stays in the audit log). Any authenticated caller may read a live
+   * listing's history; a DRAFT answers 404 to everyone but its seller
+   * and ADMINs, a WITHDRAWN or expired listing answers 404 to
+   * everyone, and an unknown id is 404 — the visibility rules live in
+   * {@link ItemService#getPriceHistory}. Anonymous callers get 401
+   * from the security chain, like every other item route.
+   */
+  @GetMapping("/{id}/price-history")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "the listing's price points, oldest first (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing, or a draft/withdrawn/expired listing "
+              + "not visible to the caller (envelope)")})
+  public ApiResponse<java.util.List<PriceHistoryPointDto>> priceHistory(@PathVariable Long id) {
+    org.springframework.security.core.Authentication auth =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = auth != null && auth.getPrincipal() instanceof Long principalId
+        ? principalId : null;
+    boolean callerIsAdmin = auth != null && auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(itemService.getPriceHistory(id, callerId, callerIsAdmin));
+  }
+
+  /**
    * Creates a listing for the authenticated user. Constraint violations
    * (blank title, non-positive price, …) are answered 400 with the JSON
    * envelope by {@code GlobalExceptionHandler#handleValidation}; no token

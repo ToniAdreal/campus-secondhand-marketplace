@@ -5,6 +5,7 @@ import {
   listingPhotoUrls,
   useItem,
   useMarkSold,
+  usePriceHistory,
 } from '../api/items';
 import { describeOfferError, useCreateOffer } from '../api/offers';
 import { describeOrderError, useCreateOrder } from '../api/orders';
@@ -25,6 +26,10 @@ export default function ItemDetailPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const { data, isLoading, isError } = useItem(Number(id));
+  // Price history (backlog #201): the listing's price timeline under
+  // the current price. A failed read (e.g. the listing was withdrawn —
+  // 404) or an empty timeline hides the section entirely.
+  const { data: priceHistory } = usePriceHistory(Number(id));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const createOrder = useCreateOrder();
   const markSold = useMarkSold();
@@ -125,6 +130,19 @@ export default function ItemDetailPage() {
       </div>
       {canReorderPhotos && <GalleryOrderEditor itemId={data.id} photos={data.photos} />}
       <p className="mt-2 text-lg">¥{(data.priceCents / 100).toFixed(2)}</p>
+      {Array.isArray(priceHistory) && priceHistory.length > 0 && (
+        <section aria-label="Price history" className="mt-2">
+          <h2 className="text-sm font-semibold">Price history</h2>
+          <ul className="mt-1 text-sm text-neutral-600">
+            {priceHistory.map((point, index) => (
+              <li key={index}>
+                ¥{(point.priceCents / 100).toFixed(2)} —{' '}
+                {new Date(point.changedAt).toLocaleDateString()}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <p className="mt-4 whitespace-pre-wrap text-neutral-700">{data.description}</p>
       <span className="mt-4 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
         {data.status}

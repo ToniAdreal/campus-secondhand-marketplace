@@ -106,6 +106,7 @@ class OpenApiContractTest {
       "/api/items/{id}/photos",
       "/api/items/{id}/photos/order",
       "/api/items/{id}/photos/{photoId}",
+      "/api/items/{id}/price-history",
       "/api/items/{id}/publish",
       "/api/items/{id}/renew",
       "/api/items/{id}/report",
@@ -313,6 +314,12 @@ class OpenApiContractTest {
     // not-a-draft 422.
     assertThat(responseCodes(docs, "/api/items/{id}/publish", "post"))
         .contains("401", "403", "404", "422");
+    // Price history (#201): the read pins its success, its anonymous
+    // 401 and its visibility 404 (unknown / draft / withdrawn /
+    // expired) — deliberately no 403: a hidden listing never confirms
+    // that it exists.
+    assertThat(responseCodes(docs, "/api/items/{id}/price-history", "get"))
+        .contains("200", "401", "404");
     // Gallery reorder (#162): pins its not-a-permutation 400 and its
     // concurrent-edit 409 alongside the ownership matrix.
     assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))

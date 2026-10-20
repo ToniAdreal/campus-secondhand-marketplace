@@ -98,6 +98,17 @@ export function listingPhotoUrls(item: Pick<Item, 'photos' | 'photoUrl'>): strin
   return item.photoUrl ? [item.photoUrl] : [];
 }
 
+/**
+ * One point on a listing's price timeline (backlog #201), mirroring the
+ * backend's PriceHistoryPointDto — exactly price + timestamp; the
+ * endpoint deliberately carries no editor identity.
+ */
+export interface PriceHistoryPoint {
+  priceCents: number;
+  /** ISO-8601 instant this price took effect (creation for the first point). */
+  changedAt: string;
+}
+
 export interface Page<T> {
   content: T[];
   totalElements: number;
@@ -132,6 +143,7 @@ export const itemKeys = {
       filters?.sort ?? null,
     ] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
+  priceHistory: (id: number) => [...itemKeys.all, 'price-history', id] as const,
   mine: (page: number) => [...itemKeys.all, 'mine', page] as const,
 };
 
@@ -196,6 +208,23 @@ export function useItem(id: number) {
     queryKey: itemKeys.detail(id),
     queryFn: () =>
       api.get<ApiResponse<Item>>(`/items/${id}`).then((res) => res.data.data),
+  });
+}
+
+/**
+ * GET /api/items/{id}/price-history — the listing's price timeline
+ * (backlog #201), oldest first: the creation price plus one point per
+ * edit that actually changed the price. The detail page renders it as
+ * a compact list under the current price and hides it when the read
+ * fails (a withdrawn listing answers 404) or returns no points.
+ */
+export function usePriceHistory(id: number) {
+  return useQuery({
+    queryKey: itemKeys.priceHistory(id),
+    queryFn: () =>
+      api
+        .get<ApiResponse<PriceHistoryPoint[]>>(`/items/${id}/price-history`)
+        .then((res) => res.data.data),
   });
 }
 
