@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { ApiResponse, Page } from './items';
@@ -167,6 +168,52 @@ export function useUnreadNotificationCount(enabled = true) {
         .then((res) => res.data.data),
     enabled,
   });
+}
+
+/**
+ * Live notification stream (backlog #203): while signed in, opens the
+ * backend's SSE stream and invalidates the notifications subtree on
+ * every `notification` event, so the bell badge moves without a
+ * refetch cycle. EventSource cannot send an Authorization header, so
+ * the stream is opened with the one-time ticket from POST
+ * /notifications/stream-ticket — the access token never appears in a
+ * URL. The stream is a hint only: the event carries just {type, id}
+ * and the real rows are refetched through the queries above. Any
+ * failure (ticket request, stream error) closes the stream silently —
+ * the query/refetch behaviour stays as the fallback.
+ */
+export function useNotificationStream(enabled = true) {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!enabled || typeof EventSource === 'undefined') {
+      return;
+    }
+    let source: EventSource | null = null;
+    let cancelled = false;
+    api
+      .post<ApiResponse<{ ticket: string }>>('/notifications/stream-ticket')
+      .then((res) => {
+        if (cancelled) {
+          return;
+        }
+        source = new EventSource(
+          `/api/notifications/stream?ticket=${encodeURIComponent(res.data.data.ticket)}`,
+        );
+        source.addEventListener('notification', () => {
+          void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+        });
+        source.onerror = () => {
+          source?.close();
+        };
+      })
+      .catch(() => {
+        // Best-effort: no stream, the refetch fallback remains.
+      });
+    return () => {
+      cancelled = true;
+      source?.close();
+    };
+  }, [enabled, queryClient]);
 }
 
 /**

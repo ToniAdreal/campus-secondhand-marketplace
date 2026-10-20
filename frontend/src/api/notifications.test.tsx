@@ -5,9 +5,11 @@ import type { ReactNode } from 'react';
 import { api } from './client';
 import {
   describeNotification,
+  notificationKeys,
   useDeleteNotification,
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
+  useNotificationStream,
   useNotifications,
   useUnreadNotificationCount,
   type Notification,
@@ -181,5 +183,89 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');
     expect(describeNotification('REPORT_APPEAL_UPHELD')).not.toMatch(/restored/i);
     expect(describeNotification('REPORT_APPEAL_REJECTED')).toMatch(/withdrawal stands/i);
+  });
+});
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  readonly url: string;
+  closed = false;
+  onerror: (() => void) | null = null;
+  private listeners = new Map<string, Array<() => void>>();
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: () => void) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  emit(type: string) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener();
+    }
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
+
+describe('useNotificationStream (#203)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    FakeEventSource.instances = [];
+  });
+
+  it('opens the stream with a one-time ticket and invalidates on event', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(postSpy).toHaveBeenCalledWith('/notifications/stream-ticket');
+    const source = FakeEventSource.instances[0];
+    expect(source.url).toBe('/api/notifications/stream?ticket=ticket-abc');
+
+    source.emit('notification');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: notificationKeys.all });
+
+    unmount();
+    expect(source.closed).toBe(true);
+  });
+
+  it('stays closed while disabled and never asks for a ticket', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockClear();
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(false), { wrapper: wrapperFor(queryClient) });
+
+    await Promise.resolve();
+    expect(postSpy).not.toHaveBeenCalledWith('/notifications/stream-ticket');
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('a stream error closes the source — the refetch fallback remains', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), { wrapper: wrapperFor(queryClient) });
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    const source = FakeEventSource.instances[0];
+    source.onerror?.();
+    expect(source.closed).toBe(true);
   });
 });

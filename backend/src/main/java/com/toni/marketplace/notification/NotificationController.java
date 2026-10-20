@@ -5,13 +5,18 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * The caller's in-app notifications (backlog #157). Every route is
@@ -28,9 +33,38 @@ import org.springframework.web.bind.annotation.RestController;
 public class NotificationController {
 
   private final NotificationService notificationService;
+  private final NotificationStreamService streamService;
 
-  public NotificationController(NotificationService notificationService) {
+  public NotificationController(NotificationService notificationService,
+                                NotificationStreamService streamService) {
     this.notificationService = notificationService;
+    this.streamService = streamService;
+  }
+
+  /**
+   * Issues the one-time stream ticket (backlog #203). Authenticated —
+   * the ticket is bound to the caller's id; anonymous callers get 401.
+   */
+  @PostMapping("/stream-ticket")
+  public ApiResponse<StreamTicketResponse> streamTicket() {
+    return ApiResponse.ok(new StreamTicketResponse(streamService.issueTicket(currentUserId())));
+  }
+
+  /**
+   * Opens the SSE stream (backlog #203). Public at the filter chain
+   * because {@code EventSource} cannot send an Authorization header —
+   * the single-use ticket consumed here is the credential, and a
+   * missing / reused / expired ticket is the same 401 envelope as any
+   * other unauthenticated call. The access token is never accepted in
+   * a URL.
+   */
+  @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  public SseEmitter stream(@RequestParam(required = false) String ticket) {
+    Long userId = streamService.consumeTicket(ticket);
+    if (userId == null) {
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthorized");
+    }
+    return streamService.openStream(userId);
   }
 
   /** The caller's notifications, newest first, paginated (global size cap applies). */

@@ -206,6 +206,13 @@ public class SecurityConfig {
             // by its HMAC signature header instead of a Bearer token (the
             // service verifies it before parsing anything).
             .requestMatchers(HttpMethod.POST, "/api/payments/webhooks/mock-psp").permitAll()
+            // Notification SSE stream (backlog #203): public at the chain
+            // because EventSource cannot send an Authorization header —
+            // the controller consumes a one-time, 60-second ticket issued
+            // by the authenticated POST /api/notifications/stream-ticket,
+            // and a missing/reused/expired ticket answers the same 401
+            // envelope. The access token is never accepted in a URL.
+            .requestMatchers(HttpMethod.GET, "/api/notifications/stream").permitAll()
             // Actuator: public liveness/readiness probes, everything else
             // authenticated. Matcher order matters — the more specific
             // health/info matchers come first.

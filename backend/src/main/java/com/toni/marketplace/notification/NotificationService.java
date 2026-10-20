@@ -28,25 +28,62 @@ import org.springframework.web.server.ResponseStatusException;
  * Mark-read on a row that is not the caller's (or does not exist) is a
  * plain 404, so the endpoint is no existence oracle.
  *
- * <p>Honest scope: in-app only. No email, no push, no websockets — the
- * row exists when the user next opens the SPA, and nothing is delivered
- * anywhere else.
+ * <p>Honest scope: in-app only. No email, no websockets. Since backlog
+ * #203 a recorded row also fans a minimal {@code {type, id}} hint out
+ * over the SSE stream (see {@link NotificationStreamService}) — but the
+ * stream is only a hint: it is published after the recording
+ * transaction commits (a rolled-back transition notifies nobody), and
+ * the SPA refetches the real rows over this service's authenticated
+ * reads, which stay the fallback whenever the stream is down.
  */
 @Service
 public class NotificationService {
 
   private final NotificationRepository notifications;
   private final Clock clock;
+  private final NotificationStreamService streams;
 
   @Autowired
-  public NotificationService(NotificationRepository notifications, Clock clock) {
+  public NotificationService(NotificationRepository notifications, Clock clock,
+                             NotificationStreamService streams) {
     this.notifications = notifications;
     this.clock = clock;
+    this.streams = streams;
   }
 
   private NotificationService() {
     this.notifications = null;
     this.clock = Clock.systemUTC();
+    this.streams = null;
+  }
+
+  /**
+   * Fans the SSE hint out for a saved row (backlog #203). Runs after
+   * the recording transaction commits — registered as an after-commit
+   * callback when a transaction synchronization is active, immediately
+   * otherwise (direct unit-test calls) — so a rolled-back transition
+   * never produces a phantom event. On the no-op instance {@code
+   * streams} is null and every record method has already returned.
+   */
+  private void publishAfterCommit(Notification saved) {
+    if (streams == null) {
+      return;
+    }
+    Runnable publish = () -> streams.publish(
+        saved.getRecipientId(), saved.getType(), saved.getId());
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .registerSynchronization(
+              new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                  publish.run();
+                }
+              });
+    } else {
+      publish.run();
+    }
   }
 
   /**
@@ -68,7 +105,7 @@ public class NotificationService {
     if (notifications == null) {
       return;
     }
-    notifications.save(new Notification(recipientId, type, orderId));
+    publishAfterCommit(notifications.save(new Notification(recipientId, type, orderId)));
   }
 
   /**
@@ -82,7 +119,7 @@ public class NotificationService {
     if (notifications == null) {
       return;
     }
-    notifications.save(new Notification(recipientId, type, orderId, offerId));
+    publishAfterCommit(notifications.save(new Notification(recipientId, type, orderId, offerId)));
   }
 
   /**
@@ -97,8 +134,8 @@ public class NotificationService {
     if (notifications == null) {
       return;
     }
-    notifications.save(
-        Notification.savedSearchMatch(recipientId, savedSearchId, matchedListingCount));
+    publishAfterCommit(notifications.save(
+        Notification.savedSearchMatch(recipientId, savedSearchId, matchedListingCount)));
   }
 
   /**
@@ -114,8 +151,8 @@ public class NotificationService {
     if (notifications == null) {
       return;
     }
-    notifications.save(
-        Notification.favoritePriceDrop(recipientId, itemId, oldPriceCents, newPriceCents));
+    publishAfterCommit(notifications.save(
+        Notification.favoritePriceDrop(recipientId, itemId, oldPriceCents, newPriceCents)));
   }
 
   /**
@@ -130,7 +167,7 @@ public class NotificationService {
     if (notifications == null) {
       return;
     }
-    notifications.save(Notification.reportAppeal(recipientId, type, appealId));
+    publishAfterCommit(notifications.save(Notification.reportAppeal(recipientId, type, appealId)));
   }
 
   /** The caller's own notifications, paginated (controller supplies newest-first). */

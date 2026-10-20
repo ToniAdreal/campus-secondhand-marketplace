@@ -3,7 +3,7 @@ import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import RouteFocusManager from './components/RouteFocusManager';
 import { useUnreadMessageCount } from './api/messages';
-import { useUnreadNotificationCount } from './api/notifications';
+import { useNotificationStream, useUnreadNotificationCount } from './api/notifications';
 import { useAuthStore } from './store/useAuthStore';
 
 function AuthNav() {
@@ -16,6 +16,9 @@ function AuthNav() {
   // Unread-notification bell (#157): same badge pattern as messages;
   // the count query only runs signed in.
   const { data: unreadNotifications } = useUnreadNotificationCount(user !== null);
+  // Live bell (#203): SSE events invalidate the notifications subtree;
+  // the count query above stays as the fallback when the stream drops.
+  useNotificationStream(user !== null);
 
   if (!user) {
     return (
