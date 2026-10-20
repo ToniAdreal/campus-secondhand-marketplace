@@ -9,6 +9,8 @@ import {
   listSessions,
   revokeSession,
   revokeOtherSessions,
+  listTrustedDevices,
+  revokeTrustedDevice,
   getLoginHistory,
   requestPasswordReset,
   confirmPasswordReset,
@@ -361,6 +363,65 @@ describe('sessions', () => {
     getSpy.mockRejectedValueOnce(failure);
 
     await expect(getLoginHistory()).rejects.toBe(failure);
+  });
+});
+
+describe('trusted devices (backlog #199)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const device = {
+    id: 7,
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0',
+    ipAddress: '203.0.113.7',
+    createdAt: '2026-10-09T01:00:00Z',
+    lastUsedAt: null,
+    expiresAt: '2026-11-08T01:00:00Z',
+  };
+
+  it('GETs /auth/trusted-devices and returns the rows from the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope([device]));
+
+    const result = await listTrustedDevices();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/trusted-devices');
+    expect(result).toEqual([device]);
+    // the DTO never carries a token or a hash — nothing to leak here
+    expect('tokenHash' in (result[0] as object)).toBe(false);
+  });
+
+  it('DELETEs /auth/trusted-devices/{id} to revoke one trusted device', async () => {
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+
+    await revokeTrustedDevice(7);
+
+    expect(deleteSpy).toHaveBeenCalledWith('/auth/trusted-devices/7');
+  });
+
+  it('propagates the 404 for an unknown or foreign trusted-device id (no oracle)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 404,
+        data: { code: 404, message: 'trusted device not found', data: null },
+      },
+    };
+    deleteSpy.mockRejectedValueOnce(failure);
+
+    await expect(revokeTrustedDevice(99)).rejects.toBe(failure);
+  });
+
+  it('authenticateTotp sends rememberDevice only when the user opted in', async () => {
+    postSpy.mockResolvedValueOnce(envelope(authBody));
+
+    await authenticateTotp({ challenge: 'chal-123', code: '123456', rememberDevice: true });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/authenticate', {
+      challenge: 'chal-123',
+      code: '123456',
+      rememberDevice: true,
+    });
   });
 });
 

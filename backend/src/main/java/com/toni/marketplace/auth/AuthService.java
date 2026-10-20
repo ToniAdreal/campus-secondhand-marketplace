@@ -67,6 +67,8 @@ public class AuthService {
   private final NotificationService notifications;
   private final SessionLimitProperties sessionLimit;
   private final BreachedPasswordChecker breachedChecker;
+  private final TrustedDeviceRepository trustedDevices;
+  private final TrustedDeviceProperties trustedDeviceProps;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -83,7 +85,9 @@ public class AuthService {
                      LoginEventRepository loginEvents,
                      NotificationService notifications,
                      SessionLimitProperties sessionLimit,
-                     BreachedPasswordChecker breachedChecker) {
+                     BreachedPasswordChecker breachedChecker,
+                     TrustedDeviceRepository trustedDevices,
+                     TrustedDeviceProperties trustedDeviceProps) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -105,6 +109,8 @@ public class AuthService {
     this.notifications = notifications;
     this.sessionLimit = sessionLimit;
     this.breachedChecker = breachedChecker;
+    this.trustedDevices = trustedDevices;
+    this.trustedDeviceProps = trustedDeviceProps;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -115,7 +121,7 @@ public class AuthService {
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
         null, new EmailVerificationProperties(), null, null, null, null, null,
-        new SessionLimitProperties(), null);
+        new SessionLimitProperties(), null, null, null);
   }
 
   /**
@@ -348,8 +354,126 @@ public class AuthService {
     return recoveryCodes != null;
   }
 
-  /** Registered user plus their first token pair. */
-  public record AuthResult(User user, JwtTokenService.TokenPair pair) {}
+  /**
+   * Trusted-device seam (backlog #199) with the same null-tolerant
+   * rationale as {@link #recoveryCodesAvailable()}: a hand-built
+   * instance without the repository (the legacy constructor) has no
+   * trust store, so no login can skip the challenge and no trust can
+   * be created there — exactly the pre-#199 behaviour. Production
+   * always gets the JPA bean.
+   */
+  private boolean trustedDevicesAvailable() {
+    return trustedDevices != null;
+  }
+
+  /** Trusted-device TTL accessor with the documented 30-day default as fallback. */
+  private java.time.Duration trustedDeviceTtl() {
+    return trustedDeviceProps != null ? trustedDeviceProps.getTtl()
+        : java.time.Duration.ofDays(30);
+  }
+
+  /** One fresh raw trusted-device token: 32 random bytes, hex — the cookie value. */
+  private static String generateTrustedDeviceToken() {
+    byte[] bytes = new byte[32];
+    new java.security.SecureRandom().nextBytes(bytes);
+    return java.util.HexFormat.of().formatHex(bytes);
+  }
+
+  /**
+   * Creates a trust row for the user (backlog #199) and returns the RAW
+   * token for the cookie — the only moment it exists outside the
+   * client. Only its SHA-256 hash is stored (Flyway V54).
+   */
+  private String createTrustedDevice(User user, SessionMeta meta) {
+    String raw = generateTrustedDeviceToken();
+    SessionMeta safeMeta = meta != null ? meta : SessionMeta.unknown();
+    trustedDevices.save(new TrustedDevice(user.getId(),
+        JwtTokenService.sha256Hex(raw), safeMeta.userAgent(), safeMeta.ipAddress(),
+        clock.instant().plus(trustedDeviceTtl())));
+    return raw;
+  }
+
+  /**
+   * The trusted-device gate at the TOTP branch of login (backlog
+   * #199): the presented cookie token is looked up by hash.
+   *
+   * <ul>
+   *   <li>Current hash, this user's row, unexpired → the device is
+   *       trusted: the token ROTATES (the presented hash becomes the
+   *       row's previous hash, a fresh token becomes current, the
+   *       expiry slides) and the fresh raw token is returned for the
+   *       new cookie.</li>
+   *   <li>Previous (rotated-out) hash → a replay: the row is DELETED
+   *       (the cookie may have been copied — neither token works
+   *       again) and the login falls through to the challenge.</li>
+   *   <li>Expired current hash → the row is deleted and the login
+   *       falls through to the challenge.</li>
+   *   <li>Anything else (absent, blank, unknown, another user's row)
+   *       → no trust; the challenge is issued exactly as before.</li>
+   * </ul>
+   *
+   * @return the fresh raw token to set as the cookie when trust applied
+   */
+  private java.util.Optional<String> consumeTrustedDevice(User user, String presentedToken,
+                                                          SessionMeta meta) {
+    if (!trustedDevicesAvailable() || presentedToken == null || presentedToken.isBlank()) {
+      return java.util.Optional.empty();
+    }
+    String hash = JwtTokenService.sha256Hex(presentedToken);
+    Instant now = clock.instant();
+    java.util.Optional<TrustedDevice> current = trustedDevices.findByTokenHash(hash);
+    if (current.isPresent()) {
+      TrustedDevice row = current.get();
+      if (!row.getUserId().equals(user.getId())) {
+        return java.util.Optional.empty();
+      }
+      if (row.isExpired(now)) {
+        trustedDevices.delete(row);
+        return java.util.Optional.empty();
+      }
+      String raw = generateTrustedDeviceToken();
+      row.setPreviousTokenHash(row.getTokenHash());
+      row.setTokenHash(JwtTokenService.sha256Hex(raw));
+      SessionMeta safeMeta = meta != null ? meta : SessionMeta.unknown();
+      row.setUserAgent(safeMeta.userAgent());
+      row.setIpAddress(safeMeta.ipAddress());
+      row.setLastUsedAt(now);
+      row.setExpiresAt(now.plus(trustedDeviceTtl()));
+      trustedDevices.save(row);
+      return java.util.Optional.of(raw);
+    }
+    // Replay of a rotated-out token: kill that device's trust outright.
+    trustedDevices.findByPreviousTokenHash(hash).ifPresent(row -> {
+      if (row.getUserId().equals(user.getId())) {
+        trustedDevices.delete(row);
+      }
+    });
+    return java.util.Optional.empty();
+  }
+
+  /** Retires every trust row of the account (password change, 2FA off, closure). */
+  private void revokeAllTrustedDevices(long userId) {
+    if (trustedDevicesAvailable()) {
+      trustedDevices.deleteByUserId(userId);
+    }
+  }
+
+  /**
+   * Registered user plus their token pair. {@code trustedDeviceToken}
+   * (backlog #199) carries the RAW trusted-device token exactly once —
+   * on the TOTP exchange that created the trust (opt-in) or on the
+   * trusted login that rotated it — so the controller can set the
+   * {@code trusted_device} cookie; it is null on every other result
+   * and only its SHA-256 hash is ever stored.
+   */
+  public record AuthResult(User user, JwtTokenService.TokenPair pair,
+                           String trustedDeviceToken) {
+
+    /** Every pre-#199 call site: no trusted-device token to hand out. */
+    public AuthResult(User user, JwtTokenService.TokenPair pair) {
+      this(user, pair, null);
+    }
+  }
 
   /**
    * Registration outcome (backlog #138). When the email-verification gate
@@ -468,6 +592,11 @@ public class AuthService {
     return login(usernameOrEmail, rawPassword, SessionMeta.unknown());
   }
 
+  /** Login without a trusted-device cookie — see the 4-arg variant (backlog #199). */
+  public LoginResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
+    return login(usernameOrEmail, rawPassword, meta, null);
+  }
+
   /**
    * Verifies credentials. The identifier is normalized before lookup, so
    * "ALICE" logs into the "alice" account. Unknown identifier and wrong
@@ -498,16 +627,23 @@ public class AuthService {
    *
    * @param meta device info captured from the request — recorded on the new
    *     session's refresh-token row (backlog #62)
+   * @param trustedDeviceToken the raw {@code trusted_device} cookie value,
+   *     if the client presented one (backlog #199): for a TOTP-enabled
+   *     account a live trust row skips ONLY this challenge step — the
+   *     password above was still verified in full. Absent, unknown,
+   *     expired or replayed tokens change nothing: the challenge is
+   *     issued exactly as before (a replay also deletes the trust row).
    */
   @Transactional
-  public LoginResult login(String usernameOrEmail, String rawPassword, SessionMeta meta) {
+  public LoginResult login(String usernameOrEmail, String rawPassword, SessionMeta meta,
+                           String trustedDeviceToken) {
     // Backlog #153: exactly one auth.login.duration sample per call —
     // success when the call returns (pair or TOTP challenge), failure
     // when it throws. The sample stops inside this transaction,
     // mirroring the counters, which also increment in-transaction.
     Timer.Sample sample = metrics().startLoginTimer();
     try {
-      LoginResult result = loginAttempt(usernameOrEmail, rawPassword, meta);
+      LoginResult result = loginAttempt(usernameOrEmail, rawPassword, meta, trustedDeviceToken);
       metrics().stopLoginTimer(sample, true);
       return result;
     } catch (RuntimeException e) {
@@ -517,7 +653,7 @@ public class AuthService {
   }
 
   private LoginResult loginAttempt(String usernameOrEmail, String rawPassword,
-                                   SessionMeta meta) {
+                                   SessionMeta meta, String trustedDeviceToken) {
     String identifier = canonical(usernameOrEmail);
     User user = users.findByUsernameIgnoreCase(identifier)
         .or(() -> users.findByEmailIgnoreCase(identifier))
@@ -603,6 +739,23 @@ public class AuthService {
       user.setLockedUntil(null);
     }
     if (user.isTotpEnabled()) {
+      // Trusted device (backlog #199): the password is verified, and a
+      // live trust row for THIS account skips only the TOTP step — the
+      // login then completes exactly like the exchange below (same
+      // new-device alert, SUCCESS history row, session cap). The token
+      // rotated on this use travels on the result so the controller can
+      // replace the cookie. No trust (absent / unknown / expired /
+      // replayed token) falls through to the challenge unchanged.
+      java.util.Optional<String> rotatedTrust =
+          consumeTrustedDevice(user, trustedDeviceToken, meta);
+      if (rotatedTrust.isPresent()) {
+        alertIfNewDevice(user.getId(), meta);
+        recordLogin(user.getId(), usernameOrEmail, LoginOutcome.SUCCESS, meta);
+        JwtTokenService.TokenPair trustedPair = jwt.createTokenPair(user, meta);
+        enforceSessionLimit(user.getId(), trustedPair);
+        return new LoginResult.Pair(
+            new AuthResult(user, trustedPair, rotatedTrust.get()));
+      }
       // Password correct, second factor still outstanding: issue a
       // short-lived signed challenge, never a token pair.
       recordLogin(user.getId(), usernameOrEmail, LoginOutcome.TOTP_REQUIRED, meta);
@@ -758,6 +911,9 @@ public class AuthService {
     if (recoveryCodesAvailable()) {
       recoveryCodes.deleteByUserId(userId);
     }
+    // Backlog #199: with 2FA off there is no challenge left to skip —
+    // every trust row is retired with the factor it bypassed.
+    revokeAllTrustedDevices(userId);
     // The disable is a sensitive transition — append its audit row
     // inside this transaction (a rollback leaves 2FA on and no row).
     audit().record(userId, AuditAction.TOTP_DISABLED, AuditTargetType.USER, userId);
@@ -1008,6 +1164,22 @@ public class AuthService {
   @Transactional(noRollbackFor = {InvalidCredentialsException.class,
       AccountLockedException.class})
   public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta) {
+    return authenticateTotp(challenge, code, meta, false);
+  }
+
+  /**
+   * The exchange with the trusted-device opt-in (backlog #199): when
+   * {@code rememberDevice} is set, a successful exchange ALSO creates a
+   * trust row for this device and the result carries the raw token for
+   * the {@code trusted_device} cookie — later password logins from
+   * this device skip only this step. The opt-in is honoured only on
+   * success and only when the trust store exists; a failed exchange
+   * never creates trust.
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta,
+                                     boolean rememberDevice) {
     long userId = jwt.parseTotpChallenge(challenge);
     // Backlog #171: an unknown user id here means the account vanished
     // between challenge and exchange — there is no username to record
@@ -1094,7 +1266,11 @@ public class AuthService {
     // Backlog #191: a TOTP-completed login founds a session exactly like
     // the password path, so it counts toward (and can trigger) the cap.
     enforceSessionLimit(user.getId(), pair);
-    return new AuthResult(user, pair);
+    // Backlog #199: the opt-in creates the trust row inside this same
+    // transaction — an exchange that rolls back leaves no trust behind.
+    String trustedToken = (rememberDevice && trustedDevicesAvailable())
+        ? createTrustedDevice(user, meta) : null;
+    return new AuthResult(user, pair, trustedToken);
   }
 
   /** Whole seconds until the lock expires, never below 1 (the header must be meaningful). */
@@ -1183,6 +1359,10 @@ public class AuthService {
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);
     jwt.revokeAll(userId);
+    // Backlog #199: a password change retires every trusted device —
+    // trust was granted against the old credential, so every device
+    // pays the full TOTP challenge again until re-trusted.
+    revokeAllTrustedDevices(userId);
     metrics().passwordChanged();
     // Backlog #98: append the audit row inside this transaction, so a
     // change that rolls back (e.g. token issuance failing) leaves no row.
@@ -1320,6 +1500,8 @@ public class AuthService {
     if (recoveryCodesAvailable()) {
       recoveryCodes.deleteByUserId(userId);
     }
+    // Backlog #199: the tombstone account has no devices left to trust.
+    revokeAllTrustedDevices(userId);
     // Anonymize the row into its tombstone form (see the javadoc above).
     user.setUsername("deleted-" + userId);
     user.setEmail("deleted-" + userId + "@deleted.invalid");
@@ -1487,6 +1669,22 @@ public class AuthService {
    */
   @Transactional
   public int revokeOtherSessions(long userId, String presentedRefreshToken) {
+    return revokeOtherSessions(userId, presentedRefreshToken, null);
+  }
+
+  /**
+   * The #163 action with the trusted-device half (backlog #199): every
+   * trust row of the caller is revoked EXCEPT the row behind the
+   * presented {@code trusted_device} cookie (matched by its current
+   * hash only — a rotated-out token identifies nothing worth keeping).
+   * An absent or unknown trusted cookie keeps no trust, mirroring the
+   * session rule. The returned count stays the SESSION count of the
+   * original contract; trust revocation is a silent side effect, like
+   * the session families' own.
+   */
+  @Transactional
+  public int revokeOtherSessions(long userId, String presentedRefreshToken,
+                                 String presentedTrustedToken) {
     Instant now = clock.instant();
     String currentFamily = (presentedRefreshToken == null || presentedRefreshToken.isBlank())
         ? null
@@ -1497,7 +1695,48 @@ public class AuthService {
         .filter(family -> !family.equals(currentFamily))
         .toList();
     otherFamilies.forEach(jwt::revokeFamily);
+    if (trustedDevicesAvailable()) {
+      String keepHash = (presentedTrustedToken == null || presentedTrustedToken.isBlank())
+          ? null : JwtTokenService.sha256Hex(presentedTrustedToken);
+      trustedDevices.findByUserIdOrderByCreatedAtAsc(userId).stream()
+          .filter(row -> !row.getTokenHash().equals(keepHash))
+          .forEach(trustedDevices::delete);
+    }
     return otherFamilies.size();
+  }
+
+  /**
+   * Trusted devices of the caller (backlog #199): the sessions
+   * surface's trust list, most recently trusted first. Rows map to
+   * {@link TrustedDeviceDto} — never the entity, never a token hash.
+   * A hand-built instance without the repository reads as an empty
+   * list.
+   */
+  @Transactional(readOnly = true)
+  public List<TrustedDeviceDto> trustedDevices(long userId) {
+    if (!trustedDevicesAvailable()) {
+      return List.of();
+    }
+    return trustedDevices.findByUserIdOrderByCreatedAtAsc(userId).stream()
+        .map(TrustedDeviceDto::of)
+        .sorted(Comparator.comparing(TrustedDeviceDto::createdAt).reversed())
+        .toList();
+  }
+
+  /**
+   * Revokes one trusted device (backlog #199): its row is deleted, so
+   * the device's cookie — current and rotated-out tokens alike — buys
+   * nothing at the next login. An unknown id — or one belonging to
+   * another user — is 404 (no cross-user oracle), mirroring
+   * {@link #revokeSession}.
+   */
+  @Transactional
+  public void revokeTrustedDevice(long userId, long deviceId) {
+    if (!trustedDevicesAvailable()
+        || trustedDevices.findByIdAndUserId(deviceId, userId).isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "trusted device not found");
+    }
+    trustedDevices.deleteById(deviceId);
   }
 
   /**

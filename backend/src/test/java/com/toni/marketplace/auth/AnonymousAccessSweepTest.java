@@ -127,6 +127,8 @@ class AnonymousAccessSweepTest {
       "GET /api/auth/sessions",
       "POST /api/auth/sessions/revoke-others",
       "DELETE /api/auth/sessions/{id}",
+      "GET /api/auth/trusted-devices",
+      "DELETE /api/auth/trusted-devices/{id}",
       "GET /api/categories",
       "POST /api/categories",
       "PATCH /api/categories/{id}",

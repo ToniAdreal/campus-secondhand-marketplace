@@ -170,6 +170,42 @@ describe('LoginPage', () => {
     await waitFor(() => expect(currentPath).toBe('/'));
   });
 
+  it('checking "trust this device" sends rememberDevice with the exchange (backlog #199)', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-trust', expiresAt: '2026-10-09T05:00:00Z' },
+      },
+    } as never);
+    postSpy.mockResolvedValueOnce(authSuccess());
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    const codeField = await screen.findByLabelText(/two-factor code/i);
+    // the opt-in starts unchecked — trust is never the default
+    const trustBox = screen.getByLabelText(/trust this device/i) as HTMLInputElement;
+    expect(trustBox.type).toBe('checkbox');
+    expect(trustBox.checked).toBe(false);
+    fireEvent.click(trustBox);
+    expect(trustBox.checked).toBe(true);
+
+    fireEvent.change(codeField, { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify code/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/2fa/authenticate', {
+      challenge: 'chal-trust',
+      code: '123456',
+      rememberDevice: true,
+    });
+    await waitFor(() => expect(currentPath).toBe('/'));
+  });
+
   it('the same code field accepts a recovery code (backlog #100)', async () => {
     postSpy.mockResolvedValueOnce({
       status: 202,

@@ -243,6 +243,22 @@ app:
       # a challenge holder cannot lock the owner out of login entirely.
       max-attempts: 5
       lock-duration: 15m
+    trusted-device:
+      # Trusted devices for the TOTP challenge (AuthService, backlog
+      # #199; Flyway V54): on a successful /api/auth/2fa/authenticate
+      # exchange the user may opt in (rememberDevice) to trusting the
+      # device — the server stores only the SHA-256 hash of a rotating
+      # token carried in the trusted_device httpOnly cookie, and later
+      # password logins from that device skip ONLY the TOTP step (the
+      # password is always verified in full). The token rotates on
+      # every trusted use; replaying a rotated-out token deletes that
+      # device's trust. ttl is sliding: each trusted use extends the
+      # expiry to now + ttl, so an unused device falls back to the
+      # full challenge after 30 days by default. Password change,
+      # TOTP disable and account closure delete every trust row; rows
+      # are listed/revocable at GET/DELETE /api/auth/trusted-devices
+      # and in bulk via POST /api/auth/sessions/revoke-others.
+      ttl: 30d
   cleanup:
     # Nightly purge of stale auth/order bookkeeping rows
     # (DataRetentionService, @Scheduled 03:00 server-local). Values in days.

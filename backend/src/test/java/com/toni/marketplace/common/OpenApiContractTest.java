@@ -94,6 +94,8 @@ class OpenApiContractTest {
       "/api/auth/sessions",
       "/api/auth/sessions/revoke-others",
       "/api/auth/sessions/{id}",
+      "/api/auth/trusted-devices",
+      "/api/auth/trusted-devices/{id}",
       "/api/categories",
       "/api/categories/{id}",
       "/api/items",
@@ -291,6 +293,12 @@ class OpenApiContractTest {
     // Login history (#171) pins its success + anonymous codes.
     assertThat(responseCodes(docs, "/api/auth/login-history", "get"))
         .contains("200", "401");
+    // Trusted devices (#199) pin their success + anonymous codes, and
+    // the revoke pins its no-oracle 404.
+    assertThat(responseCodes(docs, "/api/auth/trusted-devices", "get"))
+        .contains("200", "401");
+    assertThat(responseCodes(docs, "/api/auth/trusted-devices/{id}", "delete"))
+        .contains("200", "401", "404");
     // Account data export (#172) pins its success + anonymous codes and
     // its own per-user rate-limit 429.
     assertThat(responseCodes(docs, "/api/users/me/export", "get"))

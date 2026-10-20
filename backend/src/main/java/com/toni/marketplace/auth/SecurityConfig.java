@@ -35,8 +35,10 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       {@code GET /api/auth/me}, {@code DELETE /api/auth/me} (account
  *       closure, backlog #158), {@code GET /api/auth/sessions},
  *       {@code DELETE /api/auth/sessions/**},
- *       {@code POST /api/auth/sessions/revoke-others} (backlog #163) and
- *       {@code GET /api/auth/login-history} (backlog #171),
+ *       {@code POST /api/auth/sessions/revoke-others} (backlog #163),
+ *       {@code GET /api/auth/login-history} (backlog #171) and
+ *       {@code GET /api/auth/trusted-devices} +
+ *       {@code DELETE /api/auth/trusted-devices/**} (backlog #199),
  *       which need a Bearer access token because they act on the caller's own
  *       session(s) / sign-in history.</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
@@ -192,6 +194,8 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.DELETE, "/api/auth/sessions/**").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/sessions/revoke-others").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/login-history").authenticated()
+            .requestMatchers(HttpMethod.GET, "/api/auth/trusted-devices").authenticated()
+            .requestMatchers(HttpMethod.DELETE, "/api/auth/trusted-devices/**").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/enable").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/disable").authenticated()

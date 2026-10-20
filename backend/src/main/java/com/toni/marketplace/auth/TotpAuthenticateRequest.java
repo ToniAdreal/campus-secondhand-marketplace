@@ -15,10 +15,30 @@ import jakarta.validation.constraints.NotBlank;
  * failed second factor, so the response never reveals which form was
  * expected. (The enable endpoint keeps its strict 6-digit pattern —
  * only a real TOTP code may enroll.)
+ *
+ * <p>{@code rememberDevice} (backlog #199) is the trusted-device
+ * opt-in: when true, a SUCCESSFUL exchange also trusts this device
+ * (the response sets the {@code trusted_device} cookie), so later
+ * password logins from it skip only this step. Absent/null is false —
+ * every pre-#199 client keeps paying the challenge. The flag is
+ * honoured only on success; a failed exchange creates no trust.
  */
 public record TotpAuthenticateRequest(
     @NotBlank(message = "challenge is required")
     String challenge,
 
     @NotBlank(message = "code is required")
-    String code) {}
+    String code,
+
+    Boolean rememberDevice) {
+
+  /** Two-arg form for pre-#199 call sites: never trust the device. */
+  public TotpAuthenticateRequest(String challenge, String code) {
+    this(challenge, code, null);
+  }
+
+  /** The opt-in as a plain boolean (absent/null reads as false). */
+  public boolean rememberDeviceOrFalse() {
+    return Boolean.TRUE.equals(rememberDevice);
+  }
+}

@@ -164,6 +164,14 @@ export async function resendEmailVerification(
 export interface AuthenticateTotpPayload {
   challenge: string;
   code: string;
+  /**
+   * Trusted-device opt-in (backlog #199): when true, a SUCCESSFUL
+   * exchange also trusts this device — the response sets the
+   * `trusted_device` httpOnly cookie and later password logins from
+   * this device skip only the TOTP step. Omitted (not sent) when
+   * false/absent, matching the backend's absent-is-false contract.
+   */
+  rememberDevice?: boolean;
 }
 
 /**
@@ -180,10 +188,12 @@ export interface AuthenticateTotpPayload {
 export async function authenticateTotp(
   payload: AuthenticateTotpPayload,
 ): Promise<LoginResult> {
-  const res = await api.post<ApiResponse<AuthResponseBody>>(
-    '/auth/2fa/authenticate',
-    payload,
-  );
+  const res = await api.post<ApiResponse<AuthResponseBody>>('/auth/2fa/authenticate', {
+    challenge: payload.challenge,
+    code: payload.code,
+    // Only sent when the user opted in — absent reads as false server-side.
+    ...(payload.rememberDevice ? { rememberDevice: true } : {}),
+  });
   const body = res.data.data;
   return { user: body.user, accessToken: body.accessToken };
 }
@@ -483,6 +493,47 @@ export async function revokeOtherSessions(): Promise<number> {
 }
 
 /**
+ * One trusted device, mirroring the backend's TrustedDeviceDto
+ * (GET /api/auth/trusted-devices, backlog #199). A trusted device still
+ * requires the password at login — trust skips only the TOTP step. The
+ * token and its hashes are never exposed: `id` is the trust row id and
+ * the path id for DELETE /api/auth/trusted-devices/{id}. `lastUsedAt`
+ * is null until the first login that skipped the challenge via this
+ * trust; `expiresAt` slides forward on every trusted use.
+ */
+export interface TrustedDevice {
+  id: number;
+  userAgent: string | null;
+  ipAddress: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+}
+
+/**
+ * GET /api/auth/trusted-devices. Lists the caller's trusted devices,
+ * newest first (server-side order). Requires authentication.
+ *
+ * Throws the Axios error on failure (401 when no session exists).
+ */
+export async function listTrustedDevices(): Promise<TrustedDevice[]> {
+  const res = await api.get<ApiResponse<TrustedDevice[]>>('/auth/trusted-devices');
+  return res.data.data;
+}
+
+/**
+ * DELETE /api/auth/trusted-devices/{id}. Revokes one trusted device:
+ * its cookie buys nothing at the next login and the full TOTP
+ * challenge applies again. Unknown ids — or ids belonging to another
+ * user — fail with 404 (no cross-user oracle).
+ *
+ * Throws the Axios error on failure.
+ */
+export async function revokeTrustedDevice(id: number): Promise<void> {
+  await api.delete(`/auth/trusted-devices/${id}`);
+}
+
+/**
  * The verdict of one recorded login attempt, mirroring the backend's
  * LoginOutcome enum (backlog #171): SUCCESS — a token pair was issued;
  * BAD_PASSWORD — the account exists but the password did not match (a
@@ -544,6 +595,7 @@ export const sessionKeys = {
   all: ['sessions'] as const,
   list: () => [...sessionKeys.all, 'list'] as const,
   loginHistory: () => [...sessionKeys.all, 'login-history'] as const,
+  trustedDevices: () => [...sessionKeys.all, 'trusted-devices'] as const,
 };
 
 /** GET /api/auth/login-history as a query (first page only — see getLoginHistory); disabled for anonymous visitors so no request fires before the login bounce. */
@@ -577,6 +629,34 @@ export function useRevokeSession() {
     onSuccess: (_data, id) => {
       queryClient.setQueryData<AuthSession[]>(sessionKeys.list(), (old) =>
         old?.filter((session) => session.id !== id),
+      );
+      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    },
+  });
+}
+
+/** GET /api/auth/trusted-devices as a query (backlog #199); disabled for anonymous visitors so no request fires before the login bounce. */
+export function useTrustedDevices(enabled = true) {
+  return useQuery({
+    queryKey: sessionKeys.trustedDevices(),
+    queryFn: () => listTrustedDevices(),
+    enabled,
+  });
+}
+
+/**
+ * DELETE /api/auth/trusted-devices/{id} as a mutation (backlog #199).
+ * On success the revoked row is dropped from the cached list
+ * immediately and the sessions subtree is invalidated so it refetches
+ * the server's truth — mirroring useRevokeSession.
+ */
+export function useRevokeTrustedDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => revokeTrustedDevice(id),
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<TrustedDevice[]>(sessionKeys.trustedDevices(), (old) =>
+        old?.filter((device) => device.id !== id),
       );
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     },

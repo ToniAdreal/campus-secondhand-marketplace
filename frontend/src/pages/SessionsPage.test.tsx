@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, getAccessToken, setAccessToken } from '../api/client';
-import type { AuthSession, AuthUser, LoginEvent } from '../api/auth';
+import type { AuthSession, AuthUser, LoginEvent, TrustedDevice } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 import SessionsPage from './SessionsPage';
 
@@ -58,15 +58,27 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
+const trustedDevice: TrustedDevice = {
+  id: 7,
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1',
+  ipAddress: '192.0.2.44',
+  createdAt: '2026-10-08T09:00:00Z',
+  lastUsedAt: null,
+  expiresAt: '2026-11-07T09:00:00Z',
+};
+
 function historyPage(content: LoginEvent[]) {
   return { content, totalElements: content.length, totalPages: 1, number: 0 };
 }
 
-/** Routes the two GETs of the page: sessions list vs login-history page. */
-function mockGets(history: LoginEvent[]) {
+/** Routes the page's GETs: sessions list vs login-history page vs trusted devices. */
+function mockGets(history: LoginEvent[], trusted: TrustedDevice[] = []) {
   getSpy.mockImplementation(((path: string) => {
     if (path === '/auth/login-history') {
       return Promise.resolve(envelope(historyPage(history)));
+    }
+    if (path === '/auth/trusted-devices') {
+      return Promise.resolve(envelope(trusted));
     }
     return Promise.resolve(envelope([currentSession, otherSession]));
   }) as never);
@@ -297,6 +309,69 @@ describe('SessionsPage', () => {
     expect(getSpy).toHaveBeenCalledWith('/auth/login-history', {
       params: { page: 0, size: 20 },
     });
+  });
+
+  it('renders the trusted devices section with device, IP and expiry (backlog #199)', async () => {
+    mockGets([], [trustedDevice]);
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('Trusted devices')).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        screen.getByText('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1'),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText((content) => content.includes('192.0.2.44'))).toBeTruthy();
+    expect(screen.getByText((content) => content.startsWith('Expires:'))).toBeTruthy();
+    // never used yet — the row says so instead of rendering a bogus date
+    expect(screen.getByText((content) => content.includes('Not used yet'))).toBeTruthy();
+    expect(getSpy).toHaveBeenCalledWith('/auth/trusted-devices');
+  });
+
+  it('shows the trusted-devices empty state when nothing was trusted (backlog #199)', async () => {
+    mockGets([]);
+    renderAt('/settings/sessions');
+
+    await waitFor(() => expect(screen.getByText('No trusted devices.')).toBeTruthy());
+  });
+
+  it('revoking a trusted device DELETEs it and drops the row (backlog #199)', async () => {
+    let revoked = false;
+    getSpy.mockImplementation(((path: string) => {
+      if (path === '/auth/login-history') {
+        return Promise.resolve(envelope(historyPage([])));
+      }
+      if (path === '/auth/trusted-devices') {
+        // the post-revoke refetch (invalidation) sees the surviving list
+        return Promise.resolve(envelope(revoked ? [] : [trustedDevice]));
+      }
+      return Promise.resolve(envelope([currentSession, otherSession]));
+    }) as never);
+    deleteSpy.mockImplementation((() => {
+      revoked = true;
+      return Promise.resolve(envelope(null));
+    }) as never);
+    renderAt('/settings/sessions');
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1'),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Revoke trusted device Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1',
+      }),
+    );
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('/auth/trusted-devices/7'));
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1'),
+      ).toBeNull(),
+    );
+    // revoking trust never signs anyone out — the sessions stay untouched
+    expect(useAuthStore.getState().user).toEqual(user);
   });
 
   it('shows the login-history empty state when no attempt was recorded', async () => {

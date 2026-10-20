@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
     DataExportGrantProperties.class, SessionLimitProperties.class,
-    BreachedPasswordProperties.class})
+    BreachedPasswordProperties.class, TrustedDeviceProperties.class})
 public class AuthConfig {
 
   /**

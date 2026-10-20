@@ -5,9 +5,12 @@ import {
   useLoginHistory,
   useRevokeOtherSessions,
   useRevokeSession,
+  useRevokeTrustedDevice,
   useSessions,
+  useTrustedDevices,
   type AuthSession,
   type LoginEvent,
+  type TrustedDevice,
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
 import { queryClient } from '../queryClient';
@@ -29,6 +32,10 @@ import { useAuthStore } from '../store/useAuthStore';
  * this tab out (its refresh cookie is dead), so it asks for confirmation
  * first and then clears local auth state and bounces to /login — without
  * calling POST /api/auth/logout, which would revoke every session.
+ *
+ * Between the two, a "Trusted devices" section (backlog #199) lists
+ * the caller's TOTP trust rows from GET /api/auth/trusted-devices with
+ * a per-row revoke (DELETE /api/auth/trusted-devices/{id}).
  *
  * Below the sessions list, a "Login history" section (backlog #171)
  * renders the caller's recorded login outcomes from
@@ -64,6 +71,20 @@ function loginEventDeviceLabel(event: LoginEvent): string {
   return event.userAgent ?? 'Unknown device';
 }
 
+function trustedDeviceLabel(device: TrustedDevice): string {
+  return device.userAgent ?? 'Unknown device';
+}
+
+/**
+ * Shape guard for the trusted-device list (backlog #199): a row only
+ * renders as a trusted device when it carries the DTO's numeric id and
+ * expiry — anything else (e.g. a stale cache entry of another shape
+ * under the shared sessions subtree) is never shown as a trust row.
+ */
+function isTrustedDeviceRow(row: TrustedDevice): boolean {
+  return typeof row?.id === 'number' && typeof row?.expiresAt === 'string';
+}
+
 export default function SessionsPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
@@ -72,8 +93,10 @@ export default function SessionsPage() {
   // the credential-died-after-login case.
   const sessions = useSessions(user !== null);
   const loginHistory = useLoginHistory(user !== null);
+  const trustedDevices = useTrustedDevices(user !== null);
   const revoke = useRevokeSession();
   const revokeOthers = useRevokeOtherSessions();
+  const revokeTrusted = useRevokeTrustedDevice();
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokedOthersNote, setRevokedOthersNote] = useState<string | null>(null);
 
@@ -86,6 +109,7 @@ export default function SessionsPage() {
   }
 
   const list = sessions.data ?? [];
+  const trustedList = (trustedDevices.data ?? []).filter(isTrustedDeviceRow);
 
   function onRevokeOthers() {
     setRevokeError(null);
@@ -100,6 +124,13 @@ export default function SessionsPage() {
             : `Revoked ${count} other sessions. This device stays signed in.`,
         );
       },
+      onError: (err) => setRevokeError(describeSessionError(err)),
+    });
+  }
+
+  function onRevokeTrusted(device: TrustedDevice) {
+    setRevokeError(null);
+    revokeTrusted.mutate(device.id, {
       onError: (err) => setRevokeError(describeSessionError(err)),
     });
   }
@@ -213,6 +244,63 @@ export default function SessionsPage() {
                 aria-label={`Revoke session on ${deviceLabel(session)}`}
                 onClick={() => onRevoke(session)}
                 disabled={revoke.isLoading}
+                className="shrink-0 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h2 className="mb-1 mt-8 text-xl font-bold">Trusted devices</h2>
+      <p className="mb-4 text-sm text-neutral-500">
+        Devices you trusted at the two-factor step (backlog #199). A trusted device
+        still needs your password at login — trust skips only the code step, for 30
+        days from its last trusted use. Revoking a device makes its next login ask
+        for the code again. Revoking all other sessions also revokes trusted
+        devices, and changing your password revokes every trusted device.
+      </p>
+      {trustedDevices.isLoading && <p>Loading trusted devices…</p>}
+      {trustedDevices.isError && (
+        <p role="alert" className="text-red-600">
+          {describeSessionError(trustedDevices.error)}
+        </p>
+      )}
+      {trustedDevices.isSuccess && trustedList.length === 0 && (
+        <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+          <p className="text-neutral-600">No trusted devices.</p>
+        </div>
+      )}
+      {trustedList.length > 0 && (
+        <ul className="space-y-3">
+          {trustedList.map((device) => (
+            <li
+              key={device.id}
+              className="flex items-start justify-between gap-3 rounded-lg bg-white p-4 shadow-sm"
+            >
+              <div>
+                <p className="font-medium">{trustedDeviceLabel(device)}</p>
+                <p className="mt-1 text-sm text-neutral-500">
+                  IP: {device.ipAddress ?? 'Unknown IP'}
+                </p>
+                <p className="text-sm text-neutral-500">
+                  Trusted: {new Date(device.createdAt).toLocaleString()}
+                </p>
+                <p className="text-sm text-neutral-500">
+                  Last used:{' '}
+                  {device.lastUsedAt
+                    ? new Date(device.lastUsedAt).toLocaleString()
+                    : 'Not used yet'}
+                </p>
+                <p className="text-sm text-neutral-500">
+                  Expires: {new Date(device.expiresAt).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label={`Revoke trusted device ${trustedDeviceLabel(device)}`}
+                onClick={() => onRevokeTrusted(device)}
+                disabled={revokeTrusted.isLoading}
                 className="shrink-0 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 Revoke

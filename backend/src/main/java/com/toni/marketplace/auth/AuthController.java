@@ -35,23 +35,29 @@ public class AuthController {
 
   private static final String REFRESH_COOKIE = "refresh_token";
 
+  /** The trusted-device cookie (backlog #199): its own name, never the refresh cookie. */
+  private static final String TRUSTED_COOKIE = "trusted_device";
+
   private final AuthService auth;
   private final PasswordResetService passwordReset;
   private final EmailVerificationService emailVerification;
   private final JwtProperties jwtProps;
   private final RefreshCookieProperties cookieProps;
   private final TrustedProxiesProperties trustedProxies;
+  private final TrustedDeviceProperties trustedProps;
 
   public AuthController(AuthService auth, PasswordResetService passwordReset,
                         EmailVerificationService emailVerification,
                         JwtProperties jwtProps, RefreshCookieProperties cookieProps,
-                        TrustedProxiesProperties trustedProxies) {
+                        TrustedProxiesProperties trustedProxies,
+                        TrustedDeviceProperties trustedProps) {
     this.auth = auth;
     this.passwordReset = passwordReset;
     this.emailVerification = emailVerification;
     this.jwtProps = jwtProps;
     this.cookieProps = cookieProps;
     this.trustedProxies = trustedProxies;
+    this.trustedProps = trustedProps;
   }
 
   /**
@@ -116,18 +122,30 @@ public class AuthController {
   @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "TOTP enabled: exchange the signed challenge at /api/auth/2fa/authenticate"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credentials correct but the email address is not verified yet (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/login")
   public ResponseEntity<?> login(
-      @Valid @RequestBody LoginRequest request, HttpServletRequest http) {
+      @Valid @RequestBody LoginRequest request, HttpServletRequest http,
+      @CookieValue(value = TRUSTED_COOKIE, required = false) String trustedToken) {
     // Backlog #171: this meta feeds both the login-history row and the
     // new session's refresh-token row, so both capture the client IP
     // resolved through the #104 trusted-proxy set (with the default
     // empty set that is exactly the remote address, as before).
+    // Backlog #199: the trusted_device cookie rides along — for a
+    // TOTP-enabled account a live trust row skips only the challenge
+    // (the password was still verified); ok() then replaces the cookie
+    // with the rotated token.
     AuthService.LoginResult result = auth.login(request.usernameOrEmail(), request.password(),
-        SessionMeta.of(http, trustedProxies.trustedProxySet()));
+        SessionMeta.of(http, trustedProxies.trustedProxySet()), trustedToken);
     if (result instanceof AuthService.LoginResult.Pair pair) {
       return ok(pair.result());
     }
     AuthService.LoginResult.Challenge challenge = (AuthService.LoginResult.Challenge) result;
-    return ResponseEntity.status(HttpStatus.ACCEPTED)
+    ResponseEntity.BodyBuilder challengeResponse = ResponseEntity.status(HttpStatus.ACCEPTED);
+    if (trustedToken != null && !trustedToken.isBlank()) {
+      // Trust did not carry this login (unknown / expired / replayed /
+      // another account's token): the presented cookie is dead weight
+      // for this account — clear it so the browser stops offering it.
+      challengeResponse.header(HttpHeaders.SET_COOKIE, clearedTrustedCookie().toString());
+    }
+    return challengeResponse
         .body(ApiResponse.ok(
             new TotpChallengeResponse(challenge.challengeToken(), challenge.expiresAt())));
   }
@@ -175,7 +193,10 @@ public class AuthController {
   public ResponseEntity<ApiResponse<Void>> disableTotp(
       @AuthenticationPrincipal Long userId, @Valid @RequestBody TotpDisableRequest request) {
     auth.disableTotp(userId, request.currentPassword(), request.code());
-    return ResponseEntity.ok(ApiResponse.ok(null));
+    // Backlog #199: disabling retired every trust row; clear the cookie.
+    return ResponseEntity.ok()
+        .header(HttpHeaders.SET_COOKIE, clearedTrustedCookie().toString())
+        .body(ApiResponse.ok(null));
   }
 
   /**
@@ -230,8 +251,11 @@ public class AuthController {
       @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {
     // Backlog #171: same trusted-proxy capture as the password stage, so
     // the second-factor rows carry the resolved client IP too.
+    // Backlog #199: rememberDevice is the trust opt-in — on success
+    // ok() sets the trusted_device cookie from the result's raw token.
     return ok(auth.authenticateTotp(request.challenge(), request.code(),
-        SessionMeta.of(http, trustedProxies.trustedProxySet())));
+        SessionMeta.of(http, trustedProxies.trustedProxySet()),
+        request.rememberDeviceOrFalse()));
   }
 
   /**
@@ -313,6 +337,7 @@ public class AuthController {
     auth.closeAccount(userId, request.currentPassword(), request.code());
     return ResponseEntity.status(HttpStatus.OK)
         .header(HttpHeaders.SET_COOKIE, clearedRefreshCookie().toString())
+        .header(HttpHeaders.SET_COOKIE, clearedTrustedCookie().toString())
         .body(ApiResponse.ok(null));
   }
 
@@ -328,8 +353,16 @@ public class AuthController {
   public ResponseEntity<ApiResponse<AuthResponse>> changePassword(
       @AuthenticationPrincipal Long userId,
       @Valid @RequestBody PasswordChangeRequest request, HttpServletRequest http) {
-    return ok(auth.changePassword(userId, request.currentPassword(), request.newPassword(),
-        SessionMeta.of(http)));
+    ResponseEntity<ApiResponse<AuthResponse>> response = ok(auth.changePassword(
+        userId, request.currentPassword(), request.newPassword(), SessionMeta.of(http)));
+    // Backlog #199: the change revoked every trusted device server-side;
+    // clear this browser's now-dead trusted cookie too.
+    return ResponseEntity.status(response.getStatusCode())
+        .headers(headers -> {
+          headers.addAll(response.getHeaders());
+          headers.add(HttpHeaders.SET_COOKIE, clearedTrustedCookie().toString());
+        })
+        .body(response.getBody());
   }
 
   /**
@@ -424,9 +457,41 @@ public class AuthController {
   @PostMapping("/sessions/revoke-others")
   public ResponseEntity<ApiResponse<RevokeOtherSessionsResponse>> revokeOtherSessions(
       @AuthenticationPrincipal Long userId,
-      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken) {
+      @CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
+      @CookieValue(value = TRUSTED_COOKIE, required = false) String trustedToken) {
     return ResponseEntity.ok(ApiResponse.ok(
-        new RevokeOtherSessionsResponse(auth.revokeOtherSessions(userId, refreshToken))));
+        new RevokeOtherSessionsResponse(
+            auth.revokeOtherSessions(userId, refreshToken, trustedToken))));
+  }
+
+  /**
+   * Lists the caller's trusted devices (backlog #199, authenticated —
+   * SecurityConfig): the trust rows behind the TOTP-skip, shown on the
+   * sessions surface next to the live sessions. Rows are
+   * {@link TrustedDeviceDto} projections — the token and its hashes are
+   * never readable back.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "the caller's trusted devices, newest first (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)")})
+  @GetMapping("/trusted-devices")
+  public ResponseEntity<ApiResponse<List<TrustedDeviceDto>>> trustedDevices(
+      @AuthenticationPrincipal Long userId) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.trustedDevices(userId)));
+  }
+
+  /**
+   * Revokes one trusted device (backlog #199, authenticated): the row
+   * is deleted, so that device's cookie buys nothing at its next login
+   * and the full TOTP challenge applies again. Unknown ids — or ids
+   * belonging to another user — are 404 (no cross-user oracle),
+   * mirroring {@code DELETE /api/auth/sessions/{id}}.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "trusted device revoked (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown id, or another user's device (envelope)")})
+  @DeleteMapping("/trusted-devices/{id}")
+  public ResponseEntity<ApiResponse<Void>> revokeTrustedDevice(
+      @AuthenticationPrincipal Long userId,
+      @PathVariable("id") long deviceId) {
+    auth.revokeTrustedDevice(userId, deviceId);
+    return ResponseEntity.ok(ApiResponse.ok(null));
   }
 
   /**
@@ -463,9 +528,44 @@ public class AuthController {
   private ResponseEntity<ApiResponse<AuthResponse>> ok(AuthService.AuthResult result) {
     AuthResponse body = AuthResponse.of(result.user(), result.pair(),
         jwtProps.getAccessTtl().toSeconds());
-    return ResponseEntity.status(HttpStatus.OK)
-        .header(HttpHeaders.SET_COOKIE, refreshCookie(result.pair().refreshToken()).toString())
-        .body(ApiResponse.ok(body));
+    ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.OK)
+        .header(HttpHeaders.SET_COOKIE, refreshCookie(result.pair().refreshToken()).toString());
+    // Backlog #199: a result carrying a raw trusted-device token (the
+    // trust-creating exchange, or the rotation on a trusted login)
+    // sets the trusted_device cookie alongside the refresh cookie.
+    if (result.trustedDeviceToken() != null) {
+      response.header(HttpHeaders.SET_COOKIE,
+          trustedCookie(result.trustedDeviceToken()).toString());
+    }
+    return response.body(ApiResponse.ok(body));
+  }
+
+  /**
+   * The trusted-device cookie (backlog #199): httpOnly like the refresh
+   * cookie, its own name and lifetime ({@code app.auth.trusted-device.ttl}).
+   * The raw token exists only here and in the browser's cookie jar —
+   * the server stores its SHA-256 hash.
+   */
+  private ResponseCookie trustedCookie(String token) {
+    Duration maxAge = trustedProps != null ? trustedProps.getTtl() : Duration.ofDays(30);
+    return ResponseCookie.from(TRUSTED_COOKIE, token)
+        .httpOnly(true)
+        .secure(cookieProps.isCookieSecure())
+        .path("/")
+        .sameSite("Lax")
+        .maxAge(maxAge)
+        .build();
+  }
+
+  /** Cookie-clearing counterpart of {@link #trustedCookie}: identical name/path/SameSite, Max-Age=0. */
+  private ResponseCookie clearedTrustedCookie() {
+    return ResponseCookie.from(TRUSTED_COOKIE, "")
+        .httpOnly(true)
+        .secure(cookieProps.isCookieSecure())
+        .path("/")
+        .sameSite("Lax")
+        .maxAge(Duration.ZERO)
+        .build();
   }
 
   private ResponseCookie refreshCookie(String token) {

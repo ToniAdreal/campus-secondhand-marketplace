@@ -33,6 +33,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [challenge, setChallenge] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -66,6 +67,7 @@ export default function LoginPage() {
         setChallenge(outcome.challenge);
         setPassword('');
         setCode('');
+        setRememberDevice(false);
         return;
       }
       finishLogin(outcome.user, outcome.accessToken);
@@ -89,6 +91,9 @@ export default function LoginPage() {
       const { user: loggedIn, accessToken } = await authenticateTotp({
         challenge,
         code: code.trim(),
+        // Backlog #199: the opt-in is honoured only on a successful
+        // exchange — a failed one creates no trust server-side.
+        rememberDevice,
       });
       finishLogin(loggedIn, accessToken);
     } catch (err) {
@@ -136,6 +141,22 @@ export default function LoginPage() {
               className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
             />
           </div>
+          <div>
+            <label htmlFor="login-remember-device" className="flex items-start gap-2 text-sm">
+              <input
+                id="login-remember-device"
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={(e) => setRememberDevice(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Trust this device — skip the code step on this device for 30 days. Your
+                password is still required at every login, and you can revoke the trust
+                at any time from My sessions.
+              </span>
+            </label>
+          </div>
           <button
             type="submit"
             disabled={pending}
@@ -148,6 +169,7 @@ export default function LoginPage() {
             onClick={() => {
               setChallenge(null);
               setCode('');
+              setRememberDevice(false);
               setError(null);
             }}
             className="w-full rounded px-3 py-2 text-sm text-neutral-600 hover:underline"
