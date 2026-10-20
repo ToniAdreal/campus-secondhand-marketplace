@@ -144,6 +144,7 @@ export const itemKeys = {
     ] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
   priceHistory: (id: number) => [...itemKeys.all, 'price-history', id] as const,
+  similar: (id: number) => [...itemKeys.all, 'similar', id] as const,
   mine: (page: number) => [...itemKeys.all, 'mine', page] as const,
 };
 
@@ -224,6 +225,24 @@ export function usePriceHistory(id: number) {
     queryFn: () =>
       api
         .get<ApiResponse<PriceHistoryPoint[]>>(`/items/${id}/price-history`)
+        .then((res) => res.data.data),
+  });
+}
+
+/**
+ * GET /api/items/{id}/similar — the similar-listings rail (backlog
+ * #202): AVAILABLE listings in the same category, in the backend's
+ * pinned order (absolute price distance, then newest, then id),
+ * capped server-side. A pure query — no recommendation engine. The
+ * detail page renders the rail with the browse card and hides it when
+ * the read fails or returns no listings.
+ */
+export function useSimilarItems(id: number) {
+  return useQuery({
+    queryKey: itemKeys.similar(id),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Item[]>>(`/items/${id}/similar`)
         .then((res) => res.data.data),
   });
 }

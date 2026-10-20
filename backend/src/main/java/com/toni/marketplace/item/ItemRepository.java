@@ -235,6 +235,29 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                     Pageable pageable);
 
   /**
+   * Similar-listing candidates (backlog #202): the list-view projection
+   * for AVAILABLE listings in one category, excluding the source listing
+   * itself and every past-deadline row (the same lazy-expiry predicate
+   * the browse projection carries — a stored AVAILABLE row at or past
+   * its {@code expiresAt} is already gone). No ordering: the service
+   * applies the pinned similar order (absolute price distance, then
+   * newest, then id) in memory, because JPQL has no portable absolute-
+   * value ordering across H2 and MySQL. Blocked-seller exclusion is
+   * likewise applied by the service against the caller's block set.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where i.category.id = :categoryId and i.id <> :excludeId "
+          + "and i.status = 'AVAILABLE' "
+          + "and not (i.expiresAt is not null and i.expiresAt <= current_timestamp)")
+  List<ItemDto> findSimilarCandidates(@Param("categoryId") Long categoryId,
+                                      @Param("excludeId") Long excludeId);
+
+  /**
    * Detail view: JPQL fetch join pulls the optional category together with
    * the item, so the {@link ItemDto} mapping needs no extra lazy query.
    * The gallery ({@link ItemPhoto}) is fetch-joined in the same SELECT so

@@ -6,6 +6,7 @@ import {
   useItem,
   useMarkSold,
   usePriceHistory,
+  useSimilarItems,
 } from '../api/items';
 import { describeOfferError, useCreateOffer } from '../api/offers';
 import { describeOrderError, useCreateOrder } from '../api/orders';
@@ -30,6 +31,11 @@ export default function ItemDetailPage() {
   // the current price. A failed read (e.g. the listing was withdrawn —
   // 404) or an empty timeline hides the section entirely.
   const { data: priceHistory } = usePriceHistory(Number(id));
+  // Similar listings (backlog #202): same-category AVAILABLE listings
+  // in the backend's pinned order. A failed read or an empty rail
+  // hides the section entirely — the detail page is never blocked by
+  // its rail.
+  const { data: similarItems } = useSimilarItems(Number(id));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const createOrder = useCreateOrder();
   const markSold = useMarkSold();
@@ -322,6 +328,45 @@ export default function ItemDetailPage() {
         <div className="mt-8 border-t pt-6">
           <MessageThread itemId={data.id} sellerId={data.sellerId} />
         </div>
+      )}
+
+      {Array.isArray(similarItems) && similarItems.length > 0 && (
+        <section aria-label="Similar listings" className="mt-8 border-t pt-6">
+          <h2 className="mb-3 text-xl font-bold">Similar listings</h2>
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {similarItems.map((item) => {
+              const photoUrls = listingPhotoUrls(item);
+              return (
+                <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
+                  {photoUrls.length > 0 ? (
+                    <img
+                      src={photoUrls[0]}
+                      alt={item.title}
+                      className="mb-3 h-40 w-full rounded object-cover"
+                    />
+                  ) : (
+                    <div
+                      data-testid="no-photo-placeholder"
+                      className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
+                    >
+                      No photo
+                    </div>
+                  )}
+                  <Link to={`/items/${item.id}`} className="font-semibold hover:underline">
+                    {item.title}
+                  </Link>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    ¥{(item.priceCents / 100).toFixed(2)}
+                  </p>
+                  <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
+                    {item.status}
+                  </span>{' '}
+                  <FavoriteButton itemId={item.id} />
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
     </article>
   );

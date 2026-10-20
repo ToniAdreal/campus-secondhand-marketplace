@@ -107,6 +107,7 @@ class OpenApiContractTest {
       "/api/items/{id}/photos/order",
       "/api/items/{id}/photos/{photoId}",
       "/api/items/{id}/price-history",
+      "/api/items/{id}/similar",
       "/api/items/{id}/publish",
       "/api/items/{id}/renew",
       "/api/items/{id}/report",
@@ -319,6 +320,11 @@ class OpenApiContractTest {
     // expired) — deliberately no 403: a hidden listing never confirms
     // that it exists.
     assertThat(responseCodes(docs, "/api/items/{id}/price-history", "get"))
+        .contains("200", "401", "404");
+    // Similar listings (#202): the rail read pins its success, its
+    // anonymous 401 and its source-visibility 404 (unknown / draft /
+    // expired) — deliberately no 403, mirroring the detail read.
+    assertThat(responseCodes(docs, "/api/items/{id}/similar", "get"))
         .contains("200", "401", "404");
     // Gallery reorder (#162): pins its not-a-permutation 400 and its
     // concurrent-edit 409 alongside the ownership matrix.

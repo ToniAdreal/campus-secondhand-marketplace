@@ -166,6 +166,36 @@ public class ItemController {
   }
 
   /**
+   * Similar listings for the detail rail (backlog #202):
+   * {@code GET /api/items/{id}/similar} returns the list projection for
+   * AVAILABLE listings in the source listing's category — excluding the
+   * listing itself, listings by sellers the caller has blocked (#187)
+   * and expired listings — in the pinned order (absolute price
+   * distance, then newest, then id), capped at the documented rail
+   * size. A pure query: no recommendation engine, no tracking. Source
+   * visibility mirrors the detail read (unknown / draft-not-yours /
+   * expired → 404); anonymous callers get 401 from the security chain.
+   */
+  @GetMapping("/{id}/similar")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "the similar listings, pinned order, capped (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing, or a draft/expired listing not visible "
+              + "to the caller (envelope)")})
+  public ApiResponse<java.util.List<ItemDto>> similar(@PathVariable Long id) {
+    org.springframework.security.core.Authentication auth =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = auth != null && auth.getPrincipal() instanceof Long principalId
+        ? principalId : null;
+    boolean callerIsAdmin = auth != null && auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(itemService.getSimilarItems(id, callerId, callerIsAdmin));
+  }
+
+  /**
    * Creates a listing for the authenticated user. Constraint violations
    * (blank title, non-positive price, …) are answered 400 with the JSON
    * envelope by {@code GlobalExceptionHandler#handleValidation}; no token

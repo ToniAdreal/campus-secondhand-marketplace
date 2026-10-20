@@ -51,6 +51,9 @@ public class ItemService {
   /** Maximum gallery photos per listing (backlog #69). */
   static final int MAX_PHOTOS = 6;
 
+  /** Maximum similar listings on the detail rail (backlog #202). */
+  static final int SIMILAR_LIMIT = 6;
+
   /**
    * Lazily probed once: whether the connected database is MySQL (see
    * {@link #isMySql()}). Volatile so concurrent first requests see the same
@@ -640,6 +643,57 @@ public class ItemService {
     return priceHistory.findByItemIdOrderByChangedAtAscIdAsc(id).stream()
         .map(p -> new PriceHistoryPointDto(p.getPriceCents(), p.getChangedAt()))
         .toList();
+  }
+
+  /**
+   * Similar listings for the detail rail (backlog #202) — the read
+   * behind {@code GET /api/items/{id}/similar}. A pure query, stated
+   * honestly: no recommendation engine, no tracking, no personalisation
+   * beyond the caller's own block list. The candidates are the
+   * AVAILABLE listings in the source listing's category (the
+   * repository query already excludes the source itself and every
+   * past-deadline row), minus listings by sellers the caller has
+   * blocked (the #187 discipline, applied here against the same block
+   * set the browse path uses), ordered by the pinned deterministic
+   * order — absolute price distance from the source price, then
+   * newest first, then id ascending as the final tiebreak — and
+   * capped at {@link #SIMILAR_LIMIT}. An uncategorized source has no
+   * same-category peers and answers an empty list. Source visibility
+   * mirrors the detail read exactly: an unknown id is 404, a DRAFT
+   * answers 404 to everyone but its seller and ADMINs, and an expired
+   * listing answers 404 to everyone. Anonymous callers never reach
+   * this code: the security chain requires a token for the route.
+   */
+  @Transactional(readOnly = true)
+  public List<ItemDto> getSimilarItems(Long id, Long callerId, boolean callerIsAdmin) {
+    ItemDto source = items.findDetailViewById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (source.status() == ItemStatus.DRAFT
+        && !callerIsAdmin
+        && (callerId == null || !callerId.equals(source.sellerId()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    if (source.status() == ItemStatus.EXPIRED
+        || (source.status() == ItemStatus.AVAILABLE && source.expiresAt() != null
+            && !source.expiresAt().isAfter(clock().instant()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
+    if (source.categoryId() == null) {
+      return List.of();
+    }
+    List<Long> blocked = blockedSellerIds(callerId);
+    long sourcePrice = source.priceCents() == null ? 0L : source.priceCents();
+    List<ItemDto> ranked = items.findSimilarCandidates(source.categoryId(), id).stream()
+        .filter(d -> !blocked.contains(d.sellerId()))
+        .sorted(java.util.Comparator
+            .comparingLong((ItemDto d) -> Math.abs(
+                (d.priceCents() == null ? 0L : d.priceCents()) - sourcePrice))
+            .thenComparing(ItemDto::createdAt,
+                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))
+            .thenComparing(ItemDto::id))
+        .limit(SIMILAR_LIMIT)
+        .toList();
+    return withPhotos(ranked);
   }
 
   /**
