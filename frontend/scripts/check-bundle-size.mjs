@@ -26,6 +26,12 @@
 //   in the MyOrdersPage chunk, 66,189 bytes) —
 //   TOTAL_MAX_BYTES = 484,000 (measured + ~5%, rounded up). The entry
 //   chunk (303,788 bytes) stays inside its unchanged budget.
+//   Bump 2026-10-20 (backlog #200): total measured 485,211 bytes on the
+//   #200 tree (dispute evidence photo uploads: the new lazy
+//   DisputeEvidencePanel chunk, 5,633 bytes, plus the evidence hooks in
+//   the shared disputes module) — TOTAL_MAX_BYTES = 510,000 (measured
+//   + ~5%, rounded up). The entry chunk (306,395 bytes) stays inside
+//   its unchanged budget.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -40,7 +46,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 316_000;
-export const TOTAL_MAX_BYTES = 484_000;
+export const TOTAL_MAX_BYTES = 510_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module
