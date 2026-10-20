@@ -9,6 +9,7 @@ import {
   type OrderDispute,
 } from '../api/disputes';
 import { isForbidden } from '../api/admin';
+import DisputeEvidencePanel from '../components/DisputeEvidencePanel';
 import { useAuthStore } from '../store/useAuthStore';
 
 function allowlisted(raw: string | null, values: readonly string[]): string {
@@ -206,6 +207,7 @@ export default function AdminDisputesPage() {
                           </button>
                         </span>
                       )}
+                      <DisputeEvidencePanel disputeId={row.id} disputeStatus={row.status} />
                     </td>
                   </tr>
                 ))}

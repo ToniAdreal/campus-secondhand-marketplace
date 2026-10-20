@@ -86,8 +86,8 @@ import org.springframework.web.server.ResponseStatusException;
  * A rolled-back transition writes neither.
  *
  * <p>Honest scope: mock PSP only — a "refund" here is the mock seam, no
- * real chargeback exists; the reason is text only, no evidence upload
- * in v1.
+ * real chargeback exists. The reason is text; photo evidence on an
+ * open dispute lives in {@link DisputeEvidenceService} (backlog #200).
  */
 @Service
 public class DisputeService {
@@ -210,6 +210,32 @@ public class DisputeService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
     }
+  }
+
+  /**
+   * The dispute of one order, for the parties who may see it
+   * (backlog #200): the buyer, the listing's seller, or an ADMIN.
+   * Anyone else — and any caller asking about an order with no
+   * dispute, or an unknown order — gets the identical 404, so the
+   * read never confirms that an order or a dispute exists. This is
+   * the discovery read the SPA's evidence panel is keyed by.
+   */
+  @Transactional(readOnly = true)
+  public DisputeDto getDisputeForOrder(Long callerId, boolean admin, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "dispute not found"));
+    boolean party = admin
+        || order.getBuyerId().equals(callerId)
+        || order.getItem().getSellerId().equals(callerId);
+    if (!party) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "dispute not found");
+    }
+    return disputes.findByOrderId(orderId).stream()
+        .findFirst()
+        .map(DisputeDto::from)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "dispute not found"));
   }
 
   /** The ADMIN queue, paginated (the controller supplies newest-first); status filter optional. */

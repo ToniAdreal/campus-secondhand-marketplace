@@ -45,6 +45,36 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
+const fakeDispute = {
+  id: 3,
+  orderId: 11,
+  buyerId: 5,
+  sellerId: 3,
+  reason: 'the parcel never arrived',
+  status: 'OPEN',
+  previousStatus: 'PAID',
+  listingRestored: null,
+  createdAt: '2026-10-14T08:00:00Z',
+  resolvedAt: null,
+};
+
+/**
+ * Routes GETs by URL (backlog #200): a DISPUTED row also resolves its
+ * dispute by order and reads its evidence list — both get honest
+ * shapes, everything else gets the orders page.
+ */
+function mockGets(page: ReturnType<typeof pageEnvelope>) {
+  getSpy.mockImplementation(((url: string) => {
+    if (url.endsWith('/dispute')) {
+      return Promise.resolve(envelope(fakeDispute));
+    }
+    if (url.includes('/evidence')) {
+      return Promise.resolve(envelope([]));
+    }
+    return Promise.resolve(page);
+  }) as never);
+}
+
 function renderAt() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -75,7 +105,7 @@ describe('MyOrdersPage dispute control (backlog #169)', () => {
   });
 
   it('shows the dispute entry only on PAID/COMPLETED rows and the frozen note on DISPUTED rows', async () => {
-    getSpy.mockResolvedValue(pageEnvelope([pendingOrder, paidOrder, disputedOrder]));
+    mockGets(pageEnvelope([pendingOrder, paidOrder, disputedOrder]));
 
     renderAt();
     await waitFor(() => expect(screen.getByText('Order #11')).toBeTruthy());
@@ -90,7 +120,7 @@ describe('MyOrdersPage dispute control (backlog #169)', () => {
   });
 
   it('submitting the reason form posts the dispute and confirms', async () => {
-    getSpy.mockResolvedValue(pageEnvelope([paidOrder]));
+    mockGets(pageEnvelope([paidOrder]));
     postSpy.mockResolvedValue(
       envelope({
         id: 3,

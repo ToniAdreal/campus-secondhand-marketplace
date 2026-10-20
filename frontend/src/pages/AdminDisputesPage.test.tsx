@@ -57,6 +57,16 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
+/**
+ * Routes GETs by URL (backlog #200): each queue row also mounts an
+ * evidence panel that reads /disputes/{id}/evidence — it gets an
+ * empty list, everything else gets the disputes page.
+ */
+function mockGets(page: ReturnType<typeof pageEnvelope>) {
+  getSpy.mockImplementation(((url: string) =>
+    Promise.resolve(url.includes('/evidence') ? envelope([]) : page)) as never);
+}
+
 function renderAt(initialEntry: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -87,7 +97,7 @@ describe('AdminDisputesPage', () => {
 
   it('renders dispute rows from GET /admin/disputes with resolution state', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockResolvedValue(pageEnvelope([openDispute, refundedDispute], 0, 1));
+    mockGets(pageEnvelope([openDispute, refundedDispute], 0, 1));
 
     renderAt('/admin/disputes');
     await waitFor(() => expect(screen.getByText('the parcel never arrived')).toBeTruthy());
@@ -119,7 +129,7 @@ describe('AdminDisputesPage', () => {
 
   it('resolving with refund posts to the resolve-refund route', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockResolvedValue(pageEnvelope([openDispute], 0, 1));
+    mockGets(pageEnvelope([openDispute], 0, 1));
     postSpy.mockResolvedValue(
       envelope({ ...openDispute, status: 'RESOLVED_REFUND', listingRestored: true }),
     );
@@ -135,7 +145,7 @@ describe('AdminDisputesPage', () => {
 
   it('empty queue renders the empty state', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockResolvedValue(pageEnvelope([], 0, 0));
+    mockGets(pageEnvelope([], 0, 0));
 
     renderAt('/admin/disputes');
     await waitFor(() => expect(screen.getByText('No disputes yet.')).toBeTruthy());

@@ -98,6 +98,8 @@ class OpenApiContractTest {
       "/api/auth/trusted-devices/{id}",
       "/api/categories",
       "/api/categories/{id}",
+      "/api/disputes/{disputeId}/evidence",
+      "/api/disputes/{disputeId}/evidence/{evidenceId}",
       "/api/items",
       "/api/items/{id}",
       "/api/items/{id}/photo",
@@ -375,6 +377,18 @@ class OpenApiContractTest {
         .contains("401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-release", "post"))
         .contains("401", "403", "404", "409", "422");
+    // Dispute evidence (#200): the by-order read pins its
+    // no-existence-leak 404; the evidence endpoints pin the bad-file
+    // 400 and resolved-dispute 422 on upload, the not-uploader 403 on
+    // removal, and the party-or-404 visibility rule throughout.
+    assertThat(responseCodes(docs, "/api/orders/{id}/dispute", "get"))
+        .contains("401", "404");
+    assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence", "post"))
+        .contains("400", "401", "404", "422");
+    assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence", "get"))
+        .contains("401", "404");
+    assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence/{evidenceId}", "delete"))
+        .contains("401", "403", "404");
     // Webhook replay (#170): pins the ADMIN matrix plus the stale
     // event's 401 (the freshness re-check shares the unauthenticated
     // code, as on the live receiver) and the unknown-id 404.

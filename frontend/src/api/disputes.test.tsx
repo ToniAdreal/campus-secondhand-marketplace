@@ -6,15 +6,22 @@ import { api } from './client';
 import {
   describeAdminDisputesError,
   describeDisputeError,
+  describeDisputeEvidenceError,
+  useAddDisputeEvidence,
   useAdminDisputes,
+  useDisputeEvidence,
   useOpenDispute,
+  useOrderDispute,
+  useRemoveDisputeEvidence,
   useResolveDisputeRefund,
+  type DisputeEvidence,
   type OrderDispute,
 } from './disputes';
 import { describeNotification } from './notifications';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -137,6 +144,88 @@ describe('dispute hooks', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(postSpy).toHaveBeenCalledWith('/admin/disputes/3/resolve-refund', {});
     expect(result.current.data).toEqual(resolved);
+  });
+});
+
+describe('dispute evidence hooks (backlog #200)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const fakeEvidence: DisputeEvidence = {
+    id: 11,
+    disputeId: 3,
+    uploaderId: 5,
+    url: '/uploads/photo-11.png',
+    createdAt: '2026-10-20T08:00:00Z',
+  };
+
+  it('useOrderDispute reads the dispute nested under its order', async () => {
+    getSpy.mockResolvedValue(envelope(fakeDispute));
+    const client = makeClient();
+    const { result } = renderHook(() => useOrderDispute(9), {
+      wrapper: wrapperFor(client),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getSpy).toHaveBeenCalledWith('/orders/9/dispute');
+    expect(result.current.data).toEqual(fakeDispute);
+  });
+
+  it('useDisputeEvidence lists the evidence of one dispute', async () => {
+    getSpy.mockResolvedValue(envelope([fakeEvidence]));
+    const client = makeClient();
+    const { result } = renderHook(() => useDisputeEvidence(3), {
+      wrapper: wrapperFor(client),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(getSpy).toHaveBeenCalledWith('/disputes/3/evidence');
+    expect(result.current.data).toEqual([fakeEvidence]);
+  });
+
+  it('useAddDisputeEvidence posts the file as FormData to the evidence route', async () => {
+    postSpy.mockResolvedValue(envelope(fakeEvidence));
+    const client = makeClient();
+    const { result } = renderHook(() => useAddDisputeEvidence(), {
+      wrapper: wrapperFor(client),
+    });
+    const file = new File(['png-bytes'], 'damage.png', { type: 'image/png' });
+
+    result.current.mutate({ disputeId: 3, file });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [path, form] = postSpy.mock.calls[0] as unknown as [string, FormData];
+    expect(path).toBe('/disputes/3/evidence');
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get('file')).toBe(file);
+    expect(result.current.data).toEqual(fakeEvidence);
+  });
+
+  it('useRemoveDisputeEvidence deletes the nested evidence route', async () => {
+    deleteSpy.mockResolvedValue(envelope(null));
+    const client = makeClient();
+    const { result } = renderHook(() => useRemoveDisputeEvidence(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({ disputeId: 3, evidenceId: 11 });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(deleteSpy).toHaveBeenCalledWith('/disputes/3/evidence/11');
+  });
+});
+
+describe('describeDisputeEvidenceError', () => {
+  it.each([
+    ['bad file', envelopeError(400, 'image content does not match declared type'), 'That file could not be accepted — please attach a PNG, JPEG, WebP or GIF image within the size limit.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to manage dispute evidence.'],
+    ['not uploader', envelopeError(403, 'only the uploader'), 'Only the person who attached this photo can remove it.'],
+    ['unknown', envelopeError(404, 'dispute not found'), 'This dispute no longer exists.'],
+    ['resolved', envelopeError(422, 'evidence can only be added while the dispute is open'), 'This dispute has been resolved — evidence is closed.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeDisputeEvidenceError(error)).toBe(expected);
   });
 });
 

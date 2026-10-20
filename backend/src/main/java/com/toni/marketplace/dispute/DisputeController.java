@@ -2,7 +2,9 @@ package com.toni.marketplace.dispute;
 
 import com.toni.marketplace.common.ApiResponse;
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -54,5 +56,26 @@ public class DisputeController {
     Long buyerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(disputeService.openDispute(buyerId, id, request.reason()));
+  }
+
+  /**
+   * Reads the dispute of one order (backlog #200 — the discovery read
+   * the evidence panel is keyed by). Buyer, seller or ADMIN only;
+   * anyone else, an undisputed order and an unknown order all answer
+   * the identical 404.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown order, no dispute on the order, or a dispute "
+              + "the caller is not a party to (envelope)")})
+  @GetMapping("/{id}/dispute")
+  public ApiResponse<DisputeDto> getDispute(@PathVariable Long id) {
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    boolean admin = auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(
+        disputeService.getDisputeForOrder((Long) auth.getPrincipal(), admin, id));
   }
 }

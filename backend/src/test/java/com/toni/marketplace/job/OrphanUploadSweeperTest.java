@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.toni.marketplace.auth.MutableClock;
+import com.toni.marketplace.dispute.DisputeEvidenceRepository;
 import com.toni.marketplace.item.ItemPhotoRepository;
 import com.toni.marketplace.item.ItemRepository;
 import java.io.IOException;
@@ -22,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Unit tests for the {@link OrphanUploadSweeper} against a real temp
- * directory, with the two reference-set queries mocked and a
+ * directory, with the three reference-set queries mocked and a
  * {@link MutableClock} fixing "now". File mtimes are set explicitly, so
  * the grace-period arithmetic — not wall time — decides every verdict:
  * referenced files survive at any age, unreferenced files survive only
@@ -39,6 +40,9 @@ class OrphanUploadSweeperTest {
   @Mock
   private ItemPhotoRepository itemPhotos;
 
+  @Mock
+  private DisputeEvidenceRepository disputeEvidence;
+
   @TempDir
   private Path uploadDir;
 
@@ -48,7 +52,7 @@ class OrphanUploadSweeperTest {
   @BeforeEach
   void setUp() {
     clock = new MutableClock(Instant.parse("2026-10-09T00:00:00Z"));
-    sweeper = new OrphanUploadSweeper(items, itemPhotos,
+    sweeper = new OrphanUploadSweeper(items, itemPhotos, disputeEvidence,
         uploadDir.toString(), GRACE, clock);
   }
 
@@ -72,6 +76,21 @@ class OrphanUploadSweeperTest {
     assertThat(deleted).isZero();
     assertThat(primary).exists();
     assertThat(gallery).exists();
+  }
+
+  @Test
+  void referencedDisputeEvidenceFileIsKept() throws IOException {
+    // Backlog #200: a live dispute_evidence row references its file the
+    // same way a gallery row does — age alone must never sweep it.
+    Path evidence = writeFile("evidence.png", Duration.ofDays(30));
+    when(items.findAllPhotoUrls()).thenReturn(List.of());
+    when(itemPhotos.findAllUrls()).thenReturn(List.of());
+    when(disputeEvidence.findAllUrls()).thenReturn(List.of("/uploads/evidence.png"));
+
+    int deleted = sweeper.sweepOrphanUploads();
+
+    assertThat(deleted).isZero();
+    assertThat(evidence).exists();
   }
 
   @Test
@@ -102,7 +121,7 @@ class OrphanUploadSweeperTest {
 
   @Test
   void missingUploadDirectoryIsANoOp() {
-    OrphanUploadSweeper missing = new OrphanUploadSweeper(items, itemPhotos,
+    OrphanUploadSweeper missing = new OrphanUploadSweeper(items, itemPhotos, disputeEvidence,
         uploadDir.resolve("no-such-dir").toString(), GRACE, clock);
 
     assertThat(missing.sweepOrphanUploads()).isZero();

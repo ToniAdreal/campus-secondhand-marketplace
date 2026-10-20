@@ -10,6 +10,7 @@ import {
   useSellerOrdersInfinite,
   useSellerSalesSummary,
 } from '../api/orders';
+import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
@@ -174,6 +175,7 @@ export default function SellerOrdersPage() {
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
                 <OrderPspReferences order={order} />
+                {order.status === 'DISPUTED' && <OrderDisputeEvidence orderId={order.id} />}
                 {order.status === 'PAID' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <label className="flex items-center gap-2 text-sm text-neutral-600">

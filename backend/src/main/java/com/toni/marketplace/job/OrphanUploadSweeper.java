@@ -1,5 +1,6 @@
 package com.toni.marketplace.job;
 
+import com.toni.marketplace.dispute.DisputeEvidenceRepository;
 import com.toni.marketplace.item.ItemPhotoRepository;
 import com.toni.marketplace.item.ItemRepository;
 import java.io.IOException;
@@ -32,8 +33,10 @@ import org.springframework.stereotype.Service;
  * <p>A file is swept only when <b>both</b> hold:
  *
  * <ul>
- *   <li>its public name ({@code /uploads/<name>}) is referenced by neither
- *   {@code item.photo_url} nor any {@code item_photo} row; and</li>
+ *   <li>its public name ({@code /uploads/<name>}) is referenced by no
+ *   live row — neither {@code item.photo_url}, nor any
+ *   {@code item_photo} row, nor any {@code dispute_evidence} row
+ *   (backlog #200); and</li>
  *   <li>its last-modified time is older than the grace period
  *   ({@code app.uploads.orphan-grace}, default 24 h). The grace period is
  *   what makes the sweep safe against the write-before-commit window: a
@@ -65,17 +68,20 @@ public class OrphanUploadSweeper {
 
   private final ItemRepository items;
   private final ItemPhotoRepository itemPhotos;
+  private final DisputeEvidenceRepository disputeEvidence;
   private final Path dir;
   private final Duration grace;
   private final Clock clock;
 
   public OrphanUploadSweeper(ItemRepository items,
                              ItemPhotoRepository itemPhotos,
+                             DisputeEvidenceRepository disputeEvidence,
                              @Value("${app.uploads.dir}") String uploadDir,
                              @Value("${app.uploads.orphan-grace}") Duration grace,
                              Clock clock) {
     this.items = items;
     this.itemPhotos = itemPhotos;
+    this.disputeEvidence = disputeEvidence;
     this.dir = Paths.get(uploadDir).toAbsolutePath().normalize();
     this.grace = grace;
     this.clock = clock;
@@ -135,7 +141,8 @@ public class OrphanUploadSweeper {
 
   /**
    * File names referenced by any live row: every listing's primary
-   * {@code photo_url} plus every gallery ({@code item_photo}) URL. Values
+   * {@code photo_url}, every gallery ({@code item_photo}) URL and every
+   * dispute-evidence ({@code dispute_evidence}) URL. Values
    * that are not local {@code /uploads/} paths cannot name a file in the
    * upload directory and are ignored.
    */
@@ -145,6 +152,9 @@ public class OrphanUploadSweeper {
       addFileName(names, url);
     }
     for (String url : itemPhotos.findAllUrls()) {
+      addFileName(names, url);
+    }
+    for (String url : disputeEvidence.findAllUrls()) {
       addFileName(names, url);
     }
     return names;

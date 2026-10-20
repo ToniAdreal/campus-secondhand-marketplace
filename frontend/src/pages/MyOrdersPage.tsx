@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import { describeDisputeError, useOpenDispute } from '../api/disputes';
 import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders';
 import { describeReviewError, useCreateReview } from '../api/reviews';
+import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderReceipt from '../components/OrderReceipt';
 import OrderStatusChip from '../components/OrderStatusChip';
@@ -29,9 +30,10 @@ function isUnauthorized(error: unknown): boolean {
 
 /**
  * Per-order dispute control (backlog #169). PAID and COMPLETED rows can
- * be disputed: the button reveals a reason form (text only — v1 has no
- * evidence upload), and submitting freezes the order in DISPUTED until
- * an ADMIN resolves it. DISPUTED rows show the open state instead.
+ * be disputed: the button reveals a reason form, and submitting freezes
+ * the order in DISPUTED until an ADMIN resolves it. DISPUTED rows show
+ * the open state instead, plus the evidence panel (backlog #200) so
+ * the buyer can attach photos of the problem while it is open.
  *
  * The eligible window (7 days from the PAID/COMPLETED transition) is
  * enforced by the server — the order shape carries no transition
@@ -47,9 +49,12 @@ function OrderDisputeControl({ order }: { order: Order }) {
 
   if (order.status === 'DISPUTED') {
     return (
-      <p className="mt-2 text-sm text-red-700">
-        Dispute open — this order is frozen while an admin reviews it.
-      </p>
+      <>
+        <p className="mt-2 text-sm text-red-700">
+          Dispute open — this order is frozen while an admin reviews it.
+        </p>
+        <OrderDisputeEvidence orderId={order.id} />
+      </>
     );
   }
   if (order.status !== 'PAID' && order.status !== 'COMPLETED') {

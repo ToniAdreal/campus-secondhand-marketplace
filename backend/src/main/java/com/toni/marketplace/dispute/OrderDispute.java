@@ -57,7 +57,7 @@ public class OrderDispute {
   @Column(name = "seller_id", nullable = false)
   private Long sellerId;
 
-  /** The buyer's reason, free text only (no evidence upload in v1), length-capped at the boundary. */
+  /** The buyer's reason, free text length-capped at the boundary; photos live in dispute_evidence (#200). */
   @Column(nullable = false, length = 500)
   private String reason;
 
