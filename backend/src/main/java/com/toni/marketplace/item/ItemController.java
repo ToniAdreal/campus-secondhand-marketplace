@@ -224,8 +224,9 @@ public class ItemController {
    * Edits a listing's editable fields (title, description, price,
    * category). The listing's seller — or an ADMIN — may do so; everyone
    * else gets 403 and anonymous callers get 401. All fields are optional:
-   * omitted fields are left untouched (partial update). Status is
-   * deliberately untouched — the status machine still lives on
+   * omitted fields are left untouched (partial update). The optional
+   * status field (backlog #198) accepts only AVAILABLE/DRAFT — see
+   * {@link ItemUpdateRequest}; the SOLD transition still lives only on
    * {@code PATCH /api/items/{id}/status}; price changes on a RESERVED or
    * SOLD listing are answered 422 (the live order snapshotted the price).
    */
@@ -284,5 +285,29 @@ public class ItemController {
           description = "listing is not expired or expiring (envelope)")})
   public ApiResponse<ItemDto> renew(@PathVariable Long id) {
     return ApiResponse.ok(itemService.renewItem(id));
+  }
+
+  /**
+   * Publishes a draft listing (backlog #198): flips DRAFT to AVAILABLE
+   * and starts the #177 expiry clock at publish time (the deadline is
+   * stamped now + {@code app.listings.ttl}, not at the draft's creation
+   * time). The listing's seller — or an ADMIN — may publish; everyone
+   * else gets 403 and anonymous callers get 401. Publishing a listing
+   * that is not a draft is answered 422 with the JSON envelope; an
+   * unknown id is 404.
+   */
+  @PostMapping("/{id}/publish")
+  @PreAuthorize("@itemSecurity.canPublish(authentication, #id)")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the listing's seller or an ADMIN (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "listing is not a draft (envelope)")})
+  public ApiResponse<ItemDto> publish(@PathVariable Long id) {
+    return ApiResponse.ok(itemService.publishItem(id));
   }
 }

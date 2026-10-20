@@ -11,6 +11,7 @@ let mockPage: Page<Item> = { content: [], totalElements: 0, totalPages: 0, numbe
 const requestedPages: number[] = [];
 
 const renewCalls: number[] = [];
+const publishCalls: number[] = [];
 
 let mockSellerReports: Page<SellerReport> = {
   content: [],
@@ -76,6 +77,17 @@ vi.mock('../api/items', () => ({
     isLoading: false,
   }),
   describeRenewError: () => 'renew failed',
+  usePublishListing: () => ({
+    mutate: (
+      id: number,
+      opts?: { onError?: (e: unknown) => void; onSuccess?: () => void },
+    ) => {
+      publishCalls.push(id);
+      opts?.onSuccess?.();
+    },
+    isLoading: false,
+  }),
+  describePublishError: () => 'publish failed',
 }));
 
 const seller: AuthUser = {
@@ -142,6 +154,7 @@ describe('MyListingsPage (#146)', () => {
     mockSellerReports = { content: [], totalElements: 0, totalPages: 0, number: 0 };
     requestedPages.length = 0;
     renewCalls.length = 0;
+    publishCalls.length = 0;
     appealCalls.length = 0;
     useAuthStore.setState({ user: seller });
   });
@@ -223,6 +236,52 @@ describe('MyListingsPage (#146)', () => {
     expect(screen.getByRole('link', { name: /sell an item/i }).getAttribute('href')).toBe(
       '/items/new',
     );
+  });
+
+  const draftLamp: Item = {
+    id: 12,
+    title: 'Draft lamp',
+    description: 'Not ready yet',
+    priceCents: 1800,
+    status: 'DRAFT',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+    expiresAt: null,
+  };
+
+  it('renders a draft with a Publish action that calls publish for its id (#198)', () => {
+    mockPage = { content: [draftLamp, soldLamp], totalElements: 2, totalPages: 1, number: 0 };
+    renderPage();
+
+    expect(screen.getByText('Draft lamp')).toBeTruthy();
+    expect(screen.getByText('DRAFT')).toBeTruthy();
+    expect(screen.getByText(/visible only to you/i)).toBeTruthy();
+    // Only the draft card offers Publish.
+    const publishButtons = screen.getAllByRole('button', { name: /publish listing/i });
+    expect(publishButtons).toHaveLength(1);
+    fireEvent.click(publishButtons[0]);
+    expect(publishCalls).toEqual([12]);
+  });
+
+  it('the drafts-only filter hides non-draft listings (#198)', () => {
+    mockPage = { content: [draftLamp, soldLamp], totalElements: 2, totalPages: 1, number: 0 };
+    renderPage();
+
+    fireEvent.click(screen.getByLabelText(/show drafts only/i));
+    expect(screen.getByText('Draft lamp')).toBeTruthy();
+    expect(screen.queryByText('Desk lamp')).toBeNull();
+  });
+
+  it('no drafts section or publish action renders without drafts (#198)', () => {
+    mockPage = { content: [soldLamp], totalElements: 1, totalPages: 1, number: 0 };
+    renderPage();
+
+    expect(screen.queryByText(/show drafts only/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /publish listing/i })).toBeNull();
   });
 
   const withdrawnLamp: Item = {

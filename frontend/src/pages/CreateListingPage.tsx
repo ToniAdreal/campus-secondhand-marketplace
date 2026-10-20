@@ -95,6 +95,17 @@ export default function CreateListingPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    await submitListing(false);
+  }
+
+  // Save draft (backlog #198): same validation and create call, but the
+  // listing is created with status DRAFT — seller-private, no expiry
+  // clock until it is published from My listings.
+  async function onSaveDraft() {
+    await submitListing(true);
+  }
+
+  async function submitListing(asDraft: boolean) {
     const errors = validate();
     setFieldErrors(errors);
     setGeneralError(null);
@@ -107,6 +118,7 @@ export default function CreateListingPage() {
         description: description.trim() === '' ? undefined : description.trim(),
         priceCents: Math.round(Number(price.trim()) * 100),
         categoryId: categoryId === '' ? null : Number(categoryId),
+        ...(asDraft ? { status: 'DRAFT' as const } : {}),
       });
 
       if (photo) {
@@ -127,7 +139,9 @@ export default function CreateListingPage() {
           return;
         }
       }
-      navigate(`/items/${item.id}`);
+      // A draft lands on My listings (where its Publish action lives);
+      // a live listing lands on its public detail page, as before.
+      navigate(asDraft ? '/my-listings' : `/items/${item.id}`);
     } catch (err) {
       const message = envelopeMessage(err);
       const { field, general } = splitFieldError(message);
@@ -255,6 +269,18 @@ export default function CreateListingPage() {
         >
           {pending ? 'Publishing…' : 'Publish listing'}
         </button>
+        <button
+          type="button"
+          onClick={onSaveDraft}
+          disabled={pending}
+          className="w-full rounded bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-300 disabled:opacity-50"
+        >
+          Save draft
+        </button>
+        <p className="text-xs text-neutral-500">
+          A draft is visible only to you and has no expiry date — publish it
+          from My listings when you are ready.
+        </p>
       </form>
     </div>
   );

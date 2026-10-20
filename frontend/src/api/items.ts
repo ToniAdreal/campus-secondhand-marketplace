@@ -15,7 +15,7 @@ export interface Item {
   title: string;
   description: string | null;
   priceCents: number;
-  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'WITHDRAWN' | 'EXPIRED';
+  status: 'DRAFT' | 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'WITHDRAWN' | 'EXPIRED';
   sellerId: number;
   /** Resolved by the backend's read projections (join on the sellerId FK);
    * null when the seller row no longer exists. */
@@ -204,6 +204,13 @@ export interface CreateListingInput {
   description?: string;
   priceCents: number;
   categoryId?: number | null;
+  /**
+   * Optional initial status (backlog #198): 'DRAFT' saves a
+   * seller-private draft (no expiry clock until publish); absent or
+   * 'AVAILABLE' keeps the historical publish-immediately behaviour.
+   * The backend rejects any other value with 422.
+   */
+  status?: 'AVAILABLE' | 'DRAFT';
 }
 
 /**
@@ -377,6 +384,54 @@ export function useMarkSold() {
       api
         .patch<ApiResponse<Item>>(`/items/${itemId}/status`, { status: 'SOLD' })
         .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/items/{id}/publish to a user-facing message
+ * (backlog #198). The backend speaks the {code,message,data} envelope;
+ * a 422 means the listing is not a draft.
+ */
+export function describePublishError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422) {
+    return 'Only a draft listing can be published.';
+  }
+  if (code === 403) {
+    return 'Only the seller (or an admin) can publish this listing.';
+  }
+  if (code === 401) {
+    return 'Please log in to publish this listing.';
+  }
+  if (code === 404) {
+    return 'This listing no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/** Plain POST helper for POST /api/items/{id}/publish (backlog #198). */
+export function publishListing(itemId: number): Promise<Item> {
+  return api
+    .post<ApiResponse<Item>>(`/items/${itemId}/publish`)
+    .then((res) => res.data.data);
+}
+
+/**
+ * POST /api/items/{id}/publish — flips a DRAFT listing to AVAILABLE and
+ * starts its expiry clock at publish time (backlog #198). On success the
+ * whole `items` subtree is invalidated: the listing enters the public
+ * browse lists and its My-listings row changes status.
+ */
+export function usePublishListing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (itemId: number) => publishListing(itemId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });
     },

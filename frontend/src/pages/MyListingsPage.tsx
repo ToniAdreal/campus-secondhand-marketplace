@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
+  describePublishError,
   describeRenewError,
   isListingExpired,
   isListingExpiringSoon,
   listingPhotoUrls,
   useMyListings,
+  usePublishListing,
   useRenewListing,
 } from '../api/items';
 import {
@@ -33,6 +35,12 @@ export default function MyListingsPage() {
   const listings = useMyListings(page);
   const renew = useRenewListing();
   const [renewError, setRenewError] = useState<string | null>(null);
+  // Listing drafts (backlog #198): drafts ride the same mine=true list;
+  // the filter narrows the rendered cards to drafts, and each draft card
+  // carries its Publish action.
+  const publish = usePublishListing();
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [draftsOnly, setDraftsOnly] = useState(false);
   // Report appeals (backlog #190): reports on the caller's own
   // listings, each with its appeal state — an ACTIONED report is what
   // withdrew a listing, and its appeal is the seller's recourse.
@@ -46,6 +54,14 @@ export default function MyListingsPage() {
   }
 
   const data = listings.data;
+  const visibleContent = data
+    ? draftsOnly
+      ? data.content.filter((item) => item.status === 'DRAFT')
+      : data.content
+    : [];
+  const draftCount = data
+    ? data.content.filter((item) => item.status === 'DRAFT').length
+    : 0;
   const actionedReportsByItem = new Map<number, SellerReport[]>();
   for (const report of sellerReports.data?.content ?? []) {
     if (report.status !== 'ACTIONED') {
@@ -70,6 +86,11 @@ export default function MyListingsPage() {
           {renewError}
         </p>
       )}
+      {publishError && (
+        <p role="alert" className="text-red-600">
+          {publishError}
+        </p>
+      )}
       {appealError && (
         <p role="alert" className="text-red-600">
           {appealError}
@@ -85,8 +106,28 @@ export default function MyListingsPage() {
       )}
       {data && data.content.length > 0 && (
         <>
+          {draftCount > 0 && (
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">Drafts</h2>
+              <p className="text-sm text-neutral-600">
+                {draftCount} {draftCount === 1 ? 'draft' : 'drafts'} — visible
+                only to you, with no expiry date until published.
+              </p>
+              <label className="mt-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draftsOnly}
+                  onChange={(e) => setDraftsOnly(e.target.checked)}
+                />
+                Show drafts only
+              </label>
+            </div>
+          )}
+          {draftsOnly && visibleContent.length === 0 && (
+            <p className="text-neutral-600">No drafts on this page.</p>
+          )}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {data.content.map((item) => {
+            {visibleContent.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
                 <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
@@ -142,6 +183,22 @@ export default function MyListingsPage() {
                       className="mt-2 block rounded bg-neutral-800 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
                     >
                       Renew listing
+                    </button>
+                  )}
+                  {item.status === 'DRAFT' && (
+                    <button
+                      type="button"
+                      disabled={publish.isLoading}
+                      onClick={() => {
+                        setPublishError(null);
+                        publish.mutate(item.id, {
+                          onError: (error) =>
+                            setPublishError(describePublishError(error)),
+                        });
+                      }}
+                      className="mt-2 block rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Publish listing
                     </button>
                   )}
                   {(actionedReportsByItem.get(item.id) ?? []).map((report) => (

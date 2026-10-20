@@ -102,6 +102,7 @@ class OpenApiContractTest {
       "/api/items/{id}/photos",
       "/api/items/{id}/photos/order",
       "/api/items/{id}/photos/{photoId}",
+      "/api/items/{id}/publish",
       "/api/items/{id}/renew",
       "/api/items/{id}/report",
       "/api/items/{id}/status",
@@ -298,6 +299,10 @@ class OpenApiContractTest {
     // proof-failure 401 and the shared TOTP lockout 423.
     assertThat(responseCodes(docs, "/api/users/me/export/confirm", "post"))
         .contains("200", "401", "423");
+    // Listing drafts (#198): publish pins its ownership matrix and its
+    // not-a-draft 422.
+    assertThat(responseCodes(docs, "/api/items/{id}/publish", "post"))
+        .contains("401", "403", "404", "422");
     // Gallery reorder (#162): pins its not-a-permutation 400 and its
     // concurrent-edit 409 alongside the ownership matrix.
     assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))

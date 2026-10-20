@@ -29,5 +29,21 @@ public record ItemCreateRequest(
      * missing category id leaves the listing uncategorized.
      */
     @Positive(message = "categoryId must be positive")
-    Long categoryId) {
+    Long categoryId,
+
+    /**
+     * Optional initial status (backlog #198): absent or {@code null}
+     * keeps the historical behaviour — the listing is created
+     * {@link ItemStatus#AVAILABLE} and its #177 expiry clock starts at
+     * creation. {@link ItemStatus#DRAFT} creates a seller-private draft
+     * with no expiry deadline (the clock starts at publish). Any other
+     * value is answered 422 by the service layer — creation cannot mint
+     * a RESERVED/SOLD/WITHDRAWN/EXPIRED listing.
+     */
+    ItemStatus status) {
+
+  /** Backward-compatible 4-arg form (status absent = AVAILABLE). */
+  public ItemCreateRequest(String title, String description, Long priceCents, Long categoryId) {
+    this(title, description, priceCents, categoryId, null);
+  }
 }

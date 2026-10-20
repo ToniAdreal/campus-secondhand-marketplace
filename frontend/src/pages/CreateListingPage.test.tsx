@@ -66,6 +66,7 @@ function renderCreate(initialEntry = '/items/new') {
           <Route path="/items/new" element={<CreateListingPage />} />
           <Route path="/login" element={<div>login probe</div>} />
           <Route path="/items/:id" element={<div>detail probe</div>} />
+          <Route path="/my-listings" element={<div>my listings probe</div>} />
         </Routes>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -208,6 +209,42 @@ describe('CreateListingPage', () => {
     const uploaded = formData.get('file') as File;
     expect(uploaded.name).toBe('bike.png');
     expect(uploaded.type).toBe('image/png');
+  });
+
+  it('save draft submits with status DRAFT and navigates to My listings (#198)', async () => {
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    postSpy.mockResolvedValue(envelope({ ...createdItemPayload(), status: 'DRAFT' }));
+    fillValidForm();
+    fireEvent.click(screen.getByRole('button', { name: /save draft/i }));
+
+    await waitFor(() => expect(currentPath).toBe('/my-listings'));
+    const [createUrl, createBody] = postSpy.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(createUrl).toBe('/items');
+    expect(createBody).toMatchObject({
+      title: 'Used bike',
+      priceCents: 1250,
+      status: 'DRAFT',
+    });
+  });
+
+  it('publish submit does not send a draft status (#198)', async () => {
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    postSpy.mockResolvedValue(createdItem());
+    fillValidForm();
+    fireEvent.click(screen.getByRole('button', { name: /publish listing/i }));
+
+    await waitFor(() => expect(currentPath).toBe('/items/42'));
+    const [, createBody] = postSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(createBody).not.toHaveProperty('status');
   });
 
   it('keeps the seller on the page with a link when the photo upload fails', async () => {

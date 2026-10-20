@@ -4,17 +4,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
 import {
+  describePublishError,
   describeRenewError,
   isListingExpired,
   isListingExpiringSoon,
   itemKeys,
   listingPhotoUrls,
+  publishListing,
   useItems,
   type Item,
   type ItemPhoto,
 } from './items';
 
 const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
 
 function envelopePage() {
   return {
@@ -221,5 +224,27 @@ describe('listing expiry helpers (backlog #177)', () => {
     expect(describeRenewError(err(422))).toMatch(/cannot be renewed yet/i);
     expect(describeRenewError(err(403))).toMatch(/only the seller/i);
     expect(describeRenewError(err(404))).toMatch(/no longer exists/i);
+  });
+});
+
+describe('listing publish (backlog #198)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('publishListing posts to /items/{id}/publish and unwraps the envelope', async () => {
+    postSpy.mockResolvedValue({
+      data: { code: 0, message: 'ok', data: { id: 9, status: 'AVAILABLE' } },
+    } as never);
+    const item = await publishListing(9);
+    expect(postSpy).toHaveBeenCalledWith('/items/9/publish');
+    expect(item.status).toBe('AVAILABLE');
+  });
+
+  it('maps publish failures to friendly copy', () => {
+    const err = (code: number) => ({ response: { data: { code, message: 'raw' } } });
+    expect(describePublishError(err(422))).toMatch(/only a draft/i);
+    expect(describePublishError(err(403))).toMatch(/only the seller/i);
+    expect(describePublishError(err(404))).toMatch(/no longer exists/i);
   });
 });

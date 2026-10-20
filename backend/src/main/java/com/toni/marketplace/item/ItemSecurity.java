@@ -77,4 +77,19 @@ public class ItemSecurity {
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return admin || item.getSellerId().equals(auth.getPrincipal());
   }
+
+  /**
+   * A draft may be published by its seller or by an ADMIN (backlog
+   * #198). Same ownership semantics as {@link #canEdit}: a missing
+   * listing is 404, not a misleading 403. Guards
+   * {@code POST /api/items/{id}/publish}; whether the listing is a
+   * DRAFT at all is the service's 422 decision.
+   */
+  public boolean canPublish(Authentication auth, Long itemId) {
+    Item item = items.findById(itemId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    boolean admin = auth.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return admin || item.getSellerId().equals(auth.getPrincipal());
+  }
 }

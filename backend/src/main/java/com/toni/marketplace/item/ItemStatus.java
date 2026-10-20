@@ -1,6 +1,20 @@
 package com.toni.marketplace.item;
 
 public enum ItemStatus {
+  /**
+   * Seller-private draft (backlog #198): created via
+   * {@code POST /api/items} with {@code status=DRAFT} (or moved there by a
+   * PATCH edit), visible only to its seller (and ADMINs on the detail
+   * read) — public browse/search/detail reads exclude it and another
+   * user's detail read answers 404, never 403. A draft carries no
+   * expiry deadline (the #177 clock starts at publish, not at create)
+   * and is never orderable (order/offer creation requires
+   * {@link #AVAILABLE}). {@code POST /api/items/{id}/publish} is the
+   * DRAFT \u2192 AVAILABLE transition. No Flyway migration is needed:
+   * the {@code item.status} column is a plain {@code VARCHAR(16)} with
+   * no CHECK constraint (V1), so the new enum name persists as-is.
+   */
+  DRAFT,
   AVAILABLE,
   RESERVED,
   SOLD,

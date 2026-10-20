@@ -37,6 +37,12 @@ public interface ItemMapper {
   default Item toEntity(ItemCreateRequest request, Long sellerId, Category category) {
     Item item = new Item(request.title(), request.description(), request.priceCents(), sellerId);
     item.setCategory(category);
+    // Draft creation (backlog #198): the service validates the requested
+    // status (only AVAILABLE/DRAFT may be created) before this mapping;
+    // an absent status keeps the entity's AVAILABLE default.
+    if (request.status() != null) {
+      item.setStatus(request.status());
+    }
     return item;
   }
 }

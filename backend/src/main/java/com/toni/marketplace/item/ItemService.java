@@ -381,6 +381,10 @@ public class ItemService {
     List<ItemDto> dtos = ids.getContent().stream()
         .map(byId::get)
         .filter(Objects::nonNull)
+        // Drafts are seller-private (#198): the full-text id queries
+        // already exclude them; this hydration filter pins that no
+        // DRAFT DTO can survive even if an id somehow slipped through.
+        .filter(d -> d.status() != ItemStatus.DRAFT)
         .filter(d -> !excluding || !blockedSellerIds.contains(d.sellerId()))
         .toList();
     return new PageImpl<>(withPhotos(dtos), pageable, ids.getTotalElements());
@@ -426,8 +430,26 @@ public class ItemService {
    * never disagree on the same row.
    */
   private ItemDto loadDetail(Long id) {
+    return loadDetail(id, null, false);
+  }
+
+  /**
+   * Caller-aware detail load (backlog #198): a DRAFT listing is visible
+   * only to its seller or an ADMIN — every other caller (including the
+   * no-caller internal path) gets the same 404 as an unknown id, never
+   * a 403 that would confirm the draft exists. Anonymous callers never
+   * reach this code through the controller: the security chain requires
+   * a token for the detail route, so they are answered 401 there (the
+   * spec's visibility matrix: owner 200, other user 404, anonymous 401).
+   */
+  private ItemDto loadDetail(Long id, Long callerId, boolean callerIsAdmin) {
     ItemDto dto = items.findDetailViewById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (dto.status() == ItemStatus.DRAFT
+        && !callerIsAdmin
+        && (callerId == null || !callerId.equals(dto.sellerId()))) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
     if (dto.status() == ItemStatus.EXPIRED
         || (dto.status() == ItemStatus.AVAILABLE && dto.expiresAt() != null
             && !dto.expiresAt().isAfter(clock().instant()))) {
@@ -487,6 +509,12 @@ public class ItemService {
   public ItemDetailView getItemView(Long id, Long callerId, boolean callerIsAdmin) {
     ItemDto probe = items.findDetailViewById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (probe.status() == ItemStatus.DRAFT
+        && !callerIsAdmin
+        && (callerId == null || !callerId.equals(probe.sellerId()))) {
+      // Draft privacy (#198): 404, not 403 — see loadDetail's javadoc.
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found");
+    }
     if (probe.status() == ItemStatus.EXPIRED
         || (probe.status() == ItemStatus.AVAILABLE && probe.expiresAt() != null
             && !probe.expiresAt().isAfter(clock().instant()))) {
@@ -500,7 +528,7 @@ public class ItemService {
         recentlyViewed.recordView(callerId, id, clock().instant());
       }
     }
-    return detailView(loadDetail(id), id);
+    return detailView(loadDetail(id, callerId, callerIsAdmin), id);
   }
 
   /** Pairs a loaded detail DTO with the entity state its ETag derives from. */
@@ -519,16 +547,59 @@ public class ItemService {
    */
   @Transactional
   public ItemDto createItem(Long sellerId, ItemCreateRequest request) {
+    // Draft creation (backlog #198): only AVAILABLE (the absent-status
+    // default) or DRAFT may be created — any other requested status is
+    // 422, so creation can never mint a RESERVED/SOLD/WITHDRAWN/EXPIRED
+    // listing out of band.
+    if (request.status() != null
+        && request.status() != ItemStatus.AVAILABLE
+        && request.status() != ItemStatus.DRAFT) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "a listing can only be created as AVAILABLE or DRAFT");
+    }
     Category category = null;
     if (request.categoryId() != null) {
       category = categories.findById(request.categoryId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "category not found"));
     }
     Item item = mapper.toEntity(request, sellerId, category);
-    // Listing lifetime (backlog #177): every application-written row
-    // carries a deadline — now + app.listings.ttl (default 30 days).
-    item.setExpiresAt(clock().instant().plus(listingTtl()));
+    if (item.getStatus() == ItemStatus.DRAFT) {
+      // Drafts never expire (#198): no deadline is stamped at create —
+      // the #177 clock starts at publish (see publishItem), so a draft
+      // left untouched for months is still a draft, never an expiry.
+      item.setExpiresAt(null);
+    } else {
+      // Listing lifetime (backlog #177): every live application-written
+      // row carries a deadline — now + app.listings.ttl (default 30 days).
+      item.setExpiresAt(clock().instant().plus(listingTtl()));
+    }
     return mapper.toDto(items.save(item));
+  }
+
+  /**
+   * Publishes a draft (backlog #198): flips DRAFT to AVAILABLE and
+   * starts the #177 expiry clock at publish time — {@code expiresAt} is
+   * stamped {@code now + app.listings.ttl} here, with the exact same
+   * {@link #listingTtl()} computation the AVAILABLE create path uses,
+   * never at the draft's creation time. Publishing anything that is not
+   * a DRAFT is 422; an unknown id is 404. Ownership/role checks live on
+   * the controller's {@code @PreAuthorize} ({@link ItemSecurity#canPublish});
+   * the service stays role-agnostic. The deliberate flush mirrors
+   * {@link #updateItem}: a concurrent transition surfaces here as a
+   * {@code @Version} race mapped to 409 by GlobalExceptionHandler.
+   */
+  @Transactional
+  public ItemDto publishItem(Long id) {
+    Item item = items.findById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (item.getStatus() != ItemStatus.DRAFT) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "only a DRAFT listing can be published");
+    }
+    item.setStatus(ItemStatus.AVAILABLE);
+    item.setExpiresAt(clock().instant().plus(listingTtl()));
+    items.flush();
+    return mapper.toDto(item);
   }
 
   /**
@@ -606,7 +677,10 @@ public class ItemService {
     Long oldPriceCents = item.getPriceCents();
     boolean priceDropped = false;
     if (request.priceCents() != null && !request.priceCents().equals(item.getPriceCents())) {
-      if (item.getStatus() != ItemStatus.AVAILABLE) {
+      // Price is editable on AVAILABLE and DRAFT listings (#198: a draft
+      // has no buyer, so nothing snapshotted its price); RESERVED/SOLD
+      // (and every other state) stay locked as before.
+      if (item.getStatus() != ItemStatus.AVAILABLE && item.getStatus() != ItemStatus.DRAFT) {
         throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
             "price is locked while the listing has a buyer");
       }
@@ -615,6 +689,39 @@ public class ItemService {
     }
     if (category != null) {
       item.setCategory(category);
+    }
+    // Draft/publish status on the edit path (backlog #198): an optional
+    // status of AVAILABLE or DRAFT moves the listing between the two —
+    // to DRAFT clears the expiry deadline (drafts never expire), to
+    // AVAILABLE stamps a fresh deadline (the #177 clock starts at
+    // publish, exactly as in publishItem). Any other requested value,
+    // and any status change on a listing that is neither AVAILABLE nor
+    // DRAFT, is 422. A request naming the current status is a no-op
+    // (in particular it does NOT reset a live listing's deadline).
+    if (request.status() != null && request.status() != item.getStatus()) {
+      if (request.status() != ItemStatus.AVAILABLE && request.status() != ItemStatus.DRAFT) {
+        throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+            "a listing edit can only set status to AVAILABLE or DRAFT");
+      }
+      if (item.getStatus() != ItemStatus.AVAILABLE && item.getStatus() != ItemStatus.DRAFT) {
+        throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+            "only an AVAILABLE or DRAFT listing can change draft status");
+      }
+      item.setStatus(request.status());
+      if (request.status() == ItemStatus.DRAFT) {
+        item.setExpiresAt(null);
+      } else {
+        item.setExpiresAt(clock().instant().plus(listingTtl()));
+      }
+    } else if (request.status() != null
+        && request.status() != ItemStatus.AVAILABLE
+        && request.status() != ItemStatus.DRAFT) {
+      // Same-status no-op above must not smuggle an illegal value past
+      // the guard when the listing already carries it is impossible for
+      // AVAILABLE/DRAFT, but a RESERVED/SOLD row "edited" to its own
+      // status is still not a draft-endpoint transition — reject it.
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "a listing edit can only set status to AVAILABLE or DRAFT");
     }
     // Flush deliberately inside the transaction (not at commit), mirroring
     // OrderService.pay(): a concurrent edit of the same listing between
