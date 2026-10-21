@@ -30,6 +30,16 @@ public class Message {
   /** v1 honest-scope cap: longer bodies must go through real chat tooling. */
   public static final int MAX_BODY_LENGTH = 2000;
 
+  /**
+   * The body a soft-deleted message carries from the moment of deletion
+   * (backlog #206): the original wording is replaced in storage, not
+   * merely hidden at read time, so a retracted message cannot resurface
+   * through any read path (thread, export, future surfaces). The row
+   * itself is kept so thread order and the other party's context
+   * survive.
+   */
+  public static final String TOMBSTONE_BODY = "This message was deleted";
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -58,6 +68,23 @@ public class Message {
   @Column(name = "read_at")
   private Instant readAt;
 
+  /**
+   * When the sender last edited this message (Flyway V57, backlog
+   * #206); {@code null} while never edited. Edits are only accepted
+   * inside {@code app.messages.edit-window} of {@code createdAt} — the
+   * window check lives in {@link MessageService}.
+   */
+  @Column(name = "edited_at")
+  private Instant editedAt;
+
+  /**
+   * When the sender soft-deleted this message (Flyway V57, backlog
+   * #206); {@code null} while live. Deletion replaces {@code body} with
+   * {@link #TOMBSTONE_BODY} in the same transition.
+   */
+  @Column(name = "deleted_at")
+  private Instant deletedAt;
+
   protected Message() {}
 
   public Message(Long itemId, Long senderId, Long receiverId, String body) {
@@ -79,11 +106,43 @@ public class Message {
   public String getBody() { return body; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
+  public Instant getEditedAt() { return editedAt; }
+  public Instant getDeletedAt() { return deletedAt; }
+
+  /** Whether the sender has soft-deleted this message (backlog #206). */
+  public boolean isDeleted() {
+    return deletedAt != null;
+  }
 
   /** Stamps the read marker once; a second view keeps the first stamp. */
   public void markRead(Instant when) {
     if (this.readAt == null) {
       this.readAt = when;
+    }
+  }
+
+  /**
+   * Applies a sender edit (backlog #206): replaces the body and stamps
+   * {@code editedAt}. The caller (MessageService) has already enforced
+   * sender-only, not-deleted and the edit window. {@code createdAt}
+   * never moves — thread order and pagination are keyed on it, so an
+   * edit must not reshuffle the conversation.
+   */
+  public void edit(String newBody, Instant when) {
+    this.body = newBody;
+    this.editedAt = when;
+  }
+
+  /**
+   * Soft-deletes this message (backlog #206): stamps {@code deletedAt}
+   * and replaces the stored body with {@link #TOMBSTONE_BODY}. A repeat
+   * delete keeps the first stamp (idempotent, mirroring
+   * {@link #markRead}).
+   */
+  public void softDelete(Instant when) {
+    if (this.deletedAt == null) {
+      this.deletedAt = when;
+      this.body = TOMBSTONE_BODY;
     }
   }
 }

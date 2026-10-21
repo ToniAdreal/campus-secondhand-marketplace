@@ -1,12 +1,14 @@
 package com.toni.marketplace.auth;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
+import com.toni.marketplace.message.MessageRepository;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -73,6 +75,9 @@ class MessageRateLimitTest {
 
   @Autowired
   private ItemRepository items;
+
+  @Autowired
+  private MessageRepository messages;
 
   @Autowired
   private PasswordService passwords;
@@ -150,6 +155,24 @@ class MessageRateLimitTest {
         .andExpect(jsonPath("$.code").value(429))
         .andExpect(jsonPath("$.message").value("too many requests"))
         .andExpect(jsonPath("$.data").doesNotExist());
+  }
+
+  @Test
+  void messageEditsShareTheSendBucket() throws Exception {
+    // Backlog #206: PUT /api/messages/{id} (edit) is a message write
+    // too — the #76 per-user bucket covers it, so a sender who burned
+    // the bucket on sends cannot keep hammering through edits.
+    for (int i = 0; i < 30; i++) {
+      sendOnce(sender, receiver, "hello " + i);
+    }
+    long messageId = messages.findAll().get(0).getId();
+    mockMvc.perform(put("/api/messages/" + messageId)
+            .with(fromIp(ip))
+            .header("Authorization", "Bearer " + jwt.createTokenPair(sender).accessToken())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"body\":\"edited\"}"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(jsonPath("$.code").value(429));
   }
 
   @Test

@@ -3,6 +3,8 @@ package com.toni.marketplace.message;
 import com.toni.marketplace.auth.UserBlockRepository;
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.ItemRepository;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,13 +58,29 @@ public class MessageService {
   private final ItemRepository items;
   private final UserRepository users;
   private final UserBlockRepository blocks;
+  private final MessageProperties messageProps;
+  private final Clock clock;
 
   public MessageService(MessageRepository messages, ItemRepository items,
-                        UserRepository users, UserBlockRepository blocks) {
+                        UserRepository users, UserBlockRepository blocks,
+                        MessageProperties messageProps, Clock clock) {
     this.messages = messages;
     this.items = items;
     this.users = users;
     this.blocks = blocks;
+    this.messageProps = messageProps;
+    this.clock = clock;
+  }
+
+  /** Clock with a system fallback, mirroring ItemService's pattern. */
+  private Clock clock() {
+    return clock != null ? clock : Clock.systemUTC();
+  }
+
+  /** Edit window with the documented 15-minute default as fallback. */
+  private Duration editWindow() {
+    return messageProps != null && messageProps.getEditWindow() != null
+        ? messageProps.getEditWindow() : Duration.ofMinutes(15);
   }
 
   @Transactional
@@ -158,6 +176,70 @@ public class MessageService {
    */
   @Transactional(readOnly = true)
   public long unreadCount(Long userId) {
-    return messages.countByReceiverIdAndReadAtIsNull(userId);
+    return messages.countByReceiverIdAndReadAtIsNullAndDeletedAtIsNull(userId);
+  }
+
+  /**
+   * Edits one of the caller's own messages (backlog #206).
+   *
+   * <ul>
+   *   <li>404 — no message with that id (checked before ownership, so
+   *   the endpoint is not an existence oracle beyond what the thread
+   *   read already exposes to participants).</li>
+   *   <li>403 — the caller is not the sender. Only the sender may edit;
+   *   the receiver, the listing's seller and ADMIN get no edit right.</li>
+   *   <li>422 — the message is already deleted, or the edit window
+   *   ({@code app.messages.edit-window}, default 15 minutes from
+   *   {@code createdAt}) has closed. The boundary is inclusive: an edit
+   *   landing exactly at {@code createdAt + window} is accepted.</li>
+   * </ul>
+   *
+   * <p>An edit replaces the body and stamps {@code editedAt} from the
+   * injected {@link Clock}; {@code createdAt} never moves, so thread
+   * order and the #41 pagination contract are untouched. Sends fire no
+   * notification in this codebase and edits fire none either — there is
+   * deliberately no notification seam on this path to re-fire.
+   */
+  @Transactional
+  public MessageDto edit(Long userId, Long messageId, String newBody) {
+    Message message = messages.findById(messageId).orElseThrow(() ->
+        new ResponseStatusException(HttpStatus.NOT_FOUND, "message not found"));
+    if (!message.getSenderId().equals(userId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the sender can edit this message");
+    }
+    if (message.isDeleted()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "a deleted message cannot be edited");
+    }
+    Instant now = clock().instant();
+    if (now.isAfter(message.getCreatedAt().plus(editWindow()))) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "the edit window for this message has closed");
+    }
+    message.edit(newBody, now);
+    return MessageDto.from(message);
+  }
+
+  /**
+   * Soft-deletes one of the caller's own messages (backlog #206):
+   * sender-only (403 otherwise, 404 on an unknown id, mirroring
+   * {@link #edit}). The row is kept — {@code deletedAt} is stamped and
+   * the stored body is replaced by the tombstone — so thread order and
+   * the other party's context survive, while the unread count stops
+   * counting the row at once (the count query excludes deleted rows).
+   * Deleting an already-deleted message is an idempotent 200 returning
+   * the tombstone unchanged. Delete is not windowed: only edits are.
+   */
+  @Transactional
+  public MessageDto delete(Long userId, Long messageId) {
+    Message message = messages.findById(messageId).orElseThrow(() ->
+        new ResponseStatusException(HttpStatus.NOT_FOUND, "message not found"));
+    if (!message.getSenderId().equals(userId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the sender can delete this message");
+    }
+    message.softDelete(clock().instant());
+    return MessageDto.from(message);
   }
 }

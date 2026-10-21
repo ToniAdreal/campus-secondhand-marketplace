@@ -11,6 +11,23 @@ export interface Message {
   createdAt: string;
   /** When the receiver opened the thread; null while unread (#106). */
   readAt: string | null;
+  /** When the sender last edited the message; null while never edited (#206). */
+  editedAt: string | null;
+  /**
+   * When the sender soft-deleted the message; null while live (#206).
+   * A deleted message's body is the backend tombstone text — the
+   * original wording no longer exists on the server.
+   */
+  deletedAt: string | null;
+}
+
+/** The backend edit window (app.messages.edit-window, #206): 15 minutes from send. */
+export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+/** Whether a message the caller sent can still be edited right now (#206). */
+export function isMessageEditable(message: Message, nowMs: number = Date.now()): boolean {
+  if (message.deletedAt !== null) return false;
+  return nowMs - Date.parse(message.createdAt) <= MESSAGE_EDIT_WINDOW_MS;
 }
 
 export const messageKeys = {
@@ -111,6 +128,57 @@ export function useSendMessage() {
   });
 }
 
+export interface EditMessageInput {
+  itemId: number;
+  messageId: number;
+  body: string;
+}
+
+/**
+ * PUT /api/messages/{id} (backlog #206). Sender-only, inside the
+ * 15-minute edit window; the backend answers 422 outside it. On
+ * success the thread query is invalidated and refetched — the
+ * server-assigned editedAt cannot be computed locally, so no cache
+ * hand-editing (same doctrine as the send, #16).
+ */
+export function useEditMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EditMessageInput) =>
+      api
+        .put<ApiResponse<Message>>(`/messages/${input.messageId}`, { body: input.body })
+        .then((res) => res.data.data),
+    onSuccess: (_message, input) => {
+      void queryClient.invalidateQueries({ queryKey: messageKeys.thread(input.itemId) });
+    },
+  });
+}
+
+export interface DeleteMessageInput {
+  itemId: number;
+  messageId: number;
+}
+
+/**
+ * DELETE /api/messages/{id} (backlog #206). Sender-only soft delete:
+ * the row stays in the thread as a tombstone and stops counting as
+ * unread, so both the thread and the unread-count queries are
+ * invalidated on success (same doctrine as the send, #16).
+ */
+export function useDeleteMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DeleteMessageInput) =>
+      api
+        .delete<ApiResponse<Message>>(`/messages/${input.messageId}`)
+        .then((res) => res.data.data),
+    onSuccess: (_message, input) => {
+      void queryClient.invalidateQueries({ queryKey: messageKeys.thread(input.itemId) });
+      void queryClient.invalidateQueries({ queryKey: messageKeys.unreadCount });
+    },
+  });
+}
+
 /**
  * Maps a failed POST /api/messages to a user-facing message, keeping the
  * raw envelope text out of the UI like describeOrderError does.
@@ -120,6 +188,18 @@ export function describeMessageError(error: unknown): string {
     .response;
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
+  // Edit/delete failures first (backlog #206): their 422/403 codes
+  // overlap the send's, so the specific wording is matched before the
+  // generic code rules below.
+  if (/edit window/i.test(message)) {
+    return 'The edit window for this message has closed (15 minutes after sending).';
+  }
+  if (/deleted message cannot be edited/i.test(message)) {
+    return 'This message was deleted and can no longer be edited.';
+  }
+  if (/only the sender/i.test(message)) {
+    return 'You can only edit or delete your own messages.';
+  }
   if (code === 422 || /yourself/i.test(message)) {
     return 'You cannot message yourself.';
   }

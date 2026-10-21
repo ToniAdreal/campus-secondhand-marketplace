@@ -9,6 +9,8 @@ import MessageThread from './MessageThread';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const putSpy = vi.spyOn(api, 'put');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 const seller: AuthUser = { id: 3, username: 'seller', email: 'seller@example.com', roles: ['USER'] };
@@ -21,6 +23,8 @@ const msg1: Message = {
   body: 'Is this still available?',
   createdAt: '2026-10-07T01:00:00Z',
   readAt: null,
+  editedAt: null,
+  deletedAt: null,
 };
 const msg2: Message = {
   id: 2,
@@ -30,6 +34,8 @@ const msg2: Message = {
   body: 'Yes — pickup this weekend works.',
   createdAt: '2026-10-07T02:00:00Z',
   readAt: null,
+  editedAt: null,
+  deletedAt: null,
 };
 
 function envelope(data: unknown) {
@@ -97,6 +103,8 @@ describe('MessageThread', () => {
       body: 'Great, see you then!',
       createdAt: '2026-10-07T03:00:00Z',
       readAt: null,
+      editedAt: null,
+      deletedAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2, msg3])); // refetch after send
@@ -152,6 +160,8 @@ describe('MessageThread', () => {
       body: 'Yes — pickup this weekend works.',
       createdAt: '2026-10-07T03:00:00Z',
       readAt: null,
+      editedAt: null,
+      deletedAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, reply])); // refetch after send
@@ -192,6 +202,8 @@ describe('MessageThread', () => {
       body: 'Would you take 100?',
       createdAt: '2026-10-07T04:00:00Z',
       readAt: null,
+      editedAt: null,
+      deletedAt: null,
     };
     const replyToNine: Message = {
       id: 5,
@@ -201,6 +213,8 @@ describe('MessageThread', () => {
       body: '110 is my floor.',
       createdAt: '2026-10-07T05:00:00Z',
       readAt: null,
+      editedAt: null,
+      deletedAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg]));
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg, replyToNine]));
@@ -289,6 +303,8 @@ describe('MessageThread', () => {
       body: 'Great, see you then!',
       createdAt: '2026-10-07T03:00:00Z',
       readAt: null,
+      editedAt: null,
+      deletedAt: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg2], 0, 2)); // initial newest page
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1], 1, 2)); // load earlier
@@ -311,5 +327,94 @@ describe('MessageThread', () => {
     await waitFor(() => expect(screen.getByText('Great, see you then!')).toBeTruthy());
     expect(screen.getAllByText('Yes — pickup this weekend works.')).toHaveLength(1);
     expect(getSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it('editing an own fresh message PUTs the new body and renders the (edited) marker (backlog #206)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const fresh: Message = {
+      ...msg1,
+      body: 'Is this still availabel?',
+      createdAt: new Date().toISOString(),
+    };
+    const edited: Message = {
+      ...fresh,
+      body: 'Is this still available?',
+      editedAt: new Date().toISOString(),
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([fresh])); // initial thread load
+    getSpy.mockResolvedValueOnce(pageEnvelope([edited])); // refetch after edit
+    putSpy.mockResolvedValueOnce(envelope(edited));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Is this still availabel?')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    fireEvent.change(screen.getByLabelText(/edit your message/i), {
+      target: { value: 'Is this still available?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save edit/i }));
+
+    await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(1));
+    expect(putSpy).toHaveBeenCalledWith('/messages/1', { body: 'Is this still available?' });
+    // The edited message (with its server-stamped editedAt) arrives via
+    // refetch and renders the marker — never a local cache edit.
+    await waitFor(() => expect(screen.getByText('(edited)')).toBeTruthy());
+    expect(screen.getByText('Is this still available?')).toBeTruthy();
+  });
+
+  it('the Edit button is disabled once the 15-minute window has passed (backlog #206)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    // msg1 was sent 2026-10-07 — far outside the window at render time.
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+    const editButton = screen.getByRole('button', { name: 'Edit' }) as HTMLButtonElement;
+    expect(editButton.disabled).toBe(true);
+    // Delete is not windowed — it stays available on the same message.
+    expect(
+      (screen.getByRole('button', { name: 'Delete' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it('deleting an own message DELETEs it and the refetch renders the tombstone (backlog #206)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fresh: Message = { ...msg1, createdAt: new Date().toISOString() };
+    const tombstone: Message = {
+      ...fresh,
+      body: 'This message was deleted',
+      deletedAt: new Date().toISOString(),
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([fresh])); // initial thread load
+    getSpy.mockResolvedValueOnce(pageEnvelope([tombstone])); // refetch after delete
+    deleteSpy.mockResolvedValueOnce(envelope(tombstone));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledTimes(1));
+    expect(deleteSpy).toHaveBeenCalledWith('/messages/1');
+    await waitFor(() => expect(screen.getByText('This message was deleted')).toBeTruthy());
+    // A tombstone carries no edit/delete controls.
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('a deleted message renders as a tombstone with no controls (backlog #206)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const tombstone: Message = {
+      ...msg1,
+      body: 'This message was deleted',
+      deletedAt: '2026-10-07T01:05:00Z',
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([tombstone, msg2]));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('This message was deleted')).toBeTruthy());
+    expect(screen.queryByText('Is this still available?')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 });

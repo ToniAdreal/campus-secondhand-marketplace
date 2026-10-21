@@ -6,8 +6,11 @@ import { api } from './client';
 import type { Page } from './items';
 import {
   describeMessageError,
+  isMessageEditable,
   messageKeys,
   stitchThreadPages,
+  useDeleteMessage,
+  useEditMessage,
   useMessageThread,
   useSendMessage,
   useUnreadMessageCount,
@@ -16,6 +19,8 @@ import {
 
 const getSpy = vi.spyOn(api, 'get');
 const postSpy = vi.spyOn(api, 'post');
+const putSpy = vi.spyOn(api, 'put');
+const deleteSpy = vi.spyOn(api, 'delete');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -30,6 +35,8 @@ function msg(id: number, body = `message ${id}`): Message {
     body,
     createdAt: '2026-10-09T08:00:00Z',
     readAt: null,
+    editedAt: null,
+    deletedAt: null,
   };
 }
 
@@ -188,6 +195,74 @@ describe('useSendMessage', () => {
   });
 });
 
+describe('useEditMessage (backlog #206)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('puts the new body, unwraps the edited message and invalidates the thread', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const edited = { ...msg(9, 'fixed typo'), editedAt: '2026-10-09T08:05:00Z' };
+    putSpy.mockResolvedValueOnce(envelope(edited));
+
+    const { result } = renderHook(() => useEditMessage(), { wrapper: wrapperFor(queryClient) });
+    const returned = await result.current.mutateAsync({
+      itemId: 42,
+      messageId: 9,
+      body: 'fixed typo',
+    });
+
+    expect(putSpy).toHaveBeenCalledWith('/messages/9', { body: 'fixed typo' });
+    expect(returned).toEqual(edited);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.thread(42) });
+  });
+});
+
+describe('useDeleteMessage (backlog #206)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('deletes, unwraps the tombstone and invalidates thread + unread count', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const tombstone = {
+      ...msg(9, 'This message was deleted'),
+      deletedAt: '2026-10-09T08:05:00Z',
+    };
+    deleteSpy.mockResolvedValueOnce(envelope(tombstone));
+
+    const { result } = renderHook(() => useDeleteMessage(), { wrapper: wrapperFor(queryClient) });
+    const returned = await result.current.mutateAsync({ itemId: 42, messageId: 9 });
+
+    expect(deleteSpy).toHaveBeenCalledWith('/messages/9');
+    expect(returned).toEqual(tombstone);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.thread(42) });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.unreadCount });
+  });
+});
+
+describe('isMessageEditable (backlog #206)', () => {
+  const now = Date.parse('2026-10-09T08:10:00Z');
+
+  it('a fresh live message is editable; the window boundary is inclusive', () => {
+    expect(isMessageEditable(msg(1), now)).toBe(true);
+    const atBoundary = { ...msg(2), createdAt: '2026-10-09T07:55:00Z' };
+    expect(isMessageEditable(atBoundary, now)).toBe(true);
+  });
+
+  it('a message older than 15 minutes is not editable', () => {
+    const old = { ...msg(3), createdAt: '2026-10-09T07:54:59Z' };
+    expect(isMessageEditable(old, now)).toBe(false);
+  });
+
+  it('a deleted message is never editable', () => {
+    const deleted = { ...msg(4), deletedAt: '2026-10-09T08:01:00Z' };
+    expect(isMessageEditable(deleted, now)).toBe(false);
+  });
+});
+
 describe('useUnreadMessageCount', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -262,6 +337,21 @@ describe('describeMessageError', () => {
       'send-guard 403 (backlog #112)',
       envelopeError(403, 'not a participant in this conversation'),
       'You can only message the seller, or reply inside an existing conversation.',
+    ],
+    [
+      'edit window closed (backlog #206)',
+      envelopeError(422, 'the edit window for this message has closed'),
+      'The edit window for this message has closed (15 minutes after sending).',
+    ],
+    [
+      'edit of a deleted message (backlog #206)',
+      envelopeError(422, 'a deleted message cannot be edited'),
+      'This message was deleted and can no longer be edited.',
+    ],
+    [
+      'non-sender edit/delete (backlog #206)',
+      envelopeError(403, 'only the sender can edit this message'),
+      'You can only edit or delete your own messages.',
     ],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],

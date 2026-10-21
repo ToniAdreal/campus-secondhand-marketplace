@@ -4,8 +4,11 @@ import com.toni.marketplace.common.ApiResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -66,5 +69,58 @@ public class MessageController {
     Long userId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(messageService.unreadCount(userId));
+  }
+
+  /**
+   * Edits one of the caller's own messages (backlog #206). Sender-only
+   * (403 otherwise, 404 on an unknown id) and only inside the edit
+   * window ({@code app.messages.edit-window}, default 15 minutes from
+   * send — outside it 422, as is editing a deleted message). Jakarta
+   * validation turns blank/overlong replacement bodies into the 400
+   * envelope, exactly like the send. Covered by the #76 per-user
+   * message rate-limit bucket, like the send.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "validation failure — body blank or over 2000 characters (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the message's sender (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown message id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "edit window closed, or the message is deleted (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429",
+          description = "message rate limit (envelope)")})
+  @PutMapping("/{id}")
+  public ApiResponse<MessageDto> edit(@PathVariable Long id,
+                                      @Valid @RequestBody MessageEditRequest request) {
+    Long userId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(messageService.edit(userId, id, request.body()));
+  }
+
+  /**
+   * Soft-deletes one of the caller's own messages (backlog #206).
+   * Sender-only (403 otherwise, 404 on an unknown id). The row is
+   * kept as a tombstone so thread order survives; deleting an
+   * already-deleted message is an idempotent 200. Covered by the #76
+   * per-user message rate-limit bucket, like the send.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the message's sender (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown message id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429",
+          description = "message rate limit (envelope)")})
+  @DeleteMapping("/{id}")
+  public ApiResponse<MessageDto> delete(@PathVariable Long id) {
+    Long userId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(messageService.delete(userId, id));
   }
 }

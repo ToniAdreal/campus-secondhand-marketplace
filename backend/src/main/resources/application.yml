@@ -360,6 +360,15 @@ app:
     # (buyer, item) live pair frees up for a fresh offer. Default 48
     # hours; expiry granularity is the 5-minute cadence.
     pending-ttl: 48h
+  messages:
+    # Message edit window (MessageService, backlog #206): how long
+    # after sending the sender may still edit a message via
+    # PUT /api/messages/{id}; an edit landing exactly at
+    # createdAt + edit-window is accepted, later is 422. Default
+    # 15 minutes — long enough for a typo, short enough that a read
+    # conversation cannot be quietly rewritten. Soft delete
+    # (DELETE /api/messages/{id}) is deliberately not windowed.
+    edit-window: 15m
   disputes:
     # Order-dispute window (DisputeService, backlog #169): how long after
     # an order's PAID / COMPLETED transition its buyer may still open a

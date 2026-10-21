@@ -204,6 +204,13 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // The one throttled GET (backlog #172): see the class javadoc.
       return !dataExportLimiter.isEnabled();
     }
+    if (("PUT".equalsIgnoreCase(request.getMethod())
+            || "DELETE".equalsIgnoreCase(request.getMethod()))
+        && isMessageItemPath(path)) {
+      // Message edit/delete (backlog #206): the #76 message bucket
+      // covers every message write, not just the POST send.
+      return !messageLimiter.isEnabled();
+    }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
@@ -248,7 +255,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
-    if (MESSAGE_PATH.equals(path)) {
+    if (MESSAGE_PATH.equals(path) || isMessageItemPath(path)) {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {
         writeTooManyRequests(response, messageLimiter.retryAfterSeconds(key));
@@ -369,6 +376,18 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isReportPath(String path) {
     return path != null && path.matches("/api/items/\\d+/report");
+  }
+
+  /**
+   * True for the single-message paths {@code PUT/DELETE
+   * /api/messages/{id}} (backlog #206): the id segment is numeric
+   * (message ids are), which keeps the collection path
+   * ({@code /api/messages}) and the {@code /unread-count} sibling out
+   * of this matcher — the collection POST is matched exactly, and
+   * unread-count is a GET the filter never throttles.
+   */
+  private static boolean isMessageItemPath(String path) {
+    return path != null && path.matches("/api/messages/\\d+");
   }
 
   private void writeTooManyRequests(HttpServletResponse response, long retryAfterSeconds)

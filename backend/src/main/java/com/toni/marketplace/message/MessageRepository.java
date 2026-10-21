@@ -30,12 +30,18 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
    * transaction already carries the fresh {@code readAt} in its DTOs.
    */
   @Query("SELECT m FROM Message m WHERE m.itemId = :itemId "
-      + "AND m.receiverId = :receiverId AND m.readAt IS NULL")
+      + "AND m.receiverId = :receiverId AND m.readAt IS NULL AND m.deletedAt IS NULL")
   List<Message> findUnreadByItemAndReceiver(
       @Param("itemId") Long itemId, @Param("receiverId") Long receiverId);
 
-  /** The caller's total unread across all listings (backlog #106). */
-  long countByReceiverIdAndReadAtIsNull(Long receiverId);
+  /**
+   * The caller's total unread across all listings (backlog #106).
+   * Soft-deleted rows are excluded (backlog #206): a retracted message
+   * must stop counting the moment it is deleted, without waiting for
+   * the receiver to open the thread — the delete-then-unread-count
+   * behaviour is pinned by {@code MessageEditDeleteTest}.
+   */
+  long countByReceiverIdAndReadAtIsNullAndDeletedAtIsNull(Long receiverId);
 
   /**
    * Every message the user sent or received, for the account data
