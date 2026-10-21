@@ -152,6 +152,8 @@ class AnonymousAccessSweepTest {
       "POST /api/messages",
       "GET /api/messages",
       "GET /api/messages/unread-count",
+      "PUT /api/messages/{id}",
+      "DELETE /api/messages/{id}",
       "GET /api/notifications",
       "GET /api/notifications/stream",
       "POST /api/notifications/stream-ticket",
