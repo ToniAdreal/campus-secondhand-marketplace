@@ -147,6 +147,27 @@ public class NotificationStreamService {
   }
 
   /**
+   * Terminates every live stream of one user: the emitters are removed
+   * from the registry and completed, so each client's EventSource
+   * closes and reconnects through the refetch fallback. This is the
+   * seam a session-revocation path would call; the stream test also
+   * uses it to close a stream deterministically instead of waiting out
+   * {@link #EMITTER_TIMEOUT_MS}. Returns how many streams were closed.
+   */
+  int completeStreamsForUser(Long userId) {
+    Set<SseEmitter> set = emitters.remove(userId);
+    if (set == null) {
+      return 0;
+    }
+    int closed = 0;
+    for (SseEmitter emitter : set) {
+      emitter.complete();
+      closed++;
+    }
+    return closed;
+  }
+
+  /**
    * Heartbeat: a comment frame every 25 s keeps proxies from idling the
    * connection out and doubles as a liveness sweep — emitters whose
    * send fails are dropped here even if no event ever targets them.

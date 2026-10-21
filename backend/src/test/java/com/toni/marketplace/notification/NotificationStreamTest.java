@@ -51,6 +51,9 @@ class NotificationStreamTest {
   private NotificationService notificationService;
 
   @Autowired
+  private NotificationStreamService streamService;
+
+  @Autowired
   private UserRepository users;
 
   @Autowired
@@ -123,6 +126,11 @@ class NotificationStreamTest {
     notificationService.record(seller.getId(), NotificationType.ORDER_PAID, 4242L);
     Long rowId = notifications.findAll().get(0).getId();
 
+    // Close the stream before dispatching: asyncDispatch waits for the
+    // emitter to complete, and a live stream only completes on its
+    // 30-minute timeout — without this the test would hang that long.
+    assertThat(streamService.completeStreamsForUser(seller.getId())).isEqualTo(1);
+
     String body = mockMvc.perform(asyncDispatch(stream))
         .andReturn().getResponse().getContentAsString();
     String dataLine = body.lines()
@@ -161,6 +169,18 @@ class NotificationStreamTest {
     assertThat(service.consumeTicket(expiring)).isNull();
     assertThat(service.consumeTicket(null)).isNull();
     assertThat(service.consumeTicket("unknown")).isNull();
+  }
+
+  @Test
+  void completeStreamsForUserClosesOnlyThatUsersStreams() {
+    NotificationStreamService service = new NotificationStreamService(new MutableClock());
+    service.openStream(5L);
+    service.openStream(5L);
+    service.openStream(6L);
+    assertThat(service.completeStreamsForUser(5L)).isEqualTo(2);
+    assertThat(service.emitterCount(5L)).isZero();
+    assertThat(service.emitterCount(6L)).isEqualTo(1);
+    assertThat(service.completeStreamsForUser(5L)).isZero();
   }
 
   @Test
