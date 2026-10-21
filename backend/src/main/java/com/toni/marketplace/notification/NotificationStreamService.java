@@ -93,15 +93,36 @@ public class NotificationStreamService {
 
   /** Registers a new emitter for the user and wires its cleanup callbacks. */
   public SseEmitter openStream(Long userId) {
-    SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
     Set<SseEmitter> set = emitters.computeIfAbsent(userId, k -> new CopyOnWriteArraySet<>());
-    set.add(emitter);
+    Runnable[] cleanupRef = new Runnable[1];
+    // Deregister synchronously when the app itself completes the emitter:
+    // SseEmitter.complete() alone only notifies the MVC handler, and the
+    // onCompletion callback fires later (or never, for an emitter Spring
+    // never initialized) — without this override a completed emitter
+    // would linger in the registry until a publish/heartbeat send failed
+    // on it. The handler callbacks below stay as the backstop for client
+    // disconnects and timeouts, where the app never calls complete().
+    SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS) {
+      @Override
+      public void complete() {
+        cleanupRef[0].run();
+        super.complete();
+      }
+
+      @Override
+      public void completeWithError(Throwable ex) {
+        cleanupRef[0].run();
+        super.completeWithError(ex);
+      }
+    };
     Runnable cleanup = () -> {
       set.remove(emitter);
       if (set.isEmpty()) {
         emitters.remove(userId, set);
       }
     };
+    cleanupRef[0] = cleanup;
+    set.add(emitter);
     emitter.onCompletion(cleanup);
     emitter.onTimeout(cleanup);
     emitter.onError(e -> cleanup.run());
