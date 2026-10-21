@@ -17,6 +17,7 @@ import {
   type ReportReason,
 } from '../api/reports';
 import { useAuthStore } from '../store/useAuthStore';
+import AddToCartButton from '../components/AddToCartButton';
 import FavoriteButton from '../components/FavoriteButton';
 import GalleryOrderEditor from '../components/GalleryOrderEditor';
 import ListingGallery from '../components/ListingGallery';
@@ -179,6 +180,7 @@ export default function ItemDetailPage() {
             {createOrder.isLoading ? 'Placing order…' : 'Buy now'}
           </button>
         )}
+        {canBuy && <AddToCartButton item={data} />}
         {!user && data.status === 'AVAILABLE' && (
           <p className="text-sm text-neutral-600">
             <Link to="/login" className="text-blue-600 hover:underline">

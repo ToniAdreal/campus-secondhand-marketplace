@@ -5,6 +5,7 @@ import RouteFocusManager from './components/RouteFocusManager';
 import { useUnreadMessageCount } from './api/messages';
 import { useNotificationStream, useUnreadNotificationCount } from './api/notifications';
 import { useAuthStore } from './store/useAuthStore';
+import { useCartStore } from './store/useCartStore';
 
 function AuthNav() {
   const user = useAuthStore((s) => s.user);
@@ -16,6 +17,8 @@ function AuthNav() {
   // Unread-notification bell (#157): same badge pattern as messages;
   // the count query only runs signed in.
   const { data: unreadNotifications } = useUnreadNotificationCount(user !== null);
+  // Bundle-cart count (backlog #207): local state only, no request.
+  const cartCount = useCartStore((s) => s.items.length);
   // Live bell (#203): SSE events invalidate the notifications subtree;
   // the count query above stays as the fallback when the stream drops.
   useNotificationStream(user !== null);
@@ -37,6 +40,17 @@ function AuthNav() {
     <div className="flex items-center gap-3">
       <Link to="/orders" className="text-sm text-blue-600 hover:underline">
         My orders
+      </Link>
+      <Link to="/cart" className="text-sm text-blue-600 hover:underline">
+        Cart
+        {cartCount > 0 && (
+          <span
+            aria-label={`${cartCount} items in cart`}
+            className="ml-1 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-semibold text-white"
+          >
+            {cartCount}
+          </span>
+        )}
       </Link>
       <Link to="/offers" className="text-sm text-blue-600 hover:underline">
         Offers

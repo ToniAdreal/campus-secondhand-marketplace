@@ -265,6 +265,17 @@ function newIdempotencyKey(): string {
   return crypto.randomUUID();
 }
 
+/** POST /api/orders with an explicit Idempotency-Key header. */
+export function createOrderWithIdempotencyKey(itemId: number, idempotencyKey: string) {
+  return api
+    .post<ApiResponse<Order>>(
+      '/orders',
+      { itemId },
+      { headers: { 'Idempotency-Key': idempotencyKey } },
+    )
+    .then((res) => res.data.data);
+}
+
 /**
  * POST /api/orders — buys a listing. On success the whole `items` subtree is
  * invalidated rather than patched: the purchased item's status flips
@@ -275,16 +286,27 @@ function newIdempotencyKey(): string {
 export function useCreateOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (itemId: number) =>
-      api
-        .post<ApiResponse<Order>>(
-          '/orders',
-          { itemId },
-          { headers: { 'Idempotency-Key': newIdempotencyKey() } },
-        )
-        .then((res) => res.data.data),
+    mutationFn: (itemId: number) => createOrderWithIdempotencyKey(itemId, newIdempotencyKey()),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/orders with a caller-supplied Idempotency-Key — the bundle
+ * cart's checkout (backlog #207) derives one key per item from its
+ * batch id, so a retried checkout replays instead of double-ordering.
+ * Same invalidation discipline as useCreateOrder.
+ */
+export function useCreateOrderWithKey() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ itemId, idempotencyKey }: { itemId: number; idempotencyKey: string }) =>
+      createOrderWithIdempotencyKey(itemId, idempotencyKey),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
   });
 }
