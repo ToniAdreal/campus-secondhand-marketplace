@@ -179,6 +179,11 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('EMAIL_CHANGE_REQUESTED')).toMatch(/email change was requested/i);
     expect(describeNotification('EMAIL_CHANGE_REQUESTED')).toMatch(/change your password/i);
     expect(describeNotification('EMAIL_CHANGE_REQUESTED')).not.toMatch(/has changed/i);
+    // #209: the admin TOTP-reset line states the sign-out consequence
+    // and the re-enrollment remedy — it never claims the holder did it.
+    expect(describeNotification('TOTP_RESET_BY_ADMIN')).toMatch(/administrator reset/i);
+    expect(describeNotification('TOTP_RESET_BY_ADMIN')).toMatch(/signed out everywhere/i);
+    expect(describeNotification('TOTP_RESET_BY_ADMIN')).toMatch(/set up two-factor/i);
     // #193: the counter-offer lines name the step each side takes next.
     expect(describeNotification('OFFER_COUNTERED')).toMatch(/countered your offer/i);
     expect(describeNotification('OFFER_COUNTER_ACCEPTED')).toMatch(/accepted your counter/i);

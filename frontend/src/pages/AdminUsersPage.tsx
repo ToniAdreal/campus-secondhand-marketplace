@@ -6,6 +6,7 @@ import {
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
+  useResetAdminUserTotp,
   type AdminUser,
 } from '../api/admin';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
@@ -30,6 +31,13 @@ import { useAuthStore } from '../store/useAuthStore';
  * the account); rows for the caller themselves and for other ADMINs
  * render no disable button, mirroring the backend's 403 guards. Enable
  * is restorative and carries no such guard.
+ *
+ * Reset 2FA (backlog #209) is the staff recovery action for a
+ * locked-out account: it renders only on non-ADMIN rows (never the
+ * caller's own) whose `totpEnabled` flag is set, mirroring the
+ * backend's 422 guards, and its confirmation names the consequences —
+ * the authenticator and recovery codes stop working, every session is
+ * revoked, and every trusted device is removed.
  */
 export default function AdminUsersPage() {
   const user = useAuthStore((s) => s.user);
@@ -47,6 +55,7 @@ export default function AdminUsersPage() {
   const users = useAdminUsers(page, searchQuery, isAdmin);
   const disableUser = useDisableAdminUser();
   const enableUser = useEnableAdminUser();
+  const resetTotp = useResetAdminUserTotp();
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -66,7 +75,7 @@ export default function AdminUsersPage() {
 
   const rows: AdminUser[] = users.data?.content ?? [];
   const totalPages = users.data?.totalPages ?? 0;
-  const busy = disableUser.isLoading || enableUser.isLoading;
+  const busy = disableUser.isLoading || enableUser.isLoading || resetTotp.isLoading;
 
   const handleDisable = (target: AdminUser) => {
     setActionError(null);
@@ -87,6 +96,23 @@ export default function AdminUsersPage() {
   const handleEnable = (target: AdminUser) => {
     setActionError(null);
     enableUser.mutate(target.id, {
+      onError: (error) => setActionError(describeAdminUserError(error)),
+    });
+  };
+
+  const handleResetTotp = (target: AdminUser) => {
+    setActionError(null);
+    // The reset strips the account's second factor and signs it out
+    // everywhere — the confirmation names every consequence (#209),
+    // mirroring the disable flow's confirm-first discipline.
+    if (
+      !window.confirm(
+        `Reset two-factor authentication for ${target.username}? Their authenticator app and recovery codes will stop working, they will be signed out everywhere, and their trusted devices will be removed. They can sign in with their password alone and set up two-factor authentication again.`,
+      )
+    ) {
+      return;
+    }
+    resetTotp.mutate(target.id, {
       onError: (error) => setActionError(describeAdminUserError(error)),
     });
   };
@@ -146,6 +172,11 @@ export default function AdminUsersPage() {
                   // button for the caller's own row or another ADMIN's.
                   const canDisable =
                     !row.disabled && row.id !== user.id && !row.roles.includes('ADMIN');
+                  // Mirror the backend's TOTP-reset guards (#209): the
+                  // action exists only where a factor exists to reset —
+                  // a non-ADMIN row (never the caller's own) with 2FA on.
+                  const canResetTotp =
+                    row.totpEnabled && row.id !== user.id && !row.roles.includes('ADMIN');
                   return (
                     <tr key={row.id} className="border-b border-neutral-100 last:border-0">
                       <td className="px-4 py-3 font-medium">{row.username}</td>
@@ -156,27 +187,40 @@ export default function AdminUsersPage() {
                         {new Date(row.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3">
-                        {row.disabled ? (
-                          <button
-                            type="button"
-                            onClick={() => handleEnable(row)}
-                            disabled={busy}
-                            className="rounded bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                          >
-                            Enable
-                          </button>
-                        ) : canDisable ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDisable(row)}
-                            disabled={busy}
-                            className="rounded border border-red-600 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                          >
-                            Disable
-                          </button>
-                        ) : (
-                          <span className="text-neutral-400">—</span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {row.disabled ? (
+                            <button
+                              type="button"
+                              onClick={() => handleEnable(row)}
+                              disabled={busy}
+                              className="rounded bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                            >
+                              Enable
+                            </button>
+                          ) : canDisable ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDisable(row)}
+                              disabled={busy}
+                              className="rounded border border-red-600 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              Disable
+                            </button>
+                          ) : null}
+                          {canResetTotp && (
+                            <button
+                              type="button"
+                              onClick={() => handleResetTotp(row)}
+                              disabled={busy}
+                              className="rounded border border-amber-600 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                            >
+                              Reset 2FA
+                            </button>
+                          )}
+                          {!row.disabled && !canDisable && !canResetTotp && (
+                            <span className="text-neutral-400">—</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

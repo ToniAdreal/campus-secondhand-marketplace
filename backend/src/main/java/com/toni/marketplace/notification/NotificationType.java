@@ -75,5 +75,13 @@ public enum NotificationType {
    * confirm: by then the switch has already happened. Carries no
    * order, offer or address data.
    */
-  EMAIL_CHANGE_REQUESTED
+  EMAIL_CHANGE_REQUESTED,
+  /**
+   * An ADMIN reset the recipient's TOTP two-factor authentication
+   * (backlog #209). The reset signs the account out everywhere and
+   * retires its trusted devices, so the row is the holder's visible
+   * evidence that staff action — not the holder — turned 2FA off; it
+   * must never be silent. Carries no order, offer or credential data.
+   */
+  TOTP_RESET_BY_ADMIN
 }

@@ -106,6 +106,7 @@ class AnonymousAccessSweepTest {
       "GET /api/admin/users",
       "POST /api/admin/users/{id}/disable",
       "POST /api/admin/users/{id}/enable",
+      "POST /api/admin/users/{id}/totp-reset",
       "POST /api/auth/2fa/authenticate",
       "POST /api/auth/2fa/disable",
       "POST /api/auth/2fa/enable",

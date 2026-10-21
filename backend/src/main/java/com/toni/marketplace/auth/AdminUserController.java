@@ -23,7 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
  * (class-level {@code @PreAuthorize}); anonymous callers get the JSON 401
  * envelope and non-admin callers the JSON 403 envelope. The disable/enable
  * guard rules (no self-disable, no disabling another ADMIN, unknown id
- * → 404) live in {@link AuthService#disableUser}.
+ * → 404) live in {@link AuthService#disableUser}; the TOTP-reset guards
+ * (ADMIN target → 422, no TOTP enabled → 422, unknown id → 404) live in
+ * {@link AuthService#resetTotpByAdmin} (backlog #209).
  */
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(name = "admin", description = "ADMIN user administration")
@@ -71,5 +73,18 @@ class AdminUserController {
   public ResponseEntity<ApiResponse<AdminUserDto>> enable(
       @AuthenticationPrincipal Long actorId, @PathVariable Long id) {
     return ResponseEntity.ok(ApiResponse.ok(AdminUserDto.of(auth.enableUser(actorId, id))));
+  }
+
+  /**
+   * Resets a locked-out account's TOTP two-factor (backlog #209): clears
+   * the secret and recovery codes, retires every trusted device, and
+   * revokes every session, so the holder can sign in with the password
+   * alone and re-enroll. Audited and notified — never silent. Answers
+   * the account's new state (its {@code totpEnabled} now reads false).
+   */
+  @PostMapping("/{id}/totp-reset")
+  public ResponseEntity<ApiResponse<AdminUserDto>> resetTotp(
+      @AuthenticationPrincipal Long actorId, @PathVariable Long id) {
+    return ResponseEntity.ok(ApiResponse.ok(AdminUserDto.of(auth.resetTotpByAdmin(actorId, id))));
   }
 }

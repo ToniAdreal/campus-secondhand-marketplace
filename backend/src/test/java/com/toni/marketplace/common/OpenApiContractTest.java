@@ -74,6 +74,7 @@ class OpenApiContractTest {
       "/api/admin/users",
       "/api/admin/users/{id}/disable",
       "/api/admin/users/{id}/enable",
+      "/api/admin/users/{id}/totp-reset",
       "/api/auth/2fa/authenticate",
       "/api/auth/2fa/disable",
       "/api/auth/2fa/enable",

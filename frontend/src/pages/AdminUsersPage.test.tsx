@@ -24,6 +24,7 @@ const selfRow: AdminUser = {
   email: 'admin@example.com',
   roles: ['ADMIN', 'USER'],
   disabled: false,
+  totpEnabled: true,
   createdAt: '2026-09-01T10:00:00Z',
 };
 const otherAdminRow: AdminUser = {
@@ -32,6 +33,7 @@ const otherAdminRow: AdminUser = {
   email: 'second@example.com',
   roles: ['ADMIN'],
   disabled: false,
+  totpEnabled: true,
   createdAt: '2026-09-02T10:00:00Z',
 };
 const aliceRow: AdminUser = {
@@ -40,6 +42,7 @@ const aliceRow: AdminUser = {
   email: 'alice@example.com',
   roles: ['USER'],
   disabled: false,
+  totpEnabled: true,
   createdAt: '2026-09-03T10:00:00Z',
 };
 const bobRow: AdminUser = {
@@ -48,6 +51,7 @@ const bobRow: AdminUser = {
   email: 'bob@example.com',
   roles: ['USER'],
   disabled: true,
+  totpEnabled: false,
   createdAt: '2026-09-04T10:00:00Z',
 };
 
@@ -271,6 +275,71 @@ describe('AdminUsersPage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toBe(
       'Admin accounts cannot be disabled here — they are managed out-of-band.',
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it('Reset 2FA renders only on non-ADMIN rows with 2FA on (never self, never ADMIN, never no-2FA)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([selfRow, otherAdminRow, aliceRow, bobRow], 0, 1));
+
+    renderAt('/admin/users');
+    await waitFor(() => expect(screen.getByText('secondadmin')).toBeTruthy());
+
+    // exactly one Reset 2FA button (alice) — self and the other ADMIN
+    // carry the flag too but render none, and bob has no factor to reset
+    expect(screen.getAllByRole('button', { name: 'Reset 2FA' })).toHaveLength(1);
+  });
+
+  it('Reset 2FA confirms with the session/device consequences, posts to /totp-reset, and the list refetches', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([aliceRow], 0, 1));
+    postSpy.mockResolvedValue({
+      data: { code: 0, message: 'ok', data: { ...aliceRow, totpEnabled: false } },
+    } as never);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/admin/users');
+    await waitFor(() => expect(screen.getByText('alice')).toBeTruthy());
+    const callsBefore = getSpy.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Reset 2FA' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('signed out everywhere'));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('trusted devices'));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('recovery codes'));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/admin/users/3/totp-reset', {}));
+    // success invalidates the users subtree — the list refetches
+    await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(callsBefore));
+    confirmSpy.mockRestore();
+  });
+
+  it('declining the reset confirmation fires no request', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([aliceRow], 0, 1));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    renderAt('/admin/users');
+    await waitFor(() => expect(screen.getByText('alice')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Reset 2FA' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('a 422 from the reset maps to the friendly not-enabled copy', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([aliceRow], 0, 1));
+    postSpy.mockRejectedValue(axiosFailure(422, 'two-factor authentication is not enabled'));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderAt('/admin/users');
+    await waitFor(() => expect(screen.getByText('alice')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Reset 2FA' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe(
+      'That account does not have two-factor authentication enabled.',
     );
     confirmSpy.mockRestore();
   });

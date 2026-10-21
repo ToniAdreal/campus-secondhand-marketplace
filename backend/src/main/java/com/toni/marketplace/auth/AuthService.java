@@ -1918,4 +1918,71 @@ public class AuthService {
     audit().record(actorId, AuditAction.USER_ENABLED, AuditTargetType.USER, targetId);
     return target;
   }
+
+  /**
+   * ADMIN-assisted TOTP reset for a locked-out account (backlog #209).
+   * Until now an account that lost its TOTP device AND its recovery
+   * codes (#127) had no recovery path at all: the second factor could
+   * never be satisfied again and staff could only help with database
+   * surgery. This is the supported staff path — and, unlike the
+   * holder's own {@link #disableTotp}, it demands no proof from the
+   * target (they have none left); the ADMIN principal is the proof.
+   * Verification of the holder's identity happens out-of-band before
+   * staff call this (support process, not something this endpoint can
+   * check) — which is exactly why the reset is audited and notified
+   * rather than silent.
+   *
+   * <p>Guards, both answered 422 (a state conflict, not an
+   * authorization failure — the caller IS an authorized ADMIN): the
+   * target carries the ADMIN role (staff recovery must not become a
+   * privilege-escalation lever — a compromised admin session must not
+   * be able to strip another operator's second factor; this also
+   * covers the actor resetting themselves, so a lone admin's own
+   * reset stays a documented database runbook case, see the README),
+   * or the target has no TOTP enabled (nothing to reset). Unknown
+   * id → 404, mirroring {@link #disableUser}.
+   *
+   * <p>On success, in this one transaction: the TOTP secret is
+   * cleared and the enabled flag switched off (mirroring
+   * {@link #disableTotp}), the whole recovery-code set is deleted,
+   * every trusted device (#199) is retired (its trust was granted
+   * against the old factor), the TOTP lockout counters are cleared
+   * (a lockout is the usual reason for the reset, and the exchange it
+   * gated no longer exists), every refresh-token family is revoked
+   * and {@code tokenVersion} is bumped so live Bearer tokens die
+   * immediately — the account is signed out everywhere, mirroring
+   * {@link #disableUser} — a {@code TOTP_RESET_BY_ADMIN} audit row is
+   * appended (actor = the acting ADMIN), and a
+   * {@code TOTP_RESET_BY_ADMIN} notification is recorded for the
+   * account holder so the reset is visible to them at next login.
+   * The holder afterwards signs in with the password alone and may
+   * re-enroll 2FA from scratch.
+   */
+  @Transactional
+  public User resetTotpByAdmin(long actorId, long targetId) {
+    User target = users.findById(targetId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+    if (target.getRoles().contains(Role.ADMIN)) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "cannot reset two-factor authentication for an admin user");
+    }
+    if (!target.isTotpEnabled()) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "two-factor authentication is not enabled");
+    }
+    target.setTotpEnabled(false);
+    target.setTotpSecret(null);
+    target.setFailedTotpAttempts(0);
+    target.setTotpLockedUntil(null);
+    target.setTokenVersion(target.getTokenVersion() + 1);
+    users.save(target);
+    if (recoveryCodesAvailable()) {
+      recoveryCodes.deleteByUserId(targetId);
+    }
+    revokeAllTrustedDevices(targetId);
+    jwt.revokeAll(targetId);
+    audit().record(actorId, AuditAction.TOTP_RESET_BY_ADMIN, AuditTargetType.USER, targetId);
+    notifications().record(targetId, NotificationType.TOTP_RESET_BY_ADMIN, null);
+    return target;
+  }
 }

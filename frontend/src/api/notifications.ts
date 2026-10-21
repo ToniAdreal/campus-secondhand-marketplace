@@ -23,7 +23,8 @@ export type NotificationType =
   | 'REPORT_APPEAL_UPHELD'
   | 'REPORT_APPEAL_REJECTED'
   | 'SESSION_EVICTED'
-  | 'EMAIL_CHANGE_REQUESTED';
+  | 'EMAIL_CHANGE_REQUESTED'
+  | 'TOTP_RESET_BY_ADMIN';
 
 export interface Notification {
   id: number;
@@ -130,6 +131,12 @@ export function describeNotification(
       // account still uses the old address — the switch itself only
       // happens when the mailed link is confirmed.
       return "An email change was requested for your account. If this wasn't you, change your password.";
+    case 'TOTP_RESET_BY_ADMIN':
+      // Backlog #209: staff reset the holder's second factor after a
+      // lockout — the copy states the consequences (2FA off, signed
+      // out everywhere) and the remedy (sign in, re-enable), and never
+      // claims the holder asked for it in-app.
+      return 'An administrator reset your two-factor authentication. You were signed out everywhere — sign in with your password, and set up two-factor authentication again if you want it.';
     case 'FAVORITE_PRICE_DROP': {
       // Backlog #189: the row carries both prices — the copy states
       // them; without them (defensive) it still says what happened.

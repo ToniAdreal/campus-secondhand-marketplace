@@ -22,6 +22,7 @@ import {
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
+  useResetAdminUserTotp,
   type AdminUser,
   type AuditLogEntry,
   type SettlementSummary,
@@ -57,6 +58,7 @@ const aliceRow: AdminUser = {
   email: 'alice@example.com',
   roles: ['USER'],
   disabled: false,
+  totpEnabled: true,
   createdAt: '2026-09-03T10:00:00Z',
 };
 const bobRow: AdminUser = {
@@ -65,6 +67,7 @@ const bobRow: AdminUser = {
   email: 'bob@example.com',
   roles: ['USER'],
   disabled: true,
+  totpEnabled: false,
   createdAt: '2026-09-04T10:00:00Z',
 };
 const usersPage: Page<AdminUser> = {
@@ -254,6 +257,22 @@ describe('admin user mutations', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: adminUserKeys.all });
   });
 
+  it('useResetAdminUserTotp posts an empty body to /totp-reset, unwraps, and invalidates the users prefix', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope({ ...aliceRow, totpEnabled: false }));
+
+    const { result } = renderHook(() => useResetAdminUserTotp(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const returned = await result.current.mutateAsync(3);
+
+    expect(postSpy).toHaveBeenCalledWith('/admin/users/3/totp-reset', {});
+    expect(returned).toEqual({ ...aliceRow, totpEnabled: false });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: adminUserKeys.all });
+  });
+
   it('a failed disable invalidates nothing', async () => {
     const queryClient = makeClient();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -353,6 +372,8 @@ describe('describeAdminUserError', () => {
     ['generic forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to do that.'],
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to manage users.'],
     ['unknown user', envelopeError(404, 'not found'), 'That user no longer exists.'],
+    ['totp reset on an admin target', envelopeError(422, 'cannot reset two-factor authentication for an admin user'), 'Admin accounts cannot have two-factor authentication reset here — they are managed out-of-band.'],
+    ['totp reset without 2FA', envelopeError(422, 'two-factor authentication is not enabled'), 'That account does not have two-factor authentication enabled.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
     ['empty object', {}, 'Something went wrong. Please try again.'],

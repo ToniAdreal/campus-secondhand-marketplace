@@ -62,6 +62,16 @@ public enum AuditAction {
    */
   RECOVERY_CODES_REGENERATED,
   /**
+   * An ADMIN reset a locked-out account's TOTP two-factor
+   * ({@code AuthService.resetTotpByAdmin}, backlog #209). Actor is the
+   * acting ADMIN; target is the reset account — deliberately distinct
+   * from {@link #TOTP_DISABLED}, whose actor is the account holder
+   * proving both factors themselves: the trail keeps "holder turned
+   * 2FA off" and "staff reset 2FA for a locked-out holder" apart. A
+   * refused reset (ADMIN target, 2FA not enabled) writes no row.
+   */
+  TOTP_RESET_BY_ADMIN,
+  /**
    * The buyer paid a PENDING order ({@code OrderService.pay}, backlog
    * #122). Actor is the buyer — the money-moving transition PENDING → PAID.
    * An idempotent re-pay writes no second row, and a declined capture

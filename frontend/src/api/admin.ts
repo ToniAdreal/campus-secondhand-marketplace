@@ -15,6 +15,8 @@ export interface AdminUser {
   email: string;
   roles: string[];
   disabled: boolean;
+  /** Whether the account has TOTP 2FA on (#209) — a bare flag, never the secret. */
+  totpEnabled: boolean;
   createdAt: string;
 }
 
@@ -82,6 +84,29 @@ export function useEnableAdminUser() {
     mutationFn: (id: number) =>
       api
         .post<ApiResponse<AdminUser>>(`/admin/users/${id}/enable`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+    },
+  });
+}
+
+/**
+ * POST /api/admin/users/{id}/totp-reset — ADMIN-assisted TOTP reset for
+ * a locked-out account (backlog #209): the backend clears the secret
+ * and recovery codes, retires every trusted device, and revokes every
+ * session, then audits the reset and notifies the holder. Guarded
+ * server-side (an ADMIN target is 422, an account without TOTP is 422,
+ * unknown id 404); the page additionally renders the action only on
+ * non-ADMIN rows whose `totpEnabled` flag is set, mirroring the guards.
+ * On success the users subtree is invalidated, mirroring disable/enable.
+ */
+export function useResetAdminUserTotp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api
+        .post<ApiResponse<AdminUser>>(`/admin/users/${id}/totp-reset`, {})
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
@@ -231,6 +256,17 @@ export function describeAdminUserError(error: unknown): string {
   }
   if (code === 404) {
     return 'That user no longer exists.';
+  }
+  if (code === 422) {
+    // Backlog #209: the TOTP-reset guards. The admin-target message
+    // names an admin account; the not-enabled message names the factor.
+    if (/admin/i.test(message)) {
+      return 'Admin accounts cannot have two-factor authentication reset here — they are managed out-of-band.';
+    }
+    if (/two-factor|totp/i.test(message)) {
+      return 'That account does not have two-factor authentication enabled.';
+    }
+    return message || 'That action is not available for this account.';
   }
   return message || 'Something went wrong. Please try again.';
 }
