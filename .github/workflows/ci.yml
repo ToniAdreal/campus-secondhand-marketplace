@@ -68,6 +68,33 @@ jobs:
       - run: npm run size --prefix frontend
       - run: npm test --prefix frontend -- --run --passWithNoTests
 
+  api-drift:
+    # API drift gate (backlog #205): the frontend api modules are
+    # hand-written against the backend with no codegen, so this job
+    # exports the OpenAPI document from the backend contract-test path
+    # (the env-gated OpenApiExportTest fetches /v3/api-docs exactly as
+    # OpenApiContractTest pins it) and fails when any method+path the
+    # frontend calls is absent from the document. Paths + methods only
+    # — payload shapes are not pinned (see the script header).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package.json
+      - name: Export the OpenAPI document via the contract-test path
+        env:
+          OPENAPI_EXPORT_PATH: ${{ github.workspace }}/frontend/openapi.json
+        run: mvn -B -f backend/pom.xml test -Dtest=com.toni.marketplace.common.OpenApiExportTest
+      - run: npm ci --prefix frontend
+      - run: npm run check:api --prefix frontend
+
   e2e:
     # Browser e2e smoke (backlog #181): Playwright drives real Chromium
     # against the built SPA (vite preview) + the real backend jar on its

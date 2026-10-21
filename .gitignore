@@ -29,3 +29,8 @@ vite.config.d.ts
 # Playwright (backlog #181)
 frontend/test-results/
 frontend/playwright-report/
+
+# Exported OpenAPI document for the API drift gate (backlog #205) —
+# a build artifact re-exported from the controllers on every gate run,
+# never committed (a committed copy would go stale silently).
+frontend/openapi.json

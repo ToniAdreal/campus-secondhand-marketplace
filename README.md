@@ -317,6 +317,20 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   `frontend/scripts/check-bundle-size.mjs` (measured from the real build at
   the commit that set them; bumps are deliberate and explained in the commit
   message). The same check runs in CI right after the frontend build.
+- API drift gate (backlog #205): `npm run check:api` — a dependency-free
+  node script (`frontend/scripts/check-api-drift.mjs`, in the #165 mould)
+  extracts every method+path the frontend api modules call (the shared
+  axios instance's calls, the client.ts refresh call, and the SSE
+  stream as a GET; doc comments are stripped first, template params
+  match spec params by position, not name) and fails when one is absent
+  from the OpenAPI document. The document is exported fresh on every
+  run from the backend contract-test path — `OPENAPI_EXPORT_PATH=
+  $PWD/frontend/openapi.json mvn -f backend/pom.xml test
+  -Dtest=com.toni.marketplace.common.OpenApiExportTest` — and is a
+  gitignored build artifact, never a committed copy. CI runs both steps
+  in the `api-drift` job. Honest scope: this pins paths and methods
+  only, not payload shapes — a renamed DTO field passes this gate and
+  remains the api modules' TypeScript types' problem.
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
