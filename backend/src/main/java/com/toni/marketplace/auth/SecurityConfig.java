@@ -65,7 +65,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       {@code Content-Security-Policy} is likewise opt-in via
  *       {@code app.security.headers.csp-enabled} (off by default); when on,
  *       the strict policy in {@link #CONTENT_SECURITY_POLICY} is sent —
- *       {@code 'self'} everywhere, no {@code 'unsafe-inline'}.</li>
+ *       {@code 'self'} everywhere, no {@code 'unsafe-inline'}. With
+ *       {@code app.security.headers.csp-report-enabled} also on
+ *       (backlog #204), the policy gains a {@code report-uri} pointing
+ *       at the public {@code POST /api/security/csp-report} intake and
+ *       responses carry a {@code Reporting-Endpoints} header.</li>
  *   <li>Unauthenticated/expired requests get a JSON {@code 401} in the
  *       project's {@code {code,message,data}} envelope, never a redirect or
  *       the Spring default HTML error page.</li>
@@ -108,6 +112,19 @@ public class SecurityConfig {
    */
   static final String CONTENT_SECURITY_POLICY =
       "default-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self' ws:";
+
+  /**
+   * Public CSP violation report intake (backlog #204). When both
+   * {@code csp-enabled} and {@code csp-report-enabled} are on, the
+   * policy gains {@code ; report-uri /api/security/csp-report} (the
+   * legacy channel) and responses carry the {@code Reporting-Endpoints}
+   * header below (the Reporting API channel) — with either flag off the
+   * policy stays byte-identical to the backlog #80 string above.
+   */
+  static final String CSP_REPORT_PATH = "/api/security/csp-report";
+
+  /** Value of the {@code Reporting-Endpoints} header (backlog #204). */
+  static final String REPORTING_ENDPOINTS_VALUE = "csp-endpoint=\"/api/security/csp-report\"";
 
   @Bean
   public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
@@ -175,7 +192,20 @@ public class SecurityConfig {
           // configured when the flag is on — an unconfigured chain sends
           // no CSP header at all.
           if (securityHeaders.isCspEnabled()) {
-            headers.contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY));
+            // CSP violation reporting (backlog #204): only when the
+            // report endpoint is also enabled does the policy gain the
+            // report-uri directive and the Reporting-Endpoints header
+            // for Reporting-API browsers; otherwise the policy is the
+            // byte-identical #80 string.
+            boolean reportEnabled = securityHeaders.isCspReportEnabled();
+            String policy = reportEnabled
+                ? CONTENT_SECURITY_POLICY + "; report-uri " + CSP_REPORT_PATH
+                : CONTENT_SECURITY_POLICY;
+            headers.contentSecurityPolicy(csp -> csp.policyDirectives(policy));
+            if (reportEnabled) {
+              headers.addHeaderWriter((request, response) ->
+                  response.setHeader("Reporting-Endpoints", REPORTING_ENDPOINTS_VALUE));
+            }
           }
         })
         .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -206,6 +236,12 @@ public class SecurityConfig {
             // by its HMAC signature header instead of a Bearer token (the
             // service verifies it before parsing anything).
             .requestMatchers(HttpMethod.POST, "/api/payments/webhooks/mock-psp").permitAll()
+            // CSP violation report intake (backlog #204): public route —
+            // browsers send reports automatically and cannot present a
+            // Bearer token. Defended by the body cap in the controller,
+            // its own per-IP bucket in AuthRateLimitFilter, and the
+            // service logging/counting only sanitized fields.
+            .requestMatchers(HttpMethod.POST, "/api/security/csp-report").permitAll()
             // Notification SSE stream (backlog #203): public at the chain
             // because EventSource cannot send an Authorization header —
             // the controller consumes a one-time, 60-second ticket issued

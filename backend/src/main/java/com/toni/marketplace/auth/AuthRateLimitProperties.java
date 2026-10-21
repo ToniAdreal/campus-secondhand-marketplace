@@ -198,4 +198,28 @@ public class AuthRateLimitProperties {
   public void setDataExportAttemptsPerMinute(int dataExportAttemptsPerMinute) {
     this.dataExportAttemptsPerMinute = dataExportAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the CSP violation report intake ({@code POST
+   * /api/security/csp-report}, backlog #204). Keyed on the IP: the
+   * endpoint is public by necessity (browsers send reports without a
+   * session), so there is no principal to key on — the trusted-proxy
+   * resolution in {@code AuthRateLimitFilter} applies as for the other
+   * per-IP buckets. Sized generously (60/min): reports are
+   * browser-generated and bursty (one broken deploy can make every open
+   * page report at once), so the ceiling exists to stop a deliberate
+   * flood of the log/metric pipeline, not to gate normal reporting.
+   * Like the other non-credential buckets it never resets on success —
+   * an accepted report must not refill the allowance. Must be &ge; 1.
+   */
+  private int cspReportAttemptsPerMinute = 60;
+
+  public int getCspReportAttemptsPerMinute() {
+    return cspReportAttemptsPerMinute;
+  }
+
+  public void setCspReportAttemptsPerMinute(int cspReportAttemptsPerMinute) {
+    this.cspReportAttemptsPerMinute = cspReportAttemptsPerMinute;
+  }
 }

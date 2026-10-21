@@ -78,6 +78,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * usage throttle, never a mistake budget — a completed export does not
  * reset it.
  *
+ * <p>The CSP violation report intake ({@code POST
+ * /api/security/csp-report}, backlog #204) has a ninth, per-IP bucket
+ * (default 60/minute): the endpoint is public by necessity (browsers
+ * send reports unauthenticated), so — like the reset/TOTP buckets —
+ * it keys on the trusted-proxy-aware client IP and never resets on
+ * success. It is sized for browser-generated bursts; the ceiling stops
+ * a deliberate flood of the log/metric pipeline, not normal reporting.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -143,6 +151,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String EXPORT_PATH = "/api/users/me/export";
+  private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
@@ -153,6 +162,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter emailVerificationLimiter;
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
+  private final AuthRateLimiter cspReportLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -168,6 +178,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
                              @Qualifier("dataExportRateLimiter")
                                  AuthRateLimiter dataExportLimiter,
+                             @Qualifier("cspReportRateLimiter")
+                                 AuthRateLimiter cspReportLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -179,6 +191,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.emailVerificationLimiter = emailVerificationLimiter;
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
+    this.cspReportLimiter = cspReportLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -196,6 +209,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (MESSAGE_PATH.equals(path)) {
       return !messageLimiter.isEnabled();
+    }
+    if (CSP_REPORT_PATH.equals(path)) {
+      return !cspReportLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -249,6 +265,20 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!reportLimiter.tryConsume(key)) {
         writeTooManyRequests(response, reportLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (CSP_REPORT_PATH.equals(path)) {
+      // CSP violation reports (backlog #204): own per-IP bucket, never
+      // reset on success — an accepted report must not refill the
+      // allowance. Per-IP (not per-user) because the endpoint is public
+      // by necessity: browsers send reports without a session, so the
+      // trusted-proxy-aware client IP is the only identity available.
+      String ip = clientIp(request);
+      if (!cspReportLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, cspReportLimiter.retryAfterSeconds(ip));
         return;
       }
       chain.doFilter(request, response);

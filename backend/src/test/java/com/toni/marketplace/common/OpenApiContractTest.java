@@ -70,6 +70,7 @@ class OpenApiContractTest {
       "/api/admin/payments/webhooks",
       "/api/admin/payments/webhooks/{id}/replay",
       "/api/payments/webhooks/mock-psp",
+      "/api/security/csp-report",
       "/api/admin/users",
       "/api/admin/users/{id}/disable",
       "/api/admin/users/{id}/enable",
@@ -404,6 +405,10 @@ class OpenApiContractTest {
         .contains("401", "404");
     assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence/{evidenceId}", "delete"))
         .contains("401", "403", "404");
+    // CSP report intake (#204): pins its browser-report 204, its
+    // malformed 400, its body-cap 413 and its per-IP throttle 429.
+    assertThat(responseCodes(docs, "/api/security/csp-report", "post"))
+        .contains("204", "400", "413", "429");
     // Webhook replay (#170): pins the ADMIN matrix plus the stale
     // event's 401 (the freshness re-check shares the unauthenticated
     // code, as on the live receiver) and the unknown-id 404.

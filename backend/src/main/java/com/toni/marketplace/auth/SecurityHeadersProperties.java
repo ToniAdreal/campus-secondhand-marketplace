@@ -66,4 +66,29 @@ public class SecurityHeadersProperties {
   public void setCspEnabled(boolean cspEnabled) {
     this.cspEnabled = cspEnabled;
   }
+
+  /**
+   * Advertise the CSP violation report intake (backlog #204,
+   * {@code POST /api/security/csp-report}) to browsers. Default
+   * {@code false}, and only meaningful together with
+   * {@link #isCspEnabled()}: when both are on, the policy sent by
+   * {@code SecurityConfig} gains a
+   * {@code report-uri /api/security/csp-report} directive and every
+   * response carries {@code Reporting-Endpoints:
+   * csp-endpoint="/api/security/csp-report"} for Reporting-API
+   * browsers. With either flag off the policy stays byte-identical to
+   * the backlog #80 policy and no {@code Reporting-Endpoints} header is
+   * sent. The intake endpoint itself stays mounted either way (a proxy
+   * that mirrors the CSP can point its own {@code report-uri} at it);
+   * this switch governs only the header wiring.
+   */
+  private boolean cspReportEnabled = false;
+
+  public boolean isCspReportEnabled() {
+    return cspReportEnabled;
+  }
+
+  public void setCspReportEnabled(boolean cspReportEnabled) {
+    this.cspReportEnabled = cspReportEnabled;
+  }
 }

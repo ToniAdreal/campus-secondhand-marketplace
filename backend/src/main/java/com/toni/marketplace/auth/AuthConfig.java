@@ -13,7 +13,8 @@ import org.springframework.context.annotation.Configuration;
     TrustedProxiesProperties.class, RefreshCookieProperties.class,
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
     DataExportGrantProperties.class, SessionLimitProperties.class,
-    BreachedPasswordProperties.class, TrustedDeviceProperties.class})
+    BreachedPasswordProperties.class, TrustedDeviceProperties.class,
+    CspReportProperties.class})
 public class AuthConfig {
 
   /**
@@ -170,6 +171,22 @@ public class AuthConfig {
     exportProps.setEnabled(props.isEnabled());
     exportProps.setAttemptsPerMinute(props.getDataExportAttemptsPerMinute());
     return new AuthRateLimiter(clock, exportProps);
+  }
+
+  /**
+   * Separate token bucket for the CSP violation report intake
+   * ({@code POST /api/security/csp-report}, backlog #204; default 60
+   * reports/minute per client IP). The endpoint is public by necessity
+   * (browsers send reports unauthenticated), so this bucket is the
+   * flood gate for the log/metric pipeline; it must not share any
+   * credential bucket, and report traffic must not starve logins.
+   */
+  @Bean
+  public AuthRateLimiter cspReportRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties cspProps = new AuthRateLimitProperties();
+    cspProps.setEnabled(props.isEnabled());
+    cspProps.setAttemptsPerMinute(props.getCspReportAttemptsPerMinute());
+    return new AuthRateLimiter(clock, cspProps);
   }
 
   /**

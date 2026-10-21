@@ -98,6 +98,25 @@ app:
       # 'unsafe-inline' (verified against the Vite build output).
       # hsts-enabled: false
       # csp-enabled: false
+      # CSP violation reporting (backlog #204) is a second opt-in on
+      # top of csp-enabled: with BOTH on
+      # (app.security.headers.csp-report-enabled=true) the policy gains
+      # report-uri /api/security/csp-report and responses carry
+      # Reporting-Endpoints: csp-endpoint="/api/security/csp-report",
+      # so browsers POST violation reports to the intake below. With
+      # either flag off the policy is byte-identical to the #80 policy.
+      # csp-report-enabled: false
+    csp-report:
+      # CSP violation report intake (CspReportController, backlog
+      # #204): POST /api/security/csp-report is public by necessity
+      # (browsers send reports unauthenticated), rate-limited per IP
+      # (60/min, own bucket — app.auth.rate-limit's
+      # csp-report-attempts-per-minute in AuthRateLimitProperties) and
+      # body-capped here: a genuine report is a few hundred bytes, so
+      # 16 KB is generous headroom; over the cap answers 413 before any
+      # parsing. Only the violated directive and the blocked URI's
+      # ORIGIN are ever logged/counted — never the full URL or body.
+      # max-body-bytes: 16384
   uploads:
     # Local directory for listing photos (served publicly under /uploads/**).
     # Override with the APP_UPLOADS_DIR environment variable in production.

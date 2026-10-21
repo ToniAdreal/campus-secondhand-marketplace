@@ -102,6 +102,7 @@ class AnonymousAccessSweepTest {
       "GET /api/admin/payments/webhooks",
       "POST /api/admin/payments/webhooks/{id}/replay",
       "POST /api/payments/webhooks/mock-psp",
+      "POST /api/security/csp-report",
       "GET /api/admin/users",
       "POST /api/admin/users/{id}/disable",
       "POST /api/admin/users/{id}/enable",
@@ -222,7 +223,11 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/password-reset", 200,
       "POST /api/auth/password-reset/confirm", 401,
       "POST /api/auth/2fa/authenticate", 401,
-      "POST /api/payments/webhooks/mock-psp", 401);
+      "POST /api/payments/webhooks/mock-psp", 401,
+      // CSP report intake (#204): public by necessity (browsers send
+      // reports unauthenticated); the probe below is a well-formed
+      // legacy report, so the declared answer is the 204 acceptance.
+      "POST /api/security/csp-report", 204);
 
   /** Minimal well-formed bodies for the public probes that take one. */
   private static final Map<String, String> PROBE_BODIES = Map.of(
@@ -242,7 +247,9 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/2fa/authenticate",
       "{\"challenge\":\"anon-sweep-dummy\",\"code\":\"000000\"}",
       "POST /api/payments/webhooks/mock-psp",
-      "{}");
+      "{}",
+      "POST /api/security/csp-report",
+      "{\"csp-report\":{\"violated-directive\":\"img-src\",\"blocked-uri\":\"inline\"}}");
 
   private static final Set<String> HTTP_METHODS =
       Set.of("get", "post", "put", "patch", "delete");
