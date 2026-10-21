@@ -66,5 +66,14 @@ public enum NotificationType {
    * #191). Carries no order, offer or device data — the sessions page
    * is where the holder reviews what remains signed in.
    */
-  SESSION_EVICTED
+  SESSION_EVICTED,
+  /**
+   * An email change was requested for the recipient's account
+   * (backlog #208). Recorded at REQUEST time — while the account's
+   * address is still the old one, so the holder reading their
+   * notifications at the old address sees the attempt — and never at
+   * confirm: by then the switch has already happened. Carries no
+   * order, offer or address data.
+   */
+  EMAIL_CHANGE_REQUESTED
 }

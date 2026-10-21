@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { confirmEmailVerification } from '../api/auth';
+import { confirmEmailChange, confirmEmailVerification } from '../api/auth';
 
 type ConfirmState = 'confirming' | 'confirmed' | 'failed';
 
@@ -29,7 +29,14 @@ export default function VerifyEmailPage() {
     }
     firedRef.current = true;
     let cancelled = false;
+    // Backlog #208: the email-change confirm link lands on this same
+    // route shape, so a token the verification confirm rejects is
+    // tried against the email-change confirm — the two token tables
+    // are disjoint and a rejected verification confirm consumes
+    // nothing on the change side. Failure renders only when BOTH
+    // flows reject the token.
     confirmEmailVerification({ token })
+      .catch(() => confirmEmailChange({ token }))
       .then(() => {
         if (!cancelled) setState('confirmed');
       })

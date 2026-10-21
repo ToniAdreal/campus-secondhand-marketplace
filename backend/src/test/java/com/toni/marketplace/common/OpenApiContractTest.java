@@ -81,6 +81,7 @@ class OpenApiContractTest {
       "/api/auth/2fa/recovery-codes/regenerate",
       "/api/auth/2fa/setup",
       "/api/auth/email-change",
+      "/api/auth/email-change/confirm",
       "/api/auth/email-verification/confirm",
       "/api/auth/email-verification/resend",
       "/api/auth/login",
@@ -275,6 +276,10 @@ class OpenApiContractTest {
     // Email change (#150) pins its wrong-password 401 and taken-address 409.
     assertThat(responseCodes(docs, "/api/auth/email-change", "post"))
         .contains("400", "401", "409");
+    // Pending email change (#208): the confirm pins its identical-token
+    // 401, its taken-in-between 409 and its shared token-bucket 429.
+    assertThat(responseCodes(docs, "/api/auth/email-change/confirm", "post"))
+        .contains("200", "401", "409", "429");
     // Account closure (#158) shares the /me path (no new path in the set
     // above) and pins its identical-proof 401 and lockout 423 on DELETE.
     assertThat(responseCodes(docs, "/api/auth/me", "delete"))

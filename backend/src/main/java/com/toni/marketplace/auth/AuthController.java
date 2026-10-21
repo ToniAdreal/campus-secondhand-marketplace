@@ -366,21 +366,44 @@ public class AuthController {
   }
 
   /**
-   * Changes the caller's account email address (backlog #150,
-   * authenticated — SecurityConfig). The current password proves
-   * possession (wrong → the identical 401); a taken address — or the
-   * caller's own current one — is a 409. On success every session is
-   * revoked and the account is unverified until the NEW address is
-   * confirmed through the #138 verification flow, so no session is
-   * issued here: the answer is the plain 200 envelope, and the
-   * httpOnly refresh cookie is cleared exactly like logout's.
+   * Requests an email change (backlog #150, reworked by #208,
+   * authenticated \u2014 SecurityConfig). The current password proves
+   * possession (wrong \u2192 the identical 401); a taken address \u2014 or
+   * the caller's own current one \u2014 is a 409, checked again at
+   * confirm time. On success NOTHING switches yet: the new address is
+   * staged as pending, a single-use token is mailed to the NEW
+   * address, the holder is notified in-app at the old one, and every
+   * session (this one included) stays alive \u2014 the answer is the
+   * plain 200 envelope and no cookie is cleared. The switch happens
+   * only at {@code POST /api/auth/email-change/confirm}.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "email changed; every session revoked and the new address must be verified before the next login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — malformed new address (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong current password — identical to a bad login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "new address already registered, or equal to the current address (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "change staged as pending; a single-use token was mailed to the new address \u2014 the switch happens at confirm (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure \u2014 malformed new address (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong current password \u2014 identical to a bad login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "new address already registered, or equal to the current address (envelope)")})
   @PostMapping("/email-change")
   public ResponseEntity<ApiResponse<Void>> changeEmail(
       @AuthenticationPrincipal Long userId,
       @Valid @RequestBody EmailChangeRequest request) {
     auth.changeEmail(userId, request.currentPassword(), request.newEmail());
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * Confirms a pending email change (backlog #208, public \u2014 the
+   * token IS the credential): consumes the single-use token mailed to
+   * the new address and performs the switch \u2014 the address flips,
+   * the account is verified for it, every pre-switch session is
+   * revoked and tokenVersion bumped, and an EMAIL_CHANGED audit row
+   * is written. Unknown, used and expired tokens \u2192 the identical
+   * 401; an address taken between request and confirm \u2192 409 (the
+   * token is not consumed). No session is issued here: the holder
+   * logs in at the new address afterwards, and the httpOnly refresh
+   * cookie is cleared exactly like logout's because the session it
+   * belonged to was just revoked.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "email changed; every pre-switch session revoked (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure \u2014 missing token (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unknown, used or expired token \u2014 identical for every token failure (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "the pending address was registered by another account between request and confirm (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded \u2014 see Retry-After (envelope)")})
+  @PostMapping("/email-change/confirm")
+  public ResponseEntity<ApiResponse<Void>> confirmEmailChange(
+      @Valid @RequestBody EmailChangeConfirmRequest request) {
+    auth.confirmEmailChange(request.token());
     return ResponseEntity.status(HttpStatus.OK)
         .header(HttpHeaders.SET_COOKIE, clearedRefreshCookie().toString())
         .body(ApiResponse.ok(null));

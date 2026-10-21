@@ -118,6 +118,17 @@ public class User {
   @Column(name = "email_verified", nullable = false)
   private boolean emailVerified = true;
 
+  /**
+   * Pending email change (backlog #208, Flyway V58). The requested new
+   * address, canonical-lowercase, staged by
+   * {@code POST /api/auth/email-change} — {@link #email} does NOT move
+   * until the mailed token is confirmed at
+   * {@code POST /api/auth/email-change/confirm}, which is also when
+   * this staging field is cleared. Null whenever no change is pending.
+   */
+  @Column(name = "pending_email", length = 255)
+  private String pendingEmail;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -177,6 +188,8 @@ public class User {
   public void setDisabled(boolean disabled) { this.disabled = disabled; }
   public boolean isEmailVerified() { return emailVerified; }
   public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+  public String getPendingEmail() { return pendingEmail; }
+  public void setPendingEmail(String pendingEmail) { this.pendingEmail = pendingEmail; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
 }

@@ -134,11 +134,12 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState(false);
   const [pending, setPending] = useState(false);
 
-  // Email change (backlog #150). Success is terminal for this tab: the
-  // backend revoked every session (this one included) and the account is
-  // unverified until the new address is confirmed, so the form is
-  // replaced by the done panel and the dead in-memory credential is
-  // dropped — nothing on this page can act as the old session any more.
+  // Email change (backlog #150, reworked by #208). A successful submit
+  // only REQUESTS the change: the backend stages the new address as
+  // pending and mails it a single-use token, so this session stays
+  // alive and the form is replaced by a "check your new inbox" panel —
+  // the switch (and the sign-out of every session) happens only when
+  // the mailed link is confirmed.
   const [newEmail, setNewEmail] = useState('');
   const [emailPassword, setEmailPassword] = useState('');
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -259,9 +260,9 @@ export default function SettingsPage() {
     try {
       const target = newEmail.trim();
       await changeEmail({ currentPassword: emailPassword, newEmail: target });
-      // The server killed every session and this tab's credential with
-      // them; drop it locally too so no later call presents a dead token.
-      setAccessToken(null);
+      // Backlog #208: nothing has switched yet — the session stays
+      // alive until the mailed link is confirmed, so the credential
+      // stays in place and only the form gives way to the pending panel.
       setEmailPassword('');
       setEmailDone(target);
     } catch (err) {
@@ -480,14 +481,15 @@ export default function SettingsPage() {
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Email address</h2>
         <p className="mb-3 text-sm text-neutral-500">
-          Currently {user.email}. Changing it signs out every device and the new
-          address must be verified before you can sign in again.
+          Currently {user.email}. A change is only staged until you open the
+          confirmation link sent to the new address — confirming it switches
+          the address and signs out every device.
         </p>
         {emailDone ? (
           <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
-            Email changed to {emailDone}. You have been signed out everywhere —
-            open the verification link sent to the new address, then sign in with
-            it.
+            Check your new inbox — a confirmation link was sent to {emailDone}.
+            Your email address stays {user.email} until you open that link; the
+            switch signs out every device.
           </p>
         ) : (
           <form onSubmit={onChangeEmail} className="space-y-3">

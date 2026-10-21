@@ -174,6 +174,11 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('SESSION_EVICTED')).toMatch(/oldest session/i);
     expect(describeNotification('SESSION_EVICTED')).toMatch(/at most 5 devices/i);
     expect(describeNotification('SESSION_EVICTED')).not.toMatch(/blocked/i);
+    // #208: the email-change alert lands at request time and names the
+    // remedy — it never claims the address already changed.
+    expect(describeNotification('EMAIL_CHANGE_REQUESTED')).toMatch(/email change was requested/i);
+    expect(describeNotification('EMAIL_CHANGE_REQUESTED')).toMatch(/change your password/i);
+    expect(describeNotification('EMAIL_CHANGE_REQUESTED')).not.toMatch(/has changed/i);
     // #193: the counter-offer lines name the step each side takes next.
     expect(describeNotification('OFFER_COUNTERED')).toMatch(/countered your offer/i);
     expect(describeNotification('OFFER_COUNTER_ACCEPTED')).toMatch(/accepted your counter/i);

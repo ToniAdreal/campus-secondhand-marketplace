@@ -19,6 +19,7 @@ import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.common.AccountLockedException;
 import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
+import com.toni.marketplace.common.InvalidEmailChangeTokenException;
 import com.toni.marketplace.common.InvalidTotpCodeException;
 import com.toni.marketplace.common.PasswordReuseException;
 import com.toni.marketplace.item.Item;
@@ -69,6 +70,8 @@ public class AuthService {
   private final BreachedPasswordChecker breachedChecker;
   private final TrustedDeviceRepository trustedDevices;
   private final TrustedDeviceProperties trustedDeviceProps;
+  private final EmailChangeTokenRepository emailChangeTokens;
+  private final EmailChangeMailSender emailChangeMail;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -87,7 +90,9 @@ public class AuthService {
                      SessionLimitProperties sessionLimit,
                      BreachedPasswordChecker breachedChecker,
                      TrustedDeviceRepository trustedDevices,
-                     TrustedDeviceProperties trustedDeviceProps) {
+                     TrustedDeviceProperties trustedDeviceProps,
+                     EmailChangeTokenRepository emailChangeTokens,
+                     EmailChangeMailSender emailChangeMail) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -111,6 +116,8 @@ public class AuthService {
     this.breachedChecker = breachedChecker;
     this.trustedDevices = trustedDevices;
     this.trustedDeviceProps = trustedDeviceProps;
+    this.emailChangeTokens = emailChangeTokens;
+    this.emailChangeMail = emailChangeMail;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -121,7 +128,7 @@ public class AuthService {
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
         null, new EmailVerificationProperties(), null, null, null, null, null,
-        new SessionLimitProperties(), null, null, null);
+        new SessionLimitProperties(), null, null, null, null, null);
   }
 
   /**
@@ -1371,32 +1378,44 @@ public class AuthService {
   }
 
   /**
-   * Changes the account's email address (backlog #150). Before this, no
-   * change-email path existed anywhere: a user whose mailbox changed had
-   * no supported way to move their account.
+   * Requests an email change (backlog #150, reworked by #208). Before
+   * #150 no change-email path existed anywhere; #150 flipped the
+   * address immediately after the password check — nothing proved the
+   * caller controlled the NEW inbox before the switch, so a typo (or a
+   * password-only compromise) moved the account's recovery address to
+   * a mailbox the owner might not control. #208 splits the flow in
+   * two: this method only STAGES the change, and
+   * {@link #confirmEmailChange} performs the switch.
    *
    * <p>Proof discipline mirrors {@link #changePassword}: the current
-   * password is required and a wrong one produces the identical 401 as a
-   * bad login, so no oracle leaks. The new address is canonicalized
-   * exactly like registration and uniqueness-checked against every OTHER
-   * account (taken → 409, the register envelope); re-submitting the
-   * account's own current address is likewise a 409 — it is not a change.
+   * password is required and a wrong one produces the identical 401 as
+   * a bad login, so no oracle leaks. The new address is canonicalized
+   * exactly like registration and uniqueness-checked (taken \u2192 409,
+   * the register envelope); re-submitting the account's own current
+   * address is likewise a 409 \u2014 it is not a change. Uniqueness is
+   * checked again at confirm time (see there): the address may be
+   * taken in between.
    *
-   * <p>On success, inside this one transaction: the address flips, the
-   * account goes back to UNVERIFIED while the verification gate is on
-   * (#138) and a fresh single-use verification token for the NEW address
-   * is issued through {@link EmailVerificationService} (the old address
-   * receives nothing further), every refresh family is revoked and
-   * tokenVersion is bumped — so every pre-change session, this one
-   * included, dies immediately; unlike password change there is NO fresh
-   * pair for the caller, because the account cannot log in again until
-   * the new address is verified (login with the old address then fails
-   * as an unknown identifier; with the new address it answers the #138
-   * 403 until confirmed). With the gate off, the account simply stays
-   * verified at the new address and no token is issued. An
-   * {@code EMAIL_CHANGED} audit row (actor = target = the account
-   * holder) joins the transaction; the audit trail stores no addresses
-   * (the table has no payload column by design).
+   * <p>On success, inside this one transaction: {@code pendingEmail}
+   * is staged on the user row, any prior unused change token is
+   * deleted and a fresh single-use token (32 random bytes, only its
+   * SHA-256 hash stored, Flyway V58, the email-verification token TTL)
+   * is saved carrying its own copy of the pending address, the raw
+   * token is handed to the {@link EmailChangeMailSender} seam
+   * addressed to the NEW mailbox, and an
+   * {@code EMAIL_CHANGE_REQUESTED} in-app notification is recorded for
+   * the account \u2014 visible to the holder at the OLD address, so a
+   * hijack attempt is seen before anything moves. Deliberately NOT
+   * done here: the address does not flip, the verified flag does not
+   * change, no session is revoked, tokenVersion is not bumped and no
+   * {@code EMAIL_CHANGED} audit row is written \u2014 all of that belongs
+   * to the switch, at confirm. Requesting again replaces the pending
+   * row and invalidates the earlier token.
+   *
+   * <p>Legacy-constructor fallback: a hand-built instance without the
+   * token repository or the mail seam (direct unit tests) cannot stage
+   * a change, so it performs the pre-#208 immediate switch exactly as
+   * #150 did. Production always gets both beans.
    */
   @Transactional
   public void changeEmail(long userId, String currentPassword, String newEmail) {
@@ -1411,20 +1430,99 @@ public class AuthService {
     if (users.findByEmailIgnoreCase(canonicalNewEmail).isPresent()) {
       throw new DuplicateUserException("email is already registered");
     }
-    user.setEmail(canonicalNewEmail);
-    boolean gateOn = emailVerificationEnabled();
-    if (gateOn) {
-      user.setEmailVerified(false);
+    if (emailChangeTokens == null || emailChangeMail == null) {
+      // Legacy-constructor fallback (see the javadoc): the immediate
+      // pre-#208 switch, kept only for hand-built unit-test instances.
+      user.setEmail(canonicalNewEmail);
+      boolean gateOn = emailVerificationEnabled();
+      if (gateOn) {
+        user.setEmailVerified(false);
+      }
+      user.setTokenVersion(user.getTokenVersion() + 1);
+      users.save(user);
+      jwt.revokeAll(userId);
+      if (gateOn && emailVerification != null) {
+        emailVerification.issue(user);
+      }
+      audit().record(userId, AuditAction.EMAIL_CHANGED, AuditTargetType.USER, userId);
+      return;
     }
+    user.setPendingEmail(canonicalNewEmail);
+    users.save(user);
+    emailChangeTokens.deleteByUserIdAndUsedAtIsNull(userId);
+    byte[] raw = new byte[32];
+    new java.security.SecureRandom().nextBytes(raw);
+    String token = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+    Instant expiresAt = clock.instant().plus(
+        emailVerificationProps != null ? emailVerificationProps.getTokenTtl()
+            : java.time.Duration.ofHours(24));
+    emailChangeTokens.save(new EmailChangeToken(userId, canonicalNewEmail,
+        JwtTokenService.sha256Hex(token), expiresAt));
+    emailChangeMail.sendEmailChange(user, canonicalNewEmail, token);
+    // The alert to the OLD address (see the javadoc): an in-app row
+    // for the account holder, recorded inside this transaction.
+    notifications().record(userId, NotificationType.EMAIL_CHANGE_REQUESTED, null);
+  }
+
+  /**
+   * Confirms a pending email change (backlog #208) \u2014 the switch
+   * itself. Public: the mailed token IS the credential. Unknown, used
+   * and expired tokens all throw the identical
+   * {@link InvalidEmailChangeTokenException} (401, mirroring the
+   * password-reset confirm's credential semantics).
+   *
+   * <p>Canonical uniqueness is RE-CHECKED here: the pending address
+   * may have been registered by someone else between request and
+   * confirm \u2014 that case answers 409 and consumes nothing (the
+   * check runs before the token is stamped, and the exception rolls
+   * the transaction back), so the holder can retry if the address is
+   * freed, or stage a different address instead.
+   *
+   * <p>On success, inside this one transaction: the address flips to
+   * the token's own pending copy, the account is marked VERIFIED (the
+   * confirm just proved control of the new inbox \u2014 the #138 flag
+   * must not demand a second round trip), the staging field is
+   * cleared, the token is consumed and any sibling retired, every
+   * refresh family is revoked and tokenVersion is bumped (every
+   * pre-switch session dies, mirroring the #150 switch), and exactly
+   * one {@code EMAIL_CHANGED} audit row is appended (actor = target =
+   * the account holder; the audit table stores no addresses, by
+   * design). No fresh pair is issued: the holder logs in at the new
+   * address afterwards.
+   */
+  @Transactional
+  public void confirmEmailChange(String rawToken) {
+    if (emailChangeTokens == null) {
+      throw new InvalidEmailChangeTokenException();
+    }
+    EmailChangeToken row = emailChangeTokens
+        .findByTokenHash(JwtTokenService.sha256Hex(rawToken))
+        .orElseThrow(InvalidEmailChangeTokenException::new);
+    Instant now = clock.instant();
+    if (row.isUsed() || row.isExpired(now)) {
+      throw new InvalidEmailChangeTokenException();
+    }
+    User user = users.findById(row.getUserId())
+        .orElseThrow(InvalidEmailChangeTokenException::new);
+    String pending = row.getPendingEmail();
+    // Re-check (see the javadoc): another account holding the pending
+    // address now \u2192 409, token unconsumed. The holder's own current
+    // address cannot equal the pending one (the request forbade it),
+    // so any hit is necessarily a different account.
+    if (users.findByEmailIgnoreCase(pending).isPresent()) {
+      throw new DuplicateUserException("email is already registered");
+    }
+    user.setEmail(pending);
+    user.setPendingEmail(null);
+    user.setEmailVerified(true);
     user.setTokenVersion(user.getTokenVersion() + 1);
     users.save(user);
-    jwt.revokeAll(userId);
-    if (gateOn && emailVerification != null) {
-      emailVerification.issue(user);
-    }
-    // Backlog #98: the audit row joins this transaction, so a change that
-    // rolls back leaves no row.
-    audit().record(userId, AuditAction.EMAIL_CHANGED, AuditTargetType.USER, userId);
+    row.setUsedAt(now);
+    emailChangeTokens.save(row);
+    emailChangeTokens.deleteByUserIdAndUsedAtIsNull(user.getId());
+    jwt.revokeAll(user.getId());
+    audit().record(user.getId(), AuditAction.EMAIL_CHANGED,
+        AuditTargetType.USER, user.getId());
   }
 
   /**

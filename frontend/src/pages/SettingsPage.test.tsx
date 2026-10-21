@@ -279,7 +279,7 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Turn off two-factor authentication' })).toBeNull();
   });
 
-  it('posts the change-email payload and shows the signed-out-everywhere note on success (backlog #150)', async () => {
+  it('posts the change-email payload and shows the check-your-new-inbox pending state on success (backlog #208)', async () => {
     postSpy.mockResolvedValueOnce(envelope(null));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New email address'), {
@@ -296,11 +296,12 @@ describe('SettingsPage', () => {
       newEmail: 'toni.new@example.com',
     });
     const status = await screen.findByRole('status');
-    expect(status.textContent).toContain('Email changed to toni.new@example.com.');
-    expect(status.textContent).toContain('signed out everywhere');
-    // the backend killed this session too: the in-memory credential is gone
-    expect(getAccessToken()).toBeNull();
-    // the form is replaced — no second change can ride the dead session
+    expect(status.textContent).toContain('Check your new inbox');
+    expect(status.textContent).toContain('toni.new@example.com');
+    expect(status.textContent).toContain('stays toni@example.com');
+    // nothing has switched yet: this session's credential is still alive
+    expect(getAccessToken()).toBe('old-credential');
+    // the form is replaced by the pending panel — no duplicate request
     expect(screen.queryByRole('button', { name: 'Change email' })).toBeNull();
   });
 

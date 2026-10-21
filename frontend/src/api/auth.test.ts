@@ -5,6 +5,7 @@ import {
   me,
   changePassword,
   changeEmail,
+  confirmEmailChange,
   closeAccount,
   listSessions,
   revokeSession,
@@ -164,7 +165,7 @@ describe('changeEmail', () => {
     vi.clearAllMocks();
   });
 
-  it('posts to /auth/email-change and resolves with no credential (every session died)', async () => {
+  it('posts to /auth/email-change and resolves with no credential (request only — the session stays alive)', async () => {
     postSpy.mockResolvedValueOnce(envelope(null));
 
     const result = await changeEmail({
@@ -176,9 +177,19 @@ describe('changeEmail', () => {
       currentPassword: 'old',
       newEmail: 'new@example.com',
     });
-    // No fresh pair is returned — the account must verify the new address
-    // and sign in again, so the function resolves void.
+    // No fresh pair is returned — the request only stages the change,
+    // so the function resolves void.
     expect(result).toBeUndefined();
+  });
+
+  it('posts the token to /auth/email-change/confirm (backlog #208)', async () => {
+    postSpy.mockResolvedValueOnce(envelope(null));
+
+    await confirmEmailChange({ token: 'raw-token-abc' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/email-change/confirm', {
+      token: 'raw-token-abc',
+    });
   });
 
   it('propagates the envelope error (401 wrong current password, 409 taken address)', async () => {

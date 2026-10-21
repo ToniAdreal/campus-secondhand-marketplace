@@ -22,7 +22,8 @@ export type NotificationType =
   | 'FAVORITE_PRICE_DROP'
   | 'REPORT_APPEAL_UPHELD'
   | 'REPORT_APPEAL_REJECTED'
-  | 'SESSION_EVICTED';
+  | 'SESSION_EVICTED'
+  | 'EMAIL_CHANGE_REQUESTED';
 
 export interface Notification {
   id: number;
@@ -124,6 +125,11 @@ export function describeNotification(
       // named here mirrors the backend default
       // (app.auth.max-sessions-per-user=5).
       return 'A new sign-in signed out your oldest session — you can be signed in on at most 5 devices at once.';
+    case 'EMAIL_CHANGE_REQUESTED':
+      // Backlog #208: the alert lands at REQUEST time, while the
+      // account still uses the old address — the switch itself only
+      // happens when the mailed link is confirmed.
+      return "An email change was requested for your account. If this wasn't you, change your password.";
     case 'FAVORITE_PRICE_DROP': {
       // Backlog #189: the row carries both prices — the copy states
       // them; without them (defensive) it still says what happened.

@@ -60,10 +60,33 @@ describe('VerifyEmailPage', () => {
     postSpy.mockRejectedValueOnce(
       axiosFailure(400, 'invalid or expired verification token'),
     );
+    // Backlog #208: the change confirm is tried as the fallback and
+    // rejects the same token with its identical 401.
+    postSpy.mockRejectedValueOnce(
+      axiosFailure(401, 'invalid or expired email change token'),
+    );
     renderAt('/verify-email?token=stale-token');
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('invalid or has expired');
-    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/email-change/confirm', {
+      token: 'stale-token',
+    });
+  });
+
+  it('confirms an email-change token through the fallback (backlog #208)', async () => {
+    postSpy.mockRejectedValueOnce(
+      axiosFailure(400, 'invalid or expired verification token'),
+    );
+    postSpy.mockResolvedValueOnce(envelope(null));
+    renderAt('/verify-email?token=change-token');
+
+    const status = await screen.findByText(/email address confirmed/i);
+    expect(status).toBeTruthy();
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/email-change/confirm', {
+      token: 'change-token',
+    });
   });
 });

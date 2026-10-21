@@ -113,6 +113,7 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/2fa/recovery-codes/regenerate",
       "POST /api/auth/2fa/setup",
       "POST /api/auth/email-change",
+      "POST /api/auth/email-change/confirm",
       "POST /api/auth/email-verification/confirm",
       "POST /api/auth/email-verification/resend",
       "POST /api/auth/login",
@@ -216,20 +217,18 @@ class AnonymousAccessSweepTest {
    * never the chain's entry-point 401 — each flow's own test suite
    * proves reachability with a valid credential.
    */
-  private static final Map<String, Integer> PUBLIC_PROBE_STATUS = Map.of(
-      "POST /api/auth/register", 200,
-      "POST /api/auth/login", 401,
-      "POST /api/auth/refresh", 401,
-      "POST /api/auth/email-verification/confirm", 400,
-      "POST /api/auth/email-verification/resend", 200,
-      "POST /api/auth/password-reset", 200,
-      "POST /api/auth/password-reset/confirm", 401,
-      "POST /api/auth/2fa/authenticate", 401,
-      "POST /api/payments/webhooks/mock-psp", 401,
-      // CSP report intake (#204): public by necessity (browsers send
-      // reports unauthenticated); the probe below is a well-formed
-      // legacy report, so the declared answer is the 204 acceptance.
-      "POST /api/security/csp-report", 204);
+  private static final Map<String, Integer> PUBLIC_PROBE_STATUS = Map.ofEntries(
+      Map.entry("POST /api/auth/register", 200),
+      Map.entry("POST /api/auth/login", 401),
+      Map.entry("POST /api/auth/refresh", 401),
+      Map.entry("POST /api/auth/email-verification/confirm", 400),
+      Map.entry("POST /api/auth/email-change/confirm", 401),
+      Map.entry("POST /api/auth/email-verification/resend", 200),
+      Map.entry("POST /api/auth/password-reset", 200),
+      Map.entry("POST /api/auth/password-reset/confirm", 401),
+      Map.entry("POST /api/auth/2fa/authenticate", 401),
+      Map.entry("POST /api/payments/webhooks/mock-psp", 401),
+      Map.entry("POST /api/security/csp-report", 204));
 
   /** Minimal well-formed bodies for the public probes that take one. */
   private static final Map<String, String> PROBE_BODIES = Map.of(
@@ -239,6 +238,8 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/login",
       "{\"usernameOrEmail\":\"anon-sweep-nonexistent\",\"password\":\"wrong-password\"}",
       "POST /api/auth/email-verification/confirm",
+      "{\"token\":\"anon-sweep-dummy-token\"}",
+      "POST /api/auth/email-change/confirm",
       "{\"token\":\"anon-sweep-dummy-token\"}",
       "POST /api/auth/email-verification/resend",
       "{\"email\":\"anon-sweep@example.com\"}",

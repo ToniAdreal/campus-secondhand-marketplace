@@ -152,7 +152,8 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(ApiResponse.fail(400, ex.getMessage()));
   }
 
-  @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class})
+  @ExceptionHandler({InvalidCredentialsException.class, InvalidTokenException.class,
+      InvalidEmailChangeTokenException.class})
   public ResponseEntity<ApiResponse<Void>> handleAuthFailure(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
         .body(ApiResponse.fail(401, ex.getMessage()));

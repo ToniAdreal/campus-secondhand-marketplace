@@ -149,6 +149,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String TOTP_AUTH_PATH = "/api/auth/2fa/authenticate";
   private static final String VERIFY_RESEND_PATH = "/api/auth/email-verification/resend";
   private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
+  private static final String EMAIL_CHANGE_CONFIRM_PATH = "/api/auth/email-change/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
@@ -229,7 +230,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     if (TOTP_AUTH_PATH.equals(path)) {
       return !totpLimiter.isEnabled();
     }
-    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)) {
+    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)
+        || EMAIL_CHANGE_CONFIRM_PATH.equals(path)) {
       return !emailVerificationLimiter.isEnabled();
     }
     if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
@@ -315,10 +317,13 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
-    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)) {
+    if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)
+        || EMAIL_CHANGE_CONFIRM_PATH.equals(path)) {
       // Email verification (backlog #138): both endpoints share one per-IP
       // bucket — the resend endpoint is a mail-bombing surface, the
-      // confirm endpoint a token-guessing surface. Never reset on
+      // confirm endpoint a token-guessing surface. The email-change
+      // confirm (backlog #208) joins the same bucket: it is the same
+      // kind of token-guessing surface. Never reset on
       // success: a completed verification must not refill a guesser's
       // budget (the backlog #101 pattern).
       String ip = clientIp(request);

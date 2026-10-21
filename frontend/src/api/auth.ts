@@ -329,19 +329,40 @@ export interface ChangeEmailPayload {
 }
 
 /**
- * POST /api/auth/email-change (backlog #150). Changes the account email:
- * the current password must match (a wrong one fails with the same 401 as
- * everywhere else — no oracle) and the new address must not be taken
- * (409). On success the backend revokes EVERY session (this one too),
- * clears the refresh cookie, and flips the account back to unverified —
- * no fresh credential is returned, so the caller must treat the user as
- * signed out and send them to verify the new address, then sign in.
+ * POST /api/auth/email-change (backlog #150, reworked by #208).
+ * REQUESTS an email change: the current password must match (a wrong
+ * one fails with the same 401 as everywhere else — no oracle) and the
+ * new address must not be taken (409, re-checked at confirm). On
+ * success NOTHING has switched yet: the backend stages the new address
+ * as pending, mails a single-use token to the NEW address (see
+ * confirmEmailChange), and notifies the holder in-app at the old one.
+ * Every session stays alive — the caller stays signed in and shows the
+ * "check your new inbox" state.
  *
  * Throws the Axios error on failure; the backend wraps failures in the
  * {code,message,data} envelope.
  */
 export async function changeEmail(payload: ChangeEmailPayload): Promise<void> {
   await api.post<ApiResponse<null>>('/auth/email-change', payload);
+}
+
+export interface ConfirmEmailChangePayload {
+  token: string;
+}
+
+/**
+ * POST /api/auth/email-change/confirm (backlog #208). The token from
+ * the link mailed to the NEW address is the credential: confirming
+ * switches the account's address to it, revokes every pre-switch
+ * session and clears the refresh cookie — no session is issued here,
+ * so afterwards the user signs in at the new address. Unknown, used
+ * and expired tokens all fail with the identical 401; an address taken
+ * between request and confirm fails 409.
+ */
+export async function confirmEmailChange(
+  payload: ConfirmEmailChangePayload,
+): Promise<void> {
+  await api.post<ApiResponse<null>>('/auth/email-change/confirm', payload);
 }
 
 export interface CloseAccountPayload {
