@@ -257,10 +257,13 @@
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
          CI runs it in the dedicated backend-mutation job
          (`mvn verify -Pmutation`). The mutationThreshold below is the
-         ratchet floor. It starts at 0 for the first CI run on purpose:
-         the floor is set from that first real run's measured score —
-         see docs/mutation.md for the measured score, the date/run, and
-         the named surviving-mutant exceptions. A floor value is never
+         ratchet floor (backlog #212): the measured mutation coverage on
+         CI run 39735286602 (2026-10-22, head 41c334d) is 81/291 =
+         27.8%, and the floor is that measured score rounded DOWN to a
+         whole percent (27) so an identical rerun cannot fail on
+         rounding; the floor is never set above the measured score.
+         See docs/mutation.md for the measured scores, the date/run, and
+         the surviving-mutant dispositions. A floor value is never
          guessed. Deliberate floor bumps edit this constant together
          with docs/mutation.md and say why in the commit message. -->
     <profile>
@@ -294,7 +297,7 @@
                 <param>HTML</param>
               </outputFormats>
               <timestampedReports>false</timestampedReports>
-              <mutationThreshold>0</mutationThreshold>
+              <mutationThreshold>27</mutationThreshold>
             </configuration>
             <executions>
               <execution>
