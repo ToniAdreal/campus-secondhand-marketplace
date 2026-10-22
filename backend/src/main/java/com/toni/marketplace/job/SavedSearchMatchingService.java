@@ -9,6 +9,7 @@ import com.toni.marketplace.notification.NotificationService;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -68,7 +69,13 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Honest scope: in-app notifications only — no email, no push.
  * The schedule fires in the JVM's default time zone (the cron is
- * fixed, not zone-pinned).
+ * fixed, not zone-pinned). Each firing first takes this job's
+ * single-instance lease (backlog #215, {@link JobLockGuard}) — this
+ * job is the one whose double-run is user-visible as duplicate
+ * notifications; the lease is acquired in its own transaction before
+ * the matching transaction's work and released only after that
+ * transaction completes, so a second instance cannot start on
+ * half-committed watermarks. A skipped firing returns zero counts.
  */
 @Service
 public class SavedSearchMatchingService {
@@ -78,16 +85,30 @@ public class SavedSearchMatchingService {
   /** Browse-projection page size while scanning one search's matches. */
   static final int PAGE_SIZE = 200;
 
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "saved-search-matching";
+
   private final SavedSearchRepository savedSearches;
   private final ItemService itemService;
   private final NotificationService notifications;
+  private final JobLockGuard jobLock;
 
+  @Autowired
   public SavedSearchMatchingService(SavedSearchRepository savedSearches,
                                     ItemService itemService,
-                                    NotificationService notifications) {
+                                    NotificationService notifications,
+                                    JobLockGuard jobLock) {
     this.savedSearches = savedSearches;
     this.itemService = itemService;
     this.notifications = notifications;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public SavedSearchMatchingService(SavedSearchRepository savedSearches,
+                                    ItemService itemService,
+                                    NotificationService notifications) {
+    this(savedSearches, itemService, notifications, JobLockGuard.disabled());
   }
 
   /** What one matcher run did: searches scanned, rows baselined, notifications written, total new matches. */
@@ -97,6 +118,19 @@ public class SavedSearchMatchingService {
   @Scheduled(cron = "0 */15 * * * *")
   @Transactional
   public MatchCounts matchSavedSearches() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return new MatchCounts(0, 0, 0, 0);
+    }
+    try {
+      return matchSavedSearchesLocked();
+    } finally {
+      // Inside this transaction the guard defers the actual release
+      // until the transaction completes (see JobLockGuard.release).
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private MatchCounts matchSavedSearchesLocked() {
     int baselined = 0;
     int notified = 0;
     int totalNewMatches = 0;

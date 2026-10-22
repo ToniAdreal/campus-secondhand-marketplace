@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.toni.marketplace.job.JobLockGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,7 +36,10 @@ import org.springframework.stereotype.Service;
  * outlives its deadline by at most TTL + one cadence in the list views;
  * the decision endpoints additionally check the deadline lazily (see
  * {@link OfferService}), so a stale offer can never be accepted in
- * that gap.
+ * that gap. Each firing first takes this job's single-instance lease
+ * (backlog #215, {@link JobLockGuard}); on a multi-instance deployment
+ * only the lease holder runs the sweep, the others skip with zero
+ * counts.
  */
 @Service
 public class OfferExpiryService {
@@ -44,14 +49,26 @@ public class OfferExpiryService {
   /** Offer ids re-read per repository call; keeps each select small. */
   static final int BATCH_SIZE = 500;
 
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "offer-expiry";
+
   private final PriceOfferRepository offers;
   private final OfferService offerService;
   private final Clock clock;
+  private final JobLockGuard jobLock;
 
-  public OfferExpiryService(PriceOfferRepository offers, OfferService offerService, Clock clock) {
+  @Autowired
+  public OfferExpiryService(PriceOfferRepository offers, OfferService offerService,
+                            Clock clock, JobLockGuard jobLock) {
     this.offers = offers;
     this.offerService = offerService;
     this.clock = clock;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public OfferExpiryService(PriceOfferRepository offers, OfferService offerService, Clock clock) {
+    this(offers, offerService, clock, JobLockGuard.disabled());
   }
 
   /** How many stale offers one expiry run expired vs. skipped. */
@@ -60,6 +77,17 @@ public class OfferExpiryService {
   /** Runs every 5 minutes server-local; also callable directly in tests. */
   @Scheduled(cron = "0 */5 * * * *")
   public ExpiryCounts expireStaleOffers() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return new ExpiryCounts(0, 0);
+    }
+    try {
+      return expireStaleOffersLocked();
+    } finally {
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private ExpiryCounts expireStaleOffersLocked() {
     Instant now = clock.instant();
     int expired = 0;
     int skipped = 0;

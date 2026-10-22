@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -89,6 +90,12 @@ import org.springframework.transaction.annotation.Transactional;
  * transaction — a failure mid-purge rolls back and retries the next night.
  * The {@code @Transactional} lives on the scheduled method itself, not on a
  * self-invoked helper, so the proxy actually applies it.
+ *
+ * <p>Each firing first takes this job's single-instance lease (backlog
+ * #215, {@link JobLockGuard}): the lease is acquired in its own
+ * transaction before the purge's work and released only after the purge
+ * transaction completes, so a second instance skips with zero counts
+ * instead of double-purging.
  */
 @Service
 public class DataRetentionService {
@@ -108,10 +115,15 @@ public class DataRetentionService {
   private final WebhookEventRepository webhookEvents;
   private final EmailVerificationTokenRepository emailVerificationTokens;
   private final LoginEventRepository loginEvents;
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "data-retention";
+
   private final RecentlyViewedRepository recentlyViewed;
   private final CleanupProperties props;
   private final Clock clock;
+  private final JobLockGuard jobLock;
 
+  @Autowired
   public DataRetentionService(RefreshTokenRepository refreshTokens,
                               IdempotencyKeyRepository idempotencyKeys,
                               PasswordResetTokenRepository passwordResetTokens,
@@ -121,7 +133,8 @@ public class DataRetentionService {
                               LoginEventRepository loginEvents,
                               RecentlyViewedRepository recentlyViewed,
                               CleanupProperties props,
-                              Clock clock) {
+                              Clock clock,
+                              JobLockGuard jobLock) {
     this.refreshTokens = refreshTokens;
     this.idempotencyKeys = idempotencyKeys;
     this.passwordResetTokens = passwordResetTokens;
@@ -132,6 +145,23 @@ public class DataRetentionService {
     this.recentlyViewed = recentlyViewed;
     this.props = props;
     this.clock = clock;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public DataRetentionService(RefreshTokenRepository refreshTokens,
+                              IdempotencyKeyRepository idempotencyKeys,
+                              PasswordResetTokenRepository passwordResetTokens,
+                              AuditLogRepository auditLog,
+                              WebhookEventRepository webhookEvents,
+                              EmailVerificationTokenRepository emailVerificationTokens,
+                              LoginEventRepository loginEvents,
+                              RecentlyViewedRepository recentlyViewed,
+                              CleanupProperties props,
+                              Clock clock) {
+    this(refreshTokens, idempotencyKeys, passwordResetTokens, auditLog,
+        webhookEvents, emailVerificationTokens, loginEvents, recentlyViewed,
+        props, clock, JobLockGuard.disabled());
   }
 
   /** How many rows of each kind one purge run removed. */
@@ -147,6 +177,19 @@ public class DataRetentionService {
   @Scheduled(cron = "0 0 3 * * *")
   @Transactional
   public PurgeCounts purgeStaleData() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return new PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0);
+    }
+    try {
+      return purgeStaleDataLocked();
+    } finally {
+      // Inside this transaction the guard defers the actual release
+      // until the transaction completes (see JobLockGuard.release).
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private PurgeCounts purgeStaleDataLocked() {
     Instant now = clock.instant();
     int tokens = purgeRefreshTokens(now);
     int keys = purgeIdempotencyKeys(now);

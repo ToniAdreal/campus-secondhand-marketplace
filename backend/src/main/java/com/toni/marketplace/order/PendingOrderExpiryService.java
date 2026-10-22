@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.toni.marketplace.job.JobLockGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,6 +34,9 @@ import org.springframework.stereotype.Service;
  * <p>Honest scope: the schedule fires in the JVM's default time zone (the
  * cron is fixed, not zone-pinned), and expiry granularity is the 5-minute
  * cadence — a stale order holds its listing at most TTL + one cadence.
+ * Each firing first takes this job's single-instance lease (backlog
+ * #215, {@link JobLockGuard}); on a multi-instance deployment only the
+ * lease holder runs the sweep, the others skip with zero counts.
  */
 @Service
 public class PendingOrderExpiryService {
@@ -41,17 +46,30 @@ public class PendingOrderExpiryService {
   /** Order ids re-read per repository call; keeps each select statement small. */
   static final int BATCH_SIZE = 500;
 
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "pending-order-expiry";
+
   private final OrderRepository orders;
   private final OrderService orderService;
   private final OrderExpiryProperties props;
   private final Clock clock;
+  private final JobLockGuard jobLock;
 
+  @Autowired
   public PendingOrderExpiryService(OrderRepository orders, OrderService orderService,
-                                   OrderExpiryProperties props, Clock clock) {
+                                   OrderExpiryProperties props, Clock clock,
+                                   JobLockGuard jobLock) {
     this.orders = orders;
     this.orderService = orderService;
     this.props = props;
     this.clock = clock;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public PendingOrderExpiryService(OrderRepository orders, OrderService orderService,
+                                   OrderExpiryProperties props, Clock clock) {
+    this(orders, orderService, props, clock, JobLockGuard.disabled());
   }
 
   /** How many stale orders one expiry run cancelled vs. skipped. */
@@ -63,6 +81,17 @@ public class PendingOrderExpiryService {
    */
   @Scheduled(cron = "0 */5 * * * *")
   public ExpiryCounts expireStalePendingOrders() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return new ExpiryCounts(0, 0);
+    }
+    try {
+      return expireStalePendingOrdersLocked();
+    } finally {
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private ExpiryCounts expireStalePendingOrdersLocked() {
     Instant cutoff = clock.instant().minus(props.getPendingTtl());
     int expired = 0;
     int skipped = 0;

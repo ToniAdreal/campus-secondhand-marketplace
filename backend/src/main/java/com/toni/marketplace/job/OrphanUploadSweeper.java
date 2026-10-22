@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -57,6 +58,12 @@ import org.springframework.stereotype.Service;
  * be swept while referenced — the 24 h grace period makes that window
  * unreachable in practice (the file would have to be a day old already),
  * which is exactly the trade-off the grace period buys.
+ *
+ * <p>Each firing first takes this job's single-instance lease (backlog
+ * #215, {@link JobLockGuard}); on a multi-instance deployment only the
+ * lease holder sweeps, the others skip with a zero count. (Instances
+ * with separate upload volumes would each need their own sweep — the
+ * lease guards the shared-database deployment this repo documents.)
  */
 @Service
 public class OrphanUploadSweeper {
@@ -66,25 +73,43 @@ public class OrphanUploadSweeper {
   /** Public URL prefix of every stored upload; the DB's photo values. */
   private static final String PUBLIC_PREFIX = "/uploads/";
 
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "orphan-upload-sweep";
+
   private final ItemRepository items;
   private final ItemPhotoRepository itemPhotos;
   private final DisputeEvidenceRepository disputeEvidence;
   private final Path dir;
   private final Duration grace;
   private final Clock clock;
+  private final JobLockGuard jobLock;
 
+  @Autowired
   public OrphanUploadSweeper(ItemRepository items,
                              ItemPhotoRepository itemPhotos,
                              DisputeEvidenceRepository disputeEvidence,
                              @Value("${app.uploads.dir}") String uploadDir,
                              @Value("${app.uploads.orphan-grace}") Duration grace,
-                             Clock clock) {
+                             Clock clock,
+                             JobLockGuard jobLock) {
     this.items = items;
     this.itemPhotos = itemPhotos;
     this.disputeEvidence = disputeEvidence;
     this.dir = Paths.get(uploadDir).toAbsolutePath().normalize();
     this.grace = grace;
     this.clock = clock;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public OrphanUploadSweeper(ItemRepository items,
+                             ItemPhotoRepository itemPhotos,
+                             DisputeEvidenceRepository disputeEvidence,
+                             String uploadDir,
+                             Duration grace,
+                             Clock clock) {
+    this(items, itemPhotos, disputeEvidence, uploadDir, grace, clock,
+        JobLockGuard.disabled());
   }
 
   /**
@@ -96,6 +121,17 @@ public class OrphanUploadSweeper {
    */
   @Scheduled(cron = "0 30 3 * * *")
   public int sweepOrphanUploads() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return 0;
+    }
+    try {
+      return sweepOrphanUploadsLocked();
+    } finally {
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private int sweepOrphanUploadsLocked() {
     if (!Files.isDirectory(dir)) {
       log.debug("upload directory {} does not exist; orphan sweep is a no-op", dir);
       return 0;

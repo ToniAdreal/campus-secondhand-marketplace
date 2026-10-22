@@ -331,6 +331,16 @@ app:
     email-verification-token-retention: 30
     login-event-retention: 180
     recently-viewed-retention: 30
+  jobs:
+    # Single-instance guard for the six mutating @Scheduled jobs
+    # (JobLockGuard, backlog #215): a DB-backed lease in the Flyway V61
+    # job_lock table — one instance runs each firing, the others skip
+    # (counted on scheduler.jobs.skipped). lock-lease is how long a
+    # lease survives its holder without release; release on completion
+    # is the normal path, so the lease only ever decides crash
+    # recovery. Default 10 minutes: a crashed 5-minute job skips at
+    # most one further firing before its lease is stealable.
+    lock-lease: 10m
   listings:
     # Listing lifetime (ItemService + ListingExpiryService, backlog #177):
     # a listing stays live for ttl after creation (or renew) — default

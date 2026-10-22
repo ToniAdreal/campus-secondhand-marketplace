@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.toni.marketplace.job.JobLockGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -33,7 +35,10 @@ import org.springframework.stereotype.Service;
  * (the cron is fixed, not zone-pinned). Because the reads are already
  * lazy, a stale row's stored status lags its effective state by at
  * most one nightly cadence — visible only in the seller view's stored
- * status, never in buyer-facing reads.
+ * status, never in buyer-facing reads. Each firing first takes this
+ * job's single-instance lease (backlog #215, {@link JobLockGuard});
+ * on a multi-instance deployment only the lease holder runs the
+ * sweep, the others skip with zero counts.
  */
 @Service
 public class ListingExpiryService {
@@ -43,14 +48,26 @@ public class ListingExpiryService {
   /** Listing ids re-read per repository call; keeps each select small. */
   static final int BATCH_SIZE = 500;
 
+  /** Single-instance lease name for this job (backlog #215). */
+  public static final String LOCK_NAME = "listing-expiry";
+
   private final ItemRepository items;
   private final ItemService itemService;
   private final Clock clock;
+  private final JobLockGuard jobLock;
 
-  public ListingExpiryService(ItemRepository items, ItemService itemService, Clock clock) {
+  @Autowired
+  public ListingExpiryService(ItemRepository items, ItemService itemService,
+                              Clock clock, JobLockGuard jobLock) {
     this.items = items;
     this.itemService = itemService;
     this.clock = clock;
+    this.jobLock = jobLock;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no lease). */
+  public ListingExpiryService(ItemRepository items, ItemService itemService, Clock clock) {
+    this(items, itemService, clock, JobLockGuard.disabled());
   }
 
   /** How many stale listings one run flipped vs. skipped. */
@@ -59,6 +76,17 @@ public class ListingExpiryService {
   /** Runs nightly at 03:20 server-local; also callable directly in tests. */
   @Scheduled(cron = "0 20 3 * * *")
   public ExpiryCounts expireStaleListings() {
+    if (!jobLock.tryAcquire(LOCK_NAME)) {
+      return new ExpiryCounts(0, 0);
+    }
+    try {
+      return expireStaleListingsLocked();
+    } finally {
+      jobLock.release(LOCK_NAME);
+    }
+  }
+
+  private ExpiryCounts expireStaleListingsLocked() {
     Instant now = clock.instant();
     int expired = 0;
     int skipped = 0;
