@@ -1,32 +1,56 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
 /**
- * The five honest smoke flows (backlog #181, money path added by #194) —
- * see playwright.config.ts for what this layer does and does not claim.
+ * The seven honest smoke flows (backlog #181, money path added by #194,
+ * offer + dispute paths added by #213) — see playwright.config.ts for
+ * what this layer does and does not claim.
  * Selectors are role/label based (the SPA's #167 accessibility pass binds
  * every form field to a label), never CSS paths, so a renamed class cannot
  * silently green the suite and a lost label turns it red.
  *
  * State discipline: every test registers its own account(s) against the
  * fresh per-job backend, with a per-run unique suffix, so the suite is
- * re-runnable against a reused local server without collisions.
+ * re-runnable against a reused local server without collisions. The one
+ * exception is the ADMIN account (flow 7): registration only ever mints
+ * USER accounts, so the admin is seeded at boot by the backend's opt-in
+ * bootstrap (APP_BOOTSTRAP_ADMIN_*, set only in the e2e webServer env in
+ * playwright.config.ts) — the same mechanism an operator uses for a real
+ * deployment's first admin, never a test-only endpoint.
  *
- * Credential-bucket arithmetic (re-derived for five flows, #194): login
+ * Credential-bucket arithmetic (re-derived for seven flows, #213): login
  * and register share ONE credential bucket (capacity 5 per IP, refill
  * 5/min, and a successful login resets the bucket to full — see
- * AuthRateLimitFilter). The suite totals 7 registers + 5 logins, but what
- * matters is the longest run between successful-login resets:
+ * AuthRateLimitFilter). The suite totals 11 registers + 11 logins, but
+ * what matters is the longest run between successful-login resets:
  *   flow 1 register + flow 2 register + flow 2 login  = 3
  *   flow 3 register + flow 3 login                    = 2
  *   flow 4 register x2 + flow 4 buyer login           = 3
  *   flow 5 register x2 + flow 5 seller login          = 3
  *   flow 5 buyer login (after the seller login reset) = 1
+ *   flow 6 register x2 + flow 6 buyer login           = 3
+ *   flow 6 seller login, then flow 6 buyer login      = 1 + 1
+ *   flow 7 register x2 + flow 7 buyer login           = 3
+ *   flow 7 admin login, then flow 7 buyer login       = 1 + 1
  * The worst run is 3 of 5, and the 1-token-per-12s refill only widens the
  * margin. Order create/pay/complete calls carry a Bearer token and never
  * touch the credential bucket; logout is not a credential endpoint either.
  */
 
 const PASSWORD = 'E2eSmoke1234'; // satisfies the 12-char minimum + strength rules
+
+/**
+ * The seeded ADMIN account (backlog #213, flow 7). These credentials are
+ * NOT registered through the API — playwright.config.ts passes the same
+ * values to the backend as APP_BOOTSTRAP_ADMIN_* and
+ * BootstrapAdminInitializer creates the account at boot. They exist only
+ * inside the throwaway per-job e2e stack (in-memory H2, CI-only
+ * browsers); the password is the suite's shared test password.
+ */
+const ADMIN_ACCOUNT: TestAccount = {
+  username: 'e2eadmin',
+  email: 'e2eadmin@example.com',
+  password: PASSWORD,
+};
 
 function uniqueSuffix(): string {
   return `${Date.now().toString(36)}${Math.floor(Math.random() * 1_000_000).toString(36)}`;
@@ -128,6 +152,26 @@ async function payOrderViaApi(
   const code = body.data.handoverCode as string | undefined;
   expect(code, 'pay response discloses the handover code once').toMatch(/^\d{6}$/);
   return code as string;
+}
+
+/**
+ * Reads one order back through the public API (backlog #213 flow 6 pins
+ * the created order's amount this way: the Offers page announces the
+ * order id and that it was created "at the agreed price", but only the
+ * order resource itself proves the amount is the COUNTER price in cents,
+ * not the listing's asking price).
+ */
+async function getOrderViaApi(
+  request: APIRequestContext,
+  buyerToken: string,
+  orderId: number,
+): Promise<{ status: string; amountCents: number }> {
+  const res = await request.get(`/api/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${buyerToken}` },
+  });
+  expect(res.status(), 'API read order should succeed').toBe(200);
+  const body = await res.json();
+  return body.data as { status: string; amountCents: number };
 }
 
 async function loginThroughUi(
@@ -304,4 +348,126 @@ test('seller completes with the handover code and the buyer sees COMPLETED', asy
   await page.getByRole('link', { name: 'My orders' }).click();
   await expect(page).toHaveURL('/orders');
   await expectOrderRowStatus(page, orderId, 'COMPLETED');
+});
+
+test('offer, seller counter, buyer counter-accept creates the order at the counter price — and it pays', async ({
+  page,
+  request,
+}) => {
+  const seller = newAccount('e2esell');
+  const buyer = newAccount('e2ebuy');
+  const sellerToken = await registerViaApi(request, seller);
+  const buyerToken = await registerViaApi(request, buyer);
+  const title = `E2E offer textbook ${uniqueSuffix()}`;
+  // Asking price ¥19.99 (createListingViaApi's fixed 1999 cents). The
+  // offer is ¥15.00 and the counter ¥17.00 — three distinct amounts, so
+  // the final amount pin cannot pass on the wrong one.
+  const itemId = await createListingViaApi(request, sellerToken, title);
+
+  await loginThroughUi(page, buyer);
+
+  // Browse → detail, then make the ¥15.00 offer from the detail page.
+  const cardLink = page.getByRole('link', { name: title });
+  await expect(cardLink).toBeVisible();
+  await cardLink.click();
+  await expect(page).toHaveURL(new RegExp(`/items/${itemId}$`));
+  await page.getByLabel('Make an offer (¥)').fill('15');
+  await page.getByRole('button', { name: 'Make an offer' }).click();
+  await expect(
+    page.getByText('Offer sent — the seller can accept or decline it. Track it under Offers.'),
+  ).toBeVisible();
+
+  // The seller counters at ¥17.00 from the Offers inbox.
+  await logoutThroughUi(page);
+  await loginThroughUi(page, seller);
+  await page.getByRole('link', { name: 'Offers' }).click();
+  await expect(page).toHaveURL('/offers');
+  const receivedRow = page.locator('li', { hasText: `Listing #${itemId}` });
+  await expect(receivedRow).toContainText('offered ¥15.00');
+  await receivedRow.getByLabel('Counter price in yuan').fill('17');
+  await receivedRow.getByRole('button', { name: 'Send counter' }).click();
+  await expect(receivedRow).toContainText('You countered at ¥17.00');
+
+  // The buyer accepts the counter from their own Offers inbox.
+  await logoutThroughUi(page);
+  await loginThroughUi(page, buyer);
+  await page.getByRole('link', { name: 'Offers' }).click();
+  await expect(page).toHaveURL('/offers');
+  const madeRow = page.locator('li', { hasText: `Listing #${itemId}` });
+  await expect(madeRow).toContainText('The seller countered at ¥17.00');
+  await madeRow.getByRole('button', { name: 'Accept counter' }).click();
+  await expect(madeRow).toContainText('was created at the agreed price.');
+  const madeText = (await madeRow.textContent()) ?? '';
+  const orderMatch = /Order #(\d+) was created/.exec(madeText);
+  expect(orderMatch, 'counter-accept announces the created order id').toBeTruthy();
+  const orderId = Number(orderMatch?.[1]);
+
+  // The end-to-end pin (#168/#193 snapshot discipline): the order exists
+  // at the COUNTER price — 1700 cents, not the 1500 offered and not the
+  // 1999 asking price.
+  const order = await getOrderViaApi(request, buyerToken, orderId);
+  expect(order.amountCents).toBe(1700);
+  expect(order.status).toBe('PENDING');
+
+  // …and the counter-priced order pays like any other: the confirmation
+  // page shows ¥17.00, pay discloses the handover code, and My orders
+  // reads PAID.
+  await page.goto(`/orders/${orderId}`);
+  await expect(page.getByRole('heading', { name: 'Order confirmed' })).toBeVisible();
+  await expect(page.getByText('¥17.00')).toBeVisible();
+  await page.getByRole('button', { name: 'Pay now (demo)' }).click();
+  await expect(page.getByText('Paid (demo capture)')).toBeVisible();
+  await page.getByRole('link', { name: 'My orders' }).click();
+  await expect(page).toHaveURL('/orders');
+  await expectOrderRowStatus(page, orderId, 'PAID');
+});
+
+test('buyer disputes a paid order, admin resolves with a refund, and the buyer sees REFUNDED', async ({
+  page,
+  request,
+}) => {
+  const seller = newAccount('e2esell');
+  const buyer = newAccount('e2ebuy');
+  const sellerToken = await registerViaApi(request, seller);
+  const buyerToken = await registerViaApi(request, buyer);
+  const title = `E2E dispute textbook ${uniqueSuffix()}`;
+  const itemId = await createListingViaApi(request, sellerToken, title);
+  // Seed the PAID order through the real API (the flow 5 mould): what
+  // this flow proves in the browser is the dispute, the ADMIN resolution
+  // and the buyer-side result.
+  const orderId = await createOrderViaApi(request, buyerToken, itemId);
+  await payOrderViaApi(request, buyerToken, orderId);
+
+  await loginThroughUi(page, buyer);
+
+  // The buyer opens the dispute from My orders with a reason; the row
+  // flips to DISPUTED and shows its frozen note.
+  await page.getByRole('link', { name: 'My orders' }).click();
+  await expect(page).toHaveURL('/orders');
+  await expectOrderRowStatus(page, orderId, 'PAID');
+  const buyerRow = page.locator('li', { hasText: `Order #${orderId}` });
+  await buyerRow.getByRole('button', { name: 'Report a problem' }).click();
+  await buyerRow.getByLabel('What went wrong?').fill('The textbook arrived with a torn cover.');
+  await buyerRow.getByRole('button', { name: 'Open dispute' }).click();
+  await expect(buyerRow).toContainText('Dispute open — this order is frozen');
+  await expectOrderRowStatus(page, orderId, 'DISPUTED');
+
+  // The seeded ADMIN resolves the dispute with a refund from the admin
+  // queue; the row records the refund resolution.
+  await logoutThroughUi(page);
+  await loginThroughUi(page, ADMIN_ACCOUNT);
+  await page.getByRole('link', { name: 'Admin disputes' }).click();
+  await expect(page).toHaveURL('/admin/disputes');
+  await expect(page.getByRole('heading', { name: 'Admin disputes' })).toBeVisible();
+  const disputeRow = page.locator('tr', { hasText: `Order #${orderId}` });
+  await expect(disputeRow).toContainText('OPEN');
+  await disputeRow.getByRole('button', { name: 'Resolve with refund' }).click();
+  await expect(disputeRow).toContainText('RESOLVED_REFUND');
+
+  // The buyer, in their own session, sees the terminal REFUNDED state.
+  await logoutThroughUi(page);
+  await loginThroughUi(page, buyer);
+  await page.getByRole('link', { name: 'My orders' }).click();
+  await expect(page).toHaveURL('/orders');
+  await expectOrderRowStatus(page, orderId, 'REFUNDED');
 });

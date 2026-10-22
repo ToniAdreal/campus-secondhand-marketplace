@@ -18,6 +18,14 @@ import { defineConfig, devices } from '@playwright/test';
  *   could ever read a verification link; the suite does not pretend a
  *   mailbox exists. With the gate off, registration returns a session —
  *   exactly the path the first flow exercises.
+ * - The dispute flow (#213) needs an ADMIN, and registration only ever
+ *   mints USER accounts. The backend therefore also runs with its opt-in
+ *   first-admin bootstrap (APP_BOOTSTRAP_ADMIN_*, backlog #213) pointing
+ *   at a throwaway account that exists only in this stack's in-memory
+ *   H2: BootstrapAdminInitializer creates it at boot from exactly these
+ *   env values, the spec signs in with the same credentials, and nothing
+ *   about the mechanism is e2e-specific — it is the supported way to seed
+ *   a real deployment's first admin too.
  * - Browsers are downloaded in CI only (`npx playwright install`). This
  *   repo's local sandbox has no Docker and no browsers, so locally the
  *   config + test list are checked (`npx playwright test --list`) and the
@@ -25,14 +33,17 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly five flows (register, browse→detail, login→create→my-listings,
+ * - Exactly seven flows (register, browse→detail, login→create→my-listings,
  *   plus the money path from backlog #194: buy→pay→handover code→PAID, and
- *   seller completes with the code→buyer sees COMPLETED).
+ *   seller completes with the code→buyer sees COMPLETED; plus the two
+ *   money paths from backlog #213: offer→counter→counter-accept→order at
+ *   the counter price→pay, and pay→dispute→admin resolves refund→buyer
+ *   sees REFUNDED).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
- *   retried into green, and the five flows share one backend (one H2
+ *   retried into green, and the seven flows share one backend (one H2
  *   database, per-IP auth rate-limit buckets), so they run serially. The
- *   credential-bucket arithmetic for five flows is re-derived in the
+ *   credential-bucket arithmetic for seven flows is re-derived in the
  *   header of e2e/smoke.e2e.ts (worst run between login resets: 3 of 5).
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
@@ -73,6 +84,12 @@ export default defineConfig({
       env: {
         // Verification stubbed off for the e2e stack only — see header.
         APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false',
+        // First-admin bootstrap for the dispute flow — see header. These
+        // must match ADMIN_ACCOUNT in e2e/smoke.e2e.ts; the account lives
+        // only in this stack's in-memory H2 database.
+        APP_BOOTSTRAP_ADMIN_USERNAME: 'e2eadmin',
+        APP_BOOTSTRAP_ADMIN_EMAIL: 'e2eadmin@example.com',
+        APP_BOOTSTRAP_ADMIN_PASSWORD: 'E2eSmoke1234',
       },
     },
     {

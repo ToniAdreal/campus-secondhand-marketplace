@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Configuration;
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
     DataExportGrantProperties.class, SessionLimitProperties.class,
     BreachedPasswordProperties.class, TrustedDeviceProperties.class,
-    CspReportProperties.class})
+    CspReportProperties.class, BootstrapAdminProperties.class})
 public class AuthConfig {
 
   /**

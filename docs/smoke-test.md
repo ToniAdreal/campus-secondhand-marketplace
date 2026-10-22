@@ -134,20 +134,29 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly five flows: (1) register lands on browse signed in;
+- Exactly seven flows: (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
   the order as PAID in My orders (backlog #194); (5) the seller
   completes the order with the buyer's handover code → the buyer sees
-  COMPLETED. Flow 5 seeds its PAID order through the real API (the pay
-  response is where the code is disclosed); the completion itself is
-  driven in the browser. Selectors are role/label based.
+  COMPLETED; (6) offer → seller counters → buyer counter-accepts → the
+  order is pinned via the API at the counter price → it pays (backlog
+  #213); (7) pay → buyer disputes → the ADMIN resolves with a refund →
+  the buyer sees REFUNDED (backlog #213). Flows 5 and 7 seed their PAID
+  orders through the real API (the pay response is where the code is
+  disclosed); the completions/resolutions themselves are driven in the
+  browser. Selectors are role/label based.
 - The backend starts with the email-verification gate stubbed off via
   its documented env knob (`APP_AUTH_EMAIL_VERIFICATION_ENABLED=false`):
   the default mail sender is log-only with the token redacted, so no
   test could read a verification link — the suite does not pretend a
   mailbox exists. With the gate off, registration returns a session.
+  Flow 7's ADMIN is seeded through the backend's opt-in first-admin
+  bootstrap (`APP_BOOTSTRAP_ADMIN_*`, backlog #213): registration only
+  mints USER accounts, and the bootstrap is the supported way to create
+  a deployment's first admin — the e2e stack points it at a throwaway
+  account that lives only in the job's in-memory H2.
 - `retries: 0`, `workers: 1` (the flows share one backend and its
   per-IP auth rate-limit buckets). A flaky flow is fixed or deleted,
   never retried into green; traces/screenshots are kept on failure and

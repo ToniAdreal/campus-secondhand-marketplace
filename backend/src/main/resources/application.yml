@@ -66,6 +66,19 @@ spring:
       hibernate.format_sql: true
 
 app:
+  bootstrap:
+    # First-ADMIN seed (BootstrapAdminInitializer, backlog #213). Registration
+    # only ever mints USER accounts, so without this a fresh deployment's
+    # first ADMIN required updating app_user.roles by hand in the database.
+    # All three values default to EMPTY = no seeding (strict no-op). Set all
+    # three via the environment to create (or promote) the account at boot:
+    # the password is BCrypt-hashed before storage, must be ≥ 12 characters,
+    # and is applied ONLY at creation — a restart promotes an existing
+    # account to ADMIN but never resets its password. A partial set fails
+    # the boot fast. Remove the variables once the admin can sign in.
+    admin-username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
+    admin-email: ${APP_BOOTSTRAP_ADMIN_EMAIL:}
+    admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
   cors:
     # Explicit CORS allowlist (SecurityConfig, backlog #63). Before #63 there
     # was no CORS configuration at all. Defaults: Vite dev (5173) + the
