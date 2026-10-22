@@ -13,10 +13,12 @@ import {
   describeAdminUserError,
   describeAuditLogError,
   describeSettlementError,
+  describePaymentAttemptsError,
   describeWebhookEventsError,
   formatCents,
   isForbidden,
   useAdminAuditLog,
+  useAdminPaymentAttempts,
   useAdminPaymentSettlement,
   useAdminWebhookEvents,
   useAdminUsers,
@@ -25,6 +27,7 @@ import {
   useResetAdminUserTotp,
   type AdminUser,
   type AuditLogEntry,
+  type PaymentAttemptEntry,
   type SettlementSummary,
   type WebhookEventEntry,
 } from './admin';
@@ -545,6 +548,85 @@ describe('useAdminWebhookEvents', () => {
 
     expect(result.current.fetchStatus).toBe('idle');
     expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+const attemptPageFixture: Page<PaymentAttemptEntry> = {
+  content: [
+    {
+      id: 7,
+      orderId: 42,
+      outcome: 'DECLINED',
+      idempotencyKey: 'cap_attempt42',
+      createdAt: '2026-01-12T00:00:00Z',
+    },
+  ],
+  totalElements: 1,
+  totalPages: 1,
+  number: 0,
+};
+
+describe('useAdminPaymentAttempts', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('attempt keys hang off the payments subtree', () => {
+    expect(adminPaymentKeys.attempts(0, 'DECLINED')).toEqual([
+      'admin',
+      'payments',
+      'attempts',
+      0,
+      'DECLINED',
+    ]);
+  });
+
+  it('GETs /admin/payments/attempts paginated and unwraps the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope(attemptPageFixture));
+
+    const { result } = renderHook(() => useAdminPaymentAttempts(0, 'DECLINED'), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/attempts', {
+      params: { page: 0, size: 20, outcome: 'DECLINED' },
+    });
+    expect(result.current.data).toEqual(attemptPageFixture);
+  });
+
+  it('omits the outcome filter when unset', async () => {
+    getSpy.mockResolvedValueOnce(envelope(attemptPageFixture));
+
+    const { result } = renderHook(() => useAdminPaymentAttempts(0, ''), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/attempts', {
+      params: { page: 0, size: 20 },
+    });
+  });
+
+  it('stays idle when disabled (anonymous / non-admin page guard)', async () => {
+    const { result } = renderHook(() => useAdminPaymentAttempts(0, 'DECLINED', false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describePaymentAttemptsError', () => {
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view payment attempts.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view payment attempts.'],
+    ['invalid filter', envelopeError(400, 'unknown outcome'), 'That filter is not valid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describePaymentAttemptsError(error)).toBe(expected);
   });
 });
 

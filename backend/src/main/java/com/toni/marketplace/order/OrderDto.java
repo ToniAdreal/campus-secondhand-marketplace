@@ -25,6 +25,14 @@ import java.time.Instant;
  * {@code amountCents} while the order is PAID-but-partially-refunded,
  * and exactly {@code amountCents} once the order is REFUNDED — the
  * field the order views render their "partially refunded" badge from.
+ *
+ * <p>{@code lastPaymentFailure} (backlog #211) is a generic buyer-facing
+ * note populated ONLY on the buyer read paths ({@code OrderService}
+ * enriches the single-order read and the buyer list) for a still-PENDING
+ * order whose latest recorded payment attempt was DECLINED. The wording
+ * is fixed and leaks no PSP internals — no decline reason, no token, no
+ * idempotency key — and the component-level {@code NON_NULL} include
+ * drops the key entirely everywhere else (seller/admin DTOs included).
  */
 public record OrderDto(
     Long id,
@@ -36,7 +44,22 @@ public record OrderDto(
     String captureId,
     String refundId,
     long refundedAmountCents,
-    @JsonInclude(JsonInclude.Include.NON_NULL) String handoverCode) {
+    @JsonInclude(JsonInclude.Include.NON_NULL) String handoverCode,
+    @JsonInclude(JsonInclude.Include.NON_NULL) String lastPaymentFailure) {
+
+  /** Pre-#211 shape: no payment-failure note. Keeps existing call sites compiling. */
+  public OrderDto(Long id, Long itemId, Long buyerId, OrderStatus status,
+                  Long amountCents, Instant createdAt, String captureId,
+                  String refundId, long refundedAmountCents, String handoverCode) {
+    this(id, itemId, buyerId, status, amountCents, createdAt, captureId,
+        refundId, refundedAmountCents, handoverCode, null);
+  }
+
+  /** Copy carrying a buyer-facing payment-failure note (backlog #211). */
+  public OrderDto withLastPaymentFailure(String note) {
+    return new OrderDto(id, itemId, buyerId, status, amountCents, createdAt,
+        captureId, refundId, refundedAmountCents, handoverCode, note);
+  }
 
   public static OrderDto from(Order order) {
     return from(order, null);
@@ -54,6 +77,7 @@ public record OrderDto(
         order.getCaptureId(),
         order.getRefundId(),
         order.getRefundedAmountCents(),
-        handoverCode);
+        handoverCode,
+        null);
   }
 }

@@ -305,6 +305,8 @@ export const adminPaymentKeys = {
     [...adminPaymentKeys.all, 'settlement', window.from ?? null, window.to ?? null] as const,
   webhooks: (page: number, outcome: string) =>
     [...adminPaymentKeys.all, 'webhooks', page, outcome] as const,
+  attempts: (page: number, outcome: string) =>
+    [...adminPaymentKeys.all, 'attempts', page, outcome] as const,
 };
 
 /** Allowlisted webhook outcomes (backend WebhookEvent.Outcome). */
@@ -362,6 +364,67 @@ export function describeWebhookEventsError(error: unknown): string {
   }
   if (code === 401) {
     return 'Please log in again to view webhook events.';
+  }
+  if (code === 400) {
+    return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/** Allowlisted payment-attempt outcomes (backend PaymentAttempt.Outcome). */
+export const PAYMENT_ATTEMPT_OUTCOMES = ['SUCCEEDED', 'DECLINED'] as const;
+
+/**
+ * One row of the ADMIN payment-attempt viewer, mirroring the backend's
+ * PaymentAttemptDto (GET /api/admin/payments/attempts, backlog #211).
+ * The ledger records the order, the outcome and the order-scoped PSP
+ * idempotency key the attempt ran under — the buyer's payment token is
+ * never stored by the backend, so none exists here either.
+ */
+export interface PaymentAttemptEntry {
+  id: number;
+  orderId: number;
+  outcome: string;
+  idempotencyKey: string | null;
+  createdAt: string;
+}
+
+/**
+ * GET /api/admin/payments/attempts — ADMIN-only (the backend's
+ * @PreAuthorize is the real gate). Paginated, newest first; the
+ * outcome filter is omitted entirely when unset, so the unfiltered
+ * request stays a plain paginated list. Callers must only pass
+ * allowlisted outcome values — anything else is a backend 400.
+ */
+export function useAdminPaymentAttempts(
+  page = 0,
+  outcome = '',
+  enabled = true,
+  size = 20,
+) {
+  return useQuery({
+    queryKey: adminPaymentKeys.attempts(page, outcome),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<PaymentAttemptEntry>>>('/admin/payments/attempts', {
+          params: { page, size, ...(outcome ? { outcome } : {}) },
+        })
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed payment-attempts call to user-facing copy. */
+export function describePaymentAttemptsError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view payment attempts.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view payment attempts.';
   }
   if (code === 400) {
     return 'That filter is not valid.';

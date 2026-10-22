@@ -53,6 +53,16 @@ public class OrderService {
   private final Clock clock;
   private final HandoverAttemptService handoverAttempts;
   private final HandoverProperties handoverProperties;
+  private final PaymentAttemptRecorder paymentAttempts;
+
+  /**
+   * Generic buyer-facing note for a declined last payment attempt
+   * (backlog #211): fixed wording, no PSP internals — no decline
+   * reason, no payment token, no idempotency key ever reaches the buyer.
+   */
+  static final String LAST_PAYMENT_FAILURE_NOTE =
+      "Your last payment attempt was declined; no charge was made. "
+          + "You can try a different payment method.";
 
   @Autowired
   public OrderService(OrderRepository orders, ItemRepository items,
@@ -60,7 +70,8 @@ public class OrderService {
                      OrderCreationService creation, OrderMetrics metrics,
                      AuditService audit, NotificationService notifications,
                      Clock clock, HandoverAttemptService handoverAttempts,
-                     HandoverProperties handoverProperties) {
+                     HandoverProperties handoverProperties,
+                     PaymentAttemptRecorder paymentAttempts) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
@@ -72,6 +83,7 @@ public class OrderService {
     this.clock = clock;
     this.handoverAttempts = handoverAttempts;
     this.handoverProperties = handoverProperties;
+    this.paymentAttempts = paymentAttempts;
   }
 
   /** Constructor for direct unit tests that do not assert on notifications. */
@@ -80,7 +92,7 @@ public class OrderService {
                      OrderCreationService creation, OrderMetrics metrics,
                      AuditService audit, Clock clock) {
     this(orders, items, idempotency, payments, creation, metrics, audit,
-        NotificationService.noop(), clock, null, null);
+        NotificationService.noop(), clock, null, null, null);
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -150,6 +162,36 @@ public class OrderService {
       handoverAttempts.recordFailure(orderId, handoverProps().getMaxAttempts(),
           handoverProps().getLockDuration(), clock().instant());
     }
+  }
+
+  /**
+   * Payment-attempt recorder accessor with a skip fallback, mirroring
+   * {@link #recordHandoverFailure}: hand-built unit-test services have
+   * no recorder bean, and their attempt recording / note enrichment is
+   * skipped (the MockMvc suite pins the durable behaviour against the
+   * real bean).
+   */
+  private PaymentAttemptRecorder paymentAttempts() {
+    return paymentAttempts;
+  }
+
+  /**
+   * Buyer-facing payment-failure enrichment (backlog #211): a
+   * still-PENDING order whose latest recorded attempt was DECLINED
+   * carries the generic {@link #LAST_PAYMENT_FAILURE_NOTE}; every other
+   * DTO passes through untouched. Applied ONLY on the buyer read paths
+   * ({@link #getOrderFor} for the buyer themself and {@link #listOrders})
+   * — seller and ADMIN reads share {@link OrderDto#from(Order)} and stay
+   * note-free.
+   */
+  private OrderDto withPaymentFailureNote(OrderDto dto) {
+    if (dto.status() != OrderStatus.PENDING || paymentAttempts() == null) {
+      return dto;
+    }
+    return paymentAttempts().findLatest(dto.id())
+        .filter(a -> a.getOutcome() == PaymentAttempt.Outcome.DECLINED)
+        .map(a -> dto.withLastPaymentFailure(LAST_PAYMENT_FAILURE_NOTE))
+        .orElse(dto);
   }
 
   /** SHA-256 hex of a handover code — the only form ever stored (backlog #179). */
@@ -286,9 +328,11 @@ public class OrderService {
   @Transactional(readOnly = true)
   public Page<OrderDto> listOrders(Long buyerId, OrderStatus status, Pageable pageable) {
     if (status == null) {
-      return orders.findByBuyerId(buyerId, pageable).map(OrderDto::from);
+      return orders.findByBuyerId(buyerId, pageable)
+          .map(OrderDto::from).map(this::withPaymentFailureNote);
     }
-    return orders.findByBuyerIdAndStatus(buyerId, status, pageable).map(OrderDto::from);
+    return orders.findByBuyerIdAndStatus(buyerId, status, pageable)
+        .map(OrderDto::from).map(this::withPaymentFailureNote);
   }
 
   /**
@@ -446,7 +490,10 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "order does not belong to you");
     }
-    return OrderDto.from(order);
+    OrderDto dto = OrderDto.from(order);
+    // Backlog #211: the failure note is buyer-facing — an ADMIN reading
+    // through the bypass gets the plain DTO, like every seller read.
+    return callerIsAdmin ? dto : withPaymentFailureNote(dto);
   }
 
   /**
@@ -703,6 +750,13 @@ public class OrderService {
    *       persisted on the row — a retry with a succeeding token captures
    *       normally. The decline itself is counted on
    *       {@code payments.declined} (#115, see {@link OrderMetrics}).</li>
+   *   <li>Backlog #211: every capture attempt is written to the durable
+   *       payment-attempt ledger ({@link PaymentAttemptRecorder}) — a
+   *       SUCCEEDED row joins this transaction (recorded after the
+   *       flush, so a rolled-back pay leaves none), a DECLINED row is
+   *       recorded through the recorder's REQUIRES_NEW transaction in
+   *       the decline catch so it survives the rollback. The payment
+   *       token itself is never stored, in any column.</li>
    *   <li>Backlog #179: a successful capture also mints the buyer's
    *       6-digit handover code in this transaction — only its SHA-256
    *       hash is stored, and the plaintext is returned in this pay
@@ -748,6 +802,10 @@ public class OrderService {
     // Backlog #153: one orders.pay.duration sample per capture attempt.
     Timer.Sample sample = metrics().startPayTimer();
     boolean timerStopped = false;
+    // Backlog #211: the capture key is declared outside the try so the
+    // decline catch below can record the attempt under the very key the
+    // PSP seam declined — the key is generated before the capture call.
+    String captureKey = null;
     try {
       // Backlog #114: persist the PSP capture reference in the same
       // transaction as the transition, so a paid order always names the
@@ -755,7 +813,7 @@ public class OrderService {
       // before this assignment (and rolls the transaction back), so it
       // stores nothing; an idempotent re-pay returned above, before any
       // fresh capture, so the stored id is never replaced.
-      String captureKey = captureKeyFor(order);
+      captureKey = captureKeyFor(order);
       PaymentService.CaptureResult capture =
           payments.capture(order, captureKey, paymentToken);
       order.setCaptureId(capture.captureId());
@@ -779,6 +837,14 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
+      // Backlog #211: exactly one SUCCEEDED attempt row, written here —
+      // after the flush, inside this transaction (the recorder joins
+      // it), so a pay that still rolls back leaves no success row, and
+      // the idempotent re-pay above returned before any recording. The
+      // payment token is never passed to the recorder.
+      if (paymentAttempts() != null) {
+        paymentAttempts().recordSucceeded(orderId, captureKey);
+      }
       // Backlog #124: the capture id is now durable on the flushed row,
       // so the mock PSP's replay entry for this key has done its job —
       // forget it instead of leaking one map entry per paid order for
@@ -813,6 +879,15 @@ public class OrderService {
       // even though no state transition did. A 409 race loss lands in
       // the catch below and is never counted as a decline.
       metrics().paymentsDeclined();
+      // Backlog #211: the DECLINED attempt row is written through the
+      // recorder's REQUIRES_NEW transaction BEFORE the rethrow, so it
+      // commits on its own and survives this transaction's rollback —
+      // the durable counterpart of the non-transactional counter above.
+      // Only the order id and the PSP idempotency key are recorded; the
+      // payment token is never stored anywhere.
+      if (paymentAttempts() != null) {
+        paymentAttempts().recordDeclined(orderId, captureKey);
+      }
       throw e;
     } catch (ObjectOptimisticLockingFailureException e) {
       if (!timerStopped) {

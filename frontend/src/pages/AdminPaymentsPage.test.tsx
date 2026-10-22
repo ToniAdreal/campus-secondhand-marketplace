@@ -265,6 +265,93 @@ describe('AdminPaymentsPage', () => {
     );
   });
 
+  // Payment-attempt viewer (backlog #211): the section lists ledger
+  // rows from GET /admin/payments/attempts under the webhook viewer,
+  // defaulting to DECLINED attempts.
+  const attemptRowsFixture = [
+    {
+      id: 7,
+      orderId: 42,
+      outcome: 'DECLINED',
+      idempotencyKey: 'cap_attempt42',
+      createdAt: '2026-01-12T00:00:00Z',
+    },
+    {
+      id: 5,
+      orderId: 41,
+      outcome: 'DECLINED',
+      idempotencyKey: 'cap_attempt41',
+      createdAt: '2026-01-11T00:00:00Z',
+    },
+  ];
+
+  function mockAllPayments(attemptData: unknown) {
+    getSpy.mockImplementation(((url: string) =>
+      url === '/admin/payments/webhooks'
+        ? Promise.resolve({
+            data: { code: 0, message: 'ok', data: { content: [], totalElements: 0, totalPages: 0, number: 0 } },
+          })
+        : url === '/admin/payments/attempts'
+          ? Promise.resolve({ data: { code: 0, message: 'ok', data: attemptData } })
+          : Promise.resolve(summaryEnvelope(summaryFixture))) as never);
+  }
+
+  it('renders declined payment attempts by default with order and key', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPayments({
+      content: attemptRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('#42')).toBeTruthy());
+    expect(screen.getByText('#41')).toBeTruthy();
+    expect(screen.getByText('cap_attempt42')).toBeTruthy();
+    // Each DECLINED appears twice: the filter <option> and the row chip.
+    expect(screen.getAllByText('DECLINED')).toHaveLength(3);
+    // The default view asks the backend for DECLINED attempts only.
+    expect(getSpy).toHaveBeenCalledWith('/admin/payments/attempts', {
+      params: { page: 0, size: 20, outcome: 'DECLINED' },
+    });
+  });
+
+  it('attempt outcome filter fires a filtered attempts request', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPayments({
+      content: attemptRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('#42')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Filter by attempt outcome'), {
+      target: { value: 'SUCCEEDED' },
+    });
+
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/admin/payments/attempts', {
+        params: { page: 0, size: 20, outcome: 'SUCCEEDED' },
+      }),
+    );
+  });
+
+  it('renders the attempts empty state when no declined attempts exist', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPayments({ content: [], totalElements: 0, totalPages: 0, number: 0 });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() =>
+      expect(screen.getByText('No payment attempts match this filter.')).toBeTruthy(),
+    );
+  });
+
   it('renders the webhook empty state when the ledger is empty', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     mockSettlementAndWebhooks({ content: [], totalElements: 0, totalPages: 0, number: 0 });

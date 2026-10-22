@@ -36,10 +36,13 @@ class AdminPaymentController {
 
   private final OrderService orderService;
   private final PaymentWebhookService webhooks;
+  private final PaymentAttemptRecorder attempts;
 
-  AdminPaymentController(OrderService orderService, PaymentWebhookService webhooks) {
+  AdminPaymentController(OrderService orderService, PaymentWebhookService webhooks,
+                         PaymentAttemptRecorder attempts) {
     this.orderService = orderService;
     this.webhooks = webhooks;
+    this.attempts = attempts;
   }
 
   /**
@@ -85,6 +88,29 @@ class AdminPaymentController {
       @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
       Pageable pageable) {
     return ApiResponse.ok(webhooks.listWebhookEvents(outcome, pageable));
+  }
+
+  /**
+   * Payment-attempt viewer (backlog #211): the read side of the
+   * {@code payment_attempt} ledger. Until now a declined capture existed
+   * only as a JVM-local Micrometer counter, so an operator could not
+   * answer "which orders keep failing to pay?" from data. Rows are
+   * paginated newest first, optionally filtered by exact
+   * {@code outcome} (bound to the enum, so anything else is a 400,
+   * never a query fragment). Rows are {@link PaymentAttemptDto}
+   * projections — see that record for what is and is not exposed (the
+   * payment token is never stored in the ledger, so none can leak).
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "unknown outcome filter (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)")})
+  @GetMapping("/attempts")
+  public ApiResponse<Page<PaymentAttemptDto>> paymentAttempts(
+      @RequestParam(name = "outcome", required = false) PaymentAttempt.Outcome outcome,
+      @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
+      Pageable pageable) {
+    return ApiResponse.ok(attempts.listAttempts(outcome, pageable));
   }
 
   /**

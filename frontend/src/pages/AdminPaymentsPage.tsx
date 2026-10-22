@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
+  PAYMENT_ATTEMPT_OUTCOMES,
   WEBHOOK_OUTCOMES,
+  describePaymentAttemptsError,
   describeSettlementError,
   describeWebhookEventsError,
   formatCents,
   isForbidden,
+  useAdminPaymentAttempts,
   useAdminPaymentSettlement,
   useAdminWebhookEvents,
+  type PaymentAttemptEntry,
   type SettlementSummary,
   type WebhookEventEntry,
 } from '../api/admin';
@@ -39,6 +43,14 @@ import { useAuthStore } from '../store/useAuthStore';
  * received-at time. The ledger stores no raw body or signature, so the
  * section can show neither — the PSP reference is the join key against
  * the orders table.
+ *
+ * The payment-attempts section (backlog #211) lists the
+ * payment_attempt ledger the same way, defaulting to DECLINED attempts
+ * — the rows an operator actually chases ("which orders keep failing
+ * to pay?"). Each row shows the order, the outcome as a chip, the
+ * order-scoped PSP idempotency key the attempt ran under and the
+ * attempt time. The buyer's payment token is never stored in the
+ * ledger, so the section can show none.
  */
 export default function AdminPaymentsPage() {
   const user = useAuthStore((s) => s.user);
@@ -71,6 +83,13 @@ export default function AdminPaymentsPage() {
   const [webhookOutcome, setWebhookOutcome] = useState('');
   const webhooks = useAdminWebhookEvents(webhookPage, webhookOutcome, isAdmin);
 
+  // Payment-attempt viewer (backlog #211): paginated newest first,
+  // defaulting to DECLINED attempts; a new outcome filter restarts
+  // from the first page, mirroring the webhook viewer above.
+  const [attemptPage, setAttemptPage] = useState(0);
+  const [attemptOutcome, setAttemptOutcome] = useState('DECLINED');
+  const attempts = useAdminPaymentAttempts(attemptPage, attemptOutcome, isAdmin);
+
   if (!isAdmin) {
     return <Navigate to="/" replace />;
   }
@@ -99,6 +118,9 @@ export default function AdminPaymentsPage() {
 
   const webhookRows: WebhookEventEntry[] = webhooks.data?.content ?? [];
   const webhookTotalPages = webhooks.data?.totalPages ?? 0;
+
+  const attemptRows: PaymentAttemptEntry[] = attempts.data?.content ?? [];
+  const attemptTotalPages = attempts.data?.totalPages ?? 0;
 
   const statusCounts: Array<{ label: string; count: number | undefined }> = [
     { label: 'Total orders', count: data?.totalOrders },
@@ -287,6 +309,108 @@ export default function AdminPaymentsPage() {
                 type="button"
                 onClick={() => setWebhookPage((p) => p + 1)}
                 disabled={webhookPage + 1 >= webhookTotalPages || webhooks.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+      <section aria-label="Payment attempts" className="mt-6">
+        <h2 className="mb-3 text-lg font-semibold">Payment attempts</h2>
+        <p className="mb-4 text-sm text-neutral-600">
+          Capture attempts recorded in the payment-attempt ledger, newest first —
+          declined attempts by default, so the orders whose buyers keep failing to
+          pay are visible at a glance. The idempotency key is the order-scoped key
+          the attempt ran under; the buyer&apos;s payment token is not stored, so
+          it is not shown here.
+        </p>
+        <div className="mb-4">
+          <label htmlFor="attempt-outcome" className="sr-only">
+            Filter by attempt outcome
+          </label>
+          <select
+            id="attempt-outcome"
+            aria-label="Filter by attempt outcome"
+            value={attemptOutcome}
+            onChange={(e) => {
+              setAttemptOutcome(e.target.value);
+              setAttemptPage(0);
+            }}
+            className="rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm focus:border-sky-500 focus:outline-none"
+          >
+            <option value="">All outcomes</option>
+            {PAYMENT_ATTEMPT_OUTCOMES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </div>
+        {attempts.isLoading && <p>Loading payment attempts…</p>}
+        {attempts.isError && (
+          <p className="text-red-600">{describePaymentAttemptsError(attempts.error)}</p>
+        )}
+        {attempts.isSuccess && attemptRows.length === 0 && (
+          <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+            <p className="text-neutral-600">
+              {attemptOutcome !== ''
+                ? 'No payment attempts match this filter.'
+                : 'No payment attempts yet.'}
+            </p>
+          </div>
+        )}
+        {attemptRows.length > 0 && (
+          <>
+            <div className="overflow-x-auto rounded-lg bg-white shadow-sm">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-neutral-500">
+                    <th scope="col" className="px-4 py-3 font-medium">Order</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Outcome</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Idempotency key</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Attempted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attemptRows.map((row) => (
+                    <tr key={row.id} className="border-b border-neutral-100 last:border-0">
+                      <td className="px-4 py-3 font-medium">#{row.orderId}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            row.outcome === 'SUCCEEDED'
+                              ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800'
+                              : 'rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800'
+                          }
+                        >
+                          {row.outcome}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{row.idempotencyKey ?? '—'}</td>
+                      <td className="px-4 py-3">{new Date(row.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setAttemptPage((p) => Math.max(0, p - 1))}
+                disabled={attemptPage <= 0 || attempts.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-neutral-600">
+                Page {attemptTotalPages === 0 ? 0 : attemptPage + 1} of {attemptTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setAttemptPage((p) => p + 1)}
+                disabled={attemptPage + 1 >= attemptTotalPages || attempts.isFetching}
                 className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
               >
                 Next

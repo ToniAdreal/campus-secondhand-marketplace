@@ -66,6 +66,7 @@ class OpenApiContractTest {
       "/api/admin/reports",
       "/api/admin/reports/{id}/action",
       "/api/admin/reports/{id}/dismiss",
+      "/api/admin/payments/attempts",
       "/api/admin/payments/settlement",
       "/api/admin/payments/webhooks",
       "/api/admin/payments/webhooks/{id}/replay",

@@ -31,6 +31,12 @@ export interface Order {
   // omits the field entirely). Optional + nullable here so read-shaped
   // fixtures keep type-checking; never expect it on a fetched order.
   handoverCode?: string | null;
+  // Generic last-payment-failure note (backend backlog #211): present
+  // ONLY on buyer reads of a still-PENDING order whose latest payment
+  // attempt was declined. Fixed generic wording from the backend — no
+  // PSP internals, no token, no idempotency key. Absent everywhere else
+  // (seller/admin reads omit the field entirely).
+  lastPaymentFailure?: string | null;
 }
 
 /**
