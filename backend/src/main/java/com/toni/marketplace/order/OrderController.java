@@ -187,16 +187,22 @@ public class OrderController {
    * see the service javadoc); anything but PAID → 422, and a re-refund of
    * an already-REFUNDED order is idempotent. The listing flips
    * RESERVED → AVAILABLE in the same transaction, and a {@code @Version}
-   * conflict surfaces as 409.
+   * conflict surfaces as 409. Partial refunds (backlog #210): the
+   * optional body may carry {@code amountCents} — the order then stays
+   * PAID with a cumulative {@code refundedAmountCents} until the
+   * refunded total reaches the order amount; an absent amount refunds
+   * everything still refundable.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
   @PostMapping("/{id}/refund")
-  public ApiResponse<OrderDto> refund(@PathVariable Long id) {
+  public ApiResponse<OrderDto> refund(
+      @PathVariable Long id, @RequestBody(required = false) RefundOrderRequest request) {
     Authentication authentication =
         SecurityContextHolder.getContext().getAuthentication();
     Long callerId = (Long) authentication.getPrincipal();
     boolean admin = authentication.getAuthorities().stream()
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
-    return ApiResponse.ok(orderService.refund(callerId, admin, id));
+    return ApiResponse.ok(orderService.refund(callerId, admin, id,
+        request == null ? null : request.amountCents()));
   }
 }

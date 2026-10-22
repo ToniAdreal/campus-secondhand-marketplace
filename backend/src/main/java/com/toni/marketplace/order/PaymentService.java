@@ -148,12 +148,30 @@ public class PaymentService {
    * without issuing a second logical refund.
    */
   public RefundResult refund(Order order, String idempotencyKey) {
+    return refund(order, idempotencyKey, order.getAmountCents());
+  }
+
+  /**
+   * Refunds {@code amountCents} of a captured order (backlog #210) — the
+   * partial-refund seam. The two-arg {@link #refund(Order, String)} is a
+   * full refund of the order amount. The amount is validated here as a
+   * last line of defence (positive, never more than the order amount);
+   * {@code OrderService} validates against the remaining refundable
+   * balance before calling, so reaching this check means a caller bug.
+   * Repeating a call with the same key replays the original result —
+   * including its amount — without issuing a second logical refund.
+   */
+  public RefundResult refund(Order order, String idempotencyKey, long amountCents) {
     requireKey(idempotencyKey);
+    if (amountCents <= 0 || amountCents > order.getAmountCents()) {
+      throw new IllegalArgumentException(
+          "refund amount must be positive and no more than the order amount");
+    }
     return refundsByKey.computeIfAbsent(idempotencyKey, key -> {
       refundsIssued.incrementAndGet();
       return new RefundResult(
           "rfd_mock_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16),
-          order.getAmountCents());
+          amountCents);
     });
   }
 

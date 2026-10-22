@@ -15,7 +15,6 @@ import com.toni.marketplace.order.OrderStatus;
 import com.toni.marketplace.order.PaymentService;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -271,8 +270,15 @@ public class DisputeService {
       // call replays — never duplicates — if a crash retried it, and
       // the idempotent re-resolve above returns before reaching here.
       String refundKey = refundKeyFor(order);
-      PaymentService.RefundResult refund = payments.refund(order, refundKey);
+      // Backlog #210: a dispute refund settles whatever is still
+      // refundable — if the seller already made a partial refund while
+      // the order was PAID, the dispute refunds only the remainder, and
+      // the cumulative total lands exactly on the order amount.
+      long remaining = order.getAmountCents() - order.getRefundedAmountCents();
+      PaymentService.RefundResult refund = payments.refund(order, refundKey, remaining);
       order.setRefundId(refund.refundId());
+      order.setRefundedAmountCents(order.getAmountCents());
+      order.setRefundCount(order.getRefundCount() + 1);
       order.setStatus(OrderStatus.REFUNDED);
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
@@ -353,11 +359,13 @@ public class DisputeService {
    * for the same order can never use different keys.
    */
   private String refundKeyFor(Order order) {
-    if (order.getRefundIdempotencyKey() == null) {
-      order.setRefundIdempotencyKey(
-          "rfd_" + UUID.randomUUID().toString().replace("-", ""));
-    }
-    return order.getRefundIdempotencyKey();
+    // Backlog #210: the same sequence-derived key as OrderService — the
+    // next refund sequence for this order, so a dispute refund can never
+    // replay (or collide with) a seller refund's key, and a crash-retry
+    // before the commit re-derives the same key.
+    String key = "rfd_" + order.getId() + "_" + (order.getRefundCount() + 1);
+    order.setRefundIdempotencyKey(key);
+    return key;
   }
 
   private OrderDispute requireDispute(Long disputeId) {

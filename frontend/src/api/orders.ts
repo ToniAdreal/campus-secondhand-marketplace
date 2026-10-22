@@ -19,6 +19,12 @@ export interface Order {
   // exposed by the backend and are not part of this shape.
   captureId: string | null;
   refundId: string | null;
+  // Cumulative refunded amount in cents (backend backlog #210): 0 until
+  // the first refund, between 0 and amountCents while the order is
+  // PAID-but-partially-refunded, exactly amountCents once REFUNDED.
+  // Optional here so pre-#210-shaped fixtures keep type-checking; the
+  // backend always sends it.
+  refundedAmountCents?: number;
   // Handover code (backend backlog #179): the buyer's 6-digit code is
   // present ONLY in the pay and regenerate responses (its one plaintext
   // disclosure — the backend stores just the hash, and every read DTO
@@ -504,6 +510,12 @@ export function describeRefundError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 422 || /refund is not allowed|not in PAID/i.test(message)) {
+    if (/exceeds the remaining/i.test(message)) {
+      return 'That amount is more than what is left to refund on this order.';
+    }
+    if (/must be positive/i.test(message)) {
+      return 'Enter a refund amount greater than zero.';
+    }
     if (/REFUNDED/i.test(message)) {
       return 'This order was already refunded.';
     }
@@ -535,11 +547,25 @@ export function describeRefundError(error: unknown): string {
  * `orderKeys.all`). The buyer cannot self-refund — that is a deliberate
  * backend design decision, so this hook only belongs on seller surfaces.
  */
+export type RefundInput = number | { orderId: number; amountCents?: number };
+
 export function useRefundOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (orderId: number) =>
-      api.post<ApiResponse<Order>>(`/orders/${orderId}/refund`, {}).then((res) => res.data.data),
+    mutationFn: (input: RefundInput) => {
+      // A bare order id (or an input without amountCents) posts the
+      // pre-#210 empty body — the backend reads an absent amount as
+      // "refund everything still refundable". A partial refund posts
+      // {amountCents} (backlog #210).
+      const orderId = typeof input === 'number' ? input : input.orderId;
+      const amountCents = typeof input === 'number' ? undefined : input.amountCents;
+      return api
+        .post<ApiResponse<Order>>(
+          `/orders/${orderId}/refund`,
+          amountCents == null ? {} : { amountCents },
+        )
+        .then((res) => res.data.data);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: itemKeys.all });

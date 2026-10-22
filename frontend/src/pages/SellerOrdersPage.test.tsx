@@ -199,13 +199,15 @@ describe('SellerOrdersPage', () => {
         data: { code: 0, message: 'ok', data: refundedOrder },
       });
     }) as never);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     expect(screen.queryByText(/Refund reference/)).toBeNull();
 
+    // Backlog #210: the refund dialog opens first (amount prefilled with
+    // the full remaining amount), and confirming untouched posts the
+    // pre-#210 empty body — a full refund.
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
 
     // the mutation result carries the refund id; the invalidated list
     // refetch renders both references on the REFUNDED row
@@ -214,7 +216,6 @@ describe('SellerOrdersPage', () => {
     );
     expect(screen.getByText('Payment reference (demo): cap_mock_cccccccccccccccc')).toBeTruthy();
     expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {});
-    confirmSpy.mockRestore();
   });
 
   it('Complete fires POST /orders/{id}/complete with the typed handover code and refetches the seller list', async () => {
@@ -236,35 +237,70 @@ describe('SellerOrdersPage', () => {
     await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(1));
   });
 
-  it('Refund asks for confirmation first, then fires POST /orders/{id}/refund', async () => {
+  it('Refund opens its dialog first, then fires POST /orders/{id}/refund on confirm', async () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
     postSpy.mockResolvedValue({
       data: { code: 0, message: 'ok', data: { ...order2, status: 'REFUNDED' } },
     } as never);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
 
-    expect(confirmSpy).toHaveBeenCalled();
+    // The dialog is the confirmation: its amount field defaults to the
+    // full remaining amount (¥45.00) and nothing has been posted yet.
+    const amountInput = screen.getByLabelText('Refund amount (¥)') as HTMLInputElement;
+    expect(amountInput.value).toBe('45.00');
+    expect(postSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
     await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {}));
-    confirmSpy.mockRestore();
   });
 
-  it('declining the refund confirmation fires no request', async () => {
+  it('cancelling the refund dialog fires no request', async () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(confirmSpy).toHaveBeenCalled();
     expect(postSpy).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('button', { name: 'Confirm refund' })).toBeNull();
+  });
+
+  it('a partial refund amount posts {amountCents} and the row shows the partially-refunded note (backlog #210)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const partiallyRefunded: Order = { ...order2, refundedAmountCents: 2000 };
+    let refunded = false;
+    getSpy.mockImplementation(((path: string) => {
+      if (path === '/seller/orders') {
+        return Promise.resolve(pageEnvelope([refunded ? partiallyRefunded : order2], 0, 1));
+      }
+      return Promise.resolve(pageEnvelope([], 0, 1));
+    }) as never);
+    postSpy.mockImplementation((() => {
+      refunded = true;
+      return Promise.resolve({
+        data: { code: 0, message: 'ok', data: partiallyRefunded },
+      });
+    }) as never);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.change(screen.getByLabelText('Refund amount (¥)'), { target: { value: '20.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', { amountCents: 2000 }),
+    );
+    // The refetched PAID row renders the cumulative partial note.
+    await waitFor(() =>
+      expect(screen.getByText('Partially refunded: ¥20.00 of ¥45.00')).toBeTruthy(),
+    );
   });
 
   it('a logged-in buyer (no listings of their own) sees no orders and no action buttons', async () => {
@@ -316,17 +352,16 @@ describe('SellerOrdersPage', () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
     postSpy.mockRejectedValue(axiosFailure(422, 'order is COMPLETED, refund is not allowed'));
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toBe(
       'This order was already completed — it can no longer be refunded.',
     );
-    confirmSpy.mockRestore();
   });
 
   const summaryFixture: SellerSalesSummary = {

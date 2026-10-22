@@ -12,6 +12,7 @@ import {
 } from '../api/orders';
 import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
+import PartialRefundNote from '../components/PartialRefundNote';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -75,6 +76,19 @@ export default function SellerOrdersPage() {
   // Per-row handover codes (#179), keyed by order id — each row's code
   // belongs to that row's buyer, so the inputs are independent.
   const [handoverCodes, setHandoverCodes] = useState<Record<number, string>>({});
+  // Partial-refund dialog (backlog #210): which row's dialog is open, and
+  // its amount field in yuan (prefilled with the remaining refundable
+  // amount, so confirming untouched is exactly the old full refund).
+  const [refundDialogOrderId, setRefundDialogOrderId] = useState<number | null>(null);
+  const [refundAmountYuan, setRefundAmountYuan] = useState<string>('');
+
+  const refundPendingFor = (orderId: number): boolean => {
+    const variables = refundOrder.variables;
+    return (
+      variables === orderId ||
+      (typeof variables === 'object' && variables !== null && variables.orderId === orderId)
+    );
+  };
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -96,20 +110,37 @@ export default function SellerOrdersPage() {
     );
   };
 
-  const handleRefund = (orderId: number) => {
+  const openRefundDialog = (order: (typeof stitched)[number]) => {
     setActionError(null);
-    // Refunding hands the (mock) money back and re-lists the item — ask
-    // first, mirroring the buyer cancel flow's confirm dialog.
-    if (
-      !window.confirm(
-        'Refund this order? The buyer gets the (demo) payment back and the listing becomes available again.',
-      )
-    ) {
+    const remainingCents = order.amountCents - (order.refundedAmountCents ?? 0);
+    setRefundAmountYuan((remainingCents / 100).toFixed(2));
+    setRefundDialogOrderId(order.id);
+  };
+
+  const handleRefund = (order: (typeof stitched)[number]) => {
+    setActionError(null);
+    // Refunding hands the (mock) money back — ask first, in the refund
+    // dialog (backlog #210): the amount field defaults to everything
+    // still refundable, so the untouched confirmation is the old full
+    // refund (empty body); a smaller amount posts {amountCents} and the
+    // order stays PAID until the refunded total reaches its amount.
+    const remainingCents = order.amountCents - (order.refundedAmountCents ?? 0);
+    const cents = Math.round(Number(refundAmountYuan) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setActionError('Enter a refund amount greater than zero.');
       return;
     }
-    refundOrder.mutate(orderId, {
-      onError: (error) => setActionError(describeRefundError(error)),
-    });
+    if (cents > remainingCents) {
+      setActionError('That amount is more than what is left to refund on this order.');
+      return;
+    }
+    const onError = (error: unknown) => setActionError(describeRefundError(error));
+    const onSuccess = () => setRefundDialogOrderId(null);
+    if (cents === remainingCents) {
+      refundOrder.mutate(order.id, { onError, onSuccess });
+    } else {
+      refundOrder.mutate({ orderId: order.id, amountCents: cents }, { onError, onSuccess });
+    }
   };
 
   const summary = summaryQuery.data;
@@ -174,6 +205,7 @@ export default function SellerOrdersPage() {
                   <span>¥{(order.amountCents / 100).toFixed(2)}</span>
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
+                <PartialRefundNote order={order} />
                 <OrderPspReferences order={order} />
                 {order.status === 'DISPUTED' && <OrderDisputeEvidence orderId={order.id} />}
                 {order.status === 'PAID' && (
@@ -201,7 +233,7 @@ export default function SellerOrdersPage() {
                       onClick={() => handleComplete(order.id)}
                       disabled={
                         (completeOrder.isLoading && completeOrder.variables?.orderId === order.id) ||
-                        (refundOrder.isLoading && refundOrder.variables === order.id)
+                        (refundOrder.isLoading && refundPendingFor(order.id))
                       }
                       className="rounded bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                     >
@@ -211,16 +243,51 @@ export default function SellerOrdersPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRefund(order.id)}
+                      onClick={() => openRefundDialog(order)}
                       disabled={
                         (completeOrder.isLoading && completeOrder.variables?.orderId === order.id) ||
-                        (refundOrder.isLoading && refundOrder.variables === order.id)
+                        (refundOrder.isLoading && refundPendingFor(order.id))
                       }
                       className="rounded border border-red-600 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                     >
-                      {refundOrder.isLoading && refundOrder.variables === order.id
+                      {refundOrder.isLoading && refundPendingFor(order.id)
                         ? 'Refunding…'
                         : 'Refund order'}
+                    </button>
+                  </div>
+                )}
+                {order.status === 'PAID' && refundDialogOrderId === order.id && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-red-200 bg-red-50 p-3">
+                    <label className="flex items-center gap-2 text-sm text-neutral-700">
+                      Refund amount (¥)
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="Refund amount (¥)"
+                        value={refundAmountYuan}
+                        onChange={(event) => setRefundAmountYuan(event.target.value)}
+                        className="w-28 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                      />
+                    </label>
+                    <span className="text-sm text-neutral-500">
+                      of ¥{((order.amountCents - (order.refundedAmountCents ?? 0)) / 100).toFixed(2)}{' '}
+                      still refundable — a partial refund keeps the order paid; refunding the rest
+                      re-lists the item.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRefund(order)}
+                      disabled={refundOrder.isLoading && refundPendingFor(order.id)}
+                      className="rounded bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Confirm refund
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRefundDialogOrderId(null)}
+                      className="rounded border border-neutral-300 px-4 py-1.5 text-sm font-medium text-neutral-600 hover:bg-white"
+                    >
+                      Cancel
                     </button>
                   </div>
                 )}

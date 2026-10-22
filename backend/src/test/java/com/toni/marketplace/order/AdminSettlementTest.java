@@ -92,6 +92,13 @@ class AdminSettlementTest {
     order.setStatus(status);
     order.setCaptureId(captureId);
     order.setRefundId(refundId);
+    if (status == OrderStatus.REFUNDED) {
+      // Backlog #210 invariant: a REFUNDED order's cumulative refunded
+      // amount equals its full amount (pre-#210 refunds were
+      // all-or-nothing, and V59 backfills exactly this).
+      order.setRefundedAmountCents(amountCents);
+      order.setRefundCount(1);
+    }
     return orders.save(order);
   }
 

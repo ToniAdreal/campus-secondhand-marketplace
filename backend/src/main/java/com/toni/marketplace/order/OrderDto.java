@@ -19,6 +19,12 @@ import java.time.Instant;
  * component-level {@code NON_NULL} include drops the key from those
  * payloads entirely — a seller-facing payload never carries the field,
  * and the stored hash is never exposed anywhere.
+ *
+ * <p>{@code refundedAmountCents} (backlog #210) is the cumulative amount
+ * refunded so far: 0 until the first refund, strictly between 0 and
+ * {@code amountCents} while the order is PAID-but-partially-refunded,
+ * and exactly {@code amountCents} once the order is REFUNDED — the
+ * field the order views render their "partially refunded" badge from.
  */
 public record OrderDto(
     Long id,
@@ -29,6 +35,7 @@ public record OrderDto(
     Instant createdAt,
     String captureId,
     String refundId,
+    long refundedAmountCents,
     @JsonInclude(JsonInclude.Include.NON_NULL) String handoverCode) {
 
   public static OrderDto from(Order order) {
@@ -46,6 +53,7 @@ public record OrderDto(
         order.getCreatedAt(),
         order.getCaptureId(),
         order.getRefundId(),
+        order.getRefundedAmountCents(),
         handoverCode);
   }
 }

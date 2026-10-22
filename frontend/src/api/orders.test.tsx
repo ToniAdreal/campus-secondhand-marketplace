@@ -119,6 +119,8 @@ describe('describeRefundError', () => {
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', {}, 'Something went wrong. Please try again.'],
+    ['over-remaining amount (backlog #210)', envelopeError(422, 'refund amount exceeds the remaining refundable amount'), 'That amount is more than what is left to refund on this order.'],
+    ['non-positive amount (backlog #210)', envelopeError(422, 'refund amount must be positive'), 'Enter a refund amount greater than zero.'],
   ])('%s', (_label, error, expected) => {
     expect(describeRefundError(error)).toBe(expected);
   });
@@ -179,6 +181,20 @@ describe('order mutation invalidation', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('useRefundOrder with an amount posts {amountCents} for a partial refund (backlog #210)', async () => {
+    const queryClient = makeClient();
+    postSpy.mockResolvedValueOnce(
+      envelope({ ...fakeOrder, status: 'PAID', refundedAmountCents: 2000 }),
+    );
+
+    const { result } = renderHook(() => useRefundOrder(), { wrapper: wrapperFor(queryClient) });
+    const refunded = await result.current.mutateAsync({ orderId: 9, amountCents: 2000 });
+
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/refund', { amountCents: 2000 });
+    expect(refunded.refundedAmountCents).toBe(2000);
+    expect(refunded.status).toBe('PAID');
   });
 
   it('usePayOrder posts to /pay and invalidates the orders root only', async () => {

@@ -423,12 +423,12 @@ public class OrderService {
       return SettlementSummaryDto.from(
           orders.summarizeAll(),
           orders.sumCapturedCents(),
-          orders.sumAmountCentsByStatus(OrderStatus.REFUNDED));
+          orders.sumRefundedAmountCents());
     }
     return SettlementSummaryDto.from(
         orders.summarizeAllBetween(from, to),
         orders.sumCapturedCentsBetween(from, to),
-        orders.sumAmountCentsByStatusBetween(OrderStatus.REFUNDED, from, to));
+        orders.sumRefundedAmountCentsBetween(from, to));
   }
 
   /**
@@ -486,12 +486,24 @@ public class OrderService {
     return order.getCaptureIdempotencyKey();
   }
 
-  private String refundKeyFor(Order order) {
-    if (order.getRefundIdempotencyKey() == null) {
-      order.setRefundIdempotencyKey(
-          "rfd_" + UUID.randomUUID().toString().replace("-", ""));
-    }
-    return order.getRefundIdempotencyKey();
+  /**
+   * Per-refund PSP idempotency key (backlog #210, refining #65): derived
+   * deterministically from the order id and the NEXT refund sequence
+   * ({@code refundCount + 1}), then stored on the row as the latest
+   * refund key. Deterministic derivation is the crash-safety mechanism:
+   * {@code refundCount} only moves at the commit that records the
+   * refund, so a retry after a crash between the PSP call and the commit
+   * re-derives the SAME key and the mock replays instead of refunding
+   * twice — while each committed refund advances the sequence, so the
+   * next distinct refund's key is fresh and never reused for a different
+   * amount. (Pre-#210 there was a single random key per order, which
+   * cannot serve two distinct partial refunds: the second call would
+   * have replayed the first refund's result.)
+   */
+  private String nextRefundKeyFor(Order order) {
+    String key = "rfd_" + order.getId() + "_" + (order.getRefundCount() + 1);
+    order.setRefundIdempotencyKey(key);
+    return key;
   }
 
   private String validateKey(String key) {    if (key == null || key.isBlank()) {
@@ -990,7 +1002,8 @@ public class OrderService {
 
   /**
    * Refunds a captured order (mock PSP — see {@link PaymentService}):
-   * PAID → REFUNDED. Rules:
+   * full refunds transition PAID → REFUNDED; partial refunds
+   * (backlog #210) move money while the order stays PAID. Rules:
    * <ul>
    *   <li>Only the listing's seller (or an ADMIN) may refund; the buyer and
    *       anyone else gets 403. This is a deliberate design decision: the
@@ -1004,28 +1017,46 @@ public class OrderService {
    *       idempotent and simply returns the order without calling the PSP
    *       seam again (the mock counts refund calls — see
    *       {@link PaymentService#refundsIssued()} — and tests pin the
-   *       single-invocation guarantee).</li>
-   *   <li>The listing flips RESERVED → AVAILABLE in the same transaction, so
-   *       the list view offers the refunded item again. The flip only runs
-   *       when the item is actually RESERVED: a listing the seller already
-   *       marked SOLD by hand (PATCH /api/items/{id}/status) is left alone.
-   *       Once the order is terminal the {@code uq_order_active_item} guard
-   *       releases, so the buyer may order the item again.</li>
-   *   <li>The flip goes through {@link ItemRepository#save} (merge), the same
-   *       path as {@link #cancel(Long, Long)} and
-   *       {@link OrderCreationService#create}. The merge bumps
+   *       single-invocation guarantee for the full-refund path).</li>
+   *   <li>Amount (backlog #210): {@code amountCents == null} refunds
+   *       everything still refundable — exactly the pre-#210 behaviour.
+   *       A present amount is validated BEFORE any PSP call: non-positive
+   *       or more than the remaining balance
+   *       ({@code amountCents - refundedAmountCents}) → 422 with zero PSP
+   *       calls. Each accepted refund adds to the cumulative
+   *       {@code refundedAmountCents}; the order stays PAID while the
+   *       cumulative total is below the order amount and flips to
+   *       REFUNDED exactly when it reaches it — and only that flip
+   *       releases the listing (next rule) and counts the
+   *       {@code orders.refunded} transition metric.</li>
+   *   <li>On the completing flip the listing goes RESERVED → AVAILABLE
+   *       in the same transaction, so the list view offers the refunded
+   *       item again. The flip only runs when the item is actually
+   *       RESERVED: a listing the seller already marked SOLD by hand
+   *       (PATCH /api/items/{id}/status) is left alone. A partial refund
+   *       never touches the listing — the sale is still live.</li>
+   *   <li>The flip goes through {@link ItemRepository#save} (merge), the
+   *       same path as {@link #cancel(Long, Long)}. The merge bumps
    *       {@code Item.@Version}, and the in-transaction
-   *       {@code orders.flush()} surfaces a concurrent order-row transition
-   *       as {@code ObjectOptimisticLockingFailureException}, mapped to 409
-   *       fail-fast. The refund carries an order-scoped idempotency key
-   *       (see {@link #refundKeyFor(Order)}), mirroring
-   *       {@link #pay(Long, Long)}: on a refund race the loser's pre-flush
-   *       call replays the winner's stored refund result instead of
-   *       issuing a second logical refund (backlog #65).</li>
+   *       {@code orders.flush()} surfaces a concurrent order-row
+   *       transition as {@code ObjectOptimisticLockingFailureException},
+   *       mapped to 409 fail-fast — so two concurrent partial refunds
+   *       can never push the cumulative total past the order amount:
+   *       the loser either sees the winner's committed balance (and its
+   *       amount is re-validated against the smaller remainder) or
+   *       loses the version race → 409. Each refund carries its own
+   *       order-scoped idempotency key derived from the refund sequence
+   *       (see {@link #nextRefundKeyFor(Order)}).</li>
    * </ul>
    */
   @Transactional
   public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId) {
+    return refund(callerId, callerIsAdmin, orderId, null);
+  }
+
+  /** Amount-aware refund (backlog #210) — see {@link #refund(Long, boolean, Long)}. */
+  @Transactional
+  public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId, Long amountCents) {
     Order order = orders.findById(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
@@ -1040,22 +1071,38 @@ public class OrderService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "order is " + order.getStatus() + ", refund is not allowed");
     }
+    long remaining = order.getAmountCents() - order.getRefundedAmountCents();
+    long amount = amountCents == null ? remaining : amountCents;
+    if (amount <= 0) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "refund amount must be positive");
+    }
+    if (amount > remaining) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "refund amount exceeds the remaining refundable amount");
+    }
+    boolean completesRefund = amount == remaining;
     try {
-      // Backlog #114: persist the PSP refund reference in the same
-      // transaction as the transition, mirroring pay()'s capture id. An
-      // idempotent re-refund returned above, before any fresh refund
-      // call, so the stored id is never replaced.
-      String refundKey = refundKeyFor(order);
+      String refundKey = nextRefundKeyFor(order);
       PaymentService.RefundResult refund =
-          payments.refund(order, refundKey);
+          payments.refund(order, refundKey, amount);
+      // Backlog #114/#210: persist the LATEST PSP refund reference in the
+      // same transaction as the money movement; the cumulative total and
+      // the sequence advance with it. An idempotent re-refund of a fully
+      // refunded order returned above, before any fresh refund call, so
+      // a completed refund's stored state is never rewritten.
       order.setRefundId(refund.refundId());
-      order.setStatus(OrderStatus.REFUNDED);
-      Item item = items.findById(order.getItem().getId())
-          .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-              "order points at a missing item"));
-      if (item.getStatus() == ItemStatus.RESERVED) {
-        item.setStatus(ItemStatus.AVAILABLE);
-        items.save(item);
+      order.setRefundedAmountCents(order.getRefundedAmountCents() + amount);
+      order.setRefundCount(order.getRefundCount() + 1);
+      if (completesRefund) {
+        order.setStatus(OrderStatus.REFUNDED);
+        Item item = items.findById(order.getItem().getId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                "order points at a missing item"));
+        if (item.getStatus() == ItemStatus.RESERVED) {
+          item.setStatus(ItemStatus.AVAILABLE);
+          items.save(item);
+        }
       }
       OrderDto dto = OrderDto.from(orders.save(order));
       // Flush deliberately inside the transaction (not at commit), mirroring
@@ -1065,15 +1112,18 @@ public class OrderService {
       // Without the flush the version check would happen at commit, outside
       // this try/catch, and the caller would see a 500 instead.
       orders.flush();
-      // Backlog #124: refund mirror of pay()'s forget — the refund id is
-      // durable on the flushed row, so drop the PSP replay entry; a 409
-      // race loser threw at the flush above and never reaches this line,
-      // so it cannot forget the winner's entry.
+      // Backlog #124: the refund id is durable on the flushed row, so drop
+      // the PSP replay entry; a 409 race loser threw at the flush above
+      // and never reaches this line, so it cannot forget the winner's entry.
       payments.forgetRefund(refundKey);
-      metrics().refunded();
+      if (completesRefund) {
+        metrics().refunded();
+      }
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and
-      // the idempotent re-refund above returns before this point.
+      // the idempotent re-refund above returns before this point. A
+      // partial refund is audited too: money moved, even though the
+      // order did not transition.
       audit().record(callerId, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, orderId);
       // Backlog #157: notify the buyer in the same transaction — the
       // idempotent re-refund above returns before this point.

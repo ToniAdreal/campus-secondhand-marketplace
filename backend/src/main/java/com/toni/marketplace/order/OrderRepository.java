@@ -125,6 +125,23 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
   long sumAmountCentsByStatus(@Param("status") OrderStatus status);
 
   /**
+   * Total refunded money for the ADMIN settlement summary (backlog
+   * #210): the sum of the cumulative {@code refundedAmountCents} over
+   * every order. This replaces the status-based sum — a PAID order with
+   * a partial refund has refunded money but no REFUNDED status, and a
+   * status-only total silently dropped it from the reconciliation.
+   */
+  @Query("select coalesce(sum(o.refundedAmountCents), 0) from Order o")
+  long sumRefundedAmountCents();
+
+  /** Windowed variant of {@link #sumRefundedAmountCents} (backlog #210, bounds as in #155). */
+  @Query("select coalesce(sum(o.refundedAmountCents), 0) from Order o "
+      + "where (:createdFrom is null or o.createdAt >= :createdFrom) "
+      + "and (:createdTo is null or o.createdAt < :createdTo)")
+  long sumRefundedAmountCentsBetween(@Param("createdFrom") Instant createdFrom,
+                                     @Param("createdTo") Instant createdTo);
+
+  /**
    * Windowed variant of {@link #summarizeAll} (backlog #155): same
    * per-status aggregates, restricted to orders created in
    * {@code [createdFrom, createdTo)} over {@code Order.createdAt} — the

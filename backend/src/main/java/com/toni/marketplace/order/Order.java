@@ -106,6 +106,32 @@ public class Order {
   private String refundId;
 
   /**
+   * Cumulative amount refunded so far, in cents (backlog #210, Flyway
+   * V59). Every refund path (seller/ADMIN refund, dispute resolution)
+   * adds its amount here in the same transaction as the PSP call; the
+   * invariant is {@code 0 <= refundedAmountCents <= amountCents}, and
+   * the status flips to REFUNDED exactly when the cumulative total
+   * reaches {@code amountCents}. A partial refund leaves the order
+   * PAID and the listing RESERVED. The ADMIN settlement summary sums
+   * this column — not the status — so a partially refunded PAID order
+   * reconciles.
+   */
+  @Column(name = "refunded_amount_cents", nullable = false)
+  private long refundedAmountCents;
+
+  /**
+   * How many refunds have reached the PSP seam for this order
+   * (backlog #210). Doubles as the sequence the per-refund idempotency
+   * key is derived from ({@code rfd_<orderId>_<seq>}): the count only
+   * moves at the commit that records the refund, so a crash-and-retry
+   * before that commit re-derives the same key (PSP replay, no second
+   * refund) and the next distinct refund derives a fresh, never-reused
+   * key.
+   */
+  @Column(name = "refund_count", nullable = false)
+  private int refundCount;
+
+  /**
    * SHA-256 hash of the buyer's 6-digit handover code (backlog #179,
    * Flyway V43). Minted by {@code OrderService.pay} in the same
    * transaction as the PENDING → PAID transition; the plaintext is
@@ -215,6 +241,12 @@ public class Order {
   public void setCaptureId(String captureId) { this.captureId = captureId; }
   public String getRefundId() { return refundId; }
   public void setRefundId(String refundId) { this.refundId = refundId; }
+  public long getRefundedAmountCents() { return refundedAmountCents; }
+  public void setRefundedAmountCents(long refundedAmountCents) {
+    this.refundedAmountCents = refundedAmountCents;
+  }
+  public int getRefundCount() { return refundCount; }
+  public void setRefundCount(int refundCount) { this.refundCount = refundCount; }
   public String getHandoverCodeHash() { return handoverCodeHash; }
   public void setHandoverCodeHash(String handoverCodeHash) {
     this.handoverCodeHash = handoverCodeHash;

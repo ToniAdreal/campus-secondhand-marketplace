@@ -21,8 +21,12 @@ import java.util.Map;
  *   <li>{@code capturedCents} — sum of {@code amountCents} over every order
  *       carrying a capture id. A REFUNDED order was still captured, so it
  *       counts here as well as in {@code refundedCents}.</li>
- *   <li>{@code refundedCents} — sum of {@code amountCents} over REFUNDED
- *       orders.</li>
+ *   <li>{@code refundedCents} — sum of the cumulative
+ *       {@code refundedAmountCents} over every order (backlog #210).
+ *       A partially refunded order still in PAID contributes the amount
+ *       actually refunded; before #210 this was the sum of
+ *       {@code amountCents} over REFUNDED orders only, which silently
+ *       dropped partial refunds from the reconciliation.</li>
  *   <li>{@code netCents} — {@code capturedCents - refundedCents}.</li>
  *   <li>A PENDING (or CANCELLED) order carries no capture id and
  *       contributes nothing to any money total — only to the per-status

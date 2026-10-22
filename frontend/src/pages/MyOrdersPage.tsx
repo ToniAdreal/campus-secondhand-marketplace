@@ -6,6 +6,7 @@ import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders
 import { describeReviewError, useCreateReview } from '../api/reviews';
 import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
+import PartialRefundNote from '../components/PartialRefundNote';
 import OrderReceipt from '../components/OrderReceipt';
 import OrderStatusChip from '../components/OrderStatusChip';
 import { useAuthStore } from '../store/useAuthStore';
@@ -278,6 +279,7 @@ export default function MyOrdersPage() {
                   <span>¥{(order.amountCents / 100).toFixed(2)}</span>
                   <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 </div>
+                <PartialRefundNote order={order} />
                 <OrderPspReferences order={order} />
                 <OrderReceipt orderId={order.id} />
                 <OrderDisputeControl order={order} />
