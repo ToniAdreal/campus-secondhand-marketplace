@@ -9,6 +9,7 @@ import SettingsPage from './SettingsPage';
 
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
+const putSpy = vi.spyOn(api, 'put');
 const deleteSpy = vi.spyOn(api, 'delete');
 
 const user: AuthUser = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
@@ -486,5 +487,65 @@ describe('SettingsPage', () => {
     expect(
       getSpy.mock.calls.some((call) => String(call[0]).includes('/users/me/export')),
     ).toBe(false);
+  });
+
+  it('renders the notification catalogue with security types locked on and round-trips a toggle (backlog #216)', async () => {
+    // The catalogue is server state: mutating flips what the next
+    // catalogue read returns, exactly like the real backend.
+    let savedSearchEnabled = true;
+    const catalogue = () => [
+      {
+        type: 'SAVED_SEARCH_MATCH',
+        label: 'Saved-search matches',
+        security: false,
+        enabled: savedSearchEnabled,
+      },
+      {
+        type: 'LOGIN_NEW_DEVICE',
+        label: 'New-device sign-in alert',
+        security: true,
+        enabled: true,
+      },
+    ];
+    getSpy.mockImplementation((url: unknown) =>
+      String(url).includes('/notifications/preferences')
+        ? Promise.resolve(envelope(catalogue()))
+        : Promise.reject(new Error('count unavailable')),
+    );
+    putSpy.mockImplementation((_url: unknown, body: unknown) => {
+      savedSearchEnabled = (body as { enabled: boolean }).enabled;
+      return Promise.resolve(
+        envelope({
+          type: 'SAVED_SEARCH_MATCH',
+          label: 'Saved-search matches',
+          security: false,
+          enabled: savedSearchEnabled,
+        }),
+      );
+    });
+    renderAt('/settings');
+
+    const toggle = (await screen.findByLabelText('Saved-search matches')) as HTMLInputElement;
+    expect(toggle.type).toBe('checkbox');
+    expect(toggle.checked).toBe(true);
+    // Security alerts are locked on: checked, disabled, reason shown.
+    const securityToggle = screen.getByLabelText(/New-device sign-in alert/) as HTMLInputElement;
+    expect(securityToggle.checked).toBe(true);
+    expect(securityToggle.disabled).toBe(true);
+    expect(screen.getByText(/account-security alerts can't be turned off/)).toBeTruthy();
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(putSpy).toHaveBeenCalledWith('/notifications/preferences/SAVED_SEARCH_MATCH', {
+        enabled: false,
+      }),
+    );
+    // The re-rendered state comes from the invalidated catalogue
+    // refetch, not a local flip.
+    await waitFor(() =>
+      expect((screen.getByLabelText('Saved-search matches') as HTMLInputElement).checked).toBe(
+        false,
+      ),
+    );
   });
 });

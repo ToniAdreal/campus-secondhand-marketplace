@@ -2,6 +2,9 @@ package com.toni.marketplace.notification;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +38,14 @@ import org.springframework.web.server.ResponseStatusException;
  * transaction commits (a rolled-back transition notifies nobody), and
  * the SPA refetches the real rows over this service's authenticated
  * reads, which stay the fallback whenever the stream is down.
+ *
+ * <p>Per-type preferences (backlog #216): every {@code record*} method
+ * below is the single write seam for its variant, and each one first
+ * asks {@link #isEnabledFor} — a type the recipient muted writes no row
+ * and publishes no SSE hint, and no producer can bypass the check
+ * because producers only ever call these methods. Security types
+ * ({@link NotificationType#isSecurity()}) are never muted: the check
+ * answers enabled for them unconditionally.
  */
 @Service
 public class NotificationService {
@@ -42,19 +53,40 @@ public class NotificationService {
   private final NotificationRepository notifications;
   private final Clock clock;
   private final NotificationStreamService streams;
+  private final NotificationPreferenceRepository preferences;
 
   @Autowired
   public NotificationService(NotificationRepository notifications, Clock clock,
-                             NotificationStreamService streams) {
+                             NotificationStreamService streams,
+                             NotificationPreferenceRepository preferences) {
     this.notifications = notifications;
     this.clock = clock;
     this.streams = streams;
+    this.preferences = preferences;
   }
 
   private NotificationService() {
     this.notifications = null;
     this.clock = Clock.systemUTC();
     this.streams = null;
+    this.preferences = null;
+  }
+
+  /**
+   * Whether a notification of {@code type} may be recorded for
+   * {@code recipientId} (backlog #216). Security types are always
+   * enabled; an absent preference row is enabled (the default every
+   * existing user starts from); only an explicit muted row disables.
+   * On the no-op instance there is no store to consult, so everything
+   * reads enabled — the record methods have already returned by then.
+   */
+  private boolean isEnabledFor(Long recipientId, NotificationType type) {
+    if (type.isSecurity() || preferences == null) {
+      return true;
+    }
+    return preferences.findByUserIdAndType(recipientId, type)
+        .map(NotificationPreference::isEnabled)
+        .orElse(true);
   }
 
   /**
@@ -102,7 +134,7 @@ public class NotificationService {
    * silently drops the row.
    */
   public void record(Long recipientId, NotificationType type, Long orderId) {
-    if (notifications == null) {
+    if (notifications == null || !isEnabledFor(recipientId, type)) {
       return;
     }
     publishAfterCommit(notifications.save(new Notification(recipientId, type, orderId)));
@@ -116,7 +148,7 @@ public class NotificationService {
    * transaction, so a rolled-back accept/decline leaves no row.
    */
   public void recordOffer(Long recipientId, NotificationType type, Long offerId, Long orderId) {
-    if (notifications == null) {
+    if (notifications == null || !isEnabledFor(recipientId, type)) {
       return;
     }
     publishAfterCommit(notifications.save(new Notification(recipientId, type, orderId, offerId)));
@@ -131,7 +163,8 @@ public class NotificationService {
    */
   public void recordSavedSearchMatch(Long recipientId, Long savedSearchId,
                                      int matchedListingCount) {
-    if (notifications == null) {
+    if (notifications == null
+        || !isEnabledFor(recipientId, NotificationType.SAVED_SEARCH_MATCH)) {
       return;
     }
     publishAfterCommit(notifications.save(
@@ -148,7 +181,8 @@ public class NotificationService {
    */
   public void recordFavoritePriceDrop(Long recipientId, Long itemId,
                                       long oldPriceCents, long newPriceCents) {
-    if (notifications == null) {
+    if (notifications == null
+        || !isEnabledFor(recipientId, NotificationType.FAVORITE_PRICE_DROP)) {
       return;
     }
     publishAfterCommit(notifications.save(
@@ -164,10 +198,58 @@ public class NotificationService {
    * before reaching here.
    */
   public void recordReportAppeal(Long recipientId, NotificationType type, Long appealId) {
-    if (notifications == null) {
+    if (notifications == null || !isEnabledFor(recipientId, type)) {
       return;
     }
     publishAfterCommit(notifications.save(Notification.reportAppeal(recipientId, type, appealId)));
+  }
+
+  /**
+   * The full preference catalogue for the caller (backlog #216): one
+   * row per {@link NotificationType}, in enum order, with the caller's
+   * effective state — an absent stored row reads enabled, and security
+   * types always read enabled (see {@link NotificationPreferenceDto#of}).
+   */
+  @Transactional(readOnly = true)
+  public List<NotificationPreferenceDto> listPreferences(Long userId) {
+    Map<NotificationType, Boolean> stored = new EnumMap<>(NotificationType.class);
+    if (preferences != null) {
+      for (NotificationPreference row : preferences.findByUserId(userId)) {
+        stored.put(row.getType(), row.isEnabled());
+      }
+    }
+    return java.util.Arrays.stream(NotificationType.values())
+        .map(type -> NotificationPreferenceDto.of(type, stored.getOrDefault(type, true)))
+        .toList();
+  }
+
+  /**
+   * Applies one settings toggle (backlog #216) and returns the type's
+   * new catalogue row. Muting a security type is 422 — those alerts are
+   * locked on, and the settings UI renders them that way, so a 422 here
+   * means a hand-built request. Enabling a security type is a no-op
+   * success (it was never off; no row is written). Any other toggle is
+   * an upsert on the (user, type) pair, so repeat toggles never create
+   * duplicate rows.
+   */
+  @Transactional
+  public NotificationPreferenceDto setPreference(Long userId, NotificationType type,
+                                                 boolean enabled) {
+    if (type.isSecurity()) {
+      if (!enabled) {
+        throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+            "security notifications cannot be turned off");
+      }
+      return NotificationPreferenceDto.of(type, true);
+    }
+    if (preferences == null) {
+      return NotificationPreferenceDto.of(type, enabled);
+    }
+    NotificationPreference row = preferences.findByUserIdAndType(userId, type)
+        .orElseGet(() -> new NotificationPreference(userId, type, enabled, Instant.now(clock)));
+    row.setEnabled(enabled, Instant.now(clock));
+    preferences.save(row);
+    return NotificationPreferenceDto.of(type, enabled);
   }
 
   /** The caller's own notifications, paginated (controller supplies newest-first). */

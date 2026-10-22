@@ -15,6 +15,10 @@ import {
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
 import { useMyBlocks, useUnblockUser } from '../api/blocks';
+import {
+  useNotificationPreferences,
+  useSetNotificationPreference,
+} from '../api/notifications';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -774,6 +778,15 @@ export default function SettingsPage() {
         </button>
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Notifications</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Choose which notifications appear in your bell. Turning a type off
+          stops new ones of that type — ones you already have stay until you
+          delete them. Account-security alerts are always on.
+        </p>
+        <NotificationPreferencesSection />
+      </div>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Blocked users</h2>
         <p className="mb-3 text-sm text-neutral-500">
           Users you block cannot message you or make you offers, and their
@@ -882,6 +895,62 @@ export default function SettingsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Per-type notification toggles (backlog #216): the catalogue — labels
+ * and the locked-on security flags included — comes from the backend
+ * endpoint, the one place labels live. A failed catalogue load degrades
+ * to a plain note rather than breaking the settings page, mirroring
+ * the blocked-users section. Security rows render checked and disabled
+ * with the reason stated; every other row's toggle round-trips through
+ * the mutation and the invalidated catalogue query.
+ */
+function NotificationPreferencesSection() {
+  const catalogue = useNotificationPreferences();
+  const setPreference = useSetNotificationPreference();
+  // A malformed (non-array) payload is a failed load, never a render
+  // crash: the section degrades to the same note as an error.
+  const rows = Array.isArray(catalogue.data) ? catalogue.data : [];
+  if (catalogue.isError || (catalogue.isSuccess && !Array.isArray(catalogue.data))) {
+    return (
+      <p className="text-sm text-neutral-500">
+        Notification settings could not be loaded — everything stays on.
+      </p>
+    );
+  }
+  if (rows.length === 0) {
+    return <p className="text-sm text-neutral-500">Loading notification settings…</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {rows.map((row) => (
+        <li
+          key={row.type}
+          className="flex items-center justify-between rounded bg-neutral-50 px-3 py-2"
+        >
+          <label htmlFor={`notif-pref-${row.type}`} className="text-sm font-medium">
+            {row.label}
+            {row.security && (
+              <span className="block text-xs font-normal text-neutral-500">
+                Always on — account-security alerts can&apos;t be turned off.
+              </span>
+            )}
+          </label>
+          <input
+            id={`notif-pref-${row.type}`}
+            type="checkbox"
+            checked={row.enabled}
+            disabled={row.security || setPreference.isLoading}
+            onChange={(e) =>
+              setPreference.mutate({ type: row.type, enabled: e.target.checked })
+            }
+            className="h-4 w-4"
+          />
+        </li>
+      ))}
+    </ul>
   );
 }
 

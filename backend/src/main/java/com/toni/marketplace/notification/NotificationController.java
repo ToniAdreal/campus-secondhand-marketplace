@@ -1,6 +1,8 @@
 package com.toni.marketplace.notification;
 
 import com.toni.marketplace.common.ApiResponse;
+import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -12,6 +14,8 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -65,6 +69,36 @@ public class NotificationController {
       throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "unauthorized");
     }
     return streamService.openStream(userId);
+  }
+
+  /**
+   * The caller's per-type notification-preference catalogue (backlog
+   * #216): every type with its label, its locked-on security flag and
+   * the caller's effective state. Labels live on the backend enum —
+   * this response is the settings UI's only source for them.
+   */
+  @GetMapping("/preferences")
+  public ApiResponse<List<NotificationPreferenceDto>> preferences() {
+    return ApiResponse.ok(notificationService.listPreferences(currentUserId()));
+  }
+
+  /**
+   * Toggles one notification type for the caller (backlog #216).
+   * Muting a security type is 422; an unknown type name is 400 (the
+   * same malformed-request answer as a missing {@code enabled} flag).
+   */
+  @PutMapping("/preferences/{type}")
+  public ApiResponse<NotificationPreferenceDto> updatePreference(
+      @PathVariable String type,
+      @Valid @RequestBody NotificationPreferenceUpdateRequest request) {
+    NotificationType parsed;
+    try {
+      parsed = NotificationType.valueOf(type);
+    } catch (IllegalArgumentException e) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown notification type");
+    }
+    return ApiResponse.ok(
+        notificationService.setPreference(currentUserId(), parsed, request.enabled()));
   }
 
   /** The caller's notifications, newest first, paginated (global size cap applies). */

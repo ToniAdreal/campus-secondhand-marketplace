@@ -54,7 +54,21 @@ export const notificationKeys = {
   all: ['notifications'] as const,
   list: ['notifications', 'list'] as const,
   unreadCount: ['notifications', 'unread-count'] as const,
+  preferences: ['notifications', 'preferences'] as const,
 };
+
+/**
+ * One row of the per-type preference catalogue (backlog #216). The
+ * label and the locked-on security flag come from the backend — the
+ * one place they live — never from a copy of the list in the SPA.
+ */
+export interface NotificationPreference {
+  type: NotificationType;
+  label: string;
+  /** Security alerts are locked on: the toggle renders disabled. */
+  security: boolean;
+  enabled: boolean;
+}
 
 /** Formats a cent amount the way the listing pages do (yuan, 2dp). */
 function formatYuan(cents: number): string {
@@ -227,6 +241,46 @@ export function useNotificationStream(enabled = true) {
       source?.close();
     };
   }, [enabled, queryClient]);
+}
+
+/**
+ * GET /api/notifications/preferences (backlog #216) — the full
+ * per-type catalogue with the caller's effective state (absent
+ * preference = enabled; security types always enabled).
+ */
+export function useNotificationPreferences(enabled = true) {
+  return useQuery({
+    queryKey: notificationKeys.preferences,
+    queryFn: () =>
+      api
+        .get<ApiResponse<NotificationPreference[]>>('/notifications/preferences')
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/**
+ * PUT /api/notifications/preferences/{type} (backlog #216) — one
+ * settings toggle. Success invalidates the catalogue query, so the
+ * toggle's rendered state always comes back from the server, never a
+ * local cache hand-edit (same doctrine as #16). Muting a security
+ * type fails 422 server-side; the settings UI disables those toggles
+ * so the failure is unreachable from the page itself.
+ */
+export function useSetNotificationPreference() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { type: NotificationType; enabled: boolean }) =>
+      api
+        .put<ApiResponse<NotificationPreference>>(
+          `/notifications/preferences/${input.type}`,
+          { enabled: input.enabled },
+        )
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.preferences });
+    },
+  });
 }
 
 /**
