@@ -4,17 +4,20 @@
 
   DEFAULT (no `json-logs` profile): the plain console pattern this project
   has always used — timestamp, thread, level, the requestId MDC value set
-  by RequestIdFilter (#44), logger and message. Providing this file means
-  Spring Boot no longer applies `logging.pattern.console` from
-  application.yml, so the pattern lives HERE (single source of truth).
+  by RequestIdFilter (#44) plus the traceId/spanId MDC values it sets
+  from the W3C traceparent header (#214), logger and message. Providing
+  this file means Spring Boot no longer applies
+  `logging.pattern.console` from application.yml, so the pattern lives
+  HERE (single source of truth).
 
   OPT-IN `json-logs` profile (SPRING_PROFILES_ACTIVE=json-logs, or
   `mysql,json-logs` in the compose stack): the same console appender swaps
   to net.logstash.logback's LogstashEncoder and emits ONE JSON object per
   line — @timestamp, level, logger_name, thread_name, message, plus every
   MDC entry at top level, so the requestId shows up as a `requestId`
-  field a log aggregator can index. Nothing else changes: same loggers,
-  same levels, same console destination.
+  field (and traceId/spanId likewise) a log aggregator can index.
+  Nothing else changes: same loggers, same levels, same console
+  destination.
 
   Honest scope: this only SHAPES the lines. Shipping them anywhere
   (file collection, a remote aggregator, retention) is the operator's
@@ -24,7 +27,7 @@
 
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{requestId}] %logger{36} - %msg%n</pattern>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{requestId} %X{traceId} %X{spanId}] %logger{36} - %msg%n</pattern>
       <charset>utf8</charset>
     </encoder>
   </appender>
@@ -32,8 +35,9 @@
   <springProfile name="json-logs">
     <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
       <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-        <!-- MDC entries (requestId from RequestIdFilter) are included at
-             the top level of each JSON object by default. -->
+        <!-- MDC entries (requestId/traceId/spanId from RequestIdFilter)
+             are included at the top level of each JSON object by
+             default. -->
         <charset>utf8</charset>
       </encoder>
     </appender>
