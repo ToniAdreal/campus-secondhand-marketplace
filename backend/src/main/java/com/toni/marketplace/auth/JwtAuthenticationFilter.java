@@ -46,10 +46,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
   private final JwtTokenService jwt;
   private final UserRepository users;
+  private final CurrentAccessClaims currentClaims;
 
-  public JwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
+  public JwtAuthenticationFilter(JwtTokenService jwt, UserRepository users,
+                                 CurrentAccessClaims currentClaims) {
     this.jwt = jwt;
     this.users = users;
+    this.currentClaims = currentClaims;
+  }
+
+  /** Legacy constructor for direct unit tests without a request-scoped holder. */
+  public JwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
+    this(jwt, users, null);
   }
 
   @Override
@@ -67,6 +75,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // every previously issued bearer token.
         if (isStale(claims)) {
           SecurityContextHolder.clearContext();
+          clearClaims();
         } else {
           List<SimpleGrantedAuthority> authorities = claims.roles().stream()
               .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
@@ -75,11 +84,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
               new UsernamePasswordAuthenticationToken(claims.userId(), null, authorities);
           auth.setDetails(request.getRemoteAddr());
           SecurityContextHolder.getContext().setAuthentication(auth);
+          // Backlog #218: the step-up gate reads the presented token's
+          // auth-time from here — never the raw token.
+          if (currentClaims != null) {
+            currentClaims.set(claims);
+          }
         }
       } catch (RuntimeException ignored) {
         // Malformed, expired, wrong signature or not an access token:
         // stay unauthenticated and let the entry point answer 401.
         SecurityContextHolder.clearContext();
+        clearClaims();
       }
     }
     filterChain.doFilter(request, response);
@@ -90,5 +105,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         .map(user -> user.isDisabled()
             || user.getTokenVersion() != claims.tokenVersion())
         .orElse(true);
+  }
+
+  private void clearClaims() {
+    if (currentClaims != null) {
+      currentClaims.clear();
+    }
   }
 }

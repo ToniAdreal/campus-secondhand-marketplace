@@ -200,6 +200,25 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * authenticated user for the step-up re-proof endpoint ({@code POST
+   * /api/auth/step-up}, backlog #218). The endpoint verifies the
+   * current password, so it is a password-guessing surface for anyone
+   * holding a stolen Bearer token — it gets its own per-user bucket
+   * (JWT principal, per-IP fallback like the message/export buckets)
+   * that never resets on success. Must be &ge; 1.
+   */
+  private int stepUpAttemptsPerMinute = 5;
+
+  public int getStepUpAttemptsPerMinute() {
+    return stepUpAttemptsPerMinute;
+  }
+
+  public void setStepUpAttemptsPerMinute(int stepUpAttemptsPerMinute) {
+    this.stepUpAttemptsPerMinute = stepUpAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the CSP violation report intake ({@code POST
    * /api/security/csp-report}, backlog #204). Keyed on the IP: the

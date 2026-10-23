@@ -72,6 +72,7 @@ public class AuthService {
   private final TrustedDeviceProperties trustedDeviceProps;
   private final EmailChangeTokenRepository emailChangeTokens;
   private final EmailChangeMailSender emailChangeMail;
+  private final StepUpPolicy stepUpPolicy;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -92,7 +93,8 @@ public class AuthService {
                      TrustedDeviceRepository trustedDevices,
                      TrustedDeviceProperties trustedDeviceProps,
                      EmailChangeTokenRepository emailChangeTokens,
-                     EmailChangeMailSender emailChangeMail) {
+                     EmailChangeMailSender emailChangeMail,
+                     StepUpPolicy stepUpPolicy) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -118,6 +120,7 @@ public class AuthService {
     this.trustedDeviceProps = trustedDeviceProps;
     this.emailChangeTokens = emailChangeTokens;
     this.emailChangeMail = emailChangeMail;
+    this.stepUpPolicy = stepUpPolicy;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -128,7 +131,18 @@ public class AuthService {
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
         null, new EmailVerificationProperties(), null, null, null, null, null,
-        new SessionLimitProperties(), null, null, null, null, null);
+        new SessionLimitProperties(), null, null, null, null, null, StepUpPolicy.disabled());
+  }
+
+  /**
+   * Step-up gate accessor (backlog #218) with the same null-fallback
+   * rationale as {@link #metrics()}: a hand-built instance without the
+   * policy bean (the legacy constructor, Mockito {@code @InjectMocks})
+   * falls back to the no-op policy — the gate is enforced at the HTTP
+   * layer in production, where the real bean is always wired.
+   */
+  private StepUpPolicy stepUp() {
+    return stepUpPolicy != null ? stepUpPolicy : StepUpPolicy.disabled();
   }
 
   /**
@@ -902,6 +916,10 @@ public class AuthService {
   @Transactional(noRollbackFor = {InvalidCredentialsException.class,
       AccountLockedException.class})
   public void disableTotp(long userId, String currentPassword, String code) {
+    // Backlog #218: a stolen Bearer token must not strip the second
+    // factor — the presented token's credential proof must be fresh,
+    // on top of the password + second-factor proof below.
+    stepUp().requireFresh();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     if (!user.isTotpEnabled()) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -1574,6 +1592,10 @@ public class AuthService {
   @Transactional(noRollbackFor = {InvalidCredentialsException.class,
       AccountLockedException.class})
   public void closeAccount(long userId, String currentPassword, String code) {
+    // Backlog #218: the account's own password proof below stays, and
+    // the presented token's credential proof must ALSO be fresh — a
+    // stolen Bearer token must not be able to close the account.
+    stepUp().requireFresh();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     if (user.isTotpEnabled()) {
       requireTotpUnlocked(user);
@@ -1654,6 +1676,31 @@ public class AuthService {
       }
       verifySecondFactor(user, code);
     }
+  }
+
+  /**
+   * Step-up re-authentication (backlog #218): the re-proof path for the
+   * sensitive set. Verifies the fresh proof through
+   * {@link #requireStepUpProof} — current password, plus a TOTP or
+   * recovery code when 2FA is enabled (identical 401 on any failure,
+   * failed code proofs feed the shared #101 lockout) — and mints an
+   * access-token-only credential with a fresh {@code auth_time} claim via
+   * {@link JwtTokenService#mintStepUpAccessToken}. No new refresh
+   * family is created, so this is NOT a login: it does not count
+   * toward the #191 session cap and the SPA keeps its existing refresh
+   * cookie. The caller swaps the in-memory Bearer token and retries
+   * the gated action exactly once.
+   *
+   * <p>Deliberately exempt from the recency gate itself — this endpoint
+   * IS the re-proof, so requiring a fresh token to reach it would be
+   * circular.
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public String stepUp(long userId, String currentPassword, String code) {
+    requireStepUpProof(userId, currentPassword, code);
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    return jwt.mintStepUpAccessToken(user);
   }
 
   /**
@@ -1783,6 +1830,10 @@ public class AuthService {
   @Transactional
   public int revokeOtherSessions(long userId, String presentedRefreshToken,
                                  String presentedTrustedToken) {
+    // Backlog #218: signing out every other device is sensitive — the
+    // presented access token's credential proof must be fresh, so a
+    // stolen Bearer token cannot strand the owner on their own devices.
+    stepUp().requireFresh();
     Instant now = clock.instant();
     String currentFamily = (presentedRefreshToken == null || presentedRefreshToken.isBlank())
         ? null

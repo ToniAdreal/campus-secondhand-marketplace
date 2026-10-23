@@ -7,6 +7,7 @@ import com.toni.marketplace.common.DuplicateUserException;
 import com.toni.marketplace.common.InvalidCredentialsException;
 import com.toni.marketplace.common.InvalidTokenException;
 import com.toni.marketplace.common.PaymentDeclinedException;
+import com.toni.marketplace.common.StepUpRequiredException;
 import com.toni.marketplace.common.WeakPasswordException;
 import com.toni.marketplace.common.InvalidImageException;
 import jakarta.validation.ConstraintViolationException;
@@ -241,6 +242,20 @@ public class GlobalExceptionHandler {
       ObjectOptimisticLockingFailureException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT)
         .body(ApiResponse.fail(409, "listing was modified — reload and retry"));
+  }
+
+  /**
+   * Step-up re-authentication required (backlog #218): the presented
+   * access token is valid but its last credential proof is missing or
+   * older than {@code app.auth.step-up.max-age}, so a sensitive action
+   * is refused. Answered 403 — never 401, which would claim the
+   * credential itself is bad. The SPA's re-auth modal re-proves and
+   * retries the action exactly once.
+   */
+  @ExceptionHandler(StepUpRequiredException.class)
+  public ResponseEntity<ApiResponse<Void>> handleStepUpRequired(StepUpRequiredException ex) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(ApiResponse.fail(HttpStatus.FORBIDDEN.value(), ex.getMessage()));
   }
 
   /**

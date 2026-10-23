@@ -11,7 +11,6 @@ import java.util.Base64;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-
 /**
  * Step-up grants for the account data export (backlog #188). Until
  * now the export (#172) — the heaviest sensitive read in the app —
@@ -58,17 +57,20 @@ public class DataExportGrantService {
   private final AuditService audit;
   private final Clock clock;
   private final TransactionTemplate mintTx;
+  private final StepUpPolicy stepUp;
   private final SecureRandom random = new SecureRandom();
 
   public DataExportGrantService(AuthService auth, DataExportGrantRepository grants,
                                 DataExportGrantProperties properties, AuditService audit,
-                                Clock clock, PlatformTransactionManager txManager) {
+                                Clock clock, PlatformTransactionManager txManager,
+                                StepUpPolicy stepUp) {
     this.auth = auth;
     this.grants = grants;
     this.properties = properties;
     this.audit = audit;
     this.clock = clock;
     this.mintTx = new TransactionTemplate(txManager);
+    this.stepUp = stepUp;
   }
 
   /** A minted grant: the raw value (shown once) and its expiry. */
@@ -79,8 +81,15 @@ public class DataExportGrantService {
    * grant. Proof failures propagate from
    * {@link AuthService#requireStepUpProof} as the identical 401 (or
    * 423 under an active TOTP lock) and mint nothing.
+   *
+   * <p>Backlog #218: the export is the heaviest sensitive read in the
+   * app — the grant confirm keeps its password proof AND gains the
+   * recency gate: the presented access token's own credential proof
+   * must be fresh, so a stale-but-valid Bearer token cannot reach
+   * the password prompt at all.
    */
   public IssuedGrant confirm(long userId, String currentPassword, String code) {
+    stepUp.requireFresh();
     auth.requireStepUpProof(userId, currentPassword, code);
     byte[] raw = new byte[GRANT_BYTES];
     random.nextBytes(raw);

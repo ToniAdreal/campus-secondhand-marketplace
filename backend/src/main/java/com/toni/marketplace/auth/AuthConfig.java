@@ -14,7 +14,8 @@ import org.springframework.context.annotation.Configuration;
     PasswordPolicyProperties.class, EmailVerificationProperties.class,
     DataExportGrantProperties.class, SessionLimitProperties.class,
     BreachedPasswordProperties.class, TrustedDeviceProperties.class,
-    CspReportProperties.class, BootstrapAdminProperties.class})
+    CspReportProperties.class, BootstrapAdminProperties.class,
+    StepUpProperties.class})
 public class AuthConfig {
 
   /**
@@ -171,6 +172,23 @@ public class AuthConfig {
     exportProps.setEnabled(props.isEnabled());
     exportProps.setAttemptsPerMinute(props.getDataExportAttemptsPerMinute());
     return new AuthRateLimiter(clock, exportProps);
+  }
+
+  /**
+   * Separate token bucket for the step-up re-proof endpoint
+   * ({@code POST /api/auth/step-up}, backlog #218; default 5
+   * attempts/minute per authenticated user). Keyed on the JWT
+   * principal id like the message/export buckets — the endpoint
+   * verifies the current password, so a stolen Bearer token must not
+   * get unlimited guesses at it, and keying by IP would let one NAT
+   * address starve every user behind it.
+   */
+  @Bean
+  public AuthRateLimiter stepUpRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties stepUpProps = new AuthRateLimitProperties();
+    stepUpProps.setEnabled(props.isEnabled());
+    stepUpProps.setAttemptsPerMinute(props.getStepUpAttemptsPerMinute());
+    return new AuthRateLimiter(clock, stepUpProps);
   }
 
   /**

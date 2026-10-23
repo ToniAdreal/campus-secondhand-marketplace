@@ -11,6 +11,7 @@ import {
   enableTotp,
   recoveryCodeCount,
   setupTotp,
+  withStepUpRetry,
   type TotpSetup,
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
@@ -290,12 +291,14 @@ export default function SettingsPage() {
     setClosurePending(true);
     setClosureError(null);
     try {
+      // Backlog #218: account closure is freshness-gated; the form already
+      // holds the proof, so a stale token re-proves transparently with
+      // the same credentials and retries exactly once (withStepUpRetry).
       const code = closureCode.trim();
-      await closeAccount(
-        code
-          ? { currentPassword: closurePassword, code }
-          : { currentPassword: closurePassword },
-      );
+      const proof = code
+        ? { currentPassword: closurePassword, code }
+        : { currentPassword: closurePassword };
+      await withStepUpRetry(() => closeAccount(proof), proof);
       // The account is gone server-side and every session with it; drop
       // this tab's credential too so no later call presents a dead token.
       setAccessToken(null);
@@ -326,10 +329,17 @@ export default function SettingsPage() {
       // Step-up first (backlog #188): the proof mints a single-use
       // grant, and the download consumes it — the grant never outlives
       // this click, and the proof fields clear on success.
-      const { grant } = await confirmDataExport(
-        totpOn
-          ? { currentPassword: exportPassword, code: exportCode.trim() }
-          : { currentPassword: exportPassword },
+      //
+      // Backlog #218: the confirm endpoint is also freshness-gated — the
+      // form already holds the proof, so a stale token re-proves
+      // transparently with the same credentials and retries exactly once
+      // (withStepUpRetry); no second password prompt.
+      const proof = totpOn
+        ? { currentPassword: exportPassword, code: exportCode.trim() }
+        : { currentPassword: exportPassword };
+      const { grant } = await withStepUpRetry(
+        () => confirmDataExport(proof),
+        proof,
       );
       const { blob, filename } = await downloadMyData(grant);
       setExportPassword('');
@@ -401,7 +411,11 @@ export default function SettingsPage() {
     setDisablePending(true);
     setDisableError(null);
     try {
-      await disableTotp({ currentPassword: disablePassword, code: disableCode.trim() });
+      // Backlog #218: disabling 2FA is freshness-gated; the form already
+      // holds the proof, so a stale token re-proves transparently with
+      // the same credentials and retries exactly once (withStepUpRetry).
+      const proof = { currentPassword: disablePassword, code: disableCode.trim() };
+      await withStepUpRetry(() => disableTotp(proof), proof);
       // 2FA is off server-side: the secret and every recovery code are
       // gone, so the local readouts reset to match — and this session
       // deliberately keeps working (the backend revokes nothing here).

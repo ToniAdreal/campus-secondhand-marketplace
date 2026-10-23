@@ -86,6 +86,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * success. It is sized for browser-generated bursts; the ceiling stops
  * a deliberate flood of the log/metric pipeline, not normal reporting.
  *
+ * <p>The step-up re-proof endpoint ({@code POST /api/auth/step-up},
+ * backlog #218) has a tenth, per-user bucket (default 5/minute): the
+ * endpoint verifies the current password, so it is a password-guessing
+ * surface for anyone holding a stolen Bearer token — the bucket keys
+ * on the JWT principal (per-IP fallback for a missing/invalid token,
+ * like the message bucket) and never resets on success.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -153,6 +160,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
+  private static final String STEP_UP_PATH = "/api/auth/step-up";
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
@@ -164,6 +172,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
   private final AuthRateLimiter cspReportLimiter;
+  private final AuthRateLimiter stepUpLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -181,6 +190,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter dataExportLimiter,
                              @Qualifier("cspReportRateLimiter")
                                  AuthRateLimiter cspReportLimiter,
+                             @Qualifier("stepUpRateLimiter")
+                                 AuthRateLimiter stepUpLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -193,6 +204,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
     this.cspReportLimiter = cspReportLimiter;
+    this.stepUpLimiter = stepUpLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -220,6 +232,13 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (CSP_REPORT_PATH.equals(path)) {
       return !cspReportLimiter.isEnabled();
+    }
+    if (STEP_UP_PATH.equals(path)) {
+      // Step-up re-proof (backlog #218): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset
+      // on success — a completed proof must not refill a password
+      // guesser's budget.
+      return !stepUpLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -288,6 +307,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!cspReportLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, cspReportLimiter.retryAfterSeconds(ip));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (STEP_UP_PATH.equals(path)) {
+      // Step-up re-proof (backlog #218): own per-user bucket on the
+      // message keying, never reset on success — a password guesser
+      // holding a stolen Bearer token gets 5 attempts/minute, not
+      // unlimited tries.
+      String key = messageKey(request);
+      if (!stepUpLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, stepUpLimiter.retryAfterSeconds(key));
         return;
       }
       chain.doFilter(request, response);

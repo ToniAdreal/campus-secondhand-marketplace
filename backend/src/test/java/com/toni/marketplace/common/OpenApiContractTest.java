@@ -98,6 +98,7 @@ class OpenApiContractTest {
       "/api/auth/sessions",
       "/api/auth/sessions/revoke-others",
       "/api/auth/sessions/{id}",
+      "/api/auth/step-up",
       "/api/auth/trusted-devices",
       "/api/auth/trusted-devices/{id}",
       "/api/categories",
@@ -309,6 +310,10 @@ class OpenApiContractTest {
     // Revoke-other-sessions (#163) pins its success + anonymous codes.
     assertThat(responseCodes(docs, "/api/auth/sessions/revoke-others", "post"))
         .contains("200", "401");
+    // Step-up re-proof (#218) pins its success, its anonymous 401, its
+    // lockout 423, and its own per-user rate-limit 429.
+    assertThat(responseCodes(docs, "/api/auth/step-up", "post"))
+        .contains("200", "401", "423", "429");
     // Login history (#171) pins its success + anonymous codes.
     assertThat(responseCodes(docs, "/api/auth/login-history", "get"))
         .contains("200", "401");

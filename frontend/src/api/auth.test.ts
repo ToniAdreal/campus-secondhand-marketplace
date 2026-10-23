@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from './client';
+import { api, getAccessToken, setAccessToken } from './client';
 import {
   login,
   me,
@@ -25,6 +25,10 @@ import {
   disableTotp,
   downloadMyData,
   confirmDataExport,
+  stepUp,
+  isStepUpRequired,
+  describeStepUpError,
+  withStepUpRetry,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -743,5 +747,142 @@ describe('downloadMyData (backlog #172)', () => {
     getSpy.mockRejectedValueOnce(failure);
 
     await expect(downloadMyData('grant-abc')).rejects.toBe(failure);
+  });
+});
+
+describe('step-up re-authentication (backlog #218)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    setAccessToken(null);
+  });
+
+  const stepUpBody = {
+    accessToken: 'fresh-token',
+    tokenType: 'Bearer',
+    expiresInSeconds: 900,
+  };
+
+  function axiosFailure(status: number, code: number, message: string) {
+    return { response: { status, data: { code, message } } };
+  }
+
+  describe('stepUp', () => {
+    it('posts the proof to /auth/step-up and returns the fresh credential', async () => {
+      postSpy.mockResolvedValueOnce(envelope(stepUpBody));
+
+      const result = await stepUp({ currentPassword: 'pw' });
+
+      expect(postSpy).toHaveBeenCalledWith('/auth/step-up', { currentPassword: 'pw' });
+      expect(result).toEqual(stepUpBody);
+    });
+  });
+
+  describe('isStepUpRequired', () => {
+    it('detects the dedicated 403 step-up envelope', () => {
+      expect(
+        isStepUpRequired(
+          axiosFailure(403, 403, 'Sensitive action requires re-authentication: re-authentication required'),
+        ),
+      ).toBe(true);
+    });
+
+    it('rejects other 403s, 401s, and failures without a response', () => {
+      expect(isStepUpRequired(axiosFailure(403, 403, 'Only the buyer can do this'))).toBe(false);
+      expect(isStepUpRequired(axiosFailure(401, 401, 'Unauthorized'))).toBe(false);
+      expect(isStepUpRequired(new Error('network down'))).toBe(false);
+      expect(isStepUpRequired(null)).toBe(false);
+    });
+  });
+
+  describe('describeStepUpError', () => {
+    it('maps 401 to a wrong-credentials message', () => {
+      expect(describeStepUpError(axiosFailure(401, 401, 'bad proof'))).toContain('incorrect');
+    });
+
+    it('maps 423 to a lockout message', () => {
+      expect(describeStepUpError(axiosFailure(423, 423, 'locked'))).toContain('locked');
+    });
+
+    it('maps 429 to a throttle message', () => {
+      expect(describeStepUpError(axiosFailure(429, 429, 'slow down'))).toContain('Too many');
+    });
+
+    it('passes the envelope message through otherwise', () => {
+      expect(describeStepUpError(axiosFailure(400, 400, 'code must be 6 digits'))).toBe(
+        'code must be 6 digits',
+      );
+    });
+  });
+
+  describe('withStepUpRetry', () => {
+    it('returns the action result without re-proving when the action succeeds', async () => {
+      const action = vi.fn().mockResolvedValue('done');
+
+      const result = await withStepUpRetry(action, { currentPassword: 'pw' });
+
+      expect(result).toBe('done');
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(postSpy).not.toHaveBeenCalled();
+      expect(getAccessToken()).toBeNull();
+    });
+
+    it('re-proves with the given credentials, swaps the token, and retries exactly once', async () => {
+      const stepUpError = axiosFailure(
+        403,
+        403,
+        'Sensitive action requires re-authentication: re-authentication required',
+      );
+      const action = vi.fn().mockRejectedValueOnce(stepUpError).mockResolvedValueOnce('retried');
+      postSpy.mockResolvedValueOnce(envelope(stepUpBody));
+
+      const result = await withStepUpRetry(action, { currentPassword: 'pw', code: '123456' });
+
+      expect(result).toBe('retried');
+      expect(action).toHaveBeenCalledTimes(2);
+      expect(postSpy).toHaveBeenCalledTimes(1);
+      expect(postSpy).toHaveBeenCalledWith('/auth/step-up', {
+        currentPassword: 'pw',
+        code: '123456',
+      });
+      expect(getAccessToken()).toBe('fresh-token');
+    });
+
+    it('lets non-step-up errors propagate without re-proving', async () => {
+      const forbidden = axiosFailure(403, 403, 'Only the buyer can do this');
+      const action = vi.fn().mockRejectedValue(forbidden);
+
+      await expect(withStepUpRetry(action, { currentPassword: 'pw' })).rejects.toBe(forbidden);
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it('propagates a second step-up 403 instead of looping', async () => {
+      const stepUpError = axiosFailure(
+        403,
+        403,
+        'Sensitive action requires re-authentication: re-authentication required',
+      );
+      const action = vi.fn().mockRejectedValue(stepUpError);
+      postSpy.mockResolvedValueOnce(envelope(stepUpBody));
+
+      await expect(withStepUpRetry(action, { currentPassword: 'pw' })).rejects.toBe(stepUpError);
+      expect(action).toHaveBeenCalledTimes(2);
+      expect(postSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a failed re-proof (e.g. wrong password) without retrying the action', async () => {
+      const stepUpError = axiosFailure(
+        403,
+        403,
+        'Sensitive action requires re-authentication: re-authentication required',
+      );
+      const badProof = axiosFailure(401, 401, 'Invalid credentials');
+      const action = vi.fn().mockRejectedValueOnce(stepUpError);
+      postSpy.mockRejectedValueOnce(badProof);
+
+      await expect(withStepUpRetry(action, { currentPassword: 'wrong' })).rejects.toBe(badProof);
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(getAccessToken()).toBeNull();
+    });
   });
 });

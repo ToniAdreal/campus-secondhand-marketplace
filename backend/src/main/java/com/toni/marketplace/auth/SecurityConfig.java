@@ -36,9 +36,10 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *       closure, backlog #158), {@code GET /api/auth/sessions},
  *       {@code DELETE /api/auth/sessions/**},
  *       {@code POST /api/auth/sessions/revoke-others} (backlog #163),
- *       {@code GET /api/auth/login-history} (backlog #171) and
+ *       {@code GET /api/auth/login-history} (backlog #171),
  *       {@code GET /api/auth/trusted-devices} +
- *       {@code DELETE /api/auth/trusted-devices/**} (backlog #199),
+ *       {@code DELETE /api/auth/trusted-devices/**} (backlog #199) and
+ *       {@code POST /api/auth/step-up} (backlog #218),
  *       which need a Bearer access token because they act on the caller's own
  *       session(s) / sign-in history.</li>
  *   <li>{@code /uploads/**} is public — listing photos are meant to be
@@ -127,8 +128,9 @@ public class SecurityConfig {
   static final String REPORTING_ENDPOINTS_VALUE = "csp-endpoint=\"/api/security/csp-report\"";
 
   @Bean
-  public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenService jwt, UserRepository users) {
-    return new JwtAuthenticationFilter(jwt, users);
+  public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenService jwt, UserRepository users,
+                                                         CurrentAccessClaims currentClaims) {
+    return new JwtAuthenticationFilter(jwt, users, currentClaims);
   }
 
   @Bean
@@ -226,6 +228,7 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.GET, "/api/auth/login-history").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/trusted-devices").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/trusted-devices/**").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/step-up").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/setup").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/enable").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/disable").authenticated()

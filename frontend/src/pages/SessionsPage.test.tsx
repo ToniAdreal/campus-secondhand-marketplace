@@ -394,4 +394,104 @@ describe('SessionsPage', () => {
     expect(screen.getByText('Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0')).toBeTruthy();
     expect(useAuthStore.getState().user).toEqual(user);
   });
+
+  describe('step-up re-auth for revoke-others (backlog #218)', () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+
+    it('opens the re-auth dialog on the 403 step-up envelope and retries exactly once after proving', async () => {
+      getSpy.mockResolvedValueOnce(envelope([currentSession, otherSession]));
+      // the post-retry refetch (invalidation) sees only the current session
+      getSpy.mockResolvedValue(envelope([currentSession]));
+      postSpy
+        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockResolvedValueOnce(
+          envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+        )
+        .mockResolvedValue(envelope({ revokedCount: 1 }));
+      renderAt('/settings/sessions');
+
+      await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+
+      // the step-up dialog opens instead of an error banner
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+      expect(screen.queryByRole('alert')).toBeNull();
+
+      fireEvent.change(screen.getByLabelText('Current password'), {
+        target: { value: 'pw' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+      // proof posted, token swapped, gated action retried exactly once
+      await waitFor(() =>
+        expect(postSpy).toHaveBeenCalledWith('/auth/step-up', { currentPassword: 'pw' }),
+      );
+      expect(getAccessToken()).toBe('fresh-token');
+      await waitFor(() =>
+        expect(
+          screen.getByText('Revoked 1 other session. This device stays signed in.'),
+        ).toBeTruthy(),
+      );
+      expect(postSpy).toHaveBeenCalledTimes(3); // attempt + proof + the single retry
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('a second step-up 403 on the retry surfaces as an error instead of reopening the dialog', async () => {
+      getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
+      postSpy
+        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockResolvedValueOnce(
+          envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+        )
+        .mockRejectedValue(axiosFailure(403, stepUpMessage));
+      renderAt('/settings/sessions');
+
+      await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+
+      fireEvent.change(screen.getByLabelText('Current password'), {
+        target: { value: 'pw' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+      // exactly one retry happened; its 403 surfaces verbatim, no dialog loop
+      await waitFor(() =>
+        expect(screen.getByRole('alert').textContent).toContain('re-authentication required'),
+      );
+      expect(postSpy).toHaveBeenCalledTimes(3);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('shows the code field in the dialog when the account has 2FA enabled', async () => {
+      useAuthStore.setState({ user: { ...user, totpEnabled: true } });
+      getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
+      postSpy.mockRejectedValue(axiosFailure(403, stepUpMessage));
+      renderAt('/settings/sessions');
+
+      await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+      expect(screen.getByLabelText('Two-factor code')).toBeTruthy();
+    });
+
+    it('cancelling the dialog leaves the action unretried and shows no error', async () => {
+      getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
+      postSpy.mockRejectedValue(axiosFailure(403, stepUpMessage));
+      renderAt('/settings/sessions');
+
+      await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke all other sessions' }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(postSpy).toHaveBeenCalledTimes(1); // only the original attempt
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(getAccessToken()).toBe('tok');
+    });
+  });
 });

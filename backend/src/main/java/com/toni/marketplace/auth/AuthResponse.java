@@ -12,16 +12,20 @@ public record AuthResponse(
     long expiresInSeconds,
     UserSummary user) {
 
-  public record UserSummary(long id, String username, String email, List<String> roles) {
+  public record UserSummary(long id, String username, String email, List<String> roles,
+                            boolean totpEnabled) {
 
     /**
      * Projection of the caller for session-restore responses. Built from the
      * entity deliberately instead of serializing {@link User} — the password
-     * hash must never reach the wire.
+     * hash must never reach the wire. Carries the 2FA flag (backlog #218)
+     * so the SPA's step-up modal knows whether to ask for a second-factor
+     * code; the secret itself never leaves the server.
      */
     public static UserSummary of(User user) {
       List<String> roles = user.getRoles().stream().map(Role::name).sorted().toList();
-      return new UserSummary(user.getId(), user.getUsername(), user.getEmail(), roles);
+      return new UserSummary(user.getId(), user.getUsername(), user.getEmail(), roles,
+          user.isTotpEnabled());
     }
   }
 

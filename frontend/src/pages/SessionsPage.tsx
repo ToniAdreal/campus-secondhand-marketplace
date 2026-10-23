@@ -2,6 +2,7 @@ import axios from 'axios';
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
+  isStepUpRequired,
   useLoginHistory,
   useRevokeOtherSessions,
   useRevokeSession,
@@ -15,6 +16,7 @@ import {
 import { setAccessToken } from '../api/client';
 import { queryClient } from '../queryClient';
 import { useAuthStore } from '../store/useAuthStore';
+import StepUpModal from '../components/StepUpModal';
 
 /**
  * My sessions — the per-session device list for the caller's live
@@ -99,6 +101,14 @@ export default function SessionsPage() {
   const revokeTrusted = useRevokeTrustedDevice();
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokedOthersNote, setRevokedOthersNote] = useState<string | null>(null);
+  // Step-up re-auth (backlog #218): revoking other sessions is a sensitive
+  // action — when the token's last credential proof is too old the backend
+  // answers the dedicated 403 step-up envelope and the dialog below
+  // re-proves before the single retry. The retry flag is structural:
+  // `attemptRevokeOthers(false)` opens the dialog, the dialog's onProven
+  // calls `attemptRevokeOthers(true)`, and a second 403 surfaces as a
+  // real error instead of reopening the dialog (exactly one retry).
+  const [stepUpOpen, setStepUpOpen] = useState(false);
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
@@ -111,7 +121,7 @@ export default function SessionsPage() {
   const list = sessions.data ?? [];
   const trustedList = (trustedDevices.data ?? []).filter(isTrustedDeviceRow);
 
-  function onRevokeOthers() {
+  function attemptRevokeOthers(isRetry: boolean) {
     setRevokeError(null);
     setRevokedOthersNote(null);
     revokeOthers.mutate(undefined, {
@@ -124,8 +134,18 @@ export default function SessionsPage() {
             : `Revoked ${count} other sessions. This device stays signed in.`,
         );
       },
-      onError: (err) => setRevokeError(describeSessionError(err)),
+      onError: (err) => {
+        if (isStepUpRequired(err) && !isRetry) {
+          setStepUpOpen(true);
+          return;
+        }
+        setRevokeError(describeSessionError(err));
+      },
     });
+  }
+
+  function onRevokeOthers() {
+    attemptRevokeOthers(false);
   }
 
   function onRevokeTrusted(device: TrustedDevice) {
@@ -348,6 +368,16 @@ export default function SessionsPage() {
           Back to settings
         </Link>
       </p>
+      <StepUpModal
+        open={stepUpOpen}
+        totpEnabled={user.totpEnabled ?? false}
+        actionLabel="revoke all other sessions"
+        onProven={() => {
+          setStepUpOpen(false);
+          attemptRevokeOthers(true);
+        }}
+        onCancel={() => setStepUpOpen(false)}
+      />
     </div>
   );
 }

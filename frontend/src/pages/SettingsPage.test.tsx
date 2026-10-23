@@ -604,4 +604,79 @@ describe('SettingsPage following list (#217)', () => {
     await waitFor(() => expect(getSpy).toHaveBeenCalledWith('/users/me/follows'));
     expect(screen.getByText('You are not following any sellers yet.')).toBeTruthy();
   });
+
+  describe('step-up re-auth (backlog #218)', () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+
+    it('transparently re-proves and retries account closure once on the 403 step-up envelope', async () => {
+      deleteSpy
+        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockResolvedValueOnce(envelope(null));
+      postSpy.mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      );
+      renderAt('/settings');
+      fireEvent.click(screen.getByRole('button', { name: 'Close my account' }));
+      fireEvent.change(screen.getByLabelText('Password to confirm closure'), {
+        target: { value: 'old-secret' },
+      });
+      fireEvent.change(screen.getByLabelText('Type DELETE to confirm'), {
+        target: { value: 'DELETE' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm: close my account' }));
+
+      // the typed proof is reused — no dialog asks twice
+      await waitFor(() =>
+        expect(postSpy).toHaveBeenCalledWith('/auth/step-up', {
+          currentPassword: 'old-secret',
+        }),
+      );
+      await waitFor(() => expect(deleteSpy).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      const status = await screen.findByRole('status');
+      expect(status.textContent).toContain('Account closed.');
+      // the account is gone: the fresh token is dropped like the old one
+      expect(getAccessToken()).toBeNull();
+    });
+
+    it('transparently re-proves and retries the export confirm once on the 403 step-up envelope', async () => {
+      const blob = new Blob(['{"profile":{}}'], { type: 'application/json' });
+      getSpy.mockImplementation((url: string) =>
+        String(url).includes('/users/me/export')
+          ? Promise.resolve({ data: blob, headers: {} } as never)
+          : Promise.reject(new Error('count unavailable')),
+      );
+      postSpy
+        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockResolvedValueOnce(
+          envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+        )
+        .mockResolvedValueOnce(
+          envelope({ grant: 'grant-1', expiresAt: '2026-10-15T00:05:00Z' }),
+        );
+      renderAt('/settings');
+      fireEvent.change(screen.getByLabelText('Confirm your password'), {
+        target: { value: 's3cret-pass' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
+
+      await waitFor(() =>
+        expect(postSpy).toHaveBeenCalledWith('/auth/step-up', {
+          currentPassword: 's3cret-pass',
+        }),
+      );
+      await waitFor(() =>
+        expect(postSpy).toHaveBeenCalledWith('/users/me/export/confirm', {
+          currentPassword: 's3cret-pass',
+        }),
+      );
+      // confirm was attempted twice (attempt + single retry), never a third
+      const confirms = postSpy.mock.calls.filter((call) => call[0] === '/users/me/export/confirm');
+      expect(confirms).toHaveLength(2);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      const status = await screen.findByRole('status');
+      expect(status.textContent).toContain('Your data was downloaded');
+    });
+  });
 });

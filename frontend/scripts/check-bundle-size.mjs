@@ -32,6 +32,12 @@
 //   the shared disputes module) — TOTAL_MAX_BYTES = 510,000 (measured
 //   + ~5%, rounded up). The entry chunk (306,395 bytes) stays inside
 //   its unchanged budget.
+//   Bump 2026-10-23 (backlog #218): total measured 512,353 bytes on the
+//   #218 tree (step-up re-authentication: the StepUpModal component +
+//   stepUp/withStepUpRetry/isStepUpRequired/describeStepUpError in the
+//   shared auth module + the SessionsPage/SettingsPage wiring) —
+//   TOTAL_MAX_BYTES = 538,000 (measured + ~5%, rounded up). The entry
+//   chunk (311,105 bytes) stays inside its unchanged budget.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -46,7 +52,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 316_000;
-export const TOTAL_MAX_BYTES = 510_000;
+export const TOTAL_MAX_BYTES = 538_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module

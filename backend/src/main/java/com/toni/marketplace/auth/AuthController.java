@@ -151,6 +151,30 @@ public class AuthController {
   }
 
   /**
+   * Step-up re-authentication (backlog #218, authenticated —
+   * SecurityConfig): the re-proof path for the sensitive set. The
+   * caller proves the current password (plus a TOTP or recovery code
+   * when 2FA is enabled — the {@code DataExportConfirmRequest} proof
+   * shape, shared with the export confirm) and receives a FRESH access
+   * token (new {@code auth_time} claim) to retry the gated action with.
+   * Access-token-only: no refresh token is issued or rotated, so this
+   * is not a login and creates no session. Wrong password or wrong
+   * code → the identical 401; failed code proofs feed the shared TOTP
+   * lockout (an active lock answers 423). Own per-user rate-limit
+   * bucket in AuthRateLimitFilter (a wrong-password guesser must not
+   * get unlimited tries).
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "proof accepted; fresh access token issued (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong password or wrong/missing second-factor code — identical for both (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor attempts locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @PostMapping("/step-up")
+  public ResponseEntity<ApiResponse<StepUpResponse>> stepUp(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody DataExportConfirmRequest request) {
+    String accessToken = auth.stepUp(userId, request.currentPassword(), request.code());
+    return ResponseEntity.ok(
+        ApiResponse.ok(StepUpResponse.of(accessToken, jwtProps.getAccessTtl().toSeconds())));
+  }
+
+  /**
    * Starts TOTP enrollment for the caller (authenticated): returns the
    * Base32 shared secret and the otpauth:// URI to scan into an
    * authenticator app. Re-running setup regenerates the secret and resets

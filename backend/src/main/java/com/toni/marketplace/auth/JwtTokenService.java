@@ -2,6 +2,7 @@ package com.toni.marketplace.auth;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwsHeader;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.Locator;
@@ -61,6 +62,16 @@ import org.slf4j.LoggerFactory;
  *       token is unexpired — forcing a fresh login. Revocation is scoped to
  *       the family's {@code familyJti}, so the user's other sessions are
  *       untouched (unlike the theft path, which kills by user id).</li>
+ *   <li>Step-up re-authentication (backlog #218): every token of a pair
+ *       carries an {@code auth_time} claim — the epoch second of the last
+ *       credential proof (password login, TOTP-exchange completion,
+ *       password change, registration, or an explicit step-up proof).
+ *       Sensitive actions consult it through {@code StepUpPolicy} and
+ *       refuse a stale token with a dedicated 403 (never a 401), so a
+ *       stolen 15-minute Bearer token cannot perform them. Rotation
+ *       preserves the value and never freshens it; tokens minted before
+ *       the claim existed carry none and read as stale. The step-up
+ *       endpoint mints an access-token-only proof (no new session).</li>
  *   <li>Only the SHA-256 of a refresh token is stored server-side.</li>
  *   <li>TOTP 2FA challenge (backlog #78): a short-lived signed JWT
  *       ({@code totp-challenge}) minted at login for TOTP-enabled accounts
@@ -102,6 +113,19 @@ public class JwtTokenService {
   private static final String TYPE_REFRESH = "refresh";
   private static final String TYPE_TOTP_CHALLENGE = "totp-challenge";
   private static final String CLAIM_TOKEN_VERSION = "tver";
+  /**
+   * Last authentication-proof instant (backlog #218): epoch seconds of the
+   * moment the holder proved a credential — a password login (including the
+   * trusted-device skip, which still verifies the password), a completed
+   * TOTP exchange, a password change, a registration or an explicit
+   * step-up proof. Carried on BOTH tokens of a pair: the access token's
+   * copy is what {@code StepUpPolicy} gates sensitive actions on, and the
+   * refresh token's copy is what rotation preserves — a rotation MUST
+   * never freshen it, so a stolen 15-minute Bearer token cannot launder
+   * itself into a "recently proven" one by refreshing. Tokens minted
+   * before this claim existed carry none and read as stale.
+   */
+  private static final String CLAIM_AUTH_TIME = "auth_time";
 
   /** Default {@code kid} for the signing key when none is configured. */
   public static final String DEFAULT_CURRENT_KID = "current";
@@ -229,7 +253,32 @@ public class JwtTokenService {
                           Instant accessExpiresAt, Instant refreshExpiresAt) {}
 
   /** Claims extracted from a validated access token. */
-  public record AccessClaims(long userId, String username, List<String> roles, long tokenVersion) {}
+  public record AccessClaims(long userId, String username, List<String> roles, long tokenVersion,
+                             Instant authTime) {}
+
+  /**
+   * Mints an access token that proves a fresh credential event — the
+   * step-up endpoint's answer (backlog #218). Same claims as the pair's
+   * access token, with {@code auth_time} = now; no refresh row is created, so
+   * this is not a new session and does not count toward the #191
+   * session cap. The caller swaps the in-memory Bearer token and retries
+   * the gated action once.
+   */
+  public String mintStepUpAccessToken(User user) {
+    Instant now = clock.instant();
+    List<String> roles = user.getRoles().stream().map(Role::name).sorted().toList();
+    return Jwts.builder()
+        .subject(String.valueOf(user.getId()))
+        .claim("username", user.getUsername())
+        .claim("roles", roles)
+        .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
+        .claim(CLAIM_AUTH_TIME, now.getEpochSecond())
+        .claim("type", TYPE_ACCESS)
+        .issuedAt(Date.from(now))
+        .expiration(Date.from(now.plus(accessTtl)))
+        .header().keyId(currentKid).and().signWith(key)
+        .compact();
+  }
 
   public TokenPair createTokenPair(User user) {
     return createTokenPair(user, SessionMeta.unknown());
@@ -238,6 +287,11 @@ public class JwtTokenService {
   /**
    * Issues a token pair and records the session's device info
    * ({@link SessionMeta}) on the new refresh-token row (backlog #62).
+   *
+   * <p>Issuing a pair IS a credential proof (password login, TOTP
+   * completion, password change, registration): both tokens carry
+   * {@code auth_time} = now (backlog #218). Rotation preserves the value —
+   * see {@link #rotateRefreshToken}.
    */
   public TokenPair createTokenPair(User user, SessionMeta meta) {
     Instant now = clock.instant();
@@ -251,6 +305,7 @@ public class JwtTokenService {
         .claim("username", user.getUsername())
         .claim("roles", roles)
         .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
+        .claim(CLAIM_AUTH_TIME, now.getEpochSecond())
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))
@@ -261,6 +316,7 @@ public class JwtTokenService {
     String refreshToken = Jwts.builder()
         .subject(String.valueOf(user.getId()))
         .claim("type", TYPE_REFRESH)
+        .claim(CLAIM_AUTH_TIME, now.getEpochSecond())
         .id(jti)
         .issuedAt(Date.from(now))
         .expiration(Date.from(refreshExp))
@@ -287,7 +343,11 @@ public class JwtTokenService {
     // Tokens minted before the tokenVersion field existed carry no claim —
     // they parse as 0, matching the V10 backfill on existing rows.
     Long tokenVersion = claims.get(CLAIM_TOKEN_VERSION, Long.class);
-    return new AccessClaims(userId, username, roles, tokenVersion == null ? 0L : tokenVersion);
+    // Backlog #218: tokens minted before the auth-time claim existed carry
+    // none — they parse as null and read as stale to StepUpPolicy.
+    Long authTimeSeconds = claims.get(CLAIM_AUTH_TIME, Long.class);
+    return new AccessClaims(userId, username, roles, tokenVersion == null ? 0L : tokenVersion,
+        authTimeSeconds == null ? null : Instant.ofEpochSecond(authTimeSeconds));
   }
 
   /**
@@ -353,7 +413,17 @@ public class JwtTokenService {
       throw new InvalidRefreshTokenException("refresh token user mismatch");
     }
 
-    return rotateLive(stored, userId, claims.getSubject(), now, meta);
+    return rotateLive(stored, userId, claims.getSubject(), now, meta, authTimeOf(claims));
+  }
+
+  /**
+   * Reads the {@code auth_time} (backlog #218) claim off a parsed refresh token.
+   * Null when the token predates the claim — rotation then issues tokens
+   * with no claim, which StepUpPolicy reads as stale (fail-safe).
+   */
+  private static Instant authTimeOf(Claims claims) {
+    Long seconds = claims.get(CLAIM_AUTH_TIME, Long.class);
+    return seconds == null ? null : Instant.ofEpochSecond(seconds);
   }
 
   /**
@@ -403,16 +473,21 @@ public class JwtTokenService {
     }
     // Rotate the live successor: both tabs end up with a working token and
     // the chain stays linear, spending this stale token's single grace grant.
-    return rotateLive(successor, userId, claims.getSubject(), now, meta);
+    return rotateLive(successor, userId, claims.getSubject(), now, meta, authTimeOf(claims));
   }
 
   /**
    * Rotates a live (non-revoked, non-expired) stored refresh token: marks it
    * revoked — timestamped so the grace window can be measured — and issues
    * the next pair for the same user.
+   *
+   * <p>Backlog #218: the rotation preserves the presented token's
+   * {@code auth_time} into the new pair (both tokens) and NEVER freshens it —
+   * a rotation is not a credential proof. A stolen Bearer token cannot
+   * launder itself into "recently proven" by refreshing.
    */
   private TokenPair rotateLive(RefreshToken live, long userId, String subject, Instant now,
-                               SessionMeta meta) {
+                               SessionMeta meta, Instant authTimeAt) {
     Instant accessExp = now.plus(accessTtl);
     Instant refreshExp = now.plus(refreshTtl);
 
@@ -427,12 +502,19 @@ public class JwtTokenService {
 
     // Revoke the consumed token, then issue a new pair for the same user.
     String newJti = UUID.randomUUID().toString();
-    String newRefreshToken = Jwts.builder()
+    JwtBuilder refreshBuilder = Jwts.builder()
         .subject(subject)
         .claim("type", TYPE_REFRESH)
         .id(newJti)
         .issuedAt(Date.from(now))
-        .expiration(Date.from(refreshExp))
+        .expiration(Date.from(refreshExp));
+    // Backlog #218: a rotated-out (pre-#218) token carries no auth-time —
+    // the claim is omitted rather than nulled so no JJWT null semantics
+    // are depended on; absence reads as stale to StepUpPolicy either way.
+    if (authTimeAt != null) {
+      refreshBuilder.claim(CLAIM_AUTH_TIME, authTimeAt.getEpochSecond());
+    }
+    String newRefreshToken = refreshBuilder
         .header().keyId(currentKid).and().signWith(key)
         .compact();
 
@@ -453,14 +535,18 @@ public class JwtTokenService {
     next.setIpAddress(meta.ipAddress() != null ? meta.ipAddress() : live.getIpAddress());
     refreshTokens.save(next);
 
-    String newAccessToken = Jwts.builder()
+    JwtBuilder accessBuilder = Jwts.builder()
         .subject(subject)
         .claim("username", user.getUsername())
         .claim("roles", roles)
         .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
-        .expiration(Date.from(accessExp))
+        .expiration(Date.from(accessExp));
+    if (authTimeAt != null) {
+      accessBuilder.claim(CLAIM_AUTH_TIME, authTimeAt.getEpochSecond());
+    }
+    String newAccessToken = accessBuilder
         .header().keyId(currentKid).and().signWith(key)
         .compact();
 

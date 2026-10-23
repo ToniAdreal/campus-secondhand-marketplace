@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from './client';
+import { api, setAccessToken } from './client';
 import type { ApiResponse, Page } from './items';
 
 export interface AuthUser {
@@ -7,6 +7,8 @@ export interface AuthUser {
   username: string;
   email: string;
   roles: string[];
+  /** Whether TOTP 2FA is enabled on the account (GET /api/auth/me, backlog #218). */
+  totpEnabled?: boolean;
 }
 
 interface AuthResponseBody {
@@ -698,6 +700,120 @@ export function useRevokeOtherSessions() {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     },
   });
+}
+
+/**
+ * POST /api/auth/step-up — step-up re-authentication for sensitive actions
+ * (backlog #218). The caller re-proves the current password (plus a
+ * TOTP/recovery code when 2FA is on) and the backend mints a fresh
+ * access-token-only credential whose `aut` claim is now: no new session is
+ * created, the session cap does not count it, and the endpoint itself is
+ * exempt from the freshness gate (it IS the re-proof). Its own per-user
+ * rate-limit bucket (5/min) answers 429 on abuse.
+ *
+ * Throws the Axios error on failure (401 wrong proof, 423 lockout, 429).
+ */
+export interface StepUpPayload {
+  currentPassword: string;
+  code?: string;
+}
+
+export interface StepUpResult {
+  accessToken: string;
+  tokenType: string;
+  expiresInSeconds: number;
+}
+
+export async function stepUp(payload: StepUpPayload): Promise<StepUpResult> {
+  const res = await api.post<ApiResponse<StepUpResult>>('/auth/step-up', payload);
+  return res.data.data;
+}
+
+/**
+ * The backend's dedicated step-up 403 message (StepUpRequiredException,
+ * backlog #218). It is deliberately distinct from a 401: the token is
+ * valid and the session alive, but its last credential proof is too old
+ * for the sensitive action attempted.
+ */
+export const STEP_UP_REQUIRED_MESSAGE = 're-authentication required';
+
+/**
+ * True when the failure is the dedicated 403 step-up envelope: the gated
+ * action must re-prove the credential and retry exactly once. Any other
+ * 403 (forbidden by role/ownership) or any 401 is NOT step-up.
+ */
+export function isStepUpRequired(error: unknown): boolean {
+  if (error == null || typeof error !== 'object') return false;
+  const response = (
+    error as { response?: { data?: { code?: number; message?: string } } }
+  ).response;
+  return (
+    response?.data?.code === 403 &&
+    typeof response.data.message === 'string' &&
+    response.data.message.includes(STEP_UP_REQUIRED_MESSAGE)
+  );
+}
+
+/**
+ * Maps a failed POST /api/auth/step-up to a user-facing message. The
+ * backend speaks the {code,message,data} envelope; the 403 step-up
+ * envelope never surfaces here (that is the trigger, not the proof
+ * failing) — 401 means the password/code was wrong, 423 means the
+ * account's attempt lockout is active, 429 means the endpoint's own
+ * per-user bucket is full.
+ */
+export function describeStepUpError(error: unknown): string {
+  const response = (
+    error as { response?: { data?: { code?: number; message?: string } } }
+  ).response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 401) {
+    return 'Current password or code is incorrect — please check and try again.';
+  }
+  if (code === 423) {
+    return 'This account is temporarily locked after too many failed attempts — please wait a few minutes and try again.';
+  }
+  if (code === 429) {
+    return 'Too many verification attempts — please wait a moment and try again.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * Runs a sensitive action, transparently re-proving with the given
+ * credentials and retrying exactly once when the backend answers the
+ * dedicated 403 step-up envelope (backlog #218). For actions whose form
+ * already collected the proof (password + optional code) this avoids a
+ * second password prompt: the proof the user just typed is reused. The
+ * fresh credential is swapped into the in-memory token store (the modal
+ * path does the same) so the retried request carries a fresh `aut` claim;
+ * a second 403 propagates as a real error — there is exactly one retry,
+ * never a loop.
+ *
+ * Actions with no inline proof (e.g. revoke-others on the sessions page)
+ * use the StepUpModal instead — same swap, same retry-once discipline.
+ *
+ * Known limitation: if the proof uses a one-time recovery code (not a
+ * TOTP code) and the token was stale, the step-up endpoint consumes the
+ * code, and the retried action re-verifies it — the retry then 401s on
+ * the consumed code. TOTP codes are unaffected (they are not consumed).
+ * Users in this narrow case see the "incorrect" copy and can retry with
+ * a fresh code; the backend deliberately re-verifies rather than
+ * trusting the fresh token alone (see TotpDisableLockoutTest).
+ */
+export async function withStepUpRetry<T>(
+  action: () => Promise<T>,
+  proof: StepUpPayload,
+): Promise<T> {
+  try {
+    return await action();
+  } catch (err) {
+    if (!isStepUpRequired(err)) throw err;
+    const fresh = await stepUp(proof);
+    setAccessToken(fresh.accessToken);
+    return await action();
+  }
 }
 
 /** A downloaded account data export: the blob plus the server's filename. */
