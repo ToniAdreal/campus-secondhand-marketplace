@@ -167,6 +167,20 @@ public class Notification {
     return notification;
   }
 
+  /**
+   * New-listing-from-a-followed-seller factory (backlog #217): no
+   * order or offer — the row names the published listing in the same
+   * {@code itemId} column as FAVORITE_PRICE_DROP, so the SPA links
+   * straight to it. One row per follower, written by the publish
+   * fan-out.
+   */
+  public static Notification sellerNewListing(Long recipientId, Long itemId) {
+    Notification notification =
+        new Notification(recipientId, NotificationType.SELLER_NEW_LISTING, null, null);
+    notification.itemId = itemId;
+    return notification;
+  }
+
   @PrePersist
   void onCreate() {
     this.createdAt = Instant.now();

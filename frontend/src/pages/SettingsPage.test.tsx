@@ -549,3 +549,59 @@ describe('SettingsPage', () => {
     );
   });
 });
+
+describe('SettingsPage following list (#217)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({
+      user: { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] },
+    });
+    setAccessToken('old-credential');
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/users/me/follows') {
+        return Promise.resolve(
+          envelope([
+            {
+              sellerId: 3,
+              sellerUsername: 'campus-seller',
+              createdAt: '2026-10-23T00:00:00Z',
+            },
+          ]),
+        );
+      }
+      // Every other settings fetch degrades to empty — the sections
+      // render their empty copy, only the Following section is asserted.
+      return Promise.resolve(envelope([]));
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('renders the followed sellers with an unfollow action', async () => {
+    renderAt('/settings');
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalledWith('/users/me/follows'));
+    expect(screen.getByText('campus-seller')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Unfollow' })).toBeTruthy();
+  });
+
+  it('unfollow fires DELETE on the follow endpoint', async () => {
+    renderAt('/settings');
+    await waitFor(() => expect(getSpy).toHaveBeenCalledWith('/users/me/follows'));
+
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+    fireEvent.click(screen.getByRole('button', { name: 'Unfollow' }));
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('/users/me/follows/3'));
+  });
+
+  it('renders the empty copy when the caller follows nobody', async () => {
+    getSpy.mockImplementation(() => Promise.resolve(envelope([])));
+    renderAt('/settings');
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalledWith('/users/me/follows'));
+    expect(screen.getByText('You are not following any sellers yet.')).toBeTruthy();
+  });
+});

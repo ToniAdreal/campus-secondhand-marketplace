@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useBlockUser, useMyBlocks, useUnblockUser } from '../api/blocks';
+import { useFollowSeller, useMyFollows, useUnfollowSeller } from '../api/follows';
 import { listingPhotoUrls } from '../api/items';
 import { useSellerReviews } from '../api/reviews';
 import { useSellerListings, useSellerProfile } from '../api/sellers';
@@ -32,6 +33,17 @@ export default function SellerProfilePage() {
   const blockUser = useBlockUser();
   const unblockUser = useUnblockUser();
   const isBlocked = (myBlocks.data ?? []).some((b) => b.blockedId === sellerId);
+  // Following (backlog #217): a signed-in visitor who is not the
+  // seller can follow/unfollow them from this public surface. The
+  // follow state derives from the one follows query, exactly like
+  // favorites. The control hides when the visitor blocked the seller:
+  // the follow endpoint would answer 409 there, and the Unblock button
+  // above already communicates the state — no dead button.
+  const canFollow = canBlock && !isBlocked;
+  const myFollows = useMyFollows(canFollow);
+  const followSeller = useFollowSeller();
+  const unfollowSeller = useUnfollowSeller();
+  const isFollowed = (myFollows.data ?? []).some((f) => f.sellerId === sellerId);
 
   if (profile.isLoading) return <p>Loading seller…</p>;
   if (profile.isError || !profile.data) {
@@ -70,6 +82,29 @@ export default function SellerProfilePage() {
             className="mt-3 rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
           >
             Block user
+          </button>
+        ))}
+
+      {canFollow &&
+        (isFollowed ? (
+          <button
+            type="button"
+            aria-label={`Unfollow ${profile.data.username}`}
+            onClick={() => unfollowSeller.mutate(sellerId)}
+            disabled={unfollowSeller.isLoading}
+            className="mt-3 ml-2 rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            Following
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label={`Follow ${profile.data.username}`}
+            onClick={() => followSeller.mutate(sellerId)}
+            disabled={followSeller.isLoading}
+            className="mt-3 ml-2 rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Follow
           </button>
         ))}
 

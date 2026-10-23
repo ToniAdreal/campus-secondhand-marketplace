@@ -97,7 +97,15 @@ public enum NotificationType {
    * must never be silent. Carries no order, offer or credential data.
    * A security alert: never mutable (backlog #216).
    */
-  TOTP_RESET_BY_ADMIN("Two-factor authentication reset by an administrator", true);
+  TOTP_RESET_BY_ADMIN("Two-factor authentication reset by an administrator", true),
+  /**
+   * A seller the recipient follows published a new listing (backlog
+   * #217). The row carries the listing id in the same {@code itemId}
+   * column as FAVORITE_PRICE_DROP; the SPA links straight to the
+   * listing. A discovery alert, not a security alert: mutable in the
+   * per-type preferences (backlog #216).
+   */
+  SELLER_NEW_LISTING("New listing from a followed seller", false);
 
   private final String label;
   private final boolean security;

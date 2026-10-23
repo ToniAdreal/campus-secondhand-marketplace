@@ -31,10 +31,13 @@ public class UserBlockService {
 
   private final UserBlockRepository blocks;
   private final UserRepository users;
+  private final SellerFollowRepository follows;
 
-  public UserBlockService(UserBlockRepository blocks, UserRepository users) {
+  public UserBlockService(UserBlockRepository blocks, UserRepository users,
+                          SellerFollowRepository follows) {
     this.blocks = blocks;
     this.users = users;
+    this.follows = follows;
   }
 
   @Transactional
@@ -53,6 +56,11 @@ public class UserBlockService {
       // A concurrent block of the same pair won the unique constraint —
       // the end state is exactly the idempotent one, so it is not an error.
     }
+    // A follow must never become a channel around a block (backlog
+    // #217): blocking a followed seller removes the follow in the same
+    // transaction — the follow that the block would otherwise strand is
+    // gone atomically with the block itself.
+    follows.deleteByFollowerIdAndSellerId(blockerId, blockedId);
   }
 
   @Transactional

@@ -43,6 +43,7 @@ public class ItemService {
   private final ListingExpiryProperties listingProps;
   private final Clock clock;
   private final com.toni.marketplace.auth.UserBlockRepository blocks;
+  private final com.toni.marketplace.auth.SellerFollowRepository follows;
   private final FavoriteRepository favorites;
   private final com.toni.marketplace.notification.NotificationService notifications;
   private final RecentlyViewedService recentlyViewed;
@@ -66,6 +67,7 @@ public class ItemService {
                      ImageStorageService imageStorage, DataSource dataSource,
                      ListingExpiryProperties listingProps, Clock clock,
                      com.toni.marketplace.auth.UserBlockRepository blocks,
+                     com.toni.marketplace.auth.SellerFollowRepository follows,
                      FavoriteRepository favorites,
                      com.toni.marketplace.notification.NotificationService notifications,
                      RecentlyViewedService recentlyViewed,
@@ -79,6 +81,7 @@ public class ItemService {
     this.listingProps = listingProps;
     this.clock = clock;
     this.blocks = blocks;
+    this.follows = follows;
     this.favorites = favorites;
     this.notifications = notifications;
     this.recentlyViewed = recentlyViewed;
@@ -585,7 +588,40 @@ public class ItemService {
     // the price it was created at (drafts included: the seed is the
     // draft's asking price, readable by its seller like the draft).
     recordPricePoint(saved);
+    if (saved.getStatus() == ItemStatus.AVAILABLE) {
+      // Seller-follow fan-out (backlog #217): a listing created live
+      // (not as a draft — drafts notify on publish, never on create)
+      // notifies each of the seller's followers in this same
+      // transaction, so a rolled-back create writes no rows.
+      notifyFollowers(sellerId, saved.getId());
+    }
     return mapper.toDto(saved);
+  }
+
+  /**
+   * Notifies every follower of {@code sellerId} that a new listing went
+   * live (backlog #217), one {@code SELLER_NEW_LISTING} row per
+   * follower through the {@code NotificationService.record*} seam —
+   * which is where the per-type preference mute (#216) is honoured, so
+   * this method itself never checks preferences. The writes join the
+   * caller's transaction (a rolled-back publish notifies nobody), and
+   * drafts never reach this method — only the two public-publish seams
+   * call it ({@link #createItem} for direct AVAILABLE creation and
+   * {@link #publishItem} for DRAFT → AVAILABLE). Null-guarded like
+   * {@link #blockedSellerIds}: direct unit tests built without the
+   * follow store notify nobody.
+   */
+  private void notifyFollowers(Long sellerId, Long itemId) {
+    if (follows == null) {
+      return;
+    }
+    List<Long> followerIds = follows.findFollowerIdsBySellerId(sellerId);
+    if (followerIds == null || followerIds.isEmpty()) {
+      return;
+    }
+    for (Long followerId : followerIds) {
+      notifications.recordSellerNewListing(followerId, itemId);
+    }
   }
 
   /**
@@ -719,6 +755,9 @@ public class ItemService {
     item.setStatus(ItemStatus.AVAILABLE);
     item.setExpiresAt(clock().instant().plus(listingTtl()));
     items.flush();
+    // Seller-follow fan-out (backlog #217): the draft is now public —
+    // followers hear about it here, the only publish seam for drafts.
+    notifyFollowers(item.getSellerId(), item.getId());
     return mapper.toDto(item);
   }
 

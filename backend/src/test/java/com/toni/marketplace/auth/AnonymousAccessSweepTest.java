@@ -212,7 +212,10 @@ class AnonymousAccessSweepTest {
       "GET /api/users/{id}/reviews",
       "POST /api/users/{id}/block",
       "DELETE /api/users/{id}/block",
-      "GET /api/users/me/blocks");
+      "GET /api/users/me/blocks",
+      "POST /api/users/me/follows/{sellerId}",
+      "DELETE /api/users/me/follows/{sellerId}",
+      "GET /api/users/me/follows");
 
   /**
    * The public operations and the exact status the anonymous probe in

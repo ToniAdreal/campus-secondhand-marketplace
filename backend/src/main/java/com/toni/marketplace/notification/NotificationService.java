@@ -205,6 +205,22 @@ public class NotificationService {
   }
 
   /**
+   * New-listing-from-a-followed-seller variant (backlog #217): one row
+   * per follower of the publishing seller, carrying the listing id in
+   * the same column as the favorite-price-drop rows. Preference-aware
+   * like every other variant — a recipient who muted this type gets no
+   * row. Same transaction contract as {@link #record} — the save joins
+   * the publish transaction, so a rolled-back publish writes no rows.
+   */
+  public void recordSellerNewListing(Long recipientId, Long itemId) {
+    if (notifications == null
+        || !isEnabledFor(recipientId, NotificationType.SELLER_NEW_LISTING)) {
+      return;
+    }
+    publishAfterCommit(notifications.save(Notification.sellerNewListing(recipientId, itemId)));
+  }
+
+  /**
    * The full preference catalogue for the caller (backlog #216): one
    * row per {@link NotificationType}, in enum order, with the caller's
    * effective state — an absent stored row reads enabled, and security

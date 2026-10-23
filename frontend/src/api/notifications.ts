@@ -24,7 +24,8 @@ export type NotificationType =
   | 'REPORT_APPEAL_REJECTED'
   | 'SESSION_EVICTED'
   | 'EMAIL_CHANGE_REQUESTED'
-  | 'TOTP_RESET_BY_ADMIN';
+  | 'TOTP_RESET_BY_ADMIN'
+  | 'SELLER_NEW_LISTING';
 
 export interface Notification {
   id: number;
@@ -159,6 +160,11 @@ export function describeNotification(
       }
       return 'A listing you saved dropped in price.';
     }
+    case 'SELLER_NEW_LISTING':
+      // Backlog #217: the row carries the new listing id — the page
+      // renders the link to it; the copy names the relationship, not
+      // the seller, so an un-followed listing keeps reading sensibly.
+      return 'A seller you follow published a new listing.';
     default:
       return 'Order update.';
   }

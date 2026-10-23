@@ -15,6 +15,7 @@ import {
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
 import { useMyBlocks, useUnblockUser } from '../api/blocks';
+import { useMyFollows, useUnfollowSeller } from '../api/follows';
 import {
   useNotificationPreferences,
   useSetNotificationPreference,
@@ -795,6 +796,14 @@ export default function SettingsPage() {
         </p>
         <BlockedUsersSection />
       </div>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Following</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Sellers you follow notify you in your bell when they publish a new
+          listing. You can turn those notifications off per type above.
+        </p>
+        <FollowingSection />
+      </div>
       <div className="mt-6 border-t border-red-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold text-red-700">Danger zone</h2>
         <p className="mb-3 text-sm text-neutral-500">
@@ -982,6 +991,47 @@ function BlockedUsersSection() {
             className="rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
           >
             Unblock
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Following list (backlog #217): the caller's followed sellers with an
+ * unfollow action per row, newest follow first. The list carries only
+ * the public username — no follower counts exist anywhere in the app.
+ * A failed list load degrades to the empty copy rather than breaking
+ * the settings page.
+ */
+function FollowingSection() {
+  const follows = useMyFollows();
+  const unfollow = useUnfollowSeller();
+  const rows = follows.data ?? [];
+  if (rows.length === 0) {
+    return <p className="text-sm text-neutral-500">You are not following any sellers yet.</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {rows.map((row) => (
+        <li
+          key={row.sellerId}
+          className="flex items-center justify-between rounded bg-neutral-50 px-3 py-2"
+        >
+          <Link
+            to={`/seller/${row.sellerId}`}
+            className="text-sm font-medium text-blue-600 hover:underline"
+          >
+            {row.sellerUsername}
+          </Link>
+          <button
+            type="button"
+            onClick={() => unfollow.mutate(row.sellerId)}
+            disabled={unfollow.isLoading}
+            className="rounded border border-neutral-300 px-3 py-1 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            Unfollow
           </button>
         </li>
       ))}

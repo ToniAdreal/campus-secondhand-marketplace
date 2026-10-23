@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import SellerProfilePage from './SellerProfilePage';
+import { useAuthStore } from '../store/useAuthStore';
 import type { SellerProfile } from '../api/sellers';
 import type { SellerReview } from '../api/reviews';
 import type { Item, Page } from '../api/items';
@@ -49,6 +50,21 @@ vi.mock('../api/blocks', async (importOriginal) => {
     useMyBlocks: () => ({ data: [] }),
     useBlockUser: () => ({ mutate: () => {}, isLoading: false }),
     useUnblockUser: () => ({ mutate: () => {}, isLoading: false }),
+  };
+});
+
+// The follow action reads the follows hooks; stub them out (a mutable
+// follows list, no-op mutations) so the page renders without a query
+// client.
+let mockFollows: { sellerId: number }[] = [];
+
+vi.mock('../api/follows', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../api/follows')>();
+  return {
+    ...original,
+    useMyFollows: () => ({ data: mockFollows }),
+    useFollowSeller: () => ({ mutate: () => {}, isLoading: false }),
+    useUnfollowSeller: () => ({ mutate: () => {}, isLoading: false }),
   };
 });
 
@@ -169,5 +185,59 @@ describe('SellerProfilePage (#174)', () => {
     renderPage();
 
     expect(screen.getByText('Seller not found.')).toBeTruthy();
+  });
+});
+
+describe('SellerProfilePage follow control (#217)', () => {
+  afterEach(() => {
+    cleanup();
+    mockProfile = undefined;
+    mockProfileError = false;
+    mockListings = undefined;
+    mockReviews = undefined;
+    mockFollows = [];
+    useAuthStore.setState({ user: null });
+  });
+
+  it('renders the Follow button when the signed-in visitor is not following', () => {
+    useAuthStore.setState({
+      user: { id: 5, username: 'buyer', email: 'b@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Follow seller' })).toBeTruthy();
+  });
+
+  it('renders the Following (unfollow) state when already followed', () => {
+    useAuthStore.setState({
+      user: { id: 5, username: 'buyer', email: 'b@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockFollows = [{ sellerId: 3 }];
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Unfollow seller' })).toBeTruthy();
+  });
+
+  it('hides the follow control for anonymous visitors and for the seller themself', () => {
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+
+    // Anonymous.
+    renderPage();
+    expect(screen.queryByRole('button', { name: /[Ff]ollow seller/ })).toBeNull();
+    cleanup();
+
+    // Own profile.
+    useAuthStore.setState({
+      user: { id: 3, username: 'seller', email: 's@x.com', roles: ['USER'] },
+    });
+    renderPage();
+    expect(screen.queryByRole('button', { name: /[Ff]ollow seller/ })).toBeNull();
   });
 });

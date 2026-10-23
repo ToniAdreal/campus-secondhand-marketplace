@@ -126,9 +126,12 @@ export default function NotificationsPage() {
                     <Link to="/my-listings" className="text-blue-600 hover:underline">
                       View your listings
                     </Link>
-                  ) : notification.type === 'FAVORITE_PRICE_DROP' ? (
+                  ) : notification.type === 'FAVORITE_PRICE_DROP' ||
+                    notification.type === 'SELLER_NEW_LISTING' ? (
                     // Backlog #189: the row names the listing, not an
                     // order — link to the listing at its new price.
+                    // Backlog #217: a followed seller's new listing —
+                    // the row names the listing too, linked the same way.
                     notification.itemId !== null ? (
                       <Link
                         to={`/items/${notification.itemId}`}

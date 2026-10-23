@@ -165,7 +165,9 @@ class OpenApiContractTest {
       "/api/users/{id}/listings",
       "/api/users/{id}/profile",
       "/api/users/{id}/reviews",
-      "/api/users/me/blocks");
+      "/api/users/me/blocks",
+      "/api/users/me/follows",
+      "/api/users/me/follows/{sellerId}");
 
   @Autowired
   private MockMvc mockMvc;
@@ -369,6 +371,15 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/users/{id}/block", "delete"))
         .contains("200", "401", "404");
     assertThat(responseCodes(docs, "/api/users/me/blocks", "get"))
+        .contains("200", "401");
+    // Seller following (#217): follow pins unknown 404 + self-follow
+    // 422 + blocked-seller 409, unfollow pins unknown 404, and the
+    // following list pins anonymous 401.
+    assertThat(responseCodes(docs, "/api/users/me/follows/{sellerId}", "post"))
+        .contains("200", "401", "404", "409", "422");
+    assertThat(responseCodes(docs, "/api/users/me/follows/{sellerId}", "delete"))
+        .contains("200", "401", "404");
+    assertThat(responseCodes(docs, "/api/users/me/follows", "get"))
         .contains("200", "401");
     // Price offers (#168): creation pins its not-available / duplicate
     // 409 pair and its own-listing 422; the decisions pin the

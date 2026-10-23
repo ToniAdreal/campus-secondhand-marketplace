@@ -193,6 +193,13 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');
     expect(describeNotification('REPORT_APPEAL_UPHELD')).not.toMatch(/restored/i);
     expect(describeNotification('REPORT_APPEAL_REJECTED')).toMatch(/withdrawal stands/i);
+    // #217: the follow-publish line names the relationship, not the
+    // seller — and the type is in the catalogue's union, not the
+    // 'Order update.' default.
+    expect(describeNotification('SELLER_NEW_LISTING')).toBe(
+      'A seller you follow published a new listing.',
+    );
+    expect(describeNotification('SELLER_NEW_LISTING')).not.toBe('Order update.');
   });
 });
 

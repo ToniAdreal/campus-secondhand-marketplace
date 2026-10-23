@@ -37,7 +37,7 @@ class ItemServiceBlockExclusionTest {
   private ItemService service() {
     return new ItemService(items, mock(CategoryRepository.class), itemPhotos,
         mock(ItemMapper.class), mock(ImageStorageService.class), dataSource,
-        null, null, blocks, null, null, null, null);
+        null, null, blocks, null, null, null, null, null);
   }
 
   private static ItemDto dto(long id, long sellerId) {
