@@ -33,6 +33,12 @@ import java.time.Instant;
  * is fixed and leaks no PSP internals — no decline reason, no token, no
  * idempotency key — and the component-level {@code NON_NULL} include
  * drops the key entirely everywhere else (seller/admin DTOs included).
+ *
+ * <p>{@code carrier} / {@code trackingNumber} / {@code shippedAt}
+ * (backlog #222) are the shipped path's record: {@code null} until the
+ * seller ships the order, then the seller-entered carrier and tracking
+ * number plus the ship instant. They are seller-entered free text, not
+ * a verified carrier integration — no tracking-status lookup exists.
  */
 public record OrderDto(
     Long id,
@@ -45,20 +51,24 @@ public record OrderDto(
     String refundId,
     long refundedAmountCents,
     @JsonInclude(JsonInclude.Include.NON_NULL) String handoverCode,
-    @JsonInclude(JsonInclude.Include.NON_NULL) String lastPaymentFailure) {
+    @JsonInclude(JsonInclude.Include.NON_NULL) String lastPaymentFailure,
+    @JsonInclude(JsonInclude.Include.NON_NULL) String carrier,
+    @JsonInclude(JsonInclude.Include.NON_NULL) String trackingNumber,
+    @JsonInclude(JsonInclude.Include.NON_NULL) Instant shippedAt) {
 
   /** Pre-#211 shape: no payment-failure note. Keeps existing call sites compiling. */
   public OrderDto(Long id, Long itemId, Long buyerId, OrderStatus status,
                   Long amountCents, Instant createdAt, String captureId,
                   String refundId, long refundedAmountCents, String handoverCode) {
     this(id, itemId, buyerId, status, amountCents, createdAt, captureId,
-        refundId, refundedAmountCents, handoverCode, null);
+        refundId, refundedAmountCents, handoverCode, null, null, null, null);
   }
 
   /** Copy carrying a buyer-facing payment-failure note (backlog #211). */
   public OrderDto withLastPaymentFailure(String note) {
     return new OrderDto(id, itemId, buyerId, status, amountCents, createdAt,
-        captureId, refundId, refundedAmountCents, handoverCode, note);
+        captureId, refundId, refundedAmountCents, handoverCode, note,
+        carrier, trackingNumber, shippedAt);
   }
 
   public static OrderDto from(Order order) {
@@ -78,6 +88,9 @@ public record OrderDto(
         order.getRefundId(),
         order.getRefundedAmountCents(),
         handoverCode,
-        null);
+        null,
+        order.getCarrier(),
+        order.getTrackingNumber(),
+        order.getShippedAt());
   }
 }

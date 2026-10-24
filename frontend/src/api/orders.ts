@@ -7,9 +7,10 @@ export interface Order {
   itemId: number;
   buyerId: number;
   // 'REFUNDED' landed on the backend with the mock refund endpoint and
-  // 'DISPUTED' with the dispute flow (backlog #169); this union mirrors
-  // the server-side OrderStatus enum.
-  status: 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED' | 'DISPUTED';
+  // 'DISPUTED' with the dispute flow (backlog #169); 'SHIPPED' with the
+  // shipped fulfilment path (backlog #222). This union mirrors the
+  // server-side OrderStatus enum.
+  status: 'PENDING' | 'PAID' | 'SHIPPED' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED' | 'DISPUTED';
   amountCents: number;
   createdAt: string;
   // Mock PSP references (backend backlog #114): `null` until the pay /
@@ -37,6 +38,14 @@ export interface Order {
   // PSP internals, no token, no idempotency key. Absent everywhere else
   // (seller/admin reads omit the field entirely).
   lastPaymentFailure?: string | null;
+  // Shipped path (backend backlog #222): seller-entered carrier and
+  // tracking number plus the ship instant. `null`/absent until the
+  // seller ships the order; shown verbatim to the buyer. No carrier
+  // integration exists — there is no tracking-status lookup, only the
+  // number the seller typed.
+  carrier?: string | null;
+  trackingNumber?: string | null;
+  shippedAt?: string | null;
 }
 
 /**
@@ -410,6 +419,9 @@ export function describeCompleteError(error: unknown): string {
     return 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.';
   }
   if (code === 422 || /completion is not allowed|not in PAID/i.test(message)) {
+    if (/SHIPPED/i.test(message)) {
+      return 'This order has already shipped — only the buyer can confirm receipt now.';
+    }
     if (/COMPLETED/i.test(message)) {
       return 'This order was already completed.';
     }
@@ -450,6 +462,118 @@ export function useCompleteOrder() {
           `/orders/${orderId}/complete`,
           handoverCode ? { handoverCode } : {},
         )
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/orders/{id}/ship to a user-facing message.
+ * The backend speaks the {code,message,data} envelope; a 422 means the
+ * order is not PAID (still PENDING, already shipped, or already
+ * finished) — shipping is a one-shot transition, not idempotent.
+ */
+export function describeShipError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 400) {
+    return 'Enter a carrier and tracking number (tracking number at most 128 characters).';
+  }
+  if (code === 422 || /shipping is not allowed|not in PAID/i.test(message)) {
+    return 'Only a paid order can be shipped — this one is not paid, or already shipped or completed.';
+  }
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 403) {
+    return 'Only the seller of this listing can ship the order.';
+  }
+  if (code === 401) {
+    return 'Please log in to ship the order.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/ship — the seller (or an ADMIN) ships a PAID
+ * order (backlog #222): PAID → SHIPPED, carrier + tracking number
+ * recorded, listing stays RESERVED until the buyer confirms receipt.
+ * On success both subtrees are invalidated: the seller-orders subtree
+ * hangs off `orderKeys.all`, and the listing subtree must refetch so
+ * the row's shipped state shows.
+ */
+export function useShipOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      orderId,
+      carrier,
+      trackingNumber,
+    }: {
+      orderId: number;
+      carrier: string;
+      trackingNumber: string;
+    }) =>
+      api
+        .post<ApiResponse<Order>>(`/orders/${orderId}/ship`, { carrier, trackingNumber })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: itemKeys.all });
+    },
+  });
+}
+
+/**
+ * Maps a failed POST /api/orders/{id}/confirm-receipt to a user-facing
+ * message. A 422 means the order is not SHIPPED (still PAID, or already
+ * finished) — confirming an already-COMPLETED order is idempotent on
+ * the server and never reaches this mapper.
+ */
+export function describeConfirmReceiptError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 422 || /receipt confirmation is not allowed|not in SHIPPED/i.test(message)) {
+    return 'Only a shipped order can be confirmed — this one has not shipped yet, or is already finished.';
+  }
+  if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
+    return 'Someone just acted on this order — please refresh and try again.';
+  }
+  if (code === 403) {
+    return 'Only the buyer of this order can confirm receipt.';
+  }
+  if (code === 401) {
+    return 'Please log in to confirm receipt.';
+  }
+  if (code === 404) {
+    return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/orders/{id}/confirm-receipt — the buyer closes the shipped
+ * path (backlog #222): SHIPPED → COMPLETED with the same RESERVED →
+ * SOLD listing flip, settlement row and audit trail as the handover
+ * completion. On success both subtrees are invalidated so the buyer
+ * list and the listing detail refetch to COMPLETED/SOLD.
+ */
+export function useConfirmReceiptOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: number) =>
+      api
+        .post<ApiResponse<Order>>(`/orders/${orderId}/confirm-receipt`, {})
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });

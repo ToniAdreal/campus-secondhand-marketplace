@@ -919,7 +919,10 @@ public class OrderService {
    *   <li>Only PAID orders can be completed. PENDING/CANCELLED orders →
    *       422; a re-complete of an already-COMPLETED order is idempotent and
    *       simply returns the order (no code is demanded for the replay —
-   *       the transition already happened).</li>
+   *       the transition already happened). Backlog #222: a SHIPPED order
+   *       is likewise 422 here — the shipped path completes only via the
+   *       buyer's receipt confirmation ({@link #confirmReceipt}), so the
+   *       two completion paths are mutually exclusive.</li>
    *   <li>Backlog #179: a SELLER completion must present the buyer's
    *       6-digit handover code (minted at pay time, hash-only on the
    *       row). Missing and wrong codes are the identical 400 — no
@@ -969,6 +972,129 @@ public class OrderService {
     if (!callerIsAdmin) {
       verifyHandoverCode(order, handoverCode);
     }
+    return transitionToCompleted(order, callerId,
+        callerIsAdmin ? AuditAction.ORDER_COMPLETED_ADMIN_OVERRIDE
+            : AuditAction.ORDER_COMPLETED);
+  }
+
+  /**
+   * Ships a PAID order (backlog #222): the mailed-sale path, chosen by
+   * the seller instead of the in-person handover. Rules:
+   * <ul>
+   *   <li>Only the listing's seller (or an ADMIN) may ship; the buyer
+   *       and anyone else gets 403. The check runs before anything else,
+   *       mirroring {@link #complete}, so an order id never leaks
+   *       whether the caller could have shipped it.</li>
+   *   <li>Only PAID orders ship. PENDING/CANCELLED/COMPLETED/SHIPPED
+   *       orders → 422 — in particular, shipping a handover-completed
+   *       order is 422, and re-shipping an already-SHIPPED order is
+   *       422 (a second carrier/tracking pair would silently overwrite
+   *       the first; the seller ships once).</li>
+   *   <li>Carrier and tracking number are seller-entered free text,
+   *       trimmed and stored verbatim: blank values are rejected 400
+   *       (the controller's jakarta validation normally fires first;
+   *       this guard covers direct service calls), and the column caps
+   *       (64 / 128 chars) are enforced by the same validation.</li>
+   *   <li>The listing stays RESERVED while shipped — it flips to SOLD
+   *       only when the buyer confirms receipt ({@link #confirmReceipt}).
+   *       The order stays in the active set (see {@link OrderStatus}),
+   *       so no second order can be created on the listing meanwhile.
+   *       The in-transaction flush surfaces a concurrent transition as
+   *       409, mirroring {@link #complete}.</li>
+   *   <li>No carrier API is called and no delivery status is tracked:
+   *       the buyer sees the carrier + tracking number on their order
+   *       view and confirms receipt by hand. A SHIPPED order can still
+   *       be disputed inside the #169 window (see
+   *       {@code DisputeService}).</li>
+   * </ul>
+   */
+  @Transactional
+  public OrderDto ship(Long callerId, boolean callerIsAdmin, Long orderId,
+                       String carrier, String trackingNumber) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getItem().getSellerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the seller can ship this order");
+    }
+    if (order.getStatus() != OrderStatus.PAID) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", shipping is not allowed");
+    }
+    if (carrier == null || carrier.isBlank()
+        || trackingNumber == null || trackingNumber.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "carrier and tracking number are required");
+    }
+    try {
+      order.setStatus(OrderStatus.SHIPPED);
+      order.setCarrier(carrier.trim());
+      order.setTrackingNumber(trackingNumber.trim());
+      order.setShippedAt(clock().instant());
+      OrderDto dto = OrderDto.from(orders.save(order));
+      orders.flush();
+      audit().record(callerId, AuditAction.ORDER_SHIPPED,
+          AuditTargetType.ORDER, orderId);
+      return dto;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "order was updated concurrently, please retry");
+    }
+  }
+
+  /**
+   * Confirms receipt of a SHIPPED order (backlog #222): the buyer closes
+   * the mailed-sale path. Rules:
+   * <ul>
+   *   <li>Only the order's buyer may confirm (403 otherwise, mirroring
+   *       {@link #pay(Long, Long)}); the seller cannot confirm their own
+   *       shipment, and an ADMIN cannot either — receipt is the buyer's
+   *       statement that the parcel arrived.</li>
+   *   <li>Only SHIPPED orders confirm. PAID orders → 422 (nothing has
+   *       shipped yet); a re-confirm of an already-COMPLETED order is
+   *       idempotent and returns the order, mirroring
+   *       {@link #complete}'s re-complete.</li>
+   *   <li>The completion side effects are exactly {@link #complete}'s —
+   *       RESERVED → SOLD flip, {@code completedAt} stamp, #221
+   *       settlement row, audit and buyer notification — because both
+   *       paths end in the same COMPLETED state; only the audit action
+   *       differs ({@code ORDER_RECEIPT_CONFIRMED}), so the trail shows
+   *       which path an order took. The handover attempt counter is
+   *       cleared as part of the shared transition (a shipped order
+   *       never used the code, so there is nothing to preserve).</li>
+   * </ul>
+   */
+  @Transactional
+  public OrderDto confirmReceipt(Long buyerId, Long orderId) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!order.getBuyerId().equals(buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the buyer can confirm receipt of this order");
+    }
+    if (order.getStatus() == OrderStatus.COMPLETED) {
+      return OrderDto.from(order);
+    }
+    if (order.getStatus() != OrderStatus.SHIPPED) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "order is " + order.getStatus() + ", receipt confirmation is not allowed");
+    }
+    return transitionToCompleted(order, buyerId, AuditAction.ORDER_RECEIPT_CONFIRMED);
+  }
+
+  /**
+   * Shared COMPLETED transition for {@link #complete} and
+   * {@link #confirmReceipt} (backlog #222): the two paths must never
+   * drift apart on the settlement row, the listing flip, or the audit
+   * trail. Callers own the authorization and state gates above; this
+   * method owns only the transition itself. The audit action is the
+   * caller's: {@code ORDER_COMPLETED} / {@code ORDER_COMPLETED_ADMIN_OVERRIDE}
+   * for the handover path, {@code ORDER_RECEIPT_CONFIRMED} for the
+   * shipped path.
+   */
+  private OrderDto transitionToCompleted(Order order, Long actorId, AuditAction action) {
     try {
       order.setStatus(OrderStatus.COMPLETED);
       // Backlog #180: stamp the real completion instant for the receipt.
@@ -1004,17 +1130,14 @@ public class OrderService {
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-complete above returns before this point.
-      // Backlog #179: an ADMIN completion is the code-less override and
-      // is trailed as such; a seller completion reaching this line has
-      // proven the buyer's handover code.
-      audit().record(callerId,
-          callerIsAdmin ? AuditAction.ORDER_COMPLETED_ADMIN_OVERRIDE
-              : AuditAction.ORDER_COMPLETED,
-          AuditTargetType.ORDER, orderId);
+      audit().record(actorId, action, AuditTargetType.ORDER, order.getId());
       // Backlog #157: notify the buyer in the same transaction — the
-      // idempotent re-complete above returns before this point.
+      // idempotent re-complete above returns before this point. For the
+      // receipt path the buyer is the actor, so this is a completion
+      // notice for an action they just took, kept for symmetry with the
+      // handover path rather than a second, path-specific type.
       notifications().record(order.getBuyerId(),
-          NotificationType.ORDER_COMPLETED, orderId);
+          NotificationType.ORDER_COMPLETED, order.getId());
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,

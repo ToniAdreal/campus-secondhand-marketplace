@@ -188,10 +188,39 @@ public class Order {
   private Instant completedAt;
 
   /**
+   * Carrier the seller named when shipping the order (backlog #222,
+   * Flyway V66). Nullable until the order is shipped; blank values are
+   * rejected at the ship endpoint, so a stored value is always
+   * non-blank. Shown to the buyer on their order view — it is
+   * seller-entered free text, not a verified carrier integration.
+   */
+  @Column(name = "carrier", length = 64)
+  private String carrier;
+
+  /**
+   * Tracking number the seller recorded at ship time (backlog #222,
+   * Flyway V66). Nullable until shipped; shown verbatim to the buyer.
+   * No carrier API is called — there is no tracking-status lookup in
+   * this project, only the number the seller typed.
+   */
+  @Column(name = "tracking_number", length = 128)
+  private String trackingNumber;
+
+  /**
+   * When the order became SHIPPED (backlog #222, Flyway V66), stamped
+   * by {@code OrderService.ship} from the injected Clock in the same
+   * transaction as the PAID → SHIPPED transition. Nullable until
+   * shipped.
+   */
+  @Column(name = "shipped_at")
+  private Instant shippedAt;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
-   * the order is active (PENDING/PAID), NULL once terminal. insertable and
-   * updatable are false — the database computes it, never the application.
+   * the order is active (PENDING/PAID/SHIPPED/DISPUTED), NULL once terminal.
+   * insertable and updatable are false — the database computes it, never
+   * the application.
    */
   @Column(name = "active_item_id", insertable = false, updatable = false)
   private Long activeItemId;
@@ -260,6 +289,12 @@ public class Order {
   public void setPaidAt(Instant paidAt) { this.paidAt = paidAt; }
   public Instant getCompletedAt() { return completedAt; }
   public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
+  public String getCarrier() { return carrier; }
+  public void setCarrier(String carrier) { this.carrier = carrier; }
+  public String getTrackingNumber() { return trackingNumber; }
+  public void setTrackingNumber(String trackingNumber) { this.trackingNumber = trackingNumber; }
+  public Instant getShippedAt() { return shippedAt; }
+  public void setShippedAt(Instant shippedAt) { this.shippedAt = shippedAt; }
   public void setHandoverLockedUntil(Instant handoverLockedUntil) {
     this.handoverLockedUntil = handoverLockedUntil;
   }

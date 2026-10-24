@@ -143,6 +143,8 @@ describe('admin query keys', () => {
       'ORDER_PAID',
       'ORDER_CANCELLED',
       'ORDER_COMPLETED',
+      'ORDER_SHIPPED',
+      'ORDER_RECEIPT_CONFIRMED',
       'ORDER_REFUNDED',
       'USER_DISABLED',
       'USER_ENABLED',

@@ -5,10 +5,12 @@ import {
   describeCompleteError,
   describeOrderError,
   describeRefundError,
+  describeShipError,
   useCompleteOrder,
   useRefundOrder,
   useSellerOrdersInfinite,
   useSellerSalesSummary,
+  useShipOrder,
 } from '../api/orders';
 import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
@@ -53,6 +55,13 @@ import { useAuthStore } from '../store/useAuthStore';
  * buttons — the buyer hands it over when they receive the item. A
  * missing/wrong code is a 400 mapped to friendly copy, and repeated
  * failures lock the code server-side (the buyer can regenerate one).
+ *
+ * Shipped path (backlog #222): each PAID row also carries a ship form
+ * (carrier + tracking number, POST /api/orders/{id}/ship) as the
+ * alternative to the handover completion — the seller chooses one path
+ * per order, and the server rejects the other path's transition with
+ * 422 afterwards. SHIPPED rows show the recorded carrier + tracking
+ * number; the listing stays RESERVED until the buyer confirms receipt.
  */
 
 function isUnauthorized(error: unknown): boolean {
@@ -72,7 +81,13 @@ export default function SellerOrdersPage() {
   const summaryQuery = useSellerSalesSummary(user !== null);
   const completeOrder = useCompleteOrder();
   const refundOrder = useRefundOrder();
+  const shipOrder = useShipOrder();
   const [actionError, setActionError] = useState<string | null>(null);
+  // Per-row ship forms (#222), keyed by order id — carrier + tracking
+  // number belong to that row's shipment, so the inputs are independent.
+  const [shipForms, setShipForms] = useState<
+    Record<number, { carrier: string; trackingNumber: string }>
+  >({});
   // Per-row handover codes (#179), keyed by order id — each row's code
   // belongs to that row's buyer, so the inputs are independent.
   const [handoverCodes, setHandoverCodes] = useState<Record<number, string>>({});
@@ -106,6 +121,25 @@ export default function SellerOrdersPage() {
       { orderId, handoverCode: handoverCodes[orderId]?.trim() || undefined },
       {
         onError: (error) => setActionError(describeCompleteError(error)),
+      },
+    );
+  };
+
+  const handleShip = (orderId: number) => {
+    setActionError(null);
+    const form = shipForms[orderId] ?? { carrier: '', trackingNumber: '' };
+    const carrier = form.carrier.trim();
+    const trackingNumber = form.trackingNumber.trim();
+    if (!carrier || !trackingNumber) {
+      setActionError('Enter a carrier and tracking number to ship the order.');
+      return;
+    }
+    shipOrder.mutate(
+      { orderId, carrier, trackingNumber },
+      {
+        onError: (error) => setActionError(describeShipError(error)),
+        onSuccess: () =>
+          setShipForms((prev) => ({ ...prev, [orderId]: { carrier: '', trackingNumber: '' } })),
       },
     );
   };
@@ -255,6 +289,71 @@ export default function SellerOrdersPage() {
                         : 'Refund order'}
                     </button>
                   </div>
+                )}
+                {order.status === 'PAID' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm text-neutral-600">
+                      Carrier
+                      <input
+                        type="text"
+                        aria-label="Carrier"
+                        placeholder="e.g. SF Express"
+                        maxLength={64}
+                        value={shipForms[order.id]?.carrier ?? ''}
+                        onChange={(event) =>
+                          setShipForms((prev) => ({
+                            ...prev,
+                            [order.id]: {
+                              carrier: event.target.value,
+                              trackingNumber: prev[order.id]?.trackingNumber ?? '',
+                            },
+                          }))
+                        }
+                        className="w-36 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-neutral-600">
+                      Tracking number
+                      <input
+                        type="text"
+                        aria-label="Tracking number"
+                        placeholder="Tracking number"
+                        maxLength={128}
+                        value={shipForms[order.id]?.trackingNumber ?? ''}
+                        onChange={(event) =>
+                          setShipForms((prev) => ({
+                            ...prev,
+                            [order.id]: {
+                              carrier: prev[order.id]?.carrier ?? '',
+                              trackingNumber: event.target.value,
+                            },
+                          }))
+                        }
+                        className="w-44 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleShip(order.id)}
+                      disabled={shipOrder.isLoading && shipOrder.variables?.orderId === order.id}
+                      className="rounded bg-teal-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+                    >
+                      {shipOrder.isLoading && shipOrder.variables?.orderId === order.id
+                        ? 'Shipping…'
+                        : 'Ship order'}
+                    </button>
+                    <span className="text-sm text-neutral-500">
+                      Or complete the in-person handoff above — shipping and handover are
+                      alternative paths.
+                    </span>
+                  </div>
+                )}
+                {order.status === 'SHIPPED' && (
+                  <p className="mt-2 text-sm text-neutral-600">
+                    Shipped via {order.carrier ?? 'unknown carrier'} — tracking{' '}
+                    {order.trackingNumber ?? 'not provided'}. The listing stays reserved until
+                    the buyer confirms receipt.
+                  </p>
                 )}
                 {order.status === 'PAID' && refundDialogOrderId === order.id && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-red-200 bg-red-50 p-3">

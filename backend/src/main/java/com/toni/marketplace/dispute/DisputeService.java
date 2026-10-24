@@ -27,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Order disputes (backlog #169): a buyer whose PAID order never arrives
+ * Order disputes (backlog #169): a buyer whose PAID or SHIPPED order never arrives
  * — or whose COMPLETED order turns out wrong — opens a dispute instead
  * of depending on the seller's voluntary refund (#50, seller/ADMIN
  * only; a COMPLETED order had no recourse at all).
@@ -38,14 +38,16 @@ import org.springframework.web.server.ResponseStatusException;
  *       guard, mirroring {@code OrderService.pay}, so an order id never
  *       leaks what the caller may do with it. Unknown order → 404;
  *       anonymous → the chain's 401 envelope.</li>
- *   <li>Only PAID or COMPLETED orders, and only inside
- *       {@code app.disputes.window} (default 7 days) of the transition —
+ *   <li>Only PAID, SHIPPED (backlog #222 — a shipped order that never
+ *       arrives is exactly the dispute case) or COMPLETED orders, and
+ *       only inside {@code app.disputes.window} (default 7 days) of the transition —
  *       measured from the order's {@code updatedAt}, the last status
  *       change (orders carry no paidAt/completedAt column; see
  *       {@link DisputeProperties}). Outside the window → 422; any other
  *       status → 422.</li>
  *   <li>Opening moves the order to DISPUTED and moves NO money. While
- *       DISPUTED, pay / cancel / complete / refund all answer 422 (the
+ *       DISPUTED, pay / cancel / complete / ship / confirm-receipt /
+ *       refund all answer 422 (the
  *       dispute must be resolved first, so no transition races a
  *       resolution): complete/refund already reject every non-PAID
  *       state, cancel rejects every non-PENDING state, and pay's guard
@@ -66,7 +68,7 @@ import org.springframework.web.server.ResponseStatusException;
  *       so the PSP replay guarantee is the same one
  *       {@code OrderService.refund} relies on — and the order goes to
  *       REFUNDED. The listing flips RESERVED → AVAILABLE only when it
- *       is actually RESERVED (a PAID dispute); a COMPLETED dispute's
+ *       is actually RESERVED (a PAID or SHIPPED dispute); a COMPLETED dispute's
  *       listing is already SOLD and stays SOLD. Which case applied is
  *       recorded on the dispute row ({@code listingRestored}).</li>
  *   <li>{@link #resolveRelease}: the order returns to the exact status
@@ -147,7 +149,7 @@ public class DisputeService {
   }
 
   /**
-   * Opens a dispute on a PAID/COMPLETED order (see the class javadoc
+   * Opens a dispute on a PAID/SHIPPED/COMPLETED order (see the class javadoc
    * for the full rule set), or returns the already-open dispute for
    * the order unchanged.
    */
@@ -171,9 +173,10 @@ public class DisputeService {
               "disputed order has no open dispute"));
     }
     if (order.getStatus() != OrderStatus.PAID
+        && order.getStatus() != OrderStatus.SHIPPED
         && order.getStatus() != OrderStatus.COMPLETED) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-          "order is " + order.getStatus() + ", only PAID or COMPLETED orders "
+          "order is " + order.getStatus() + ", only PAID, SHIPPED or COMPLETED orders "
               + "can be disputed");
     }
     if (disputes.findByOrderId(orderId).stream()

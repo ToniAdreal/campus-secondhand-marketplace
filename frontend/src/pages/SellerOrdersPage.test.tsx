@@ -429,4 +429,50 @@ describe('SellerOrdersPage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toBe('upstream exploded');
   });
+
+  it('PAID rows carry a ship form; submitting posts carrier + tracking (backlog #222)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2], 0, 1));
+    postSpy.mockResolvedValueOnce({
+      data: { code: 0, message: 'ok', data: { ...order2, status: 'SHIPPED' } },
+    } as never);
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Carrier'), { target: { value: 'SF Express' } });
+    fireEvent.change(screen.getByLabelText('Tracking number'), {
+      target: { value: 'SF123456789' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ship order' }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/ship', {
+        carrier: 'SF Express',
+        trackingNumber: 'SF123456789',
+      }),
+    );
+  });
+
+  it('SHIPPED rows show the recorded carrier + tracking and no ship form (backlog #222)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    const shipped: Order = {
+      ...order2,
+      status: 'SHIPPED',
+      carrier: 'SF Express',
+      trackingNumber: 'SF123456789',
+    };
+    getSpy.mockResolvedValue(pageEnvelope([shipped], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    expect(screen.getByText('SHIPPED')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Shipped via SF Express — tracking SF123456789. The listing stays reserved until the buyer confirms receipt.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Ship order' })).toBeNull();
+  });
 });

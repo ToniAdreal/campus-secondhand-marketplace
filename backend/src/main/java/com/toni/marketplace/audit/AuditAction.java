@@ -107,6 +107,21 @@ public enum AuditAction {
   /** A seller (or ADMIN) completed a PAID order ({@code OrderService.complete}). */
   ORDER_COMPLETED,
   /**
+   * A seller (or ADMIN) shipped a PAID order ({@code OrderService.ship},
+   * backlog #222): PAID → SHIPPED with the carrier and tracking number
+   * recorded. Actor is the shipping seller (or ADMIN).
+   */
+  ORDER_SHIPPED,
+  /**
+   * The buyer confirmed receipt of a SHIPPED order
+   * ({@code OrderService.confirmReceipt}, backlog #222): SHIPPED →
+   * COMPLETED with the same RESERVED → SOLD listing flip as a handover
+   * completion. Actor is the confirming buyer — distinct from
+   * {@link #ORDER_COMPLETED} so the trail shows which completion path
+   * an order took.
+   */
+  ORDER_RECEIPT_CONFIRMED,
+  /**
    * An ADMIN completed a PAID order WITHOUT the buyer's handover code
    * ({@code OrderService.complete}, backlog #179). Actor is the
    * completing ADMIN. Deliberately distinct from

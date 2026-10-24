@@ -7,19 +7,23 @@ import { itemKeys } from './items';
 import {
   describeCancelError,
   describeCompleteError,
+  describeConfirmReceiptError,
   describeOrderError,
   describePayError,
   describeRefundError,
   describeRegenerateHandoverError,
   describeReceiptError,
+  describeShipError,
   orderKeys,
   useCancelOrder,
   useCompleteOrder,
+  useConfirmReceiptOrder,
   usePayOrder,
   useRefundOrder,
   useRegenerateHandoverCode,
   useOrderReceipt,
   useSellerSalesSummary,
+  useShipOrder,
   type Order,
   type OrderReceipt,
   type SellerSalesSummary,
@@ -97,6 +101,7 @@ describe('describeCompleteError', () => {
     ['handover wording', envelopeError(0, 'handover code locked'), 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.'],
     ['not-paid code', envelopeError(422, 'unprocessable'), 'Only a paid order can be completed — this one is not paid yet, or is already finished.'],
     ['already-completed wording', envelopeError(422, 'order is already COMPLETED'), 'This order was already completed.'],
+    ['shipped wording (backlog #222)', envelopeError(422, 'order is SHIPPED, completion is not allowed'), 'This order has already shipped — only the buyer can confirm receipt now.'],
     ['conflict code', envelopeError(409, 'conflict'), 'Someone just acted on this order — please refresh and try again.'],
     ['version wording', envelopeError(0, 'stale version'), 'Someone just acted on this order — please refresh and try again.'],
     ['forbidden', envelopeError(403, 'forbidden'), 'Only the seller of this listing can complete the order.'],
@@ -123,6 +128,33 @@ describe('describeRefundError', () => {
     ['non-positive amount (backlog #210)', envelopeError(422, 'refund amount must be positive'), 'Enter a refund amount greater than zero.'],
   ])('%s', (_label, error, expected) => {
     expect(describeRefundError(error)).toBe(expected);
+  });
+});
+
+describe('describeShipError', () => {
+  it.each([
+    ['blank body code', envelopeError(400, 'carrier is required'), 'Enter a carrier and tracking number (tracking number at most 128 characters).'],
+    ['not-paid code', envelopeError(422, 'unprocessable'), 'Only a paid order can be shipped — this one is not paid, or already shipped or completed.'],
+    ['conflict code', envelopeError(409, 'conflict'), 'Someone just acted on this order — please refresh and try again.'],
+    ['forbidden', envelopeError(403, 'forbidden'), 'Only the seller of this listing can ship the order.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to ship the order.'],
+    ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeShipError(error)).toBe(expected);
+  });
+});
+
+describe('describeConfirmReceiptError', () => {
+  it.each([
+    ['not-shipped code', envelopeError(422, 'unprocessable'), 'Only a shipped order can be confirmed — this one has not shipped yet, or is already finished.'],
+    ['conflict code', envelopeError(409, 'conflict'), 'Someone just acted on this order — please refresh and try again.'],
+    ['forbidden', envelopeError(403, 'forbidden'), 'Only the buyer of this order can confirm receipt.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to confirm receipt.'],
+    ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeConfirmReceiptError(error)).toBe(expected);
   });
 });
 
@@ -164,6 +196,45 @@ describe('order mutation invalidation', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/orders/9/complete', { handoverCode: '123456' });
     expect(returned).toEqual(fakeOrder);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('useShipOrder posts to /ship with carrier + tracking and invalidates orders + items', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope({ ...fakeOrder, status: 'SHIPPED' }));
+
+    const { result } = renderHook(() => useShipOrder(), { wrapper: wrapperFor(queryClient) });
+    const returned = await result.current.mutateAsync({
+      orderId: 9,
+      carrier: 'SF Express',
+      trackingNumber: 'SF123456789',
+    });
+
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/ship', {
+      carrier: 'SF Express',
+      trackingNumber: 'SF123456789',
+    });
+    expect(returned.status).toBe('SHIPPED');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('useConfirmReceiptOrder posts to /confirm-receipt and invalidates orders + items', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope({ ...fakeOrder, status: 'COMPLETED' }));
+
+    const { result } = renderHook(() => useConfirmReceiptOrder(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const returned = await result.current.mutateAsync(9);
+
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/confirm-receipt', {});
+    expect(returned.status).toBe('COMPLETED');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
     expect(invalidateSpy).toHaveBeenCalledTimes(2);

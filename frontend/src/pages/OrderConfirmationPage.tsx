@@ -11,6 +11,7 @@ import {
 } from '../api/orders';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderReceipt from '../components/OrderReceipt';
+import OrderShipmentControl from '../components/OrderShipmentControl';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -128,6 +129,7 @@ export default function OrderConfirmationPage() {
       <div className="mt-2">
         <OrderPspReferences order={data} />
       </div>
+      <OrderShipmentControl order={data} />
       <OrderReceipt orderId={data.id} />
       {canPay && (
         <div className="mt-4">

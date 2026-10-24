@@ -11,6 +11,7 @@ import type { Order } from '../api/orders';
 const CHIP_CLASSES: Record<Order['status'], string> = {
   PENDING: 'bg-amber-100 text-amber-800',
   PAID: 'bg-green-100 text-green-800',
+  SHIPPED: 'bg-teal-100 text-teal-800',
   COMPLETED: 'bg-sky-100 text-sky-800',
   CANCELLED: 'bg-neutral-200 text-neutral-600',
   REFUNDED: 'bg-purple-100 text-purple-800',

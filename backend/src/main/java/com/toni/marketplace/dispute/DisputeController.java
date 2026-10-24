@@ -29,8 +29,8 @@ public class DisputeController {
   }
 
   /**
-   * Opens a dispute on a PAID or COMPLETED order: the order moves to
-   * DISPUTED (frozen — pay/cancel/complete/refund all answer 422 until
+   * Opens a dispute on a PAID, SHIPPED or COMPLETED order: the order moves to
+   * DISPUTED (frozen — pay/cancel/complete/ship/confirm-receipt/refund all answer 422 until
    * an ADMIN resolves it) and no money moves. Only the order's buyer
    * may dispute (403 otherwise); only inside the dispute window
    * ({@code app.disputes.window}, default 7 days from the transition —
@@ -49,7 +49,7 @@ public class DisputeController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
           description = "version conflict with a concurrent transition (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
-          description = "order is not PAID/COMPLETED, the dispute window has closed, or a resolved dispute already exists (envelope)")})
+          description = "order is not PAID/SHIPPED/COMPLETED, the dispute window has closed, or a resolved dispute already exists (envelope)")})
   @PostMapping("/{id}/dispute")
   public ApiResponse<DisputeDto> dispute(@PathVariable Long id,
                                          @Valid @RequestBody DisputeCreateRequest request) {

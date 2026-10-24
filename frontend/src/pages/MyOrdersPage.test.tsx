@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import MyOrdersPage from './MyOrdersPage';
 
 const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 
@@ -186,5 +187,31 @@ describe('MyOrdersPage', () => {
     renderAt('/orders');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toBe('upstream exploded');
+  });
+
+  it('SHIPPED rows show tracking + a confirm button that posts /confirm-receipt (backlog #222)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const shipped: Order = {
+      ...order2,
+      status: 'SHIPPED',
+      carrier: 'SF Express',
+      trackingNumber: 'SF123456789',
+    };
+    getSpy.mockResolvedValue(pageEnvelope([shipped], 0, 1));
+    postSpy.mockResolvedValueOnce({
+      data: { code: 0, message: 'ok', data: { ...shipped, status: 'COMPLETED' } },
+    } as never);
+
+    renderAt('/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    expect(screen.getByText('SHIPPED')).toBeTruthy();
+    expect(
+      screen.getByText('Shipped via SF Express — tracking SF123456789.'),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm receipt' }));
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/confirm-receipt', {}),
+    );
   });
 });

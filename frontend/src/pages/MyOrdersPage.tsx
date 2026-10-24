@@ -6,6 +6,7 @@ import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders
 import { describeReviewError, useCreateReview } from '../api/reviews';
 import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
+import OrderShipmentControl from '../components/OrderShipmentControl';
 import PartialRefundNote from '../components/PartialRefundNote';
 import OrderReceipt from '../components/OrderReceipt';
 import OrderStatusChip from '../components/OrderStatusChip';
@@ -30,17 +31,19 @@ function isUnauthorized(error: unknown): boolean {
 }
 
 /**
- * Per-order dispute control (backlog #169). PAID and COMPLETED rows can
- * be disputed: the button reveals a reason form, and submitting freezes
- * the order in DISPUTED until an ADMIN resolves it. DISPUTED rows show
- * the open state instead, plus the evidence panel (backlog #200) so
- * the buyer can attach photos of the problem while it is open.
+ * Per-order dispute control (backlog #169). PAID, SHIPPED (backlog
+ * #222 — a shipped order that never arrives is exactly the dispute
+ * case) and COMPLETED rows can be disputed: the button reveals a
+ * reason form, and submitting freezes the order in DISPUTED until an
+ * ADMIN resolves it. DISPUTED rows show the open state instead, plus
+ * the evidence panel (backlog #200) so the buyer can attach photos of
+ * the problem while it is open.
  *
- * The eligible window (7 days from the PAID/COMPLETED transition) is
- * enforced by the server — the order shape carries no transition
- * timestamp the SPA could check honestly — so the button renders for
- * every PAID/COMPLETED row and a window-expired attempt maps the
- * server's 422 to plain copy via describeDisputeError.
+ * The eligible window (7 days from the PAID/SHIPPED/COMPLETED
+ * transition) is enforced by the server — the order shape carries no
+ * transition timestamp the SPA could check honestly — so the button
+ * renders for every PAID/SHIPPED/COMPLETED row and a window-expired
+ * attempt maps the server's 422 to plain copy via describeDisputeError.
  */
 function OrderDisputeControl({ order }: { order: Order }) {
   const [open, setOpen] = useState(false);
@@ -58,7 +61,7 @@ function OrderDisputeControl({ order }: { order: Order }) {
       </>
     );
   }
-  if (order.status !== 'PAID' && order.status !== 'COMPLETED') {
+  if (order.status !== 'PAID' && order.status !== 'SHIPPED' && order.status !== 'COMPLETED') {
     return null;
   }
   if (openDispute.isSuccess) {
@@ -281,6 +284,7 @@ export default function MyOrdersPage() {
                 </div>
                 <PartialRefundNote order={order} />
                 <OrderPspReferences order={order} />
+                <OrderShipmentControl order={order} />
                 <OrderReceipt orderId={order.id} />
                 <OrderDisputeControl order={order} />
                 <OrderReviewControl order={order} />

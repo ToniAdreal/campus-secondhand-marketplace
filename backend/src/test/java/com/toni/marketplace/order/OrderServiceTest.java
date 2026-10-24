@@ -191,7 +191,7 @@ class OrderServiceTest {
   @Test
   void creation_existingActiveOrder_throws409BeforeSaving() {
     when(items.findById(3L)).thenReturn(Optional.of(listing(5L)));
-    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID)))
+    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DISPUTED)))
         .thenReturn(true);
 
     assertThatThrownBy(() -> creation.create(7L, 3L))
@@ -205,7 +205,7 @@ class OrderServiceTest {
   void creation_happyPath_snapshotsPriceAndStatusPending() {
     Item lamp = listing(5L);
     when(items.findById(3L)).thenReturn(Optional.of(lamp));
-    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID)))
+    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DISPUTED)))
         .thenReturn(false);
     Order saved = new Order(lamp, 7L, lamp.getPriceCents());
     when(orders.save(any(Order.class))).thenReturn(saved);
@@ -652,7 +652,7 @@ class OrderServiceTest {
   void creation_happyPath_flushesInsideTheTransaction() {
     Item lamp = listing(5L);
     when(items.findById(3L)).thenReturn(Optional.of(lamp));
-    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID)))
+    when(orders.existsByItem_IdAndStatusIn(3L, List.of(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED, OrderStatus.DISPUTED)))
         .thenReturn(false);
     Order saved = new Order(lamp, 7L, lamp.getPriceCents());
     when(orders.save(any(Order.class))).thenReturn(saved);

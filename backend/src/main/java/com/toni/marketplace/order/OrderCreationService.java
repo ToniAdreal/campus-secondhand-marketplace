@@ -29,7 +29,8 @@ import org.springframework.web.server.ResponseStatusException;
 public class OrderCreationService {
 
   private static final List<OrderStatus> ACTIVE =
-      List.of(OrderStatus.PENDING, OrderStatus.PAID);
+      List.of(OrderStatus.PENDING, OrderStatus.PAID, OrderStatus.SHIPPED,
+          OrderStatus.DISPUTED);
 
   private final OrderRepository orders;
   private final ItemRepository items;

@@ -166,6 +166,44 @@ public class OrderController {
   }
 
   /**
+   * Ships a PAID order (backlog #222) — the mailed-sale path: the seller
+   * records the carrier and tracking number, PAID → SHIPPED, and the
+   * listing stays RESERVED until the buyer confirms receipt. Only the
+   * listing's seller (or an ADMIN) may ship (403 otherwise); anything
+   * but PAID → 422 (shipping a handover-completed order, or re-shipping,
+   * are both 422); blank or over-long carrier/tracking → 400 envelope
+   * via jakarta validation.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "missing or over-long carrier/tracking number (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
+  @PostMapping("/{id}/ship")
+  public ApiResponse<OrderDto> ship(
+      @PathVariable Long id, @Valid @RequestBody ShipOrderRequest request) {
+    Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = (Long) authentication.getPrincipal();
+    boolean admin = authentication.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(orderService.ship(callerId, admin, id,
+        request.carrier(), request.trackingNumber()));
+  }
+
+  /**
+   * Confirms receipt of a SHIPPED order (backlog #222): the buyer closes
+   * the mailed-sale path, SHIPPED → COMPLETED with the same RESERVED →
+   * SOLD listing flip, settlement row and audit trail as the handover
+   * completion. Only the order's buyer may confirm (403 otherwise);
+   * anything but SHIPPED → 422 (a PAID order has nothing to confirm
+   * yet); re-confirming a COMPLETED order is idempotent.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not SHIPPED (envelope)")})
+  @PostMapping("/{id}/confirm-receipt")
+  public ApiResponse<OrderDto> confirmReceipt(@PathVariable Long id) {
+    Long buyerId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(orderService.confirmReceipt(buyerId, id));
+  }
+
+  /**
    * Regenerates the buyer's handover code (backlog #179): the old code
    * is invalidated and the new plaintext is returned in this response —
    * its one disclosure. Buyer-only (403 otherwise); only while the order

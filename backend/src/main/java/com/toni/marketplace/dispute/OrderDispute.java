@@ -27,7 +27,7 @@ import org.hibernate.type.SqlTypes;
  * cannot drift).
  *
  * <p>{@code previousStatus} records the order status the dispute froze
- * (PAID or COMPLETED): a release resolution returns the order to
+ * (PAID, SHIPPED or COMPLETED): a release resolution returns the order to
  * exactly that status, and a refund resolution uses it to explain the
  * listing outcome. {@code listingRestored} is written only by a refund
  * resolution — {@code true} when the listing flipped RESERVED →
@@ -66,7 +66,7 @@ public class OrderDispute {
   @Column(nullable = false, length = 24)
   private DisputeStatus status = DisputeStatus.OPEN;
 
-  /** The order status this dispute froze: PAID or COMPLETED. */
+  /** The order status this dispute froze: PAID, SHIPPED or COMPLETED. */
   @Enumerated(EnumType.STRING)
   @JdbcTypeCode(SqlTypes.VARCHAR)
   @Column(name = "previous_status", nullable = false, length = 16)

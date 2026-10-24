@@ -186,6 +186,8 @@ class AnonymousAccessSweepTest {
       "POST /api/orders",
       "POST /api/orders/{id}/cancel",
       "POST /api/orders/{id}/complete",
+      "POST /api/orders/{id}/ship",
+      "POST /api/orders/{id}/confirm-receipt",
       "POST /api/orders/{id}/handover-code/regenerate",
       "POST /api/orders/{id}/dispute",
       "GET /api/orders/{id}/dispute",
