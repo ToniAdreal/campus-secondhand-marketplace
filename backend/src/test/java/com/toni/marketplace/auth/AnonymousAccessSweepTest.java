@@ -203,6 +203,8 @@ class AnonymousAccessSweepTest {
       "GET /api/seller/orders",
       "GET /api/seller/orders/{id}",
       "GET /api/seller/orders/summary",
+      "GET /api/seller/payouts",
+      "GET /api/seller/payouts/totals",
       "GET /api/seller/sales/export.csv",
       "GET /api/users/me/export",
       "POST /api/users/me/export/confirm",

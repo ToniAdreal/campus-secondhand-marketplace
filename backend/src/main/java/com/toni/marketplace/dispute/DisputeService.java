@@ -13,6 +13,7 @@ import com.toni.marketplace.order.OrderMetrics;
 import com.toni.marketplace.order.OrderRepository;
 import com.toni.marketplace.order.OrderStatus;
 import com.toni.marketplace.order.PaymentService;
+import com.toni.marketplace.order.SellerPayoutService;
 import java.time.Clock;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -100,13 +101,15 @@ public class DisputeService {
   private final NotificationService notifications;
   private final DisputeProperties props;
   private final Clock clock;
+  private final SellerPayoutService payouts;
 
   @Autowired
   public DisputeService(OrderDisputeRepository disputes, OrderRepository orders,
                         ItemRepository items, PaymentService payments,
                         OrderMetrics metrics, AuditService audit,
                         NotificationService notifications, DisputeProperties props,
-                        Clock clock) {
+                        Clock clock,
+                        SellerPayoutService payouts) {
     this.disputes = disputes;
     this.orders = orders;
     this.items = items;
@@ -116,6 +119,7 @@ public class DisputeService {
     this.notifications = notifications;
     this.props = props;
     this.clock = clock;
+    this.payouts = payouts;
   }
 
   /** Constructor for direct unit tests that do not assert on metrics/audit/notifications. */
@@ -123,7 +127,7 @@ public class DisputeService {
                         ItemRepository items, PaymentService payments,
                         DisputeProperties props, Clock clock) {
     this(disputes, orders, items, payments, OrderMetrics.noop(), AuditService.noop(),
-        NotificationService.noop(), props, clock);
+        NotificationService.noop(), props, clock, null);
   }
 
   private Clock clock() {
@@ -295,6 +299,15 @@ public class DisputeService {
       // on the flushed row, so the PSP replay entry has done its job.
       payments.forgetRefund(refundKey);
       metrics().refunded();
+      // Backlog #221: a refund that lands after completion never mutates
+      // the settlement row — it appends a compensating negative entry,
+      // so the seller's net reconciles (settlement + adjustments). When
+      // the dispute froze a PAID order there is no settlement row and
+      // this is a no-op; direct unit tests without a payout bean skip
+      // it the same way.
+      if (payouts != null) {
+        payouts.recordRefundAdjustment(order.getId(), remaining, "DISPUTE_REFUND");
+      }
       dispute.setStatus(DisputeStatus.RESOLVED_REFUND);
       dispute.setListingRestored(restored);
       dispute.setResolvedAt(clock().instant());

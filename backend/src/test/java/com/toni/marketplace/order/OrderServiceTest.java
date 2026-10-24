@@ -92,11 +92,11 @@ class OrderServiceTest {
   private OrderService service;
   private OrderCreationService creation;
 
-  /** The full 12-arg service: mocked metrics/audit/notifications/attempts, fixed clock. */
+  /** The full 13-arg service: mocked metrics/audit/notifications/attempts, fixed clock. */
   private OrderService awareService() {
     return new OrderService(orders, items, idempotency, payments, creationMock,
         awareMetrics, awareAudit, awareNotifications,
-        Clock.fixed(PAY_NOW, ZoneOffset.UTC), null, null, awareAttempts);
+        Clock.fixed(PAY_NOW, ZoneOffset.UTC), null, null, awareAttempts, null);
   }
 
   private static String sha256Hex(String input) {

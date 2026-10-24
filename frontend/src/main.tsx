@@ -30,6 +30,7 @@ const SessionsPage = lazy(() => import('./pages/SessionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const CartPage = lazy(() => import('./pages/CartPage'));
 const SellerOrdersPage = lazy(() => import('./pages/SellerOrdersPage'));
+const SellerPayoutsPage = lazy(() => import('./pages/SellerPayoutsPage'));
 const SellerProfilePage = lazy(() => import('./pages/SellerProfilePage'));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminAuditLogPage = lazy(() => import('./pages/AdminAuditLogPage'));
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: 'my-listings', element: <MyListingsPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'seller/orders', element: <SellerOrdersPage /> },
+      { path: 'seller/payouts', element: <SellerPayoutsPage /> },
       { path: 'seller/:id', element: <SellerProfilePage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'register', element: <RegisterPage /> },

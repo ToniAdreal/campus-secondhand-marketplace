@@ -54,6 +54,7 @@ public class OrderService {
   private final HandoverAttemptService handoverAttempts;
   private final HandoverProperties handoverProperties;
   private final PaymentAttemptRecorder paymentAttempts;
+  private final SellerPayoutService payouts;
 
   /**
    * Generic buyer-facing note for a declined last payment attempt
@@ -71,7 +72,8 @@ public class OrderService {
                      AuditService audit, NotificationService notifications,
                      Clock clock, HandoverAttemptService handoverAttempts,
                      HandoverProperties handoverProperties,
-                     PaymentAttemptRecorder paymentAttempts) {
+                     PaymentAttemptRecorder paymentAttempts,
+                     SellerPayoutService payouts) {
     this.orders = orders;
     this.items = items;
     this.idempotency = idempotency;
@@ -84,6 +86,7 @@ public class OrderService {
     this.handoverAttempts = handoverAttempts;
     this.handoverProperties = handoverProperties;
     this.paymentAttempts = paymentAttempts;
+    this.payouts = payouts;
   }
 
   /** Constructor for direct unit tests that do not assert on notifications. */
@@ -92,7 +95,7 @@ public class OrderService {
                      OrderCreationService creation, OrderMetrics metrics,
                      AuditService audit, Clock clock) {
     this(orders, items, idempotency, payments, creation, metrics, audit,
-        NotificationService.noop(), clock, null, null, null);
+        NotificationService.noop(), clock, null, null, null, null);
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -990,6 +993,14 @@ public class OrderService {
       // 500.
       orders.flush();
       metrics().completed();
+      // Backlog #221: the settlement row is created in this same
+      // transaction — a completion that rolls back leaves no payout
+      // behind, and a re-complete returns before this point, so the
+      // row is created exactly once. Direct unit tests construct this
+      // service without a payout bean; they skip creation (null guard).
+      if (payouts != null) {
+        payouts.createForCompletedOrder(order);
+      }
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-complete above returns before this point.

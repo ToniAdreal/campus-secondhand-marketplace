@@ -75,6 +75,9 @@ function AuthNav() {
       <Link to="/seller/orders" className="text-sm text-blue-600 hover:underline">
         Sales
       </Link>
+      <Link to="/seller/payouts" className="text-sm text-blue-600 hover:underline">
+        Payouts
+      </Link>
       <Link to="/items/new" className="text-sm text-blue-600 hover:underline">
         Sell an item
       </Link>

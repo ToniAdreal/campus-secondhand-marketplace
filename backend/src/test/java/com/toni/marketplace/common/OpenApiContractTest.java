@@ -40,7 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code ItemController}, {@code MessageController},
  * {@code NotificationController}, {@code OrderController},
  * {@code ReportController}, {@code AdminReportController},
- * {@code SellerOrderController}, {@code SellerSalesExportController},
+ * {@code SellerOrderController}, {@code SellerPayoutController},
+ * {@code SellerSalesExportController},
  * {@code FavoriteController}, {@code RecentlyViewedController},
  * {@code SavedSearchController} and
  * {@code AccountDataExportController} — the passkey ceremony
@@ -159,6 +160,8 @@ class OpenApiContractTest {
       "/api/seller/orders",
       "/api/seller/orders/{id}",
       "/api/seller/orders/summary",
+      "/api/seller/payouts",
+      "/api/seller/payouts/totals",
       "/api/seller/reports",
       "/api/seller/reports/{id}/appeal",
       "/api/seller/sales/export.csv",
