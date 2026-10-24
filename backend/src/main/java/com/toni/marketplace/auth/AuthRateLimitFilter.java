@@ -93,6 +93,28 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * on the JWT principal (per-IP fallback for a missing/invalid token,
  * like the message bucket) and never resets on success.
  *
+ * <p>Listing creation ({@code POST /api/items}, backlog #219) has an
+ * eleventh, per-<em>user</em> bucket (default 10/minute) on the same
+ * keying as the message bucket (JWT principal id, per-IP fallback for
+ * a missing/invalid token), never reset on success: the abuse surface
+ * is an account spamming listing rows, not a brute-force surface, so
+ * the ceiling is sized for human listing (10/min is generous) while
+ * staying useless for a script. Sibling item POSTs ({@code /photo},
+ * {@code /photos}, {@code /renew}, {@code /publish}) are deliberately
+ * NOT in this bucket — they have their own abuse shape and would
+ * starve listing creation if they shared it; the collection POST is
+ * matched exactly, so they pass through untouched.
+ *
+ * <p>Order creation ({@code POST /api/orders}, backlog #219) has a
+ * twelfth, per-<em>user</em> bucket (default 20/minute) on the same
+ * keying, never reset on success: an account hammering order rows
+ * also triggers the idempotency, notification and metrics work every
+ * order carries, so the create-order path gets its own ceiling,
+ * sized higher than the listing bucket because the buy flow is one
+ * order per click and a fast buyer is legitimate. Only the
+ * collection POST is throttled — pay/cancel/complete/refund carry
+ * their own semantics and are left alone.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -161,6 +183,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
+  private static final String ITEMS_PATH = "/api/items";
+  private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
 
   private final AuthRateLimiter credentialLimiter;
@@ -173,6 +197,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter dataExportLimiter;
   private final AuthRateLimiter cspReportLimiter;
   private final AuthRateLimiter stepUpLimiter;
+  private final AuthRateLimiter listingCreateLimiter;
+  private final AuthRateLimiter orderCreateLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -192,6 +218,10 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter cspReportLimiter,
                              @Qualifier("stepUpRateLimiter")
                                  AuthRateLimiter stepUpLimiter,
+                             @Qualifier("listingCreateRateLimiter")
+                                 AuthRateLimiter listingCreateLimiter,
+                             @Qualifier("orderCreateRateLimiter")
+                                 AuthRateLimiter orderCreateLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -205,6 +235,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.dataExportLimiter = dataExportLimiter;
     this.cspReportLimiter = cspReportLimiter;
     this.stepUpLimiter = stepUpLimiter;
+    this.listingCreateLimiter = listingCreateLimiter;
+    this.orderCreateLimiter = orderCreateLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -239,6 +271,21 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // on success — a completed proof must not refill a password
       // guesser's budget.
       return !stepUpLimiter.isEnabled();
+    }
+    if (ITEMS_PATH.equals(path)) {
+      // Listing creation (backlog #219): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset
+      // on success — a created listing must not refill the spam
+      // allowance. The exact match keeps the sibling item POSTs
+      // (/photo, /photos, /renew, /publish) out of this bucket.
+      return !listingCreateLimiter.isEnabled();
+    }
+    if (ORDERS_PATH.equals(path)) {
+      // Order creation (backlog #219): own per-user bucket on the
+      // message keying, never reset on success — a placed order must
+      // not refill the allowance. The exact match keeps the
+      // transition POSTs (/pay, /cancel, ...) out of this bucket.
+      return !orderCreateLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -320,6 +367,35 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!stepUpLimiter.tryConsume(key)) {
         writeTooManyRequests(response, stepUpLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (ITEMS_PATH.equals(path)) {
+      // Listing creation (backlog #219): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // creates, but anonymous hammering is still throttled), never
+      // reset on success — a created listing must not refill the
+      // listing-spam allowance.
+      String key = messageKey(request);
+      if (!listingCreateLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, listingCreateLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (ORDERS_PATH.equals(path)) {
+      // Order creation (backlog #219): own per-user bucket on the
+      // message keying, never reset on success — a placed order must
+      // not refill the allowance. Order rows trigger idempotency,
+      // notification and metrics work, so create-order gets its own
+      // ceiling apart from the listing bucket.
+      String key = messageKey(request);
+      if (!orderCreateLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, orderCreateLimiter.retryAfterSeconds(key));
         return;
       }
       chain.doFilter(request, response);

@@ -241,4 +241,49 @@ public class AuthRateLimitProperties {
   public void setCspReportAttemptsPerMinute(int cspReportAttemptsPerMinute) {
     this.cspReportAttemptsPerMinute = cspReportAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for listing creation
+   * ({@code POST /api/items}, backlog #219). Keyed on the user rather
+   * than the IP, mirroring the message/report buckets: the endpoint is
+   * authenticated, so one listing spammer behind a NAT address must not
+   * starve every seller behind it (anonymous requests, which the
+   * security chain 401s anyway, fall back to a per-IP bucket). Sized at
+   * 10/min: generous for a human listing their shelf, useless for a
+   * listing-spam script. Like the other usage buckets it never resets
+   * on success — a created listing must not refill the spam allowance.
+   * Must be &ge; 1.
+   */
+  private int listingCreateAttemptsPerMinute = 10;
+
+  public int getListingCreateAttemptsPerMinute() {
+    return listingCreateAttemptsPerMinute;
+  }
+
+  public void setListingCreateAttemptsPerMinute(int listingCreateAttemptsPerMinute) {
+    this.listingCreateAttemptsPerMinute = listingCreateAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for order creation
+   * ({@code POST /api/orders}, backlog #219). Same keying as the
+   * listing-creation bucket above: the abuse surface is an account
+   * hammering order rows (and triggering downstream
+   * idempotency/notification work), not an IP. Sized at 20/min —
+   * higher than the listing bucket because the buy flow is one order
+   * per click and a fast buyer is legitimate, while a script ordering
+   * at volume is the throttle target. Never resets on success, like
+   * every other non-credential bucket. Must be &ge; 1.
+   */
+  private int orderCreateAttemptsPerMinute = 20;
+
+  public int getOrderCreateAttemptsPerMinute() {
+    return orderCreateAttemptsPerMinute;
+  }
+
+  public void setOrderCreateAttemptsPerMinute(int orderCreateAttemptsPerMinute) {
+    this.orderCreateAttemptsPerMinute = orderCreateAttemptsPerMinute;
+  }
 }

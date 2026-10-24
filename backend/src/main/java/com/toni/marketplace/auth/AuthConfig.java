@@ -192,6 +192,38 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for listing creation
+   * ({@code POST /api/items}, backlog #219; default 10 listings/minute
+   * per authenticated user). Keyed on the JWT principal id like the
+   * message/report buckets — listing spam is a per-user abuse surface,
+   * and keying by IP would let one NAT address starve every seller
+   * behind it.
+   */
+  @Bean
+  public AuthRateLimiter listingCreateRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties listingProps = new AuthRateLimitProperties();
+    listingProps.setEnabled(props.isEnabled());
+    listingProps.setAttemptsPerMinute(props.getListingCreateAttemptsPerMinute());
+    return new AuthRateLimiter(clock, listingProps);
+  }
+
+  /**
+   * Separate token bucket for order creation
+   * ({@code POST /api/orders}, backlog #219; default 20 orders/minute
+   * per authenticated user). Keyed on the JWT principal id like the
+   * listing-creation bucket — the abuse surface is an account hammering
+   * order rows (and the idempotency/notification work each order
+   * triggers), not an IP.
+   */
+  @Bean
+  public AuthRateLimiter orderCreateRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties orderProps = new AuthRateLimitProperties();
+    orderProps.setEnabled(props.isEnabled());
+    orderProps.setAttemptsPerMinute(props.getOrderCreateAttemptsPerMinute());
+    return new AuthRateLimiter(clock, orderProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity
