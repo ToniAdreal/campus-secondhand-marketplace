@@ -43,7 +43,9 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code SellerOrderController}, {@code SellerSalesExportController},
  * {@code FavoriteController}, {@code RecentlyViewedController},
  * {@code SavedSearchController} and
- * {@code AccountDataExportController}.
+ * {@code AccountDataExportController} — the passkey ceremony
+ * endpoints ({@code /api/auth/2fa/passkeys/**}) live on
+ * {@code AuthController} and are pinned here too.
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
@@ -79,6 +81,11 @@ class OpenApiContractTest {
       "/api/auth/2fa/authenticate",
       "/api/auth/2fa/disable",
       "/api/auth/2fa/enable",
+      "/api/auth/2fa/passkeys",
+      "/api/auth/2fa/passkeys/assertion/options",
+      "/api/auth/2fa/passkeys/registration/options",
+      "/api/auth/2fa/passkeys/registration/verify",
+      "/api/auth/2fa/passkeys/{id}",
       "/api/auth/2fa/recovery-codes/count",
       "/api/auth/2fa/recovery-codes/regenerate",
       "/api/auth/2fa/setup",

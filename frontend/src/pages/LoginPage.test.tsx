@@ -268,4 +268,149 @@ describe('LoginPage', () => {
     expect(currentPath).toBe('/');
     expect(screen.queryByRole('button', { name: /^login$/i })).toBeNull();
   });
+
+  // WebAuthn passkeys as an alternative second factor (backlog #220).
+  describe('passkey second factor', () => {
+    const challenge202 = (factors: string[]) => ({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { challenge: 'chal-pk', expiresAt: '2026-10-09T05:00:00Z', factors },
+      },
+    }) as never;
+
+    function enableWebAuthn() {
+      (window as unknown as Record<string, unknown>).PublicKeyCredential = function () {};
+      const get = vi.fn();
+      Object.defineProperty(window.navigator, 'credentials', {
+        value: { get, create: vi.fn() },
+        configurable: true,
+      });
+      return get;
+    }
+
+    function disableWebAuthn() {
+      delete (window as unknown as Record<string, unknown>).PublicKeyCredential;
+    }
+
+    afterEach(() => {
+      disableWebAuthn();
+    });
+
+    async function loginTo202(factors: string[]) {
+      postSpy.mockResolvedValueOnce(challenge202(factors));
+      renderLogin('/login');
+      fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+      fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+      fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+      // the factor step rendered (the back-to-login button is unique to it)
+      await screen.findByRole('button', { name: /back to login/i });
+    }
+
+    it('renders the passkey option only when the 202 advertises passkey AND the browser supports WebAuthn', async () => {
+      enableWebAuthn();
+      await loginTo202(['totp', 'passkey']);
+      // both options render
+      expect(await screen.findByRole('button', { name: /use a passkey instead/i })).not.toBeNull();
+      expect(screen.getByLabelText(/two-factor code/i)).not.toBeNull();
+    });
+
+    it('renders no passkey option when the account holds no passkey', async () => {
+      enableWebAuthn();
+      await loginTo202(['totp']);
+      expect(await screen.findByLabelText(/two-factor code/i)).not.toBeNull();
+      expect(screen.queryByRole('button', { name: /use a passkey instead/i })).toBeNull();
+    });
+
+    it('renders no passkey option when the browser lacks WebAuthn support', async () => {
+      disableWebAuthn();
+      await loginTo202(['totp', 'passkey']);
+      expect(await screen.findByLabelText(/two-factor code/i)).not.toBeNull();
+      expect(screen.queryByRole('button', { name: /use a passkey instead/i })).toBeNull();
+    });
+
+    it('renders no code form when the account is passkey-only', async () => {
+      enableWebAuthn();
+      await loginTo202(['passkey']);
+      expect(
+        await screen.findByRole('button', { name: /use a passkey instead/i }),
+      ).not.toBeNull();
+      expect(screen.queryByLabelText(/two-factor code/i)).toBeNull();
+    });
+
+    it('a passkey sign-in completes the login through the assertion exchange', async () => {
+      const get = enableWebAuthn();
+      get.mockResolvedValue({
+        id: 'cred-id',
+        rawId: new Uint8Array([9]).buffer,
+        type: 'public-key',
+        response: {
+          clientDataJSON: new Uint8Array([1]).buffer,
+          authenticatorData: new Uint8Array([2]).buffer,
+          signature: new Uint8Array([3]).buffer,
+          userHandle: null,
+        },
+      });
+      await loginTo202(['totp', 'passkey']);
+      postSpy.mockResolvedValueOnce(
+        envelope({
+          challenge: 'b64url-challenge',
+          rpId: 'localhost',
+          allowCredentials: ['Y3JlZC1pZA'],
+          timeout: 60000,
+          userVerification: 'preferred',
+        }),
+      );
+      postSpy.mockResolvedValueOnce(authSuccess());
+
+      fireEvent.click(await screen.findByRole('button', { name: /use a passkey instead/i }));
+
+      await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(3));
+      expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/2fa/passkeys/assertion/options', {
+        challenge: 'chal-pk',
+      });
+      // the browser ceremony ran against the server options
+      expect(get).toHaveBeenCalledTimes(1);
+      const requestOptions = get.mock.calls[0][0].publicKey;
+      expect(requestOptions.rpId).toBe('localhost');
+      // the assertion went to the same exchange endpoint as the TOTP code
+      const thirdCall = postSpy.mock.calls[2];
+      expect(thirdCall[0]).toBe('/auth/2fa/authenticate');
+      const payload = thirdCall[1] as { challenge: string; assertion: string };
+      expect(payload.challenge).toBe('chal-pk');
+      const parsed = JSON.parse(payload.assertion);
+      expect(parsed.id).toBe('cred-id');
+      expect(parsed.response.signature).toBeTruthy();
+      // and the login completed exactly like the TOTP leg
+      expect(useAuthStore.getState().user).toEqual(fakeUser);
+      expect(getAccessToken()).toBe('tok-abc');
+      await waitFor(() => expect(currentPath).toBe('/'));
+    });
+
+    it('a failed assertion exchange shows the backend message verbatim', async () => {
+      enableWebAuthn();
+      await loginTo202(['passkey']);
+      postSpy.mockResolvedValueOnce(
+        envelope({
+          challenge: 'b64url-challenge',
+          rpId: 'localhost',
+          allowCredentials: [],
+          timeout: 60000,
+          userVerification: 'preferred',
+        }),
+      );
+      postSpy.mockRejectedValueOnce(authFailure401());
+
+      // the ceremony is cancelled by the user — no credential, one message
+      const get = (
+        window.navigator as unknown as { credentials: { get: ReturnType<typeof vi.fn> } }
+      ).credentials.get;
+      get.mockRejectedValue(new DOMException('cancelled', 'NotAllowedError'));
+
+      fireEvent.click(await screen.findByRole('button', { name: /use a passkey instead/i }));
+      expect((await screen.findByRole('alert')).textContent).toBe('Passkey sign-in failed');
+      expect(useAuthStore.getState().user).toBeNull();
+    });
+  });
 });

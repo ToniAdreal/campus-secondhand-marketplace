@@ -32,6 +32,13 @@ export interface LoginResult {
 export interface TotpChallenge {
   challenge: string;
   expiresAt: string;
+  /**
+   * The proofs the exchange accepts for this account (backlog #220):
+   * `totp` when TOTP is enrolled, `passkey` when at least one passkey is
+   * enrolled. Absent on no path the backend emits — defaulted defensively
+   * to the TOTP-only shape.
+   */
+  factors: string[];
 }
 
 /**
@@ -68,7 +75,14 @@ export async function login(payload: LoginPayload): Promise<LoginOutcome> {
   const body = res.data.data;
   if (res.status === 202 || (body && 'challenge' in body)) {
     const challenge = body as TotpChallenge;
-    return { kind: 'totp-challenge', challenge: challenge.challenge, expiresAt: challenge.expiresAt };
+    return {
+      kind: 'totp-challenge',
+      challenge: challenge.challenge,
+      expiresAt: challenge.expiresAt,
+      // Backlog #220: the 202 advertises which second factors the account
+      // holds; older responses without the field read as TOTP-only.
+      factors: Array.isArray(challenge.factors) ? challenge.factors : ['totp'],
+    };
   }
   const auth = body as AuthResponseBody;
   return { kind: 'authenticated', user: auth.user, accessToken: auth.accessToken };
@@ -167,6 +181,14 @@ export interface AuthenticateTotpPayload {
   challenge: string;
   code: string;
   /**
+   * The passkey proof (backlog #220): the serialized
+   * `PublicKeyCredential` JSON from `navigator.credentials.get()`,
+   * verified against the single-use assertion challenge. When present
+   * and non-blank the passkey path is taken and `code` is ignored;
+   * when absent the TOTP/recovery-code path applies.
+   */
+  assertion?: string;
+  /**
    * Trusted-device opt-in (backlog #199): when true, a SUCCESSFUL
    * exchange also trusts this device — the response sets the
    * `trusted_device` httpOnly cookie and later password logins from
@@ -178,12 +200,15 @@ export interface AuthenticateTotpPayload {
 
 /**
  * POST /api/auth/2fa/authenticate (backlog #100). Exchanges the 202 login
- * challenge plus a code for the normal token pair (httpOnly refresh cookie
- * included, exactly like a finished login). The single `code` field accepts
- * either the current 6-digit TOTP code or one of the one-time recovery
- * codes issued at enable time — a successful recovery-code exchange
- * consumes that code. A bad/expired challenge or a wrong code fails with
- * the identical 401, so callers show one generic message.
+ * challenge plus exactly one proof for the normal token pair (httpOnly
+ * refresh cookie included, exactly like a finished login). The single
+ * `code` field accepts either the current 6-digit TOTP code or one of the
+ * one-time recovery codes issued at enable time — a successful
+ * recovery-code exchange consumes that code; `assertion` (backlog #220)
+ * carries a WebAuthn passkey assertion instead, and when present the
+ * passkey path is taken. A bad/expired challenge or a wrong proof fails
+ * with the identical 401 whatever the factor, so callers show one generic
+ * message.
  *
  * Throws the Axios error on failure (the {code,message,data} envelope).
  */
@@ -193,6 +218,9 @@ export async function authenticateTotp(
   const res = await api.post<ApiResponse<AuthResponseBody>>('/auth/2fa/authenticate', {
     challenge: payload.challenge,
     code: payload.code,
+    // Backlog #220: the passkey proof travels in `assertion`; omitted
+    // when the TOTP/recovery-code path is used.
+    ...(payload.assertion ? { assertion: payload.assertion } : {}),
     // Only sent when the user opted in — absent reads as false server-side.
     ...(payload.rememberDevice ? { rememberDevice: true } : {}),
   });
@@ -278,6 +306,97 @@ export async function recoveryCodeCount(): Promise<number> {
     '/auth/2fa/recovery-codes/count',
   );
   return res.data.data.remaining;
+}
+
+// ---------------------------------------------------------------------------
+// WebAuthn passkeys as an alternative second factor (backlog #220).
+//
+// The ceremony byte fields travel as base64url strings; the ArrayBuffer
+// conversions live in ./webauthn (pure, unit-tested) and the navigator
+// calls live in the pages, feature-detected — no passkey UI where the
+// browser lacks WebAuthn support. Enrolment and removal are step-up gated
+// server-side (a 403 step-up envelope when the presented access token's
+// credential proof is stale); callers wrap the options/remove calls in
+// withStepUpRetry with the typed proof.
+// ---------------------------------------------------------------------------
+
+/** Re-exported for the pages: the ceremony option shapes. */
+import type {
+  PasskeyAssertionOptions,
+  PasskeyInfo,
+  PasskeyRegistrationOptions,
+} from './webauthn';
+export type { PasskeyAssertionOptions, PasskeyInfo, PasskeyRegistrationOptions };
+
+/**
+ * POST /api/auth/2fa/passkeys/registration/options (authenticated, step-up
+ * gated). Mints the registration ceremony options — the single-use server
+ * challenge plus the rp/user descriptors — for
+ * `navigator.credentials.create()`.
+ */
+export async function startPasskeyRegistration(): Promise<PasskeyRegistrationOptions> {
+  const res = await api.post<ApiResponse<PasskeyRegistrationOptions>>(
+    '/auth/2fa/passkeys/registration/options',
+  );
+  return res.data.data;
+}
+
+/**
+ * POST /api/auth/2fa/passkeys/registration/verify (authenticated, step-up
+ * gated). Completes enrolment with the serialized PublicKeyCredential JSON
+ * from `navigator.credentials.create()`. Returns the enrolled credential
+ * id (base64url) — the handle the settings surface lists and DELETE
+ * addresses. A PASSKEY_REGISTERED audit row and a security notification
+ * are recorded server-side.
+ */
+export async function finishPasskeyRegistration(
+  credential: string,
+): Promise<{ credentialId: string }> {
+  const res = await api.post<ApiResponse<{ credentialId: string }>>(
+    '/auth/2fa/passkeys/registration/verify',
+    { credential },
+  );
+  return res.data.data;
+}
+
+/**
+ * GET /api/auth/2fa/passkeys (authenticated). Lists the caller's enrolled
+ * passkeys — id, credential id, enrolment instant and last verified
+ * signature counter. The public keys are never exposed.
+ */
+export async function listPasskeys(): Promise<PasskeyInfo[]> {
+  const res = await api.get<ApiResponse<PasskeyInfo[]>>('/auth/2fa/passkeys');
+  return res.data.data;
+}
+
+/**
+ * DELETE /api/auth/2fa/passkeys/{id} (authenticated, step-up gated).
+ * Removes one of the caller's passkeys; a PASSKEY_REMOVED audit row and a
+ * security notification are recorded server-side. Unknown ids — or ids
+ * belonging to another user — are 404, never a cross-user oracle.
+ */
+export async function deletePasskey(id: number): Promise<void> {
+  await api.delete(`/auth/2fa/passkeys/${id}`);
+}
+
+/**
+ * POST /api/auth/2fa/passkeys/assertion/options (public — the caller is not
+ * authenticated yet). Opens a passkey assertion ceremony: the 202 login
+ * challenge token resolves to the challenged account, which must hold at
+ * least one passkey. Returns the single-use assertion challenge plus the
+ * `allowCredentials` list for `navigator.credentials.get()`; the
+ * resulting assertion is exchanged — with the same 202 challenge — at
+ * POST /api/auth/2fa/authenticate. A bad/expired 202 challenge or no
+ * passkeys enrolled answers the identical 401.
+ */
+export async function startPasskeyAssertion(
+  challenge: string,
+): Promise<PasskeyAssertionOptions> {
+  const res = await api.post<ApiResponse<PasskeyAssertionOptions>>(
+    '/auth/2fa/passkeys/assertion/options',
+    { challenge },
+  );
+  return res.data.data;
 }
 
 /**

@@ -73,6 +73,9 @@ public class AuthService {
   private final EmailChangeTokenRepository emailChangeTokens;
   private final EmailChangeMailSender emailChangeMail;
   private final StepUpPolicy stepUpPolicy;
+  private final PasskeyService passkeyService;
+  private final PasskeyChallengeRepository passkeyChallenges;
+  private final PasskeyCredentialRepository passkeyCredentials;
 
   @Autowired
   public AuthService(UserRepository users, PasswordService passwords, JwtTokenService jwt,
@@ -94,7 +97,10 @@ public class AuthService {
                      TrustedDeviceProperties trustedDeviceProps,
                      EmailChangeTokenRepository emailChangeTokens,
                      EmailChangeMailSender emailChangeMail,
-                     StepUpPolicy stepUpPolicy) {
+                     StepUpPolicy stepUpPolicy,
+                     PasskeyService passkeyService,
+                     PasskeyChallengeRepository passkeyChallenges,
+                     PasskeyCredentialRepository passkeyCredentials) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
@@ -121,6 +127,9 @@ public class AuthService {
     this.emailChangeTokens = emailChangeTokens;
     this.emailChangeMail = emailChangeMail;
     this.stepUpPolicy = stepUpPolicy;
+    this.passkeyService = passkeyService;
+    this.passkeyChallenges = passkeyChallenges;
+    this.passkeyCredentials = passkeyCredentials;
   }
 
   /** Legacy constructor for direct unit tests that do not assert on metrics. */
@@ -131,7 +140,8 @@ public class AuthService {
         null, clock, lockout, new TotpLockoutProperties(),
         AuthMetrics.noop(), AuditService.noop(), new PasswordPolicyProperties(),
         null, new EmailVerificationProperties(), null, null, null, null, null,
-        new SessionLimitProperties(), null, null, null, null, null, StepUpPolicy.disabled());
+        new SessionLimitProperties(), null, null, null, null, null, StepUpPolicy.disabled(),
+        null, null, null);
   }
 
   /**
@@ -393,6 +403,60 @@ public class AuthService {
         : java.time.Duration.ofDays(30);
   }
 
+  /**
+   * Passkey-store seam (backlog #220) with the same null-tolerant
+   * rationale as {@link #recoveryCodesAvailable()}: a hand-built
+   * instance without the passkey beans (the legacy constructor) has no
+   * passkey store — enrolment reads as unavailable and the 202 gate
+   * treats every account as passkey-less, exactly the pre-#220
+   * behaviour. Production always gets the JPA beans.
+   */
+  private boolean passkeysAvailable() {
+    return passkeyService != null && passkeyChallenges != null && passkeyCredentials != null;
+  }
+
+  /** Guards the ceremony endpoints against a hand-built instance without the passkey store. */
+  private void requirePasskeysAvailable() {
+    if (!passkeysAvailable()) {
+      throw new IllegalStateException("passkey store unavailable");
+    }
+  }
+
+  /**
+   * Whether the account holds at least one enrolled passkey (backlog #220).
+   * A null id means a hand-built, not-yet-persisted user (the unit-test
+   * shape) — which by definition holds no passkeys. The pre-#220
+   * second-factor check ({@code user.isTotpEnabled()}) never needed the
+   * id, so this must not NPE on it either (caught by
+   * AuthServiceNormalizationTest's Mockito-built users during review).
+   */
+  private boolean hasPasskeys(Long userId) {
+    return userId != null && passkeysAvailable()
+        && passkeyCredentials.existsByUserId(userId);
+  }
+
+  /**
+   * The second-factor family (backlog #220): TOTP and passkeys are
+   * independent factors — the login 202 challenge fires when EITHER is
+   * enrolled, and the challenge accepts a TOTP code, a recovery code,
+   * or a passkey assertion according to what the account holds.
+   */
+  private boolean secondFactorEnrolled(User user) {
+    return user.isTotpEnabled() || hasPasskeys(user.getId());
+  }
+
+  /** The factor names the 202 challenge accepts, for the SPA's challenge UI. */
+  private java.util.List<String> enrolledFactors(User user) {
+    java.util.List<String> factors = new java.util.ArrayList<>(2);
+    if (user.isTotpEnabled()) {
+      factors.add("totp");
+    }
+    if (hasPasskeys(user.getId())) {
+      factors.add("passkey");
+    }
+    return java.util.List.copyOf(factors);
+  }
+
   /** One fresh raw trusted-device token: 32 random bytes, hex — the cookie value. */
   private static String generateTrustedDeviceToken() {
     byte[] bytes = new byte[32];
@@ -508,16 +572,22 @@ public class AuthService {
 
   /**
    * Outcome of a password login (backlog #78). Most logins produce a
-   * {@link Pair}; a login for a TOTP-enabled account produces a
-   * {@link Challenge} — a short-lived signed token the client exchanges
-   * (with a valid 6-digit code) at {@code POST /api/auth/2fa/authenticate}.
-   * The sealed type forces every caller to handle both cases.
+   * {@link Pair}; a login for a second-factor-enrolled account produces
+   * a {@link Challenge} — a short-lived signed token the client
+   * exchanges at {@code POST /api/auth/2fa/authenticate}. The sealed
+   * type forces every caller to handle both cases.
    */
   public sealed interface LoginResult permits LoginResult.Pair, LoginResult.Challenge {
     /** A finished login: user plus the token pair to return. */
     record Pair(AuthResult result) implements LoginResult {}
-    /** A 2FA challenge: signed token plus its absolute expiry instant. */
-    record Challenge(String challengeToken, Instant expiresAt) implements LoginResult {}
+    /**
+     * A second-factor challenge: signed token, its absolute expiry
+     * instant, and the factor names the exchange accepts
+     * ({@code "totp"} and/or {@code "passkey"}, backlog #220) so the
+     * SPA renders exactly the options that can succeed.
+     */
+    record Challenge(String challengeToken, Instant expiresAt,
+                     java.util.List<String> factors) implements LoginResult {}
   }
 
   /**
@@ -759,14 +829,15 @@ public class AuthService {
       user.setFailedLoginAttempts(0);
       user.setLockedUntil(null);
     }
-    if (user.isTotpEnabled()) {
-      // Trusted device (backlog #199): the password is verified, and a
-      // live trust row for THIS account skips only the TOTP step — the
-      // login then completes exactly like the exchange below (same
-      // new-device alert, SUCCESS history row, session cap). The token
-      // rotated on this use travels on the result so the controller can
-      // replace the cookie. No trust (absent / unknown / expired /
-      // replayed token) falls through to the challenge unchanged.
+    if (secondFactorEnrolled(user)) {
+      // Trusted device (backlog #199, factor-agnostic since #220): the
+      // password is verified, and a live trust row for THIS account
+      // skips the second-factor step — the login then completes exactly
+      // like the exchange below (same new-device alert, SUCCESS history
+      // row, session cap). The token rotated on this use travels on the
+      // result so the controller can replace the cookie. No trust
+      // (absent / unknown / expired / replayed token) falls through to
+      // the challenge unchanged.
       java.util.Optional<String> rotatedTrust =
           consumeTrustedDevice(user, trustedDeviceToken, meta);
       if (rotatedTrust.isPresent()) {
@@ -778,10 +849,15 @@ public class AuthService {
             new AuthResult(user, trustedPair, rotatedTrust.get()));
       }
       // Password correct, second factor still outstanding: issue a
-      // short-lived signed challenge, never a token pair.
+      // short-lived signed challenge, never a token pair. The challenge
+      // accepts a TOTP code, a recovery code, or a passkey assertion —
+      // whichever factors the account holds (backlog #220); the
+      // TOTP_REQUIRED history outcome keeps its name and now means
+      // "second-factor challenge issued".
       recordLogin(user.getId(), usernameOrEmail, LoginOutcome.TOTP_REQUIRED, meta);
       Instant expiresAt = now.plus(jwt.getTotpChallengeTtl());
-      return new LoginResult.Challenge(jwt.createTotpChallenge(user), expiresAt);
+      return new LoginResult.Challenge(jwt.createTotpChallenge(user), expiresAt,
+          enrolledFactors(user));
     }
     // Backlog #178: a successful sign-in from a never-seen (IP, device)
     // pair alerts the account holder — checked BEFORE this login's own
@@ -907,6 +983,16 @@ public class AuthService {
    * tokenVersion bump, no refresh-family revocation — mirroring enable,
    * which also leaves sessions alone.
    *
+   * <p>Backlog #220: disabling TOTP retires only the TOTP factor —
+   * enrolled passkeys survive — they are an independent second factor,
+   * the 202 challenge keeps firing for them, and the device trust rows
+   * survive with them (trust skips the second-factor challenge, which
+   * can still fire). The recovery codes are TOTP's companion
+   * credential and are deleted with it. Contrast {@link
+   * #resetTotpByAdmin}, which retires the whole second-factor family
+   * including passkeys: an admin reset is compromise recovery, and an
+   * attacker-enrolled passkey must not survive a TOTP-only reset.
+   *
    * <p>{@code noRollbackFor}: the lockout counter increment must survive
    * the 401 / 423 it produces, exactly as on {@code authenticateTotp} —
    * the default rollback would erase it and the throttle would never
@@ -936,9 +1022,13 @@ public class AuthService {
     if (recoveryCodesAvailable()) {
       recoveryCodes.deleteByUserId(userId);
     }
-    // Backlog #199: with 2FA off there is no challenge left to skip —
-    // every trust row is retired with the factor it bypassed.
-    revokeAllTrustedDevices(userId);
+    // Backlog #199/#220: trust rows are retired only when no second
+    // factor remains — a device that proved the second factor still
+    // skips the challenge while passkeys keep the 202 firing. With
+    // TOTP off and no passkeys there is no challenge left to skip.
+    if (!hasPasskeys(userId)) {
+      revokeAllTrustedDevices(userId);
+    }
     // The disable is a sensitive transition — append its audit row
     // inside this transaction (a rollback leaves 2FA on and no row).
     audit().record(userId, AuditAction.TOTP_DISABLED, AuditTargetType.USER, userId);
@@ -1205,18 +1295,82 @@ public class AuthService {
       AccountLockedException.class})
   public AuthResult authenticateTotp(String challenge, String code, SessionMeta meta,
                                      boolean rememberDevice) {
+    return authenticateSecondFactor(challenge, code, null, meta, rememberDevice);
+  }
+
+  /**
+   * The second-factor exchange dispatcher (backlog #220): the 202
+   * challenge accepts exactly one proof per call — a TOTP code, a
+   * recovery code, or a passkey assertion — routed by what the request
+   * carries and what the account holds. The gate matrix, pinned by
+   * {@code PasskeyCeremonyTest}:
+   *
+   * <ul>
+   *   <li>TOTP enrolled, no passkeys: a code completes the login; an
+   *       assertion is the identical 401.</li>
+   *   <li>Passkeys enrolled, no TOTP: an assertion completes the login;
+   *       a code is the identical 401.</li>
+   *   <li>Both enrolled: either proof completes the login.</li>
+   *   <li>Neither enrolled (or a disabled account): every proof is the
+   *       identical 401 — reaching this endpoint means the account
+   *       changed between the password stage and the exchange.</li>
+   * </ul>
+   *
+   * <p>Every failure mode answers the identical 401 ({@link
+   * InvalidCredentialsException}) — the response never reveals which
+   * factor was expected or which check failed — and a failed exchange
+   * of either kind feeds the shared #101 per-account lockout (an
+   * active lock answers 423 for both).
+   */
+  @Transactional(noRollbackFor = {InvalidCredentialsException.class,
+      AccountLockedException.class})
+  public AuthResult authenticateSecondFactor(String challenge, String code, String assertion,
+                                             SessionMeta meta, boolean rememberDevice) {
     long userId = jwt.parseTotpChallenge(challenge);
     // Backlog #171: an unknown user id here means the account vanished
     // between challenge and exchange — there is no username to record
     // the row against, so this one failure leaves no history row.
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
-    String stored = user.getTotpSecret();
-    if (user.isDisabled() || !user.isTotpEnabled() || stored == null) {
+    boolean totpEnrolled = user.isTotpEnabled() && user.getTotpSecret() != null;
+    boolean passkeyEnrolled = hasPasskeys(userId);
+    if (user.isDisabled() || (!totpEnrolled && !passkeyEnrolled)) {
       // Backlog #171: account-state failures fold into the identical 401
       // and into TOTP_FAILED alike (see LoginOutcome).
       recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
       throw new InvalidCredentialsException();
     }
+    if (assertion != null && !assertion.isBlank()) {
+      if (!passkeyEnrolled) {
+        // A passkey assertion against an account with no passkeys: the
+        // identical 401 — the response never hints which factors exist.
+        recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+        throw new InvalidCredentialsException();
+      }
+      return authenticatePasskey(user, assertion, meta, rememberDevice);
+    }
+    if (!totpEnrolled) {
+      // A code against a passkey-only account: the identical 401.
+      recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+      throw new InvalidCredentialsException();
+    }
+    return authenticateTotpCode(user, code, meta, rememberDevice);
+  }
+
+  /**
+   * The TOTP/recovery-code leg of the exchange (backlog #78/#91),
+   * factored out of {@link #authenticateTotp} for the #220 dispatcher:
+   * the caller has already resolved the user and established that TOTP
+   * is enrolled (enabled with a stored secret). The body below is the
+   * original exchange unchanged — lockout gate, secret resolution,
+   * code-or-recovery verification, success reset, login completion.
+   *
+   * @param meta device info captured from the request — recorded on the new
+   *     session's refresh-token row (backlog #62)
+   */
+  private AuthResult authenticateTotpCode(User user, String code, SessionMeta meta,
+                                          boolean rememberDevice) {
+    long userId = user.getId();
+    String stored = user.getTotpSecret();
     TotpLockoutProperties totpLockout = totpLockout();
     Instant now = clock.instant();
     if (totpLockout.isEnabled()) {
@@ -1296,6 +1450,329 @@ public class AuthService {
     String trustedToken = (rememberDevice && trustedDevicesAvailable())
         ? createTrustedDevice(user, meta) : null;
     return new AuthResult(user, pair, trustedToken);
+  }
+
+  /**
+   * The passkey leg of the second-factor exchange (backlog #220): runs
+   * inside the dispatcher's transaction ({@link
+   * #authenticateSecondFactor}), so the {@code noRollbackFor} discipline
+   * there covers this method too. The caller has already resolved the
+   * user and established that passkeys are enrolled.
+   *
+   * <p>Steps: the shared #101 lock gate first (an active lock refuses
+   * the attempt outright, even for a valid assertion — otherwise the
+   * passkey path would bypass the exchange's lock entirely); then the
+   * credential is selected by the response's credential id (an unknown
+   * id is the identical 401, the challenge stays live); then the
+   * single-use assertion challenge is consumed — the challenge row is
+   * stamped on the verify ATTEMPT, success or failure, so a challenge
+   * can never be verified twice (a replayed assertion answers the
+   * identical 401 as an unknown challenge: no oracle); then the
+   * ceremony is verified (origin, rp-id, challenge echo, signature,
+   * user presence, and the signature-counter clone check). A genuine
+   * verification failure feeds the shared #101 counter and can trip
+   * the 423, exactly like a wrong TOTP code; account-state failures
+   * (unknown credential id) never feed it.
+   *
+   * <p>On success the failure counter resets, the stored signature
+   * counter advances, and the login completes exactly like the TOTP
+   * leg (new-device alert, SUCCESS history row, session cap, the #199
+   * trusted-device opt-in) — the fresh {@code auth_time} claim on the
+   * minted pair makes this exchange a step-up proof event like any
+   * other login completion.
+   */
+  private AuthResult authenticatePasskey(User user, String assertionJson, SessionMeta meta,
+                                         boolean rememberDevice) {
+    long userId = user.getId();
+    TotpLockoutProperties totpLockout = totpLockout();
+    Instant now = clock.instant();
+    if (totpLockout.isEnabled()) {
+      Instant totpLockedUntil = user.getTotpLockedUntil();
+      if (totpLockedUntil != null) {
+        if (now.isBefore(totpLockedUntil)) {
+          // Locked: even a valid assertion under a fresh challenge is
+          // refused until the window passes. This attempt does not
+          // extend the lock or feed the counter.
+          recordLogin(userId, user.getUsername(), LoginOutcome.LOCKED, meta);
+          throw new AccountLockedException(retryAfterSeconds(now, totpLockedUntil));
+        }
+        // Expired lock: the account gets a fresh allowance.
+        user.setTotpLockedUntil(null);
+        user.setFailedTotpAttempts(0);
+      }
+    }
+    // The client echoes the issued challenge inside clientDataJSON —
+    // read it back for the single-use lookup.
+    byte[] challengeBytes = passkeyService.extractChallengeBytes(assertionJson, false);
+    String credentialId = passkeyService.extractCredentialId(assertionJson);
+    PasskeyCredential credential = passkeyCredentials
+        .findByUserIdAndCredentialId(userId, credentialId)
+        .orElse(null);
+    if (credential == null) {
+      // Unknown credential id is account state, not guessing — the
+      // identical 401, never lockout-counted, and the challenge stays
+      // live for the real attempt.
+      recordLogin(userId, user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+      throw new InvalidCredentialsException();
+    }
+    consumePasskeyChallenge(userId, PasskeyChallengePurpose.ASSERTION, challengeBytes);
+    final long newSignCount;
+    try {
+      newSignCount = passkeyService.verifyAssertion(assertionJson, challengeBytes,
+          PasskeyService.base64UrlDecode(credentialId), credential.getPublicKeyCose(),
+          credential.getAaguid(), credential.getSignCount());
+    } catch (InvalidCredentialsException e) {
+      // A genuine second-factor failure — count it on the shared #101
+      // counter, and lock when the ceiling is reached (the locking
+      // failure itself answers 423, mirroring the TOTP leg).
+      if (totpLockout.isEnabled()) {
+        int attempts = user.getFailedTotpAttempts() + 1;
+        user.setFailedTotpAttempts(attempts);
+        if (attempts >= totpLockout.getMaxAttempts()) {
+          user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
+          recordLogin(userId, user.getUsername(), LoginOutcome.LOCKED, meta);
+          throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
+        }
+      }
+      recordLogin(userId, user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+      throw e;
+    }
+    // Success: the failure counter resets (mirrors the #60 login rule).
+    if (totpLockout.isEnabled()
+        && (user.getFailedTotpAttempts() != 0 || user.getTotpLockedUntil() != null)) {
+      user.setFailedTotpAttempts(0);
+      user.setTotpLockedUntil(null);
+    }
+    credential.setSignCount(newSignCount);
+    passkeyCredentials.save(credential);
+    // Backlog #178: the passkey exchange is where this login completes,
+    // so the new-device check runs here too — the password stage only
+    // recorded TOTP_REQUIRED, never a SUCCESS. Same before-recording
+    // order as on the plain login path.
+    alertIfNewDevice(userId, meta);
+    recordLogin(userId, user.getUsername(), LoginOutcome.SUCCESS, meta);
+    JwtTokenService.TokenPair pair = jwt.createTokenPair(user, meta);
+    // Backlog #191: a passkey-completed login founds a session exactly
+    // like the password path, so it counts toward (and can trigger) the
+    // cap.
+    enforceSessionLimit(userId, pair);
+    // Backlog #199: the opt-in creates the trust row inside this same
+    // transaction — an exchange that rolls back leaves no trust behind.
+    String trustedToken = (rememberDevice && trustedDevicesAvailable())
+        ? createTrustedDevice(user, meta) : null;
+    return new AuthResult(user, pair, trustedToken);
+  }
+
+  /**
+   * Starts passkey enrolment (backlog #220, authenticated): mints the
+   * registration ceremony options — the single-use server challenge
+   * (stored hashed, {@link PasskeyChallengePurpose#REGISTRATION}) plus
+   * the rp/user descriptors the browser needs.
+   *
+   * <p>Enrolment gate: the presented access token must carry a FRESH
+   * credential proof ({@link StepUpPolicy#requireFresh}, backlog #218)
+   * — registering a passkey hands out a new way to complete logins, so
+   * a merely-authenticated (possibly stolen) session must not be
+   * enough. The fresh proof already includes the current password (and
+   * a second factor when 2FA is on) via {@code POST /api/auth/step-up},
+   * so no inline password is asked again here. When 2FA is NOT yet
+   * enrolled, the password-only step-up is the only proof the account
+   * has — blocking enrolment behind existing 2FA would keep passkeys
+   * from exactly the users #220 is for (no authenticator app).
+   */
+  @Transactional
+  public PasskeyRegistrationOptions startPasskeyRegistration(long userId) {
+    // Backlog #218: a stolen Bearer <redacted> must not enroll a backdoor
+    // second factor — the presented token's credential proof must be
+    // fresh, on top of the authentication itself.
+    stepUp().requireFresh();
+    requirePasskeysAvailable();
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    byte[] challengeBytes = passkeyService.newChallengeBytes();
+    replaceChallenge(userId, PasskeyChallengePurpose.REGISTRATION, challengeBytes);
+    java.util.List<String> excludeCredentials = passkeyCredentials
+        .findByUserIdOrderByCreatedAtDesc(userId).stream()
+        .map(PasskeyCredential::getCredentialId)
+        .toList();
+    // The WebAuthn user handle must be opaque bytes, never the username
+    // (the handle is exposed to the authenticator): the 8-byte
+    // big-endian account id is stable and reveals nothing.
+    byte[] userHandle = java.nio.ByteBuffer.allocate(Long.BYTES).putLong(userId).array();
+    return new PasskeyRegistrationOptions(
+        PasskeyService.base64UrlEncode(challengeBytes),
+        passkeyService.rpId(),
+        "CampusMarketplace",
+        new PasskeyRegistrationOptions.PasskeyUserEntity(
+            PasskeyService.base64UrlEncode(userHandle), user.getUsername(), user.getUsername()),
+        excludeCredentials,
+        60_000,
+        "none");
+  }
+
+  /**
+   * Completes passkey enrolment (backlog #220, authenticated): consumes
+   * the single-use registration challenge and verifies the ceremony
+   * (origin, rp-id, challenge echo, attestation signature, user
+   * presence) through {@link PasskeyService}. The same fresh-proof gate
+   * as {@link #startPasskeyRegistration} applies — the options call and
+   * the verify call are separately gated so a proof that went stale
+   * between the two cannot finish the enrolment.
+   *
+   * <p>On success the credential row is persisted (credential id,
+   * COSE public key, initial signature counter) and a
+   * {@code PASSKEY_REGISTERED} audit row plus a security notification
+   * are recorded — a passkey the holder did not enroll is account
+   * compromise, so enrolment must never be silent. A credential id
+   * already on file (the same authenticator re-enrolled, or a roaming
+   * key already enrolled on another account — the id is globally
+   * unique) is a 409, never a second row.
+   *
+   * @return the enrolled credential id (base64url)
+   */
+  @Transactional
+  public String finishPasskeyRegistration(long userId, String credentialJson) {
+    stepUp().requireFresh();
+    requirePasskeysAvailable();
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    byte[] challengeBytes = passkeyService.extractChallengeBytes(credentialJson, true);
+    consumePasskeyChallenge(userId, PasskeyChallengePurpose.REGISTRATION, challengeBytes);
+    com.webauthn4j.data.RegistrationData data =
+        passkeyService.verifyRegistration(credentialJson, challengeBytes);
+    String credentialId = PasskeyService.base64UrlEncode(data.getAttestationObject()
+        .getAuthenticatorData().getAttestedCredentialData().getCredentialId());
+    if (passkeyCredentials.findByCredentialId(credentialId).isPresent()) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.CONFLICT, "this passkey is already enrolled");
+    }
+    long signCount = data.getAttestationObject().getAuthenticatorData().getSignCount();
+    byte[] coseKey = passkeyService.coseKeyBytes(data.getAttestationObject()
+        .getAuthenticatorData().getAttestedCredentialData().getCOSEKey());
+    // The AAGUID travels with the credential row: webauthn4j refuses a
+    // null AAGUID when the credential record is rebuilt at assertion
+    // time (backlog #220 — a null was caught 500ing during review).
+    com.webauthn4j.data.attestation.authenticator.AAGUID attestedAaguid = data
+        .getAttestationObject().getAuthenticatorData().getAttestedCredentialData().getAaguid();
+    byte[] aaguid = attestedAaguid == null ? null : attestedAaguid.getBytes();
+    passkeyCredentials.save(new PasskeyCredential(userId, credentialId, coseKey, signCount, aaguid));
+    // The enrolment is a sensitive transition — append its audit row
+    // inside this transaction (a rollback leaves no credential and no
+    // row), and notify the holder (security alert, never mutable).
+    audit().record(userId, AuditAction.PASSKEY_REGISTERED, AuditTargetType.USER, userId);
+    notifications().record(userId, NotificationType.PASSKEY_REGISTERED, null);
+    return credentialId;
+  }
+
+  /**
+   * Lists the caller's enrolled passkeys (backlog #220, authenticated):
+   * {@link PasskeyInfo} projections for the settings surface — the
+   * public key itself is never exposed. Authentication only (no
+   * step-up): this is a read, mirroring {@code GET
+   * /api/auth/trusted-devices}.
+   */
+  @Transactional(readOnly = true)
+  public java.util.List<PasskeyInfo> listPasskeys(long userId) {
+    requirePasskeysAvailable();
+    return passkeyCredentials.findByUserIdOrderByCreatedAtDesc(userId).stream()
+        .map(PasskeyInfo::of)
+        .toList();
+  }
+
+  /**
+   * Removes one of the caller's passkeys (backlog #220, authenticated):
+   * the same fresh-proof gate as enrolment — removing a second factor
+   * is as sensitive as adding one. Unknown ids — or ids belonging to
+   * another user — are 404 (no cross-user oracle), mirroring
+   * {@code DELETE /api/auth/sessions/{id}}. Removing the last passkey
+   * drops the account to whatever factors remain (password-only when
+   * TOTP is off too) — an explicit, audited choice, mirroring {@link
+   * #disableTotp}'s "the current session survives" discipline. A
+   * {@code PASSKEY_REMOVED} audit row and security notification are
+   * recorded in the same transaction.
+   */
+  @Transactional
+  public void deletePasskey(long userId, long passkeyId) {
+    stepUp().requireFresh();
+    requirePasskeysAvailable();
+    PasskeyCredential row = passkeyCredentials.findById(passkeyId)
+        .filter(credential -> credential.getUserId() == userId)
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "passkey not found"));
+    passkeyCredentials.delete(row);
+    audit().record(userId, AuditAction.PASSKEY_REMOVED, AuditTargetType.USER, userId);
+    notifications().record(userId, NotificationType.PASSKEY_REMOVED, null);
+  }
+
+  /**
+   * Opens a passkey assertion ceremony (backlog #220, public — the
+   * caller is not authenticated yet): the 202 login challenge token
+   * resolves to the challenged account exactly like the
+   * {@code /2fa/authenticate} exchange; the account must hold at least
+   * one passkey or the answer is the identical 401 (no enrolment
+   * oracle — the 202 token already proves the password). A fresh
+   * single-use assertion challenge is stored (replacing any prior
+   * unused one, the #90 one-live-token discipline) and returned with
+   * the {@code allowCredentials} list for
+   * {@code navigator.credentials.get()}.
+   */
+  @Transactional
+  public PasskeyAssertionOptions startPasskeyAssertion(String challengeToken) {
+    requirePasskeysAvailable();
+    long userId = jwt.parseTotpChallenge(challengeToken);
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    if (user.isDisabled() || !hasPasskeys(userId)) {
+      // Backlog #171: account-state failures fold into the identical
+      // 401 — the 202 token proves the password, so this reveals
+      // nothing to anyone who does not hold it.
+      throw new InvalidCredentialsException();
+    }
+    byte[] challengeBytes = passkeyService.newChallengeBytes();
+    replaceChallenge(userId, PasskeyChallengePurpose.ASSERTION, challengeBytes);
+    java.util.List<String> allowCredentials = passkeyCredentials
+        .findByUserIdOrderByCreatedAtDesc(userId).stream()
+        .map(PasskeyCredential::getCredentialId)
+        .toList();
+    return new PasskeyAssertionOptions(
+        PasskeyService.base64UrlEncode(challengeBytes),
+        passkeyService.rpId(),
+        allowCredentials,
+        60_000,
+        "preferred");
+  }
+
+  /**
+   * Issues a fresh single-use challenge for the purpose, replacing the
+   * user's prior unused row for it (the #90 one-live-token discipline —
+   * a superseded challenge can never be verified afterwards).
+   */
+  private void replaceChallenge(long userId, PasskeyChallengePurpose purpose,
+                                byte[] challengeBytes) {
+    passkeyChallenges.deleteByUserIdAndPurposeAndUsedAtIsNull(userId, purpose);
+    passkeyChallenges.save(new PasskeyChallenge(userId, purpose,
+        PasskeyService.challengeHash(challengeBytes), passkeyService.challengeExpiresAt()));
+  }
+
+  /**
+   * Consumes the single-use challenge the client echoed: the row must
+   * exist, belong to the user, be for this purpose, be unused and be
+   * unexpired — every violation is the identical 401 (no oracle tells
+   * a replayed challenge from an unknown or expired one). The row is
+   * stamped on the verify ATTEMPT, so a challenge verifies at most
+   * once however the attempt ends.
+   *
+   * @return the raw challenge bytes for the ceremony verification
+   */
+  private byte[] consumePasskeyChallenge(long userId, PasskeyChallengePurpose purpose,
+                                         byte[] challengeBytes) {
+    PasskeyChallenge row = passkeyChallenges
+        .findByChallengeHash(PasskeyService.challengeHash(challengeBytes))
+        .orElse(null);
+    if (row == null || row.getUserId() != userId || row.getPurpose() != purpose
+        || row.isUsed() || row.isExpired(clock.instant())) {
+      throw new InvalidCredentialsException();
+    }
+    row.setUsedAt(clock.instant());
+    passkeyChallenges.save(row);
+    return challengeBytes;
   }
 
   /** Whole seconds until the lock expires, never below 1 (the header must be meaningful). */
@@ -1619,6 +2096,13 @@ public class AuthService {
     }
     if (recoveryCodesAvailable()) {
       recoveryCodes.deleteByUserId(userId);
+    }
+    // Backlog #220: the tombstone account keeps no credentials — every
+    // enrolled passkey and outstanding challenge is deleted with the
+    // TOTP secret above.
+    if (passkeysAvailable()) {
+      passkeyChallenges.deleteByUserId(userId);
+      passkeyCredentials.deleteByUserId(userId);
     }
     // Backlog #199: the tombstone account has no devices left to trust.
     revokeAllTrustedDevices(userId);
@@ -1993,6 +2477,15 @@ public class AuthService {
    * or the target has no TOTP enabled (nothing to reset). Unknown
    * id → 404, mirroring {@link #disableUser}.
    *
+   * <p>Backlog #220: the reset retires the whole second-factor family,
+   * not just TOTP — every enrolled passkey and outstanding challenge
+   * is deleted with the secret above. An admin reset is compromise
+   * recovery (or lockout recovery); an attacker-enrolled passkey
+   * surviving a TOTP-only reset would leave the backdoor open, so the
+   * passkeys go too and the holder re-enrols both factors from scratch
+   * afterwards. Contrast {@link #disableTotp}, where the holder
+   * deliberately retires only the TOTP factor with full proof.
+   *
    * <p>On success, in this one transaction: the TOTP secret is
    * cleared and the enabled flag switched off (mirroring
    * {@link #disableTotp}), the whole recovery-code set is deleted,
@@ -2029,6 +2522,13 @@ public class AuthService {
     users.save(target);
     if (recoveryCodesAvailable()) {
       recoveryCodes.deleteByUserId(targetId);
+    }
+    // Backlog #220: passkeys retire with the TOTP factor (see the
+    // javadoc above) — an attacker-enrolled passkey must not survive
+    // an admin reset.
+    if (passkeysAvailable()) {
+      passkeyChallenges.deleteByUserId(targetId);
+      passkeyCredentials.deleteByUserId(targetId);
     }
     revokeAllTrustedDevices(targetId);
     jwt.revokeAll(targetId);

@@ -29,6 +29,11 @@ import {
   isStepUpRequired,
   describeStepUpError,
   withStepUpRetry,
+  startPasskeyRegistration,
+  finishPasskeyRegistration,
+  listPasskeys,
+  deletePasskey,
+  startPasskeyAssertion,
 } from './auth';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -461,6 +466,8 @@ describe('two-factor (backlog #100)', () => {
       kind: 'totp-challenge',
       challenge: 'chal-123',
       expiresAt: '2026-10-09T05:00:00Z',
+      // Backlog #220: absent factors default to the TOTP-only shape.
+      factors: ['totp'],
     });
     expect('accessToken' in result).toBe(false);
   });
@@ -884,5 +891,98 @@ describe('step-up re-authentication (backlog #218)', () => {
       expect(action).toHaveBeenCalledTimes(1);
       expect(getAccessToken()).toBeNull();
     });
+  });
+});
+
+describe('passkeys as an alternative second factor (backlog #220)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('login parses the advertised factors from the 202 challenge', async () => {
+    postSpy.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        code: 0,
+        message: 'ok',
+        data: {
+          challenge: 'chal-pk',
+          expiresAt: '2026-10-09T05:00:00Z',
+          factors: ['totp', 'passkey'],
+        },
+      },
+    } as never);
+
+    const result = await login({ usernameOrEmail: 'toni', password: 'secret' });
+
+    expect(result).toEqual({
+      kind: 'totp-challenge',
+      challenge: 'chal-pk',
+      expiresAt: '2026-10-09T05:00:00Z',
+      factors: ['totp', 'passkey'],
+    });
+  });
+
+  it('authenticateTotp sends the assertion instead of a code on the passkey path', async () => {
+    postSpy.mockResolvedValueOnce(envelope(authBody));
+
+    await authenticateTotp({ challenge: 'chal-pk', code: '', assertion: '{"id":"cred-1"}' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/authenticate', {
+      challenge: 'chal-pk',
+      code: '',
+      assertion: '{"id":"cred-1"}',
+    });
+  });
+
+  it('startPasskeyRegistration posts to the registration options endpoint', async () => {
+    const options = { challenge: 'abc', rpId: 'localhost' };
+    postSpy.mockResolvedValueOnce(envelope(options));
+
+    const result = await startPasskeyRegistration();
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/registration/options');
+    expect(result).toEqual(options);
+  });
+
+  it('finishPasskeyRegistration posts the serialized credential and returns the credential id', async () => {
+    postSpy.mockResolvedValueOnce(envelope({ credentialId: 'cred-1' }));
+
+    const result = await finishPasskeyRegistration('{"id":"cred-1"}');
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/registration/verify', {
+      credential: '{"id":"cred-1"}',
+    });
+    expect(result).toEqual({ credentialId: 'cred-1' });
+  });
+
+  it('listPasskeys GETs the enrolled passkeys', async () => {
+    const rows = [{ id: 1, credentialId: 'cred-1', createdAt: '2026-10-23T00:00:00Z', signCount: 0 }];
+    getSpy.mockResolvedValueOnce(envelope(rows));
+
+    const result = await listPasskeys();
+
+    expect(getSpy).toHaveBeenCalledWith('/auth/2fa/passkeys');
+    expect(result).toEqual(rows);
+  });
+
+  it('deletePasskey DELETEs the passkey by row id', async () => {
+    deleteSpy.mockResolvedValueOnce(envelope(null));
+
+    await deletePasskey(7);
+
+    expect(deleteSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/7');
+  });
+
+  it('startPasskeyAssertion posts the 202 challenge and returns the assertion options', async () => {
+    const options = { challenge: 'abc', rpId: 'localhost', allowCredentials: ['cred-1'] };
+    postSpy.mockResolvedValueOnce(envelope(options));
+
+    const result = await startPasskeyAssertion('chal-pk');
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/assertion/options', {
+      challenge: 'chal-pk',
+    });
+    expect(result).toEqual(options);
   });
 });

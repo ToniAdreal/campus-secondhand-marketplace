@@ -1,8 +1,13 @@
 import axios from 'axios';
 import { type FormEvent, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { authenticateTotp, login } from '../api/auth';
+import { authenticateTotp, login, startPasskeyAssertion } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
+import {
+  assertionOptionsToRequestOptions,
+  serializeAssertionCredential,
+  webauthnSupported,
+} from '../api/webauthn';
 
 /** Reads the human message out of the backend {code,message,data} envelope. */
 function envelopeMessage(err: unknown, fallback: string): string {
@@ -15,13 +20,17 @@ function envelopeMessage(err: unknown, fallback: string): string {
 }
 
 /**
- * Login (backlog #17) + the TOTP second-factor step (backlog #100). A
- * plain login finishes in one POST; on a 2FA-enabled account the backend
+ * Login (backlog #17) + the second-factor step (backlog #100). A plain
+ * login finishes in one POST; on a second-factor account the backend
  * answers 202 with a signed challenge instead of a token pair, and this
- * page switches to a code step: the same field accepts a 6-digit
+ * page switches to the factor step: the code field accepts a 6-digit
  * authenticator code OR a one-time recovery code (the backend's
- * single-field contract). A wrong code gets the backend's identical 401
- * copy — the page shows it verbatim and never hints which form failed.
+ * single-field contract), and — when the account holds a passkey and the
+ * browser supports WebAuthn (backlog #220) — a "Use a passkey" button
+ * drives `navigator.credentials.get()` and exchanges the assertion at
+ * the same /api/auth/2fa/authenticate endpoint. A wrong proof gets the
+ * backend's identical 401 — the page shows it verbatim and never hints
+ * which factor or which check failed.
  */
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -32,6 +41,8 @@ export default function LoginPage() {
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
   const [challenge, setChallenge] = useState<string | null>(null);
+  // The factor names the 202 challenge accepts ("totp" and/or "passkey").
+  const [factors, setFactors] = useState<string[]>([]);
   const [code, setCode] = useState('');
   const [rememberDevice, setRememberDevice] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +74,11 @@ export default function LoginPage() {
       });
       if (outcome.kind === 'totp-challenge') {
         // No token pair yet — the password is spent; only the challenge
-        // (held in memory, never persisted) carries into the code step.
+        // (held in memory, never persisted) carries into the factor step.
         setChallenge(outcome.challenge);
+        // Backlog #220: the 202 advertises which proofs can succeed — the
+        // page renders exactly those options.
+        setFactors(outcome.factors);
         setPassword('');
         setCode('');
         setRememberDevice(false);
@@ -105,6 +119,39 @@ export default function LoginPage() {
     }
   }
 
+  async function onUsePasskey() {
+    if (!challenge) return;
+    setPending(true);
+    setError(null);
+    try {
+      // Backlog #220: the 202 challenge opens a single-use assertion
+      // ceremony; the browser signs it and the same exchange endpoint
+      // finishes the login.
+      const options = await startPasskeyAssertion(challenge);
+      const credential = (await navigator.credentials.get({
+        publicKey: assertionOptionsToRequestOptions(options),
+      })) as PublicKeyCredential | null;
+      if (!credential) {
+        setError('The passkey ceremony was cancelled.');
+        return;
+      }
+      const { user: loggedIn, accessToken } = await authenticateTotp({
+        challenge,
+        code: '',
+        assertion: serializeAssertionCredential(credential),
+        rememberDevice,
+      });
+      finishLogin(loggedIn, accessToken);
+    } catch (err) {
+      // A cancelled ceremony, an unknown credential and a failed
+      // ceremony all land on the backend's identical 401 — shown
+      // verbatim, never a hint about which check failed.
+      setError(envelopeMessage(err, 'Passkey sign-in failed'));
+    } finally {
+      setPending(false);
+    }
+  }
+
   const passwordResetDone =
     (location.state as { passwordReset?: boolean } | null)?.passwordReset === true;
 
@@ -124,23 +171,37 @@ export default function LoginPage() {
       )}
       {challenge ? (
         <form onSubmit={onCodeSubmit} className="space-y-3">
-          <p className="text-sm text-neutral-600">
-            Enter the 6-digit code from your authenticator app — or one of your recovery
-            codes if you no longer have the app.
-          </p>
-          <div>
-            <label htmlFor="login-totp-code" className="mb-1 block text-sm font-medium">
-              Two-factor code
-            </label>
-            <input
-              id="login-totp-code"
-              type="text"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
-            />
-          </div>
+          {factors.includes('totp') && (
+            <>
+              <p className="text-sm text-neutral-600">
+                Enter the 6-digit code from your authenticator app — or one of your recovery
+                codes if you no longer have the app.
+              </p>
+              <div>
+                <label htmlFor="login-totp-code" className="mb-1 block text-sm font-medium">
+                  Two-factor code
+                </label>
+                <input
+                  id="login-totp-code"
+                  type="text"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                />
+              </div>
+            </>
+          )}
+          {factors.includes('passkey') && webauthnSupported() && (
+            <button
+              type="button"
+              onClick={onUsePasskey}
+              disabled={pending}
+              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+            >
+              {pending ? 'Waiting for your passkey…' : 'Use a passkey instead'}
+            </button>
+          )}
           <div>
             <label htmlFor="login-remember-device" className="flex items-start gap-2 text-sm">
               <input
@@ -157,17 +218,20 @@ export default function LoginPage() {
               </span>
             </label>
           </div>
-          <button
-            type="submit"
-            disabled={pending}
-            className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {pending ? 'Verifying…' : 'Verify code'}
-          </button>
+          {factors.includes('totp') && (
+            <button
+              type="submit"
+              disabled={pending}
+              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {pending ? 'Verifying…' : 'Verify code'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
               setChallenge(null);
+              setFactors([]);
               setCode('');
               setRememberDevice(false);
               setError(null);

@@ -234,6 +234,13 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/disable").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/2fa/recovery-codes/count").authenticated()
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/recovery-codes/regenerate").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/2fa/passkeys/registration/options").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/2fa/passkeys/registration/verify").authenticated()
+            .requestMatchers(HttpMethod.GET, "/api/auth/2fa/passkeys").authenticated()
+            .requestMatchers(HttpMethod.DELETE, "/api/auth/2fa/passkeys/**").authenticated()
+            // The passkey assertion options stay public like
+            // /api/auth/2fa/authenticate — the 202 challenge token in the
+            // body is the credential (backlog #220).
             .requestMatchers("/api/auth/**", "/uploads/**", "/error").permitAll()
             // Mock-PSP webhook (backlog #140): public route, authenticated
             // by its HMAC signature header instead of a Bearer token (the

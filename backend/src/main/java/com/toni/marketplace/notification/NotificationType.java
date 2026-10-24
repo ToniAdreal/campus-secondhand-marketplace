@@ -99,6 +99,19 @@ public enum NotificationType {
    */
   TOTP_RESET_BY_ADMIN("Two-factor authentication reset by an administrator", true),
   /**
+   * The recipient enrolled a WebAuthn passkey (backlog #220). A
+   * security alert: never mutable (backlog #216) — a passkey the
+   * holder did not enroll is account compromise, so enrolment must
+   * never be silent.
+   */
+  PASSKEY_REGISTERED("Passkey registered", true),
+  /**
+   * The recipient removed one of their passkeys (backlog #220). A
+   * security alert: never mutable — a removal the holder did not
+   * perform deserves their attention.
+   */
+  PASSKEY_REMOVED("Passkey removed", true),
+  /**
    * A seller the recipient follows published a new listing (backlog
    * #217). The row carries the listing id in the same {@code itemId}
    * column as FAVORITE_PRICE_DROP; the SPA links straight to the

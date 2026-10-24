@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
     DataExportGrantProperties.class, SessionLimitProperties.class,
     BreachedPasswordProperties.class, TrustedDeviceProperties.class,
     CspReportProperties.class, BootstrapAdminProperties.class,
-    StepUpProperties.class})
+    StepUpProperties.class, PasskeyProperties.class})
 public class AuthConfig {
 
   /**

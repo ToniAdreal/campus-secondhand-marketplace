@@ -15,6 +15,8 @@ import {
   type TotpSetup,
 } from '../api/auth';
 import { setAccessToken } from '../api/client';
+import { webauthnSupported } from '../api/webauthn';
+import PasskeySection from '../components/PasskeySection';
 import { useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useMyFollows, useUnfollowSeller } from '../api/follows';
 import {
@@ -717,6 +719,7 @@ export default function SettingsPage() {
             )}
           </div>
         )}
+        {webauthnSupported() && <PasskeySection totpOn={totpOn} />}
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Sessions</h2>

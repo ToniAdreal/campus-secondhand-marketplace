@@ -113,13 +113,16 @@ public class AuthController {
   }
 
   /**
-   * Password login. For a TOTP-enabled account the password check alone
+   * Password login. For a second-factor account the password check alone
    * does not finish the login: the answer is HTTP 202 with a short-lived
    * signed challenge (no token pair, no refresh cookie), which the client
-   * exchanges — with the 6-digit code — at {@code POST
-   * /api/auth/2fa/authenticate}.
+   * exchanges — with the 6-digit TOTP code, a recovery code, or a passkey
+   * assertion (backlog #220) — at {@code POST /api/auth/2fa/authenticate}.
+   * The 202 body advertises which factors the account holds
+   * ({@code "totp"} and/or {@code "passkey"}) so the SPA renders exactly
+   * the options that can succeed.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "TOTP enabled: exchange the signed challenge at /api/auth/2fa/authenticate"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credentials correct but the email address is not verified yet (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202", description = "second factor enrolled: exchange the signed challenge at /api/auth/2fa/authenticate (factors lists totp and/or passkey)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "invalid credentials — identical for unknown identifiers (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credentials correct but the email address is not verified yet (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "account locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/login")
   public ResponseEntity<?> login(
       @Valid @RequestBody LoginRequest request, HttpServletRequest http,
@@ -147,7 +150,8 @@ public class AuthController {
     }
     return challengeResponse
         .body(ApiResponse.ok(
-            new TotpChallengeResponse(challenge.challengeToken(), challenge.expiresAt())));
+            new TotpChallengeResponse(challenge.challengeToken(), challenge.expiresAt(),
+                challenge.factors())));
   }
 
   /**
@@ -259,17 +263,109 @@ public class AuthController {
   }
 
   /**
-   * The second-factor exchange (public — the caller is not authenticated
-   * yet): the 202 challenge plus the current 6-digit code — or a
-   * one-time recovery code (backlog #91), which the successful exchange
-   * consumes. On success the response is the normal token pair with the
-   * httpOnly refresh cookie, exactly like a finished login. Bad/expired
-   * challenge or wrong code → 401. Brute-force defences (backlog #101):
-   * its own 5/min-per-IP rate-limit bucket (429), and repeated failed
-   * exchanges lock the exchange for the account (423 + Retry-After) —
-   * a lock that never blocks password login itself.
+   * Starts passkey enrolment (backlog #220, authenticated —
+   * SecurityConfig): mints the registration ceremony options — the
+   * single-use server challenge plus the rp/user descriptors — for
+   * {@code navigator.credentials.create()}. The presented access token
+   * must carry a FRESH credential proof (backlog #218 step-up): a
+   * merely-authenticated session must not be enough to enroll a new
+   * second factor. Re-running options replaces the previous unused
+   * challenge (the #90 one-live-token discipline).
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "bad/expired challenge or wrong code — identical for every failure kind (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor exchange locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "registration ceremony options (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credential proof older than the step-up window — re-prove at /api/auth/step-up (envelope)")})
+  @PostMapping("/2fa/passkeys/registration/options")
+  public ResponseEntity<ApiResponse<PasskeyRegistrationOptions>> startPasskeyRegistration(
+      @AuthenticationPrincipal Long userId) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.startPasskeyRegistration(userId)));
+  }
+
+  /**
+   * Completes passkey enrolment (backlog #220, authenticated —
+   * SecurityConfig): verifies the {@code navigator.credentials.create()}
+   * response against the stored single-use challenge and persists the
+   * credential (id, COSE public key, signature counter). The request
+   * carries the raw {@code PublicKeyCredential} JSON — byte fields
+   * base64url-encoded per the WebAuthn spec. Wrong/expired/used
+   * challenge or a failed ceremony → the identical 401; no live
+   * challenge → 400 (request options first); an already-enrolled
+   * credential id → 409. A {@code PASSKEY_REGISTERED} audit row and a
+   * security notification are recorded in the same transaction.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "passkey enrolled; the credential id is in the envelope"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "no live registration challenge — request options first (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller, or wrong/expired/used challenge / failed ceremony — identical for every failure kind (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credential proof older than the step-up window — re-prove at /api/auth/step-up (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "this passkey is already enrolled (envelope)")})
+  @PostMapping("/2fa/passkeys/registration/verify")
+  public ResponseEntity<ApiResponse<PasskeyRegistrationResult>> finishPasskeyRegistration(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody PasskeyRegistrationRequest request) {
+    return ResponseEntity.ok(ApiResponse.ok(
+        new PasskeyRegistrationResult(auth.finishPasskeyRegistration(userId, request.credential()))));
+  }
+
+  /**
+   * Lists the caller's enrolled passkeys (backlog #220, authenticated —
+   * SecurityConfig): id, credential id, enrolment instant and last
+   * verified signature counter per credential. The public keys are
+   * never exposed.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "the caller's enrolled passkeys (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)")})
+  @GetMapping("/2fa/passkeys")
+  public ResponseEntity<ApiResponse<List<PasskeyInfo>>> listPasskeys(
+      @AuthenticationPrincipal Long userId) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.listPasskeys(userId)));
+  }
+
+  /**
+   * Removes one of the caller's passkeys (backlog #220, authenticated —
+   * SecurityConfig): the presented access token must carry a FRESH
+   * credential proof (backlog #218 step-up), like enrolment. Unknown
+   * ids — or ids belonging to another user — are 404 (no cross-user
+   * oracle), mirroring {@code DELETE /api/auth/sessions/{id}}.
+   * Removing the last passkey drops the account to its remaining
+   * factors — an explicit, audited choice. A
+   * {@code PASSKEY_REMOVED} audit row and a security notification are
+   * recorded in the same transaction.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "passkey removed (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credential proof older than the step-up window — re-prove at /api/auth/step-up (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown id, or another user's passkey (envelope)")})
+  @DeleteMapping("/2fa/passkeys/{id}")
+  public ResponseEntity<ApiResponse<Void>> deletePasskey(
+      @AuthenticationPrincipal Long userId,
+      @PathVariable("id") long passkeyId) {
+    auth.deletePasskey(userId, passkeyId);
+    return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * Opens a passkey assertion ceremony (backlog #220, public — the
+   * caller is not authenticated yet): the 202 login challenge token
+   * resolves to the challenged account, which must hold at least one
+   * passkey. Returns the single-use assertion challenge plus the
+   * {@code allowCredentials} list for
+   * {@code navigator.credentials.get()}; the resulting assertion is
+   * exchanged — with the same 202 challenge token — at
+   * {@code POST /api/auth/2fa/authenticate}. Bad/expired challenge
+   * token or no passkeys enrolled → the identical 401.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "assertion ceremony options (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — missing challenge (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "bad/expired 202 challenge or no passkeys enrolled — identical for every failure kind (envelope)")})
+  @PostMapping("/2fa/passkeys/assertion/options")
+  public ResponseEntity<ApiResponse<PasskeyAssertionOptions>> startPasskeyAssertion(
+      @Valid @RequestBody PasskeyAssertionOptionsRequest request) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.startPasskeyAssertion(request.challenge())));
+  }
+
+  /**
+   * The second-factor exchange (public — the caller is not authenticated
+   * yet): the 202 challenge plus exactly one proof — the current 6-digit
+   * code, a one-time recovery code (backlog #91, consumed by a successful
+   * exchange), or a WebAuthn passkey assertion (backlog #220, verified
+   * against the single-use assertion challenge). On success the response
+   * is the normal token pair with the httpOnly refresh cookie, exactly
+   * like a finished login. Bad/expired challenge or wrong proof → the
+   * identical 401, whichever factor was tried. Brute-force defences
+   * (backlog #101): its own 5/min-per-IP rate-limit bucket (429), and
+   * repeated failed exchanges lock the exchange for the account
+   * (423 + Retry-After) — a lock that never blocks password login
+   * itself. The passkey path shares both defences.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "token pair issued (refresh token in the httpOnly cookie)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "bad/expired challenge or wrong proof — identical for every failure kind and factor (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "423", description = "second-factor exchange locked after repeated failures — see Retry-After (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429", description = "rate limit exceeded — see Retry-After (envelope)")})
   @PostMapping("/2fa/authenticate")
   public ResponseEntity<ApiResponse<AuthResponse>> authenticateTotp(
       @Valid @RequestBody TotpAuthenticateRequest request, HttpServletRequest http) {
@@ -277,7 +373,8 @@ public class AuthController {
     // the second-factor rows carry the resolved client IP too.
     // Backlog #199: rememberDevice is the trust opt-in — on success
     // ok() sets the trusted_device cookie from the result's raw token.
-    return ok(auth.authenticateTotp(request.challenge(), request.code(),
+    return ok(auth.authenticateSecondFactor(request.challenge(), request.code(),
+        request.assertion(),
         SessionMeta.of(http, trustedProxies.trustedProxySet()),
         request.rememberDeviceOrFalse()));
   }

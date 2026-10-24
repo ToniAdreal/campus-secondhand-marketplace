@@ -111,6 +111,11 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/2fa/authenticate",
       "POST /api/auth/2fa/disable",
       "POST /api/auth/2fa/enable",
+      "POST /api/auth/2fa/passkeys/assertion/options",
+      "POST /api/auth/2fa/passkeys/registration/options",
+      "POST /api/auth/2fa/passkeys/registration/verify",
+      "GET /api/auth/2fa/passkeys",
+      "DELETE /api/auth/2fa/passkeys/{id}",
       "GET /api/auth/2fa/recovery-codes/count",
       "POST /api/auth/2fa/recovery-codes/regenerate",
       "POST /api/auth/2fa/setup",
@@ -235,32 +240,23 @@ class AnonymousAccessSweepTest {
       Map.entry("POST /api/auth/password-reset", 200),
       Map.entry("POST /api/auth/password-reset/confirm", 401),
       Map.entry("POST /api/auth/2fa/authenticate", 401),
+      Map.entry("POST /api/auth/2fa/passkeys/assertion/options", 401),
       Map.entry("POST /api/payments/webhooks/mock-psp", 401),
       Map.entry("POST /api/security/csp-report", 204));
 
   /** Minimal well-formed bodies for the public probes that take one. */
-  private static final Map<String, String> PROBE_BODIES = Map.of(
-      "POST /api/auth/register",
-      "{\"username\":\"anon-sweep-probe\",\"email\":\"anon-sweep-probe@example.com\","
-          + "\"password\":\"s3cret-password\"}",
-      "POST /api/auth/login",
-      "{\"usernameOrEmail\":\"anon-sweep-nonexistent\",\"password\":\"wrong-password\"}",
-      "POST /api/auth/email-verification/confirm",
-      "{\"token\":\"anon-sweep-dummy-token\"}",
-      "POST /api/auth/email-change/confirm",
-      "{\"token\":\"anon-sweep-dummy-token\"}",
-      "POST /api/auth/email-verification/resend",
-      "{\"email\":\"anon-sweep@example.com\"}",
-      "POST /api/auth/password-reset",
-      "{\"usernameOrEmail\":\"anon-sweep-nonexistent\"}",
-      "POST /api/auth/password-reset/confirm",
-      "{\"token\":\"anon-sweep-dummy-token\",\"newPassword\":\"Anon-Sweep-N3w!Pass\"}",
-      "POST /api/auth/2fa/authenticate",
-      "{\"challenge\":\"anon-sweep-dummy\",\"code\":\"000000\"}",
-      "POST /api/payments/webhooks/mock-psp",
-      "{}",
-      "POST /api/security/csp-report",
-      "{\"csp-report\":{\"violated-directive\":\"img-src\",\"blocked-uri\":\"inline\"}}");
+  private static final Map<String, String> PROBE_BODIES = Map.ofEntries(
+      Map.entry("POST /api/auth/register", "{\"username\":\"anon-sweep-probe\",\"email\":\"anon-sweep-probe@example.com\"," + "\"password\":\"s3cret-password\"}"),
+      Map.entry("POST /api/auth/login", "{\"usernameOrEmail\":\"anon-sweep-nonexistent\",\"password\":\"wrong-password\"}"),
+      Map.entry("POST /api/auth/email-verification/confirm", "{\"token\":\"anon-sweep-dummy-token\"}"),
+      Map.entry("POST /api/auth/email-change/confirm", "{\"token\":\"anon-sweep-dummy-token\"}"),
+      Map.entry("POST /api/auth/email-verification/resend", "{\"email\":\"anon-sweep@example.com\"}"),
+      Map.entry("POST /api/auth/password-reset", "{\"usernameOrEmail\":\"anon-sweep-nonexistent\"}"),
+      Map.entry("POST /api/auth/password-reset/confirm", "{\"token\":\"anon-sweep-dummy-token\",\"newPassword\":\"Anon-Sweep-N3w!Pass\"}"),
+      Map.entry("POST /api/auth/2fa/authenticate", "{\"challenge\":\"anon-sweep-dummy\",\"code\":\"000000\"}"),
+      Map.entry("POST /api/auth/2fa/passkeys/assertion/options", "{\"challenge\":\"anon-sweep-dummy\"}"),
+      Map.entry("POST /api/payments/webhooks/mock-psp", "{}"),
+      Map.entry("POST /api/security/csp-report", "{\"csp-report\":{\"violated-directive\":\"img-src\",\"blocked-uri\":\"inline\"}}"));
 
   private static final Set<String> HTTP_METHODS =
       Set.of("get", "post", "put", "patch", "delete");

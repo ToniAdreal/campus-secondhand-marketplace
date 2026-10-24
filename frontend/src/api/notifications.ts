@@ -25,6 +25,8 @@ export type NotificationType =
   | 'SESSION_EVICTED'
   | 'EMAIL_CHANGE_REQUESTED'
   | 'TOTP_RESET_BY_ADMIN'
+  | 'PASSKEY_REGISTERED'
+  | 'PASSKEY_REMOVED'
   | 'SELLER_NEW_LISTING';
 
 export interface Notification {
@@ -152,6 +154,15 @@ export function describeNotification(
       // out everywhere) and the remedy (sign in, re-enable), and never
       // claims the holder asked for it in-app.
       return 'An administrator reset your two-factor authentication. You were signed out everywhere — sign in with your password, and set up two-factor authentication again if you want it.';
+    case 'PASSKEY_REGISTERED':
+      // Backlog #220: a security alert, never mutable — a passkey the
+      // holder did not enroll is account compromise, so the copy tells
+      // them to remove it and change their password.
+      return "A passkey was registered on your account. If this wasn't you, remove it in Settings and change your password.";
+    case 'PASSKEY_REMOVED':
+      // Backlog #220: a security alert, never mutable — a removal the
+      // holder did not perform deserves their attention.
+      return "A passkey was removed from your account. If this wasn't you, change your password.";
     case 'FAVORITE_PRICE_DROP': {
       // Backlog #189: the row carries both prices — the copy states
       // them; without them (defensive) it still says what happened.

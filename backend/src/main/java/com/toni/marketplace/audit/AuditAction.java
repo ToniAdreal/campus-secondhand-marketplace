@@ -72,6 +72,23 @@ public enum AuditAction {
    */
   TOTP_RESET_BY_ADMIN,
   /**
+   * The account holder enrolled a WebAuthn passkey
+   * ({@code AuthService.finishPasskeyRegistration}, backlog #220).
+   * Actor and target are both the account holder, mirroring {@link
+   * #TOTP_ENABLED}: enrolment required a fresh step-up proof, and only
+   * the public half of the credential is stored.
+   */
+  PASSKEY_REGISTERED,
+  /**
+   * The account holder removed one of their passkeys
+   * ({@code AuthService.deletePasskey}, backlog #220). Actor and
+   * target are both the account holder, mirroring {@link
+   * #TOTP_DISABLED}: removal required a fresh step-up proof.
+   * Removing the last passkey drops the account to its remaining
+   * factors — an explicit, audited choice.
+   */
+  PASSKEY_REMOVED,
+  /**
    * The buyer paid a PENDING order ({@code OrderService.pay}, backlog
    * #122). Actor is the buyer — the money-moving transition PENDING → PAID.
    * An idempotent re-pay writes no second row, and a declined capture

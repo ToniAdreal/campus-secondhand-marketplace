@@ -482,6 +482,19 @@ app:
     # replay inside the window is harmless because every use still requires
     # a fresh valid TOTP code.
     totp-challenge-ttl: 5m
+    # WebAuthn passkey relying-party settings (backlog #220). rp-id must
+    # be the registrable domain serving the SPA — credentials are bound
+    # to it and can never be asserted under another id. allowed-origins
+    # lists the exact origins (scheme + host + port) the server accepts
+    # in the browser's client data; an empty list fails closed (every
+    # ceremony rejects). challenge-ttl is the lifetime of the stored
+    # single-use registration/assertion challenges. Defaults describe
+    # local development (Vite on :5173 against the API on :8080).
+    passkey:
+      rp-id: localhost
+      allowed-origins:
+        - http://localhost:5173
+      challenge-ttl: 5m
 
 # Logging is configured in logback-spring.xml (backlog #137): the default
 # console pattern lives there (it renders %X{requestId}, the MDC value set

@@ -27,6 +27,7 @@
     <pitest.version>1.15.3</pitest.version>
     <pitest-junit5.version>1.2.1</pitest-junit5.version>
     <logstash-encoder.version>7.4</logstash-encoder.version>
+    <webauthn4j.version>0.31.11.RELEASE</webauthn4j.version>
   </properties>
 
   <dependencies>
@@ -113,6 +114,23 @@
       <version>${mapstruct.version}</version>
     </dependency>
     <dependency>
+      <!-- WebAuthn passkeys as an alternative second factor (backlog #220):
+           webauthn4j-core provides the registration/assertion ceremony
+           verification; version pinned and fetched into the offline repo
+           via populate.py before first offline build. -->
+      <groupId>com.webauthn4j</groupId>
+      <artifactId>webauthn4j-core</artifactId>
+      <version>${webauthn4j.version}</version>
+    </dependency>
+    <dependency>
+      <!-- webauthn4j-test: software-authenticator fixtures for the #220
+           ceremony tests (MockMvc register/assert matrix). Test scope only. -->
+      <groupId>com.webauthn4j</groupId>
+      <artifactId>webauthn4j-test</artifactId>
+      <version>${webauthn4j.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
@@ -155,6 +173,16 @@
         <version>${testcontainers.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <!-- webauthn4j-core 0.31.x runs on Jackson 3 (tools.jackson),
+             whose databind needs com.fasterxml.jackson.core:jackson-annotations
+             2.22; the Spring Boot BOM manages 2.15.4, so pin 2.22 here.
+             Annotations are additive-only within 2.x, so the app's Jackson
+             2.15.4 databind is unaffected (backlog #220). -->
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-annotations</artifactId>
+        <version>2.22</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
