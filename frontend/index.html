@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Campus Marketplace</title>
+    <!--
+      Theme pre-paint init (backlog #227). This is a self-contained copy
+      of the resolution in src/theme.ts — same localStorage key
+      (campus-marketplace-theme), same rule (stored light/dark beats the
+      OS; anything else follows prefers-color-scheme), same `dark` class
+      on <html> that Tailwind's class-based dark mode keys off. It runs
+      synchronously in <head>, before the module bundle and before first
+      paint, so the first frame is already the right theme (no flash).
+      It never throws: a denied storage or a missing media query falls
+      back to light, and main.tsx re-applies the stored theme on boot
+      as the safety net. Honest CSP note (see the README #227 row): the
+      opt-in strict CSP has no 'unsafe-inline', so a CSP-enabled proxy
+      must allow this script (hash) or it degrades to the main.tsx
+      re-apply — a brief flash, never a broken theme.
+    -->
+    <script>
+      try {
+        var stored = window.localStorage.getItem('campus-marketplace-theme');
+        var dark =
+          stored === 'dark' ||
+          (stored !== 'light' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) {
+        /* storage/media unavailable — main.tsx applies the theme on boot */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -262,7 +262,7 @@ export default function HomePage() {
             {recentlyViewed.data.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-                <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
+                <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
                   {photoUrls.length > 0 ? (
                     <img
                       src={photoUrls[0]}
@@ -272,7 +272,7 @@ export default function HomePage() {
                   ) : (
                     <div
                       data-testid="no-photo-placeholder"
-                      className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
+                      className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
                     >
                       No photo
                     </div>
@@ -283,7 +283,7 @@ export default function HomePage() {
                   <p className="mt-1 text-sm text-neutral-500">
                     ¥{(item.priceCents / 100).toFixed(2)}
                   </p>
-                  <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
+                  <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs dark:bg-neutral-700 dark:text-neutral-200">
                     {item.status}
                   </span>{' '}
                   <FavoriteButton itemId={item.id} />
@@ -302,7 +302,7 @@ export default function HomePage() {
             {data.content.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-              <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
+              <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
                 {photoUrls.length > 0 ? (
                   <img
                     src={photoUrls[0]}
@@ -312,7 +312,7 @@ export default function HomePage() {
                 ) : (
                   <div
                     data-testid="no-photo-placeholder"
-                    className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
+                    className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
                   >
                     No photo
                   </div>
@@ -323,7 +323,7 @@ export default function HomePage() {
                 <p className="mt-1 text-sm text-neutral-500">
                   ¥{(item.priceCents / 100).toFixed(2)}
                 </p>
-                <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs">
+                <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs dark:bg-neutral-700 dark:text-neutral-200">
                   {item.status}
                 </span>{' '}
                 <FavoriteButton itemId={item.id} />

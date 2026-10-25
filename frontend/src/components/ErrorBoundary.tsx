@@ -65,14 +65,14 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
         // a page that silently vanished.
         <div role="alert" className="mx-auto max-w-md py-16 text-center">
           <h1 className="text-3xl font-bold">Something went wrong</h1>
-          <p className="mt-3 text-neutral-600">
+          <p className="mt-3 text-neutral-600 dark:text-neutral-300">
             This page hit an unexpected error. The rest of the marketplace is
             still available — heading back home should recover.
           </p>
           <Link
             to="/"
             onClick={this.handleReset}
-            className="mt-6 inline-block text-blue-600 hover:underline"
+            className="mt-6 inline-block text-blue-600 hover:underline dark:text-blue-400"
           >
             Back to home
           </Link>

@@ -99,10 +99,10 @@ export default function StepUpModal({
     >
       <form
         onSubmit={onSubmit}
-        className="w-full max-w-sm rounded-lg bg-white p-6 shadow-lg"
+        className="w-full max-w-sm rounded-lg bg-white p-6 shadow-lg dark:bg-neutral-800"
       >
         <h2 className="mb-1 text-lg font-bold">Confirm your identity</h2>
-        <p className="mb-4 text-sm text-neutral-500">
+        <p className="mb-4 text-sm text-neutral-500 dark:text-neutral-400">
           For your security, please re-enter your credentials before we {actionLabel}.
           This session will stay signed in.
         </p>
@@ -145,7 +145,7 @@ export default function StepUpModal({
             type="button"
             onClick={onCancel}
             disabled={pending}
-            className="rounded border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 disabled:opacity-50"
+            className="rounded border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-200"
           >
             Cancel
           </button>

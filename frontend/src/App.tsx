@@ -26,10 +26,10 @@ function AuthNav() {
   if (!user) {
     return (
       <div className="flex items-center gap-3">
-        <Link to="/login" className="text-sm text-blue-600 hover:underline">
+        <Link to="/login" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Login
         </Link>
-        <Link to="/register" className="text-sm text-blue-600 hover:underline">
+        <Link to="/register" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Register
         </Link>
       </div>
@@ -38,10 +38,10 @@ function AuthNav() {
 
   return (
     <div className="flex items-center gap-3">
-      <Link to="/orders" className="text-sm text-blue-600 hover:underline">
+      <Link to="/orders" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         My orders
       </Link>
-      <Link to="/cart" className="text-sm text-blue-600 hover:underline">
+      <Link to="/cart" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Cart
         {cartCount > 0 && (
           <span
@@ -52,13 +52,13 @@ function AuthNav() {
           </span>
         )}
       </Link>
-      <Link to="/offers" className="text-sm text-blue-600 hover:underline">
+      <Link to="/offers" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Offers
       </Link>
-      <Link to="/favorites" className="text-sm text-blue-600 hover:underline">
+      <Link to="/favorites" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Favorites
       </Link>
-      <Link to="/notifications" className="text-sm text-blue-600 hover:underline">
+      <Link to="/notifications" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Notifications
         {unreadNotifications !== undefined && unreadNotifications > 0 && (
           <span
@@ -69,53 +69,53 @@ function AuthNav() {
           </span>
         )}
       </Link>
-      <Link to="/my-listings" className="text-sm text-blue-600 hover:underline">
+      <Link to="/my-listings" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         My listings
       </Link>
-      <Link to="/seller/orders" className="text-sm text-blue-600 hover:underline">
+      <Link to="/seller/orders" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Sales
       </Link>
-      <Link to="/seller/payouts" className="text-sm text-blue-600 hover:underline">
+      <Link to="/seller/payouts" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Payouts
       </Link>
-      <Link to="/items/new" className="text-sm text-blue-600 hover:underline">
+      <Link to="/items/new" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Sell an item
       </Link>
-      <Link to="/settings" className="text-sm text-blue-600 hover:underline">
+      <Link to="/settings" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         Settings
       </Link>
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/users" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/users" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin users
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/audit-log" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/audit-log" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin audit log
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/payments" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/payments" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin payments
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/reports" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/reports" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin reports
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/disputes" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/disputes" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin disputes
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/appeals" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/appeals" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin appeals
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/dashboard" className="text-sm text-blue-600 hover:underline">
+        <Link to="/admin/dashboard" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin dashboard
         </Link>
       )}
@@ -127,7 +127,7 @@ function AuthNav() {
           {unreadCount} unread
         </span>
       )}
-      <span className="text-sm text-neutral-600">{user.username}</span>
+      <span className="text-sm text-neutral-600 dark:text-neutral-300">{user.username}</span>
       <button
         type="button"
         onClick={() => {
@@ -138,7 +138,7 @@ function AuthNav() {
             () => navigate('/'),
           );
         }}
-        className="text-sm text-blue-600 hover:underline"
+        className="text-sm text-blue-600 hover:underline dark:text-blue-400"
       >
         Logout
       </button>
@@ -148,8 +148,10 @@ function AuthNav() {
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-900">
-      <header className="bg-white shadow-sm">
+    // Shell palette (backlog #227): dark: variants carry the dark theme
+    // on the light surfaces below — palette only, no layout change.
+    <div className="min-h-screen bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
+      <header className="bg-white shadow-sm dark:bg-neutral-800">
         <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <Link to="/" className="text-lg font-bold">
             Campus Marketplace
@@ -167,7 +169,7 @@ export default function App() {
         <ErrorBoundary>
           <Suspense
             fallback={
-              <p role="status" className="text-sm text-neutral-500">
+              <p role="status" className="text-sm text-neutral-500 dark:text-neutral-400">
                 Loading…
               </p>
             }

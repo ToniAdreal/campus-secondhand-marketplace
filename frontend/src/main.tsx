@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import App from './App';
 import { installFrontendErrorTelemetry } from './api/telemetry';
+import { applyTheme, readStoredTheme } from './theme';
 import './index.css';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
@@ -79,6 +80,14 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// Re-apply the stored theme on boot (backlog #227). The index.html
+// pre-paint script already set the `dark` class before first paint; this
+// is the safety net for environments where that inline script cannot run
+// (e.g. a CSP-enabled proxy without a hash allowance for it) and it keeps
+// the React tree's theme store in sync with the class on <html>.
+// Idempotent — applying the same resolution twice changes nothing.
+applyTheme(readStoredTheme());
 
 // Install the window crash hooks (backlog #223) before the tree renders:
 // uncaught errors and unhandled rejections beacon once each to

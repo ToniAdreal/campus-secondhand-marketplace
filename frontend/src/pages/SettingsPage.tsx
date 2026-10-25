@@ -17,6 +17,7 @@ import {
 import { setAccessToken } from '../api/client';
 import { webauthnSupported } from '../api/webauthn';
 import PasskeySection from '../components/PasskeySection';
+import ThemeControl from '../components/ThemeControl';
 import { useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useMyFollows, useUnfollowSeller } from '../api/follows';
 import {
@@ -436,7 +437,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
+    <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm dark:bg-neutral-800">
       <h1 className="mb-1 text-xl font-bold">Settings</h1>
       <p className="mb-4 text-sm text-neutral-500">
         Signed in as <span className="font-medium text-neutral-700">{user.username}</span>
@@ -499,6 +500,12 @@ export default function SettingsPage() {
           {pending ? 'Changing…' : 'Change password'}
         </button>
       </form>
+      {/* Theme (backlog #227): the picker lives in Settings, not in the
+          header, so the choice is a deliberate preference rather than a
+          stray toggle — and the section renders for every signed-in user. */}
+      <div className="mt-6 border-t border-neutral-200 pt-4 dark:border-neutral-700">
+        <ThemeControl />
+      </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Email address</h2>
         <p className="mb-3 text-sm text-neutral-500">

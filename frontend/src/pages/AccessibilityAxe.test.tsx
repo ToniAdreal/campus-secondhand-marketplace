@@ -199,3 +199,84 @@ describe('automated accessibility checks (axe-core, backlog #183)', () => {
     await expectNoSeriousOrCriticalViolations(container);
   });
 });
+
+/**
+ * Same key pages under the dark theme (backlog #227). The `dark` class
+ * on <html> is what flips the palette, so these tests render the pages
+ * with the class applied and assert the same zero-serious/critical gate
+ * — a dark-variant class that broke markup (e.g. a lost label) would
+ * fail here, not just in the light suite. Honest jsdom limit, same as
+ * #183: `color-contrast` still reports incomplete (no canvas/layout),
+ * so real contrast in the dark palette is NOT audited by this suite —
+ * the dark values were chosen as dark-bg/light-text pairs (see
+ * OrderStatusChip and the shell) and need a visual pass, not an axe
+ * claim. The class is removed after each test so no other suite sees
+ * a leaked theme.
+ */
+describe('automated accessibility checks under the dark theme (backlog #227)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    document.documentElement.classList.add('dark');
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    document.documentElement.classList.remove('dark');
+  });
+
+  it('Home / browse page has no serious/critical violations in dark mode', async () => {
+    const { container } = renderRoute('/', '/', <HomePage />);
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Item detail page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute('/items/7', '/items/:id', <ItemDetailPage />);
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Login page has no serious/critical violations in dark mode', async () => {
+    const { container } = renderRoute('/login', '/login', <LoginPage />);
+    expect(screen.getByLabelText(/username or email/i)).toBeTruthy();
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Register page has no serious/critical violations in dark mode', async () => {
+    const { container } = renderRoute('/register', '/register', <RegisterPage />);
+    expect(screen.getByLabelText(/username/i)).toBeTruthy();
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Create listing page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute('/items/new', '/items/new', <CreateListingPage />);
+    await waitFor(() => expect(screen.getByLabelText(/title/i)).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Notifications page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute('/notifications', '/notifications', <NotificationsPage />);
+    await waitFor(() => expect(screen.getByText(/order.*paid|paid/i)).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Settings page (with the theme control) has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute('/settings', '/settings', <SettingsPage />);
+    expect(screen.getByLabelText('Current password')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /dark/i })).toBeTruthy();
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+});

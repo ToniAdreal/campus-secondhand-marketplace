@@ -8,14 +8,17 @@ import type { Order } from '../api/orders';
  * two pages can never drift apart.
  */
 
+// Dark variants (backlog #227) keep the same semantic hues at a darker
+// value with lighter text, so chips stay legible on the dark shell —
+// the light values are untouched.
 const CHIP_CLASSES: Record<Order['status'], string> = {
-  PENDING: 'bg-amber-100 text-amber-800',
-  PAID: 'bg-green-100 text-green-800',
-  SHIPPED: 'bg-teal-100 text-teal-800',
-  COMPLETED: 'bg-sky-100 text-sky-800',
-  CANCELLED: 'bg-neutral-200 text-neutral-600',
-  REFUNDED: 'bg-purple-100 text-purple-800',
-  DISPUTED: 'bg-red-100 text-red-800',
+  PENDING: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+  PAID: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  SHIPPED: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+  COMPLETED: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+  CANCELLED: 'bg-neutral-200 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-200',
+  REFUNDED: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+  DISPUTED: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
 };
 
 export default function OrderStatusChip({ status }: { status: Order['status'] }) {
