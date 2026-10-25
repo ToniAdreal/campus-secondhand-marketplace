@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { reportFrontendError } from '../api/telemetry';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -14,9 +15,11 @@ interface ErrorBoundaryState {
  *
  * Without a boundary, a render error in any route component unmounts the
  * whole React tree and leaves a blank page. This boundary catches the error,
- * logs it (console.error — visible in dev tools; there is no remote error
- * reporting in this project), and renders a friendly fallback inside the app
- * shell instead, so the header/nav stay usable.
+ * logs it (console.error — visible in dev tools) and sends one best-effort
+ * telemetry beacon (backlog #223: error name + route template + app version
+ * only — never the message, the stack, or any URL query — via
+ * `api/telemetry.ts`, which never throws into this fallback), and renders
+ * a friendly fallback inside the app shell instead, so the header/nav stay usable.
  *
  * The "Back to home" link resets the boundary's error state on click:
  * without the reset the boundary would keep showing the fallback even after
@@ -25,7 +28,9 @@ interface ErrorBoundaryState {
  *
  * Honest scope: this catches render/lifecycle errors in the route subtree
  * only. Errors in event handlers, async code, and the shell itself (header)
- * are not caught by any React error boundary.
+ * are not caught by any React error boundary — but uncaught ones still
+ * beacon once each through the `window` hooks installed in main.tsx
+ * (backlog #223), so they are counted even though they render no fallback.
  */
 export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false };
@@ -36,6 +41,16 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('ErrorBoundary caught an error:', error, info);
+    // One best-effort beacon per crash (backlog #223); a failed beacon
+    // never throws into the fallback UI.
+    try {
+      reportFrontendError(
+        error?.name ?? 'Error',
+        typeof window !== 'undefined' ? window.location.pathname : undefined,
+      );
+    } catch {
+      // Telemetry must never become a second crash.
+    }
   }
 
   private handleReset = (): void => {

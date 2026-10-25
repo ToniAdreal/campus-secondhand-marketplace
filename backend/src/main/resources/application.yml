@@ -146,6 +146,19 @@ app:
     # than this, so a full disk stops traffic before uploads start
     # failing user-visibly. Readiness only — never liveness.
     health-min-free: 10MB
+  telemetry:
+    errors:
+      # Frontend error telemetry intake (TelemetryErrorController,
+      # backlog #223): POST /api/telemetry/errors is public by necessity
+      # (a crash can happen on an anonymous page), rate-limited per IP
+      # (60/min, own bucket — app.auth.rate-limit's
+      # telemetry-error-attempts-per-minute in AuthRateLimitProperties)
+      # and body-capped here: a genuine beacon is three short fields
+      # (name + route template + version), so 4 KB is generous
+      # headroom; over the cap answers 413 before any parsing. Only
+      # the sanitized name, route template and version are ever
+      # logged/counted — never the message, the stack, or any URL query.
+      max-body-bytes: 4096
   auth:
     # Refresh-cookie Secure flag (AuthController, backlog #130): the
     # httpOnly refresh_token cookie is a 7-day credential, so behind

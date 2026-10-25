@@ -3,6 +3,7 @@ import React, { lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import App from './App';
+import { installFrontendErrorTelemetry } from './api/telemetry';
 import './index.css';
 import { queryClient } from './queryClient';
 import { useAuthStore } from './store/useAuthStore';
@@ -78,6 +79,12 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// Install the window crash hooks (backlog #223) before the tree renders:
+// uncaught errors and unhandled rejections beacon once each to
+// POST /api/telemetry/errors (name + route template + version only).
+// The hooks never throw; a failed beacon is silently dropped.
+installFrontendErrorTelemetry();
 
 // Restore the session on boot: a surviving httpOnly refresh cookie is
 // enough to come back logged in (silent refresh -> /me). Fire-and-forget —

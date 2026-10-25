@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
     DataExportGrantProperties.class, SessionLimitProperties.class,
     BreachedPasswordProperties.class, TrustedDeviceProperties.class,
     CspReportProperties.class, BootstrapAdminProperties.class,
-    StepUpProperties.class, PasskeyProperties.class})
+    StepUpProperties.class, PasskeyProperties.class, TelemetryErrorProperties.class})
 public class AuthConfig {
 
   /**
@@ -237,6 +237,22 @@ public class AuthConfig {
     cspProps.setEnabled(props.isEnabled());
     cspProps.setAttemptsPerMinute(props.getCspReportAttemptsPerMinute());
     return new AuthRateLimiter(clock, cspProps);
+  }
+
+  /**
+   * Separate token bucket for the frontend error telemetry intake
+   * ({@code POST /api/telemetry/errors}, backlog #223; default 60
+   * beacons/minute per client IP). The endpoint is public by necessity
+   * (a crash can happen on an anonymous page), so this bucket is the
+   * flood gate for the log/metric pipeline; it must not share any
+   * credential bucket, and beacon traffic must not starve logins.
+   */
+  @Bean
+  public AuthRateLimiter telemetryErrorRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties telemetryProps = new AuthRateLimitProperties();
+    telemetryProps.setEnabled(props.isEnabled());
+    telemetryProps.setAttemptsPerMinute(props.getTelemetryErrorAttemptsPerMinute());
+    return new AuthRateLimiter(clock, telemetryProps);
   }
 
   /**

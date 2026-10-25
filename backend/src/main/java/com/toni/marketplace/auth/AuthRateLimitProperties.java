@@ -286,4 +286,28 @@ public class AuthRateLimitProperties {
   public void setOrderCreateAttemptsPerMinute(int orderCreateAttemptsPerMinute) {
     this.orderCreateAttemptsPerMinute = orderCreateAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the frontend error telemetry intake ({@code POST
+   * /api/telemetry/errors}, backlog #223). Keyed on the IP: the
+   * endpoint is public by necessity (a crash can happen on an
+   * anonymous page), so there is no principal to key on — the
+   * trusted-proxy resolution in {@code AuthRateLimitFilter} applies as
+   * for the other per-IP buckets. Sized generously (60/min, like the
+   * CSP bucket): a crash loop in one tab can otherwise flood the
+   * log/metric pipeline, but a broken release makes every open page
+   * beacon at once, so the ceiling exists to stop a deliberate flood,
+   * not to gate normal reporting. Like the other non-credential buckets
+   * it never resets on success. Must be &ge; 1.
+   */
+  private int telemetryErrorAttemptsPerMinute = 60;
+
+  public int getTelemetryErrorAttemptsPerMinute() {
+    return telemetryErrorAttemptsPerMinute;
+  }
+
+  public void setTelemetryErrorAttemptsPerMinute(int telemetryErrorAttemptsPerMinute) {
+    this.telemetryErrorAttemptsPerMinute = telemetryErrorAttemptsPerMinute;
+  }
 }

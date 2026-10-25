@@ -216,7 +216,10 @@ is the Zustand auth store; TanStack Query mutations invalidate the shared
 `components/ErrorBoundary` wraps the route outlet in `App` — a crashed route
 renders a "Something went wrong" fallback with a back-to-home reset instead
 of unmounting the tree into a blank page (render errors only, logged via
-`console.error`; no remote error reporting).
+`console.error` plus one best-effort telemetry beacon per crash, backlog #223:
+error name + route template + app version only — never the message, the stack,
+or any URL query; uncaught window errors and unhandled rejections beacon once
+each through hooks installed in `main.tsx`).
 
 ## Feature scope notes
 
@@ -418,6 +421,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Upload-storage health indicator (backlog #154 — `UploadStorageHealthIndicator` joins the readiness group only, never liveness: UP when the `app.uploads.dir` root exists or is creatable, is writable and has at least `app.uploads.health-min-free` (default 10 MB) usable space, DOWN with a reason otherwise; details carry the path + free bytes, never file names, and stay hidden over HTTP under the existing `show-details: never` rule — only the UP/DOWN status is disclosed)
 - [x] Content-Security-Policy header (opt-in via `app.security.headers.csp-enabled`; strict `'self'`-only policy, no `'unsafe-inline'`)
 - [x] CSP violation report intake (backlog #204 — POST /api/security/csp-report: public by necessity (browsers send reports unauthenticated), own per-IP rate-limit bucket (60/min), 16 KB body cap (413 over it, 400 on malformed/empty), both report shapes tolerated (legacy `report-uri` JSON + Reporting API array), only the violated directive and the blocked URI's origin are ever logged — never the full URL, body or headers — plus a `csp_reports_total` counter per sanitized directive; `report-uri` / `Reporting-Endpoints` are wired into the CSP header only when `csp-enabled` AND `app.security.headers.csp-report-enabled` are both on, otherwise the policy stays byte-identical)
+- [x] Frontend error telemetry intake (backlog #223 — POST /api/telemetry/errors: public by necessity (a crash can happen on an anonymous page), own per-IP rate-limit bucket (60/min), 4 KB body cap (413 over it, 400 on malformed/empty/missing name), 204 on accept; the SPA's ErrorBoundary plus the `window` error/unhandled-rejection hooks installed in `main.tsx` send one best-effort `fetch(keepalive)` beacon per crash with `credentials: 'omit'`; only the sanitized error name (known JS names, else `other`), the route template (`:id` for concrete segments, `unknown` for unmatched paths) and the app version are ever logged — never the message, the stack, stack URLs' queries, or any storage/cookie data — plus a `frontend_errors_total` counter per sanitized error name; honest scope: counts and names only — no session replay, no stack capture, no third-party error service, nothing persisted)
 - [x] Uploads persist across compose recreates (`uploads-data` named volume at /app/uploads)
 - [x] Seller username on listing DTOs — ad-hoc JPQL join on the raw `sellerId` FK in the list/detail projections (single SELECT, no N+1; the detail page renders "Sold by <username>"; usernames are visible to anyone who can read a listing, as on any marketplace)
 - [x] Category-list cache — `GET /api/categories` served from a JVM-local ConcurrentMap cache (spring-context built-in, no new dependency), evicted on ADMIN category create/rename/delete; a rejected write does not flush the cache; no TTL and not shared across instances (single-JVM demo scope)

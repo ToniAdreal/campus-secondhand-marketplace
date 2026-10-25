@@ -104,6 +104,7 @@ class AnonymousAccessSweepTest {
       "POST /api/admin/payments/webhooks/{id}/replay",
       "POST /api/payments/webhooks/mock-psp",
       "POST /api/security/csp-report",
+      "POST /api/telemetry/errors",
       "GET /api/admin/users",
       "POST /api/admin/users/{id}/disable",
       "POST /api/admin/users/{id}/enable",
@@ -246,7 +247,8 @@ class AnonymousAccessSweepTest {
       Map.entry("POST /api/auth/2fa/authenticate", 401),
       Map.entry("POST /api/auth/2fa/passkeys/assertion/options", 401),
       Map.entry("POST /api/payments/webhooks/mock-psp", 401),
-      Map.entry("POST /api/security/csp-report", 204));
+      Map.entry("POST /api/security/csp-report", 204),
+      Map.entry("POST /api/telemetry/errors", 204));
 
   /** Minimal well-formed bodies for the public probes that take one. */
   private static final Map<String, String> PROBE_BODIES = Map.ofEntries(
@@ -260,7 +262,8 @@ class AnonymousAccessSweepTest {
       Map.entry("POST /api/auth/2fa/authenticate", "{\"challenge\":\"anon-sweep-dummy\",\"code\":\"000000\"}"),
       Map.entry("POST /api/auth/2fa/passkeys/assertion/options", "{\"challenge\":\"anon-sweep-dummy\"}"),
       Map.entry("POST /api/payments/webhooks/mock-psp", "{}"),
-      Map.entry("POST /api/security/csp-report", "{\"csp-report\":{\"violated-directive\":\"img-src\",\"blocked-uri\":\"inline\"}}"));
+      Map.entry("POST /api/security/csp-report", "{\"csp-report\":{\"violated-directive\":\"img-src\",\"blocked-uri\":\"inline\"}}"),
+      Map.entry("POST /api/telemetry/errors", "{\"name\":\"Error\",\"route\":\"/login\",\"version\":\"0.1.0\"}"));
 
   private static final Set<String> HTTP_METHODS =
       Set.of("get", "post", "put", "patch", "delete");

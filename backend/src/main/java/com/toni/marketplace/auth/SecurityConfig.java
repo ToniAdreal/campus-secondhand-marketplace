@@ -252,6 +252,13 @@ public class SecurityConfig {
             // its own per-IP bucket in AuthRateLimitFilter, and the
             // service logging/counting only sanitized fields.
             .requestMatchers(HttpMethod.POST, "/api/security/csp-report").permitAll()
+            // Frontend error telemetry intake (backlog #223): public
+            // route — a render crash can happen on an anonymous page
+            // and the window hooks fire without a session, so no Bearer
+            // token can be presented. Defended by the body cap in the
+            // controller, its own per-IP bucket in AuthRateLimitFilter,
+            // and the service logging/counting only sanitized fields.
+            .requestMatchers(HttpMethod.POST, "/api/telemetry/errors").permitAll()
             // Notification SSE stream (backlog #203): public at the chain
             // because EventSource cannot send an Authorization header —
             // the controller consumes a one-time, 60-second ticket issued

@@ -86,6 +86,14 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * success. It is sized for browser-generated bursts; the ceiling stops
  * a deliberate flood of the log/metric pipeline, not normal reporting.
  *
+ * <p>The frontend error beacon intake ({@code POST
+ * /api/telemetry/errors}, backlog #223) has a thirteenth, per-IP bucket
+ * (default 60/minute): the endpoint is public by necessity (a crash can
+ * happen on an anonymous page), so — like the CSP bucket — it keys on
+ * the trusted-proxy-aware client IP and never resets on success. It is
+ * sized for crash-loop bursts; the ceiling stops a deliberate flood of
+ * the log/metric pipeline, not normal reporting.
+ *
  * <p>The step-up re-proof endpoint ({@code POST /api/auth/step-up},
  * backlog #218) has a tenth, per-user bucket (default 5/minute): the
  * endpoint verifies the current password, so it is a password-guessing
@@ -182,6 +190,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
+  private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
@@ -196,6 +205,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
   private final AuthRateLimiter cspReportLimiter;
+  private final AuthRateLimiter telemetryErrorLimiter;
   private final AuthRateLimiter stepUpLimiter;
   private final AuthRateLimiter listingCreateLimiter;
   private final AuthRateLimiter orderCreateLimiter;
@@ -216,6 +226,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter dataExportLimiter,
                              @Qualifier("cspReportRateLimiter")
                                  AuthRateLimiter cspReportLimiter,
+                             @Qualifier("telemetryErrorRateLimiter")
+                                 AuthRateLimiter telemetryErrorLimiter,
                              @Qualifier("stepUpRateLimiter")
                                  AuthRateLimiter stepUpLimiter,
                              @Qualifier("listingCreateRateLimiter")
@@ -234,6 +246,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
     this.cspReportLimiter = cspReportLimiter;
+    this.telemetryErrorLimiter = telemetryErrorLimiter;
     this.stepUpLimiter = stepUpLimiter;
     this.listingCreateLimiter = listingCreateLimiter;
     this.orderCreateLimiter = orderCreateLimiter;
@@ -264,6 +277,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (CSP_REPORT_PATH.equals(path)) {
       return !cspReportLimiter.isEnabled();
+    }
+    if (TELEMETRY_ERROR_PATH.equals(path)) {
+      return !telemetryErrorLimiter.isEnabled();
     }
     if (STEP_UP_PATH.equals(path)) {
       // Step-up re-proof (backlog #218): own per-user bucket on the
@@ -354,6 +370,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!cspReportLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, cspReportLimiter.retryAfterSeconds(ip));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (TELEMETRY_ERROR_PATH.equals(path)) {
+      // Frontend error beacons (backlog #223): own per-IP bucket, never
+      // reset on success — an accepted beacon must not refill the
+      // allowance. Per-IP (not per-user) because the endpoint is public
+      // by necessity: a crash can happen on an anonymous page, so the
+      // trusted-proxy-aware client IP is the only identity available.
+      // Sized like the CSP bucket (60/min): a crash loop in one tab
+      // can otherwise flood the log/metric pipeline.
+      String ip = clientIp(request);
+      if (!telemetryErrorLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, telemetryErrorLimiter.retryAfterSeconds(ip));
         return;
       }
       chain.doFilter(request, response);
