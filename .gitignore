@@ -39,3 +39,7 @@ frontend/openapi.json
 # job and uploaded as an artifact; never committed (the docs entry in
 # docs/load-smoke.md is the record, not a per-run JSON file).
 load/k6-summary.json
+
+# Compose-stack backups (backlog #225) — database dumps that include
+# password hashes; written by scripts/backup.sh, never committed.
+backups/

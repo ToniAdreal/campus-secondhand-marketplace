@@ -145,3 +145,67 @@ conflict 409) do not count — this alert is server faults only. It also
 says nothing about latency; the domain timers
 (`auth.login.duration`, `orders.pay.duration`, …) are the latency
 surface.
+
+## Backup and restore drill (backlog #225)
+
+The compose stack's MySQL data (`mysql-data` volume) and listing photos
+(`uploads-data` volume) have exactly one way back from a lost volume:
+`scripts/backup.sh` + `scripts/restore-drill.sh`. There is no managed
+backup service, no off-site copy, and no point-in-time recovery — the
+procedure below is a manual local drill for a portfolio stack, and a
+drill that passes once proves only that day's restore.
+
+### Back up
+
+Run from the repo root, with the stack already up:
+
+```bash
+docker compose up -d
+bash scripts/backup.sh [BACKUP_DIR]   # default: backups/<timestamp>
+```
+
+It writes `marketdb.sql` (mysqldump, `--single-transaction`, so a
+running stack dumps a consistent InnoDB snapshot), `uploads.tar.gz`
+(the uploads volume), and `manifest.txt` (timestamp, source project,
+row counts for `app_user` / `item` / `orders`, sha256 checksums). It
+never asks for a password: the dump runs inside the mysql container,
+where the compose file already sets the database credentials.
+
+A backup directory contains a database dump that includes password
+hashes. Treat it like a credential: never commit it (`backups/` is
+gitignored), never upload it anywhere.
+
+### Restore drill
+
+```bash
+bash scripts/restore-drill.sh <BACKUP_DIR> [SCRATCH_PROJECT]
+```
+
+It restores into a scratch compose project (default
+`marketplace-restore-drill`) — never over the running stack — with the
+host ports remapped (mysql 13306, backend 18080, frontend 180), boots
+it, and checks it: actuator `/health` UP, the nginx `/api` proxy
+answering the 401 envelope, and row counts for `app_user` / `item` /
+`orders` matching the source (live source counts when the source stack
+is up, otherwise the counts in `manifest.txt` from backup time). Any
+mismatch exits non-zero. The scratch stack is torn down (`down -v`) on
+exit unless `KEEP_SCRATCH=1`. The script refuses to run when the
+scratch project equals the source project, and every compose invocation
+in it uses the scratch project — no drill step can touch the running
+stack's containers or volumes.
+
+A drill against an empty stack (all counts 0) passes with a warning:
+0 == 0 proves the plumbing, not a restore of real data. Seed the
+source stack first (register a user, create a listing — the CI drill
+job does exactly this) for a drill that means something.
+
+### Cadence and scope
+
+Run the drill before any migration-heavy release, and after any change
+to the backup/restore scripts themselves. The CI `backup-restore-drill`
+job runs the same two scripts on every push: seed, back up, restore
+into the scratch project, compare, tear both stacks down. What a
+passing drill does **not** prove: that any older backup is restorable
+(only the backup just taken was restored), that a backup taken on a
+different machine restores here, or that data survives anything other
+than the volume-loss shape the drill rehearses.

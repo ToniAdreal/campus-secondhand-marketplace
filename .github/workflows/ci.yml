@@ -247,3 +247,51 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  backup-restore-drill:
+    # Backup + restore drill (backlog #225): seed the compose stack,
+    # back it up with scripts/backup.sh, restore it into a scratch
+    # project with scripts/restore-drill.sh (row counts must match),
+    # then tear both stacks down. Manual version: docs/runbook.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up --build -d
+      - name: Wait for the API through the nginx /api proxy
+        run: |
+          code=""
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/api/items || true)
+            # 401 (JSON envelope) means nginx → backend → security chain is live
+            if [ "$code" = "401" ]; then echo "API is up"; break; fi
+            echo "waiting for API (got [$code])…"
+            sleep 10
+          done
+          if [ "$code" != "401" ]; then
+            echo "API never came up through the proxy"
+            docker compose logs backend
+            exit 1
+          fi
+      - name: Seed the stack (one user, one listing) so the drill compares real rows
+        run: |
+          curl -fsS -X POST http://localhost/api/auth/register \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"smoke","email":"smoke@example.com","password":"Sm0kePass123"}' \
+            -o /tmp/register.json
+          TOKEN=$(curl -fsS -X POST http://localhost/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"usernameOrEmail":"smoke","password":"Sm0kePass123"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])')
+          curl -fsS -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"smoke listing","priceCents":1999}' -o /dev/null
+          echo "seed OK: one user, one listing"
+      - name: Back up the running stack
+        run: bash scripts/backup.sh backups/ci-drill
+      - name: Restore drill into a scratch project
+        run: bash scripts/restore-drill.sh backups/ci-drill
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -p marketplace-restore-drill down -v || true
+          docker compose down -v
