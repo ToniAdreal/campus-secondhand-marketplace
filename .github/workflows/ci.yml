@@ -143,6 +143,65 @@ jobs:
             frontend/test-results
           if-no-files-found: ignore
 
+  load-smoke:
+    # Load smoke for the read hot paths (backlog #224): k6 drives the
+    # browse list + item detail against the real backend jar on its
+    # default H2 profile, in the e2e job's mould (the jar is packaged
+    # with tests skipped ON PURPOSE — the backend-unit /
+    # backend-integration jobs gate those suites on the same push; here
+    # the jar is only a fixture). Measurement-only for performance:
+    # the script carries NO thresholds (backlog #212 discipline — the
+    # first CI run's p95/error-rate are recorded in docs/load-smoke.md
+    # with the run id, and only then are thresholds set at or below the
+    # measured floor, never guessed). The job DOES fail on failed
+    # checks: a non-200 on a seeded read is a correctness defect, not a
+    # performance variance. k6 is downloaded as a pinned release
+    # tarball (no third-party action); the local sandbox cannot run k6
+    # against the backend (TCP-blocked), so the script is inspect-checked
+    # locally and proven here. The k6 summary is uploaded on every run
+    # so the measured numbers are retrievable, not just pass/fail.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: mvn -B -q -f backend/pom.xml package -DskipTests
+      - name: Install k6 (pinned release tarball)
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v2.3.0/k6-v2.3.0-linux-amd64.tar.gz | tar -xz
+          echo "$PWD/k6-v2.3.0-linux-amd64" >> "$GITHUB_PATH"
+      - name: Start the backend jar (H2, email-verification gate off)
+        env:
+          APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
+        run: |
+          nohup java -jar backend/target/campus-marketplace-0.1.0.jar > /tmp/backend-load-smoke.log 2>&1 &
+          echo $! > /tmp/backend-load-smoke.pid
+          code=""
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/actuator/health || true)
+            if [ "$code" = "200" ]; then echo "backend is up"; break; fi
+            echo "waiting for backend (got [$code])…"
+            sleep 10
+          done
+          if [ "$code" != "200" ]; then echo "backend never came up"; cat /tmp/backend-load-smoke.log; exit 1; fi
+      - name: Run the k6 read smoke
+        run: k6 run --summary-export load/k6-summary.json load/k6-read-smoke.js
+      - name: Fail on failed checks (correctness gate; performance thresholds unset)
+        run: |
+          python3 -c 'import json,sys; d=json.load(open("load/k6-summary.json")); f=d["metrics"]["checks"]["fails"]; print(f"checks failed: {f}"); sys.exit(1 if f else 0)'
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-load-smoke-summary
+          path: load/k6-summary.json
+          if-no-files-found: ignore
+      - name: Stop the backend jar
+        if: always()
+        run: kill "$(cat /tmp/backend-load-smoke.pid)" || true
+
   docker-compose-smoke:
     # Full-stack smoke on real MySQL 8: compose builds the backend + frontend
     # images, then register/login/create-listing are exercised through the

@@ -34,3 +34,8 @@ frontend/playwright-report/
 # a build artifact re-exported from the controllers on every gate run,
 # never committed (a committed copy would go stale silently).
 frontend/openapi.json
+
+# k6 load-smoke summary (backlog #224) — written by the CI load-smoke
+# job and uploaded as an artifact; never committed (the docs entry in
+# docs/load-smoke.md is the record, not a per-run JSON file).
+load/k6-summary.json
