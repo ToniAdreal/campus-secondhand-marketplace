@@ -111,7 +111,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * {@code /photos}, {@code /renew}, {@code /publish}) are deliberately
  * NOT in this bucket — they have their own abuse shape and would
  * starve listing creation if they shared it; the collection POST is
- * matched exactly, so they pass through untouched.
+ * matched exactly, so they land in their own #228 mutation bucket
+ * instead.
  *
  * <p>Order creation ({@code POST /api/orders}, backlog #219) has a
  * twelfth, per-<em>user</em> bucket (default 20/minute) on the same
@@ -120,8 +121,33 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * order carries, so the create-order path gets its own ceiling,
  * sized higher than the listing bucket because the buy flow is one
  * order per click and a fast buyer is legitimate. Only the
- * collection POST is throttled — pay/cancel/complete/refund carry
- * their own semantics and are left alone.
+ * collection POST is throttled — the transition POSTs have their own
+ * bucket (backlog #228, below), so creating orders can never starve
+ * paying for them, nor vice versa.
+ *
+ * <p>Order transitions ({@code POST /api/orders/{id}/pay}, {@code /cancel},
+ * {@code /complete}, {@code /refund}, {@code /ship}, backlog #228) share a
+ * per-<em>user</em> bucket (default 20/minute) on the same keying as the
+ * message bucket (JWT principal id, per-IP fallback for a missing/invalid
+ * token), never reset on success: the five transitions are the money path
+ * of a single order, so one account hammering them — paid or not — is one
+ * abuse shape, and the bucket must not be refillable by an idempotent
+ * re-pay. The path carries the order id, so the transitions are matched
+ * by shape ({@code /api/orders/<digits>/(pay|cancel|complete|refund|ship)})
+ * rather than by equality; the sibling transition POSTs
+ * ({@code /confirm-receipt}, {@code /handover-code/regenerate}) are not in
+ * this bucket — they were out of #228's scope and stay unthrottled.
+ *
+ * <p>Item mutations ({@code POST /api/items/{id}/photo}, {@code /photos},
+ * {@code /renew}, {@code /publish} and {@code PATCH /api/items/{id}/status},
+ * backlog #228) share a per-<em>user</em> bucket (default 30/minute) on the
+ * same keying, never reset on success: one account editing its own listings
+ * is one abuse shape, and the bucket must not be refillable by a
+ * successful upload. The ceiling is generous on purpose — a seller adding
+ * a gallery one file at a time is legitimate traffic. The collection POST
+ * ({@code POST /api/items}) keeps its own #219 bucket, and the
+ * {@code /report} POST keeps its #160 bucket; only the mutation shapes
+ * land here.
  *
  * <p>Behavior:
  * <ul>
@@ -209,6 +235,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter stepUpLimiter;
   private final AuthRateLimiter listingCreateLimiter;
   private final AuthRateLimiter orderCreateLimiter;
+  private final AuthRateLimiter orderTransitionLimiter;
+  private final AuthRateLimiter itemMutationLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -234,6 +262,10 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter listingCreateLimiter,
                              @Qualifier("orderCreateRateLimiter")
                                  AuthRateLimiter orderCreateLimiter,
+                             @Qualifier("orderTransitionRateLimiter")
+                                 AuthRateLimiter orderTransitionLimiter,
+                             @Qualifier("itemMutationRateLimiter")
+                                 AuthRateLimiter itemMutationLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -250,6 +282,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.stepUpLimiter = stepUpLimiter;
     this.listingCreateLimiter = listingCreateLimiter;
     this.orderCreateLimiter = orderCreateLimiter;
+    this.orderTransitionLimiter = orderTransitionLimiter;
+    this.itemMutationLimiter = itemMutationLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -268,6 +302,12 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // Message edit/delete (backlog #206): the #76 message bucket
       // covers every message write, not just the POST send.
       return !messageLimiter.isEnabled();
+    }
+    if ("PATCH".equalsIgnoreCase(request.getMethod()) && isItemStatusPath(path)) {
+      // Listing status flip (backlog #228): the one PATCH in the item
+      // mutation bucket — it must be checked before the POST-only gate
+      // below, or it would pass through unthrottled.
+      return !itemMutationLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -293,15 +333,32 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // message keying (JWT principal, per-IP fallback), never reset
       // on success — a created listing must not refill the spam
       // allowance. The exact match keeps the sibling item POSTs
-      // (/photo, /photos, /renew, /publish) out of this bucket.
+      // (/photo, /photos, /renew, /publish) out of this bucket —
+      // they have their own #228 bucket below.
       return !listingCreateLimiter.isEnabled();
     }
     if (ORDERS_PATH.equals(path)) {
       // Order creation (backlog #219): own per-user bucket on the
       // message keying, never reset on success — a placed order must
       // not refill the allowance. The exact match keeps the
-      // transition POSTs (/pay, /cancel, ...) out of this bucket.
+      // transition POSTs (/pay, /cancel, ...) out of this bucket —
+      // they have their own #228 bucket below.
       return !orderCreateLimiter.isEnabled();
+    }
+    if (isOrderTransitionPath(path)) {
+      // Order transitions (backlog #228): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset
+      // on success — an idempotent re-pay must not refill the
+      // allowance. Shape-matched because the path carries the order id.
+      return !orderTransitionLimiter.isEnabled();
+    }
+    if (isItemMutationPath(path)) {
+      // Item mutations (backlog #228): own per-user bucket on the
+      // message keying, never reset on success — a successful upload
+      // must not refill the allowance. Shape-matched because the path
+      // carries the listing id; the PATCH /status sibling is handled
+      // above (it is not a POST).
+      return !itemMutationLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -433,6 +490,37 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isOrderTransitionPath(path)) {
+      // Order transitions (backlog #228): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // transitions, but anonymous hammering is still throttled),
+      // never reset on success — an idempotent re-pay must not refill
+      // the transition allowance, and transition traffic must not
+      // touch the order-create bucket.
+      String key = messageKey(request);
+      if (!orderTransitionLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, orderTransitionLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (isItemMutationPath(path) || isItemStatusPath(path)) {
+      // Item mutations (backlog #228): own per-user bucket on the
+      // message keying, never reset on success — a successful upload
+      // must not refill the allowance, and mutation traffic must not
+      // touch the listing-create bucket. The PATCH /status sibling
+      // reaches this branch via shouldNotFilter's PATCH check above;
+      // the POST shapes (photo/photos/renew/publish) via the matcher.
+      String key = messageKey(request);
+      if (!itemMutationLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, itemMutationLimiter.retryAfterSeconds(key));
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       // Password reset (backlog #90): both endpoints share one per-IP
       // bucket — the request endpoint is a mail-bombing surface, the
@@ -521,6 +609,43 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isReportPath(String path) {
     return path != null && path.matches("/api/items/\\d+/report");
+  }
+
+  /**
+   * True for the order transition POSTs ({@code POST
+   * /api/orders/{id}/pay}, {@code /cancel}, {@code /complete},
+   * {@code /refund}, {@code /ship}, backlog #228): the id segment is
+   * numeric (order ids are), which keeps the collection POST
+   * ({@code /api/orders}) and the sibling transition POSTs
+   * ({@code /confirm-receipt}, {@code /handover-code/regenerate}) out
+   * of this bucket — those two were out of #228's scope.
+   */
+  private static boolean isOrderTransitionPath(String path) {
+    return path != null && path.matches("/api/orders/\\d+/(pay|cancel|complete|refund|ship)");
+  }
+
+  /**
+   * True for the item mutation POSTs ({@code POST
+   * /api/items/{id}/photo}, {@code /photos}, {@code /renew},
+   * {@code /publish}, backlog #228): the id segment is numeric, which
+   * keeps the collection POST ({@code /api/items}), the
+   * {@code /report} POST and the {@code /photos/order} PUT out of this
+   * bucket — the reorder PUT was out of #228's scope.
+   */
+  private static boolean isItemMutationPath(String path) {
+    return path != null && path.matches("/api/items/\\d+/(photos?|renew|publish)");
+  }
+
+  /**
+   * True for the listing status PATCH ({@code PATCH
+   * /api/items/{id}/status}, backlog #228): the mutation bucket's one
+   * non-POST member, matched separately because the filter's POST-only
+   * gate would otherwise skip it. The sibling {@code PATCH
+   * /api/items/{id}} (edit) is deliberately not here — #228 named only
+   * the status flip.
+   */
+  private static boolean isItemStatusPath(String path) {
+    return path != null && path.matches("/api/items/\\d+/status");
   }
 
   /**

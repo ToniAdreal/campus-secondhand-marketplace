@@ -224,6 +224,45 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the order transition POSTs
+   * ({@code POST /api/orders/{id}/pay}, {@code /cancel}, {@code /complete},
+   * {@code /refund}, {@code /ship}, backlog #228; default 20
+   * transitions/minute per authenticated user). The five transitions
+   * share this one bucket — they are the money path of a single order —
+   * keyed on the JWT principal id like the listing/order-create buckets,
+   * so transition traffic neither consumes nor starves the create-order
+   * bucket, and one account hammering transitions is throttled as one
+   * abuse shape. Never reset on success: an idempotent re-pay must not
+   * refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter orderTransitionRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties transitionProps = new AuthRateLimitProperties();
+    transitionProps.setEnabled(props.isEnabled());
+    transitionProps.setAttemptsPerMinute(props.getOrderTransitionAttemptsPerMinute());
+    return new AuthRateLimiter(clock, transitionProps);
+  }
+
+  /**
+   * Separate token bucket for the item mutation POSTs/PATCH
+   * ({@code POST /api/items/{id}/photo}, {@code /photos}, {@code /renew},
+   * {@code /publish} and {@code PATCH /api/items/{id}/status}, backlog
+   * #228; default 30 mutations/minute per authenticated user). The
+   * mutations share this one bucket — one account editing its own
+   * listings — keyed on the JWT principal id like the listing-create
+   * bucket, so mutation traffic neither consumes nor starves listing
+   * creation, and a legitimate photo-upload burst stays under the
+   * generous ceiling. Never reset on success.
+   */
+  @Bean
+  public AuthRateLimiter itemMutationRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties mutationProps = new AuthRateLimitProperties();
+    mutationProps.setEnabled(props.isEnabled());
+    mutationProps.setAttemptsPerMinute(props.getItemMutationAttemptsPerMinute());
+    return new AuthRateLimiter(clock, mutationProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

@@ -310,4 +310,54 @@ public class AuthRateLimitProperties {
   public void setTelemetryErrorAttemptsPerMinute(int telemetryErrorAttemptsPerMinute) {
     this.telemetryErrorAttemptsPerMinute = telemetryErrorAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the order
+   * transition POSTs ({@code POST /api/orders/{id}/pay}, {@code /cancel},
+   * {@code /complete}, {@code /refund}, {@code /ship}, backlog #228).
+   * Same keying as the listing/order-create buckets (anonymous requests,
+   * which the security chain 401s anyway, fall back to a per-IP bucket).
+   * The five transitions share this one bucket: they are the money path
+   * of a single order, so one account hammering transitions — paid or
+   * not — is one abuse shape, and the transitions must neither consume
+   * nor be starved by the order-create bucket. Sized at 20/min like
+   * order creation: a legitimate checkout is a handful of transitions,
+   * while a script flipping orders at volume is the throttle target.
+   * Never resets on success — an idempotent re-pay must not refill the
+   * allowance. Must be &ge; 1.
+   */
+  private int orderTransitionAttemptsPerMinute = 20;
+
+  public int getOrderTransitionAttemptsPerMinute() {
+    return orderTransitionAttemptsPerMinute;
+  }
+
+  public void setOrderTransitionAttemptsPerMinute(int orderTransitionAttemptsPerMinute) {
+    this.orderTransitionAttemptsPerMinute = orderTransitionAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the item
+   * mutation POSTs/PATCH ({@code POST /api/items/{id}/photo},
+   * {@code /photos}, {@code /renew}, {@code /publish} and
+   * {@code PATCH /api/items/{id}/status}, backlog #228). Same keying as
+   * the other per-user buckets (per-IP fallback for anonymous requests).
+   * The mutations share this one bucket: they are one account editing
+   * its own listings, so they must neither consume nor be starved by
+   * the listing-create bucket — and a photo-upload burst (a seller
+   * adding a gallery one file at a time) is legitimate, so the ceiling
+   * is sized generously at 30/min. Never resets on success. Must be
+   * &ge; 1.
+   */
+  private int itemMutationAttemptsPerMinute = 30;
+
+  public int getItemMutationAttemptsPerMinute() {
+    return itemMutationAttemptsPerMinute;
+  }
+
+  public void setItemMutationAttemptsPerMinute(int itemMutationAttemptsPerMinute) {
+    this.itemMutationAttemptsPerMinute = itemMutationAttemptsPerMinute;
+  }
 }
