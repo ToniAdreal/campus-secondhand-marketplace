@@ -105,6 +105,11 @@ function AuthNav() {
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
+        <Link to="/admin/categories" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+          Admin categories
+        </Link>
+      )}
+      {user.roles.includes('ADMIN') && (
         <Link to="/admin/disputes" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
           Admin disputes
         </Link>

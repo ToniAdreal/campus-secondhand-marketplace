@@ -37,6 +37,7 @@ const SellerProfilePage = lazy(() => import('./pages/SellerProfilePage'));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminAuditLogPage = lazy(() => import('./pages/AdminAuditLogPage'));
 const AdminReportsPage = lazy(() => import('./pages/AdminReportsPage'));
+const AdminCategoriesPage = lazy(() => import('./pages/AdminCategoriesPage'));
 const AdminDisputesPage = lazy(() => import('./pages/AdminDisputesPage'));
 const AdminAppealsPage = lazy(() => import('./pages/AdminAppealsPage'));
 const AdminPaymentsPage = lazy(() => import('./pages/AdminPaymentsPage'));
@@ -71,6 +72,7 @@ const router = createBrowserRouter([
       { path: 'admin/users', element: <AdminUsersPage /> },
       { path: 'admin/audit-log', element: <AdminAuditLogPage /> },
       { path: 'admin/reports', element: <AdminReportsPage /> },
+      { path: 'admin/categories', element: <AdminCategoriesPage /> },
       { path: 'admin/disputes', element: <AdminDisputesPage /> },
       { path: 'admin/appeals', element: <AdminAppealsPage /> },
       { path: 'admin/payments', element: <AdminPaymentsPage /> },
