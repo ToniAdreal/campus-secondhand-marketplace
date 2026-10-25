@@ -14,6 +14,7 @@ export type NotificationType =
   | 'OFFER_COUNTERED'
   | 'OFFER_COUNTER_ACCEPTED'
   | 'OFFER_COUNTER_DECLINED'
+  | 'OFFER_EXPIRED'
   | 'ORDER_DISPUTED'
   | 'DISPUTE_RESOLVED_REFUND'
   | 'DISPUTE_RESOLVED_RELEASE'
@@ -112,6 +113,11 @@ export function describeNotification(
       return 'The buyer accepted your counter — an order was created at your counter price.';
     case 'OFFER_COUNTER_DECLINED':
       return 'The buyer declined your counter.';
+    case 'OFFER_EXPIRED':
+      // Backlog #226: one neutral line serves both waiting parties —
+      // the buyer whose PENDING offer went unanswered and the seller
+      // whose counter went unaccepted — without naming who lapsed.
+      return 'An offer expired before it was answered.';
     case 'ORDER_DISPUTED':
       return 'A buyer disputed an order for your listing.';
     case 'DISPUTE_RESOLVED_REFUND':

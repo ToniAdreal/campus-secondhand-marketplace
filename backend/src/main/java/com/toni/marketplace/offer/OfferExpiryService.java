@@ -39,7 +39,8 @@ import org.springframework.stereotype.Service;
  * that gap. Each firing first takes this job's single-instance lease
  * (backlog #215, {@link JobLockGuard}); on a multi-instance deployment
  * only the lease holder runs the sweep, the others skip with zero
- * counts.
+ * counts. Each expired row notifies its waiting party (backlog #226)
+ * from inside the row transaction — see {@link OfferService}.
  */
 @Service
 public class OfferExpiryService {

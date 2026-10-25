@@ -188,6 +188,12 @@ describe('notifications api hooks (#157)', () => {
     expect(describeNotification('OFFER_COUNTERED')).toMatch(/countered your offer/i);
     expect(describeNotification('OFFER_COUNTER_ACCEPTED')).toMatch(/accepted your counter/i);
     expect(describeNotification('OFFER_COUNTER_DECLINED')).toMatch(/declined your counter/i);
+    // #226: one neutral expiry line serves both waiting parties —
+    // the buyer whose offer went unanswered and the seller whose
+    // counter went unaccepted — without naming who lapsed.
+    expect(describeNotification('OFFER_EXPIRED')).toBe(
+      'An offer expired before it was answered.',
+    );
     // #190: appeal copy is generic — it never claims the listing was
     // restored (that fact lives on the appeal's listingRestored).
     expect(describeNotification('REPORT_APPEAL_UPHELD')).toBe('Your appeal was upheld.');

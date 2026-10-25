@@ -82,9 +82,17 @@ import org.springframework.web.server.ResponseStatusException;
  *       counter-decline notifies the seller (OFFER_COUNTER_DECLINED,
  *       no order id). Every row is written inside its transition's own
  *       transaction, so a rolled-back transition notifies nobody.
- *       Withdraw and expiry notify nobody — both are visible in the
- *       acting party's own offer list, and expiry's counterpart
- *       never acted at all.</li>
+ *       Withdraw notifies nobody — it is visible in the acting
+ *       party's own offer list. Expiry (backlog #226) notifies the
+ *       WAITING party only, through the same record seam: a PENDING
+ *       expiry notifies the buyer (the seller never answered), a
+ *       COUNTERED expiry notifies the seller (the buyer never
+ *       answered the counter) — the party who let it lapse already
+ *       knows, so they get nothing. The row carries the offer id
+ *       and no order id, and the #216 preference check applies, so
+ *       a muted OFFER_EXPIRED writes no row and fires no SSE hint.
+ *       The sweep re-run finds the row EXPIRED and returns false,
+ *       so the row is written exactly once.</li>
  * </ul>
  *
  * <p>Honest scope: at most one counter per offer (backlog #193) — there
@@ -402,9 +410,23 @@ public class OfferService {
         || offer.getExpiresAt().isAfter(now)) {
       return false;
     }
+    // Capture the pre-flip state first: it decides who was waiting.
+    // A PENDING offer's buyer waited on the seller's answer; a
+    // COUNTERED offer's seller waited on the buyer's answer (backlog
+    // #226). The party who let it lapse already knows, so they get
+    // nothing. Recorded after the flush, so a lost @Version race
+    // notifies nobody, and inside this same transaction, so a
+    // rolled-back flip leaves no row; the #216 preference check in
+    // the record seam applies, and the after-commit SSE hint (#203)
+    // fires from that same seam. A sweep re-run finds the row
+    // EXPIRED and returns false above, so the row is written once.
+    OfferStatus was = offer.getStatus();
     offer.setStatus(OfferStatus.EXPIRED);
     offers.save(offer);
     offers.flush();
+    Long waitingParty = was == OfferStatus.PENDING ? offer.getBuyerId() : offer.getSellerId();
+    notifications().recordOffer(waitingParty, NotificationType.OFFER_EXPIRED,
+        offer.getId(), null);
     return true;
   }
 

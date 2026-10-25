@@ -32,6 +32,16 @@ public enum NotificationType {
   OFFER_COUNTER_ACCEPTED("Counter accepted", false),
   /** The buyer declined the caller's counter; no order exists (backlog #193). */
   OFFER_COUNTER_DECLINED("Counter declined", false),
+  /**
+   * A live offer expired unanswered (backlog #226): a PENDING expiry
+   * notifies the buyer (the seller never answered), a COUNTERED expiry
+   * notifies the seller (the buyer never answered the counter). The
+   * party who let it lapse already knows, so they get nothing. The
+   * row carries the offer id, no order id. Mutable like the other
+   * offer types (backlog #216) — a muted row writes nothing and fires
+   * no SSE hint.
+   */
+  OFFER_EXPIRED("Offer expired", false),
   /** A buyer disputed an order on the caller's listing (backlog #169). */
   ORDER_DISPUTED("Order disputed", false),
   /** An ADMIN resolved a dispute by refunding the order (backlog #169). */
