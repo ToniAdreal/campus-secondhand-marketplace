@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { listingPhotoUrls, useItems } from '../api/items';
+import { listingPhotoUrls, useItems, useItemSuggestions } from '../api/items';
 import { useRecentlyViewed } from '../api/recentlyViewed';
 import FavoriteButton from '../components/FavoriteButton';
 import ListingPhoto from '../components/ListingPhoto';
 import SaveSearchButton from '../components/SaveSearchButton';
+import SearchSuggestions from '../components/SearchSuggestions';
 import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
 import { useAuthStore } from '../store/useAuthStore';
@@ -143,6 +145,41 @@ export default function HomePage() {
   // any of the #96 filters, or a non-default sort on its own.
   const user = useAuthStore((s) => s.user);
   const showSaveSearch = user !== null && (anyFilter || sort !== 'newest');
+  // Search suggestions (backlog #235): the dropdown query is the live
+  // input, debounced 300 ms like the #15 URL commit, so typing never
+  // fires a request per keystroke. The query stays disabled signed out
+  // — anonymous callers get 401 from the chain, like browse — and the
+  // dropdown only opens on fresh suggestions: Escape or a selection
+  // dismisses it, a new query re-arms it, and a selected title never
+  // reopens it (the selected title is remembered until the input
+  // changes again, so the just-picked suggestion does not pop back up
+  // once its own suggestions land).
+  const [debouncedSuggestQuery, setDebouncedSuggestQuery] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSuggestQuery(searchInput), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  useEffect(() => {
+    setSuggestionsDismissed(false);
+  }, [debouncedSuggestQuery]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedSuggestion !== null && searchInput !== selectedSuggestion) {
+      setSelectedSuggestion(null);
+    }
+  }, [searchInput, selectedSuggestion]);
+  const suggestionsQuery = useItemSuggestions(debouncedSuggestQuery, user !== null);
+  const suggestionsOpen =
+    !suggestionsDismissed &&
+    debouncedSuggestQuery.trim() !== '' &&
+    debouncedSuggestQuery !== selectedSuggestion &&
+    (suggestionsQuery.data?.length ?? 0) > 0;
+  const selectSuggestion = (title: string) => {
+    setSelectedSuggestion(title);
+    setSuggestionsDismissed(true);
+    setSearchInput(title);
+  };
   // "Recently viewed" strip (backlog #195): the signed-in visitor's
   // browsing trail, written by the detail read itself. The query is
   // disabled signed out (the endpoint is 401 for anonymous callers),
@@ -159,7 +196,7 @@ export default function HomePage() {
     <div>
       <h1 className="mb-4 text-2xl font-bold">Latest listings</h1>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row">
-        <div className="flex-1">
+        <div className="relative flex-1">
           <label htmlFor="search" className="sr-only">
             Search listings
           </label>
@@ -168,10 +205,22 @@ export default function HomePage() {
             type="search"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSuggestionsDismissed(true);
+              }
+            }}
             placeholder="Search listings…"
             className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm
                        focus:border-sky-500 focus:outline-none"
           />
+          {suggestionsOpen && (
+            <SearchSuggestions
+              suggestions={suggestionsQuery.data ?? []}
+              onSelect={selectSuggestion}
+              onDismiss={() => setSuggestionsDismissed(true)}
+            />
+          )}
         </div>
         <div>
           <label htmlFor="category-filter" className="sr-only">

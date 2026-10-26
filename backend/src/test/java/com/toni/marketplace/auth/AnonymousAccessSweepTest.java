@@ -146,6 +146,7 @@ class AnonymousAccessSweepTest {
       "PATCH /api/categories/{id}",
       "DELETE /api/categories/{id}",
       "GET /api/items",
+      "GET /api/items/suggestions",
       "GET /api/items/{id}",
       "POST /api/items",
       "POST /api/items/{id}/photo",

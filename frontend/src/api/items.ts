@@ -129,6 +129,17 @@ export interface ItemListFilters {
   sort?: string | null;
 }
 
+/**
+ * One search-suggestion row (backlog #235), mirroring the backend's
+ * ItemSuggestionDto: exactly the listing id and its title. The dropdown
+ * only displays the title, and selecting one navigates to the existing
+ * {@code ?q=} results — no description, price or seller data rides along.
+ */
+export interface ItemSuggestion {
+  id: number;
+  title: string;
+}
+
 export const itemKeys = {
   all: ['items'] as const,
   list: (page: number, q?: string, categoryId?: number | null, filters?: ItemListFilters) =>
@@ -142,6 +153,7 @@ export const itemKeys = {
       filters?.maxPriceCents ?? null,
       filters?.sort ?? null,
     ] as const,
+  suggestions: (q: string) => [...itemKeys.all, 'suggestions', q] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
   priceHistory: (id: number) => [...itemKeys.all, 'price-history', id] as const,
   similar: (id: number) => [...itemKeys.all, 'similar', id] as const,
@@ -201,6 +213,30 @@ export function useMyListings(page = 0) {
           params: { page, size: 20, mine: true },
         })
         .then((res) => res.data.data),
+  });
+}
+
+/**
+ * GET /api/items/suggestions?q= — the search-suggestion dropdown feed
+ * (backlog #235): title-prefix matches over the browseable set, capped
+ * at 8 server-side, alphabetical. The query stays disabled while the
+ * input is blank, so no request fires for an empty box, and the caller
+ * gates it on a signed-in session — anonymous callers get 401 from the
+ * chain, exactly like browse, so the dropdown never renders for them.
+ * Debouncing lives with the caller (HomePage mirrors the #15 300 ms),
+ * not here: this hook fetches exactly the query it is given.
+ */
+export function useItemSuggestions(q: string, enabled = true) {
+  const trimmed = q.trim();
+  return useQuery({
+    queryKey: itemKeys.suggestions(trimmed),
+    queryFn: () =>
+      api
+        .get<ApiResponse<ItemSuggestion[]>>('/items/suggestions', {
+          params: { q: trimmed },
+        })
+        .then((res) => res.data.data),
+    enabled: enabled && trimmed !== '',
   });
 }
 

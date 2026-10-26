@@ -16,6 +16,9 @@ const calls: Array<{
 /** Content the mocked useItems serves; empty unless a test seeds listings. */
 let mockContent: Item[] = [];
 
+/** Suggestions the mocked useItemSuggestions serves; empty unless a test seeds titles. */
+let mockSuggestions: Array<{ id: number; title: string }> = [];
+
 /** Page-count override for the pagination tests; null derives it from content. */
 let mockTotalPages: number | null = null;
 
@@ -39,6 +42,9 @@ vi.mock('../api/items', async (importOriginal) => {
       };
       return { data: pageData, isLoading: false, isError: false };
     },
+    // Suggestions are inert by default (empty list renders no dropdown);
+    // the #235 describe seeds mockSuggestions per test.
+    useItemSuggestions: () => ({ data: mockSuggestions, isLoading: false, isError: false }),
   };
 });
 
@@ -574,5 +580,81 @@ describe('HomePage recently viewed strip (#195)', () => {
     renderHome('/');
 
     expect(screen.queryByRole('heading', { name: /recently viewed/i })).toBeNull();
+  });
+});
+
+describe('HomePage search suggestions dropdown (backlog #235)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls.length = 0;
+    currentSearch = '';
+    mockSuggestions = [];
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mockSuggestions = [];
+  });
+
+  function typeAndDebounce(value: string) {
+    const input = screen.getByLabelText(/search listings/i);
+    fireEvent.change(input, { target: { value } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    return input;
+  }
+
+  it('renders the dropdown after debounced typing', () => {
+    mockSuggestions = [
+      { id: 1, title: 'Bike helmet' },
+      { id: 2, title: 'Bike lock' },
+    ];
+    renderHome('/');
+
+    typeAndDebounce('bike');
+
+    expect(screen.getByRole('listbox', { name: /search suggestions/i })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Bike helmet' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Bike lock' })).toBeTruthy();
+  });
+
+  it('selecting a suggestion navigates to the ?q= results and closes the dropdown', () => {
+    mockSuggestions = [
+      { id: 1, title: 'Bike helmet' },
+      { id: 2, title: 'Bike lock' },
+    ];
+    renderHome('/');
+
+    const input = typeAndDebounce('bike');
+    fireEvent.click(screen.getByRole('option', { name: 'Bike lock' }));
+
+    expect((input as HTMLInputElement).value).toBe('Bike lock');
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(currentSearch).toBe('?q=Bike+lock');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('Escape dismisses the dropdown', () => {
+    mockSuggestions = [{ id: 1, title: 'Bike helmet' }];
+    renderHome('/');
+
+    const input = typeAndDebounce('bike');
+    expect(screen.getByRole('listbox')).toBeTruthy();
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('renders no dropdown when there are no suggestions', () => {
+    renderHome('/');
+
+    typeAndDebounce('bike');
+
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 });

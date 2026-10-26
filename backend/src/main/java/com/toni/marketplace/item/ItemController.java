@@ -86,6 +86,31 @@ public class ItemController {
   }
 
   /**
+   * Search suggestions (backlog #235): title-prefix matches over the
+   * browseable set, capped at 8, alphabetical. A blank or missing
+   * {@code q} answers an empty list (200), never 400. Anonymous
+   * callers get 401 from the security chain, exactly like the browse
+   * list — the endpoint is not public, and the caller's block set
+   * (#187) is applied the same way, resolved here from the JWT
+   * principal. Selecting a suggestion in the SPA navigates to the
+   * existing {@code ?q=} results; there is no second search contract.
+   */
+  @GetMapping("/suggestions")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "up to 8 title suggestions, alphabetical (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)")})
+  public ApiResponse<java.util.List<ItemSuggestionDto>> suggestions(
+      @RequestParam(name = "q", required = false) String query) {
+    Object principal = SecurityContextHolder.getContext().getAuthentication() == null
+        ? null
+        : SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    Long callerId = principal instanceof Long id ? id : null;
+    return ApiResponse.ok(itemService.getItemSuggestions(query, callerId));
+  }
+
+  /**
    * Listing detail with a strong ETag / conditional GET (backlog #166,
    * extending #145's category pattern). The validator is the SHA-256 of
    * (id, version, updatedAt, full DTO): every write path — edit, status

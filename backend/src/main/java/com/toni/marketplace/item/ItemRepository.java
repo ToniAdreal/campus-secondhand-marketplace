@@ -258,6 +258,55 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                       @Param("excludeId") Long excludeId);
 
   /**
+   * Search suggestions (backlog #235): title-prefix matches only — the
+   * query is a {@code LIKE '<prefix>%'} on the title, never on the
+   * description, so a word that appears only in a description never
+   * surfaces as a suggestion. The caller passes the already-escaped
+   * prefix (see {@link ItemService#normalizeKeyword}); the trailing
+   * {@code %} is the only wildcard. Visibility mirrors the browse
+   * projection exactly: EXPIRED and DRAFT rows are excluded, as are
+   * past-deadline AVAILABLE rows (lazy expiry, #177); RESERVED and SOLD
+   * rows stay in, because the browse list they feed into shows them
+   * too. Ordered alphabetically by title (then id) so the dropdown is
+   * scannable; the service caps the page at 8. No new table, no
+   * full-text query — the prefix LIKE is the cheap path the #68
+   * FULLTEXT index discussion pointed at, and it runs identically on
+   * H2 and MySQL.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemSuggestionDto(i.id, i.title) "
+          + "from Item i "
+          + "where lower(i.title) like lower(concat(:prefix, '%')) escape '\\' "
+          + "and i.status <> 'EXPIRED' and i.status <> 'DRAFT' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "order by lower(i.title) asc, i.id asc")
+  List<ItemSuggestionDto> findTitleSuggestions(@Param("prefix") String prefix,
+                                               org.springframework.data.domain.Pageable pageable);
+
+  /**
+   * Block-excluding variant of {@link #findTitleSuggestions} (backlog
+   * #235, mirroring #187): the same title-prefix predicate plus
+   * {@code i.sellerId not in :blockedSellerIds}, so a blocked seller's
+   * listings never appear in the caller's dropdown — exactly as they
+   * never appear in the caller's browse/search. Only called with a
+   * non-empty exclusion set.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemSuggestionDto(i.id, i.title) "
+          + "from Item i "
+          + "where lower(i.title) like lower(concat(:prefix, '%')) escape '\\' "
+          + "and i.status <> 'EXPIRED' and i.status <> 'DRAFT' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "and i.sellerId not in :blockedSellerIds "
+          + "order by lower(i.title) asc, i.id asc")
+  List<ItemSuggestionDto> findTitleSuggestionsExcludingSellers(
+      @Param("prefix") String prefix,
+      @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+      org.springframework.data.domain.Pageable pageable);
+
+  /**
    * Detail view: JPQL fetch join pulls the optional category together with
    * the item, so the {@link ItemDto} mapping needs no extra lazy query.
    * The gallery ({@link ItemPhoto}) is fetch-joined in the same SELECT so

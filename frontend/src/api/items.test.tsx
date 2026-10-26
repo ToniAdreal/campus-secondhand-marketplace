@@ -12,6 +12,7 @@ import {
   listingPhotoUrls,
   publishListing,
   useItems,
+  useItemSuggestions,
   type Item,
   type ItemPhoto,
 } from './items';
@@ -246,5 +247,40 @@ describe('listing publish (backlog #198)', () => {
     expect(describePublishError(err(422))).toMatch(/only a draft/i);
     expect(describePublishError(err(403))).toMatch(/only the seller/i);
     expect(describePublishError(err(404))).toMatch(/no longer exists/i);
+  });
+});
+
+describe('useItemSuggestions request (backlog #235)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches titles for the trimmed query', async () => {
+    getSpy.mockResolvedValue({
+      data: {
+        code: 0,
+        message: 'ok',
+        data: [
+          { id: 1, title: 'Bike helmet' },
+          { id: 2, title: 'Bike lock' },
+        ],
+      },
+    } as never);
+
+    const { result } = renderHook(() => useItemSuggestions('  bike  '), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/items/suggestions', { params: { q: 'bike' } });
+    expect(result.current.data).toEqual([
+      { id: 1, title: 'Bike helmet' },
+      { id: 2, title: 'Bike lock' },
+    ]);
+  });
+
+  it('stays disabled for a blank query and fires no request', async () => {
+    const { result } = renderHook(() => useItemSuggestions('   '), { wrapper });
+
+    expect(result.current.isFetching).toBe(false);
+    expect(getSpy).not.toHaveBeenCalled();
   });
 });

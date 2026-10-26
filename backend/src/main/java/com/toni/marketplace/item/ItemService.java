@@ -55,6 +55,9 @@ public class ItemService {
   /** Maximum similar listings on the detail rail (backlog #202). */
   static final int SIMILAR_LIMIT = 6;
 
+  /** Maximum rows on the search-suggestion dropdown (backlog #235). */
+  static final int SUGGESTION_LIMIT = 8;
+
   /**
    * Lazily probed once: whether the connected database is MySQL (see
    * {@link #isMySql()}). Volatile so concurrent first requests see the same
@@ -190,6 +193,31 @@ public class ItemService {
                                  Long callerId) {
     return listBrowse(pageable, categoryId, keyword, minPriceCents, maxPriceCents, sort,
         blockedSellerIds(callerId));
+  }
+
+  /**
+   * Search suggestions (backlog #235): title-prefix matches over the
+   * same browseable set the list view shows (EXPIRED/DRAFT and
+   * past-deadline AVAILABLE rows excluded, blocked sellers excluded
+   * for the caller, #187), alphabetically ordered, capped at
+   * {@link #SUGGESTION_LIMIT}. A null, blank or whitespace-only query
+   * answers an empty list — never 400, never a wildcard dump: the
+   * dropdown simply has nothing to show until the user types. The
+   * query is escaped by {@link #normalizeKeyword} before it reaches
+   * the repository, so a typed {@code %} or {@code _} matches itself
+   * literally instead of acting as a LIKE wildcard.
+   */
+  @Transactional(readOnly = true)
+  public List<ItemSuggestionDto> getItemSuggestions(String rawQuery, Long callerId) {
+    if (rawQuery == null || rawQuery.isBlank()) {
+      return List.of();
+    }
+    String prefix = normalizeKeyword(rawQuery);
+    Pageable cap = PageRequest.of(0, SUGGESTION_LIMIT);
+    List<Long> blocked = blockedSellerIds(callerId);
+    return blocked.isEmpty()
+        ? items.findTitleSuggestions(prefix, cap)
+        : items.findTitleSuggestionsExcludingSellers(prefix, blocked, cap);
   }
 
   private Page<ItemDto> listBrowse(Pageable pageable, Long categoryId, String keyword,

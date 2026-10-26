@@ -20,6 +20,10 @@ vi.mock('../api/items', async (importOriginal) => {
       isLoading: false,
       isError: false,
     }),
+    // Suggestions are inert here (empty list renders no dropdown) — the
+    // hook needs a stub because this file renders HomePage without a
+    // QueryClientProvider, and the real hook would throw there.
+    useItemSuggestions: () => ({ data: [], isLoading: false, isError: false }),
   };
 });
 

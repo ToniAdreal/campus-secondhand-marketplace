@@ -116,6 +116,7 @@ class OpenApiContractTest {
       "/api/disputes/{disputeId}/evidence",
       "/api/disputes/{disputeId}/evidence/{evidenceId}",
       "/api/items",
+      "/api/items/suggestions",
       "/api/items/{id}",
       "/api/items/{id}/photo",
       "/api/items/{id}/photos",
