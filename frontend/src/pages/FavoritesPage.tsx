@@ -8,6 +8,7 @@ import {
   useSavedSearches,
 } from '../api/savedSearches';
 import FavoriteButton from '../components/FavoriteButton';
+import ListingPhoto from '../components/ListingPhoto';
 import { useAuthStore } from '../store/useAuthStore';
 
 /**
@@ -54,10 +55,11 @@ export default function FavoritesPage() {
             return (
               <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
                 {photoUrls.length > 0 ? (
-                  <img
+                  <ListingPhoto
                     src={photoUrls[0]}
                     alt={item.title}
-                    className="mb-3 h-40 w-full rounded object-cover"
+                    imgClassName="mb-3 h-40 w-full rounded object-cover"
+                    placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
                   />
                 ) : (
                   <div

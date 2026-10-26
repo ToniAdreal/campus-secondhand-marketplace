@@ -41,4 +41,39 @@ describe('ListingGallery', () => {
     expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
     expect(container.querySelector('img')).toBeNull();
   });
+
+  it('swaps a failed main image for the placeholder while thumbnails stay', () => {
+    render(
+      <ListingGallery
+        title="Used bike"
+        photoUrls={['/uploads/a.png', '/uploads/b.png']}
+      />,
+    );
+
+    fireEvent.error(screen.getByRole('img', { name: 'Used bike' }));
+
+    expect(screen.queryByRole('img', { name: 'Used bike' })).toBeNull();
+    expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
+    // The thumbnails are separate images and are untouched by the main failure.
+    expect(screen.getByRole('button', { name: 'Show photo 1 of 2' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show photo 2 of 2' })).toBeTruthy();
+  });
+
+  it('swaps a failed thumbnail for its placeholder and leaves the main image alone', () => {
+    render(
+      <ListingGallery
+        title="Used bike"
+        photoUrls={['/uploads/a.png', '/uploads/b.png']}
+      />,
+    );
+
+    const thumbButton = screen.getByRole('button', { name: 'Show photo 2 of 2' });
+    const thumbImg = thumbButton.querySelector('img');
+    expect(thumbImg).not.toBeNull();
+    fireEvent.error(thumbImg!);
+
+    expect(screen.getByRole('img', { name: 'Used bike' })).toBeTruthy();
+    expect(thumbButton.querySelector('img')).toBeNull();
+    expect(thumbButton.querySelector('[data-testid="no-photo-placeholder"]')).not.toBeNull();
+  });
 });

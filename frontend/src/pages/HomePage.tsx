@@ -2,6 +2,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { listingPhotoUrls, useItems } from '../api/items';
 import { useRecentlyViewed } from '../api/recentlyViewed';
 import FavoriteButton from '../components/FavoriteButton';
+import ListingPhoto from '../components/ListingPhoto';
 import SaveSearchButton from '../components/SaveSearchButton';
 import { useCategories } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
@@ -264,10 +265,11 @@ export default function HomePage() {
               return (
                 <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
                   {photoUrls.length > 0 ? (
-                    <img
+                    <ListingPhoto
                       src={photoUrls[0]}
                       alt={item.title}
-                      className="mb-3 h-40 w-full rounded object-cover"
+                      imgClassName="mb-3 h-40 w-full rounded object-cover"
+                      placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
                     />
                   ) : (
                     <div
@@ -304,10 +306,11 @@ export default function HomePage() {
               return (
               <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
                 {photoUrls.length > 0 ? (
-                  <img
+                  <ListingPhoto
                     src={photoUrls[0]}
                     alt={item.title}
-                    className="mb-3 h-40 w-full rounded object-cover"
+                    imgClassName="mb-3 h-40 w-full rounded object-cover"
+                    placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
                   />
                 ) : (
                   <div

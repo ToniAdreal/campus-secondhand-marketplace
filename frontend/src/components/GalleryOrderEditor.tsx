@@ -4,6 +4,7 @@ import {
   useReorderPhotos,
   type ItemPhoto,
 } from '../api/items';
+import ListingPhoto from './ListingPhoto';
 
 /**
  * Seller gallery editor (backlog #162): reorder a listing's photos
@@ -97,10 +98,11 @@ export default function GalleryOrderEditor({
               key={photoId}
               className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-2"
             >
-              <img
+              <ListingPhoto
                 src={photo.url}
                 alt=""
-                className="h-12 w-12 rounded object-cover"
+                imgClassName="h-12 w-12 rounded object-cover"
+                placeholderClassName="flex h-12 w-12 items-center justify-center overflow-hidden rounded bg-neutral-100 text-[8px] text-neutral-500"
               />
               <span className="text-sm text-neutral-700">
                 Photo {index + 1}

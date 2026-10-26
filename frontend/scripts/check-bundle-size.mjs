@@ -38,6 +38,15 @@
 //   shared auth module + the SessionsPage/SettingsPage wiring) —
 //   TOTAL_MAX_BYTES = 538,000 (measured + ~5%, rounded up). The entry
 //   chunk (311,105 bytes) stays inside its unchanged budget.
+//   Catch-up bump 2026-10-26 (backlog #233): the #218 budget was never
+//   bumped through #219–#232, so the #232 tree already measured 543,183
+//   bytes (over budget — CI's frontend job was already failing at the
+//   size step on main) and this tree measures 545,223 bytes; #233's own
+//   delta is only +2,040 (the new ListingPhoto chunk, 333 bytes, plus
+//   wiring in its 10 call sites). TOTAL_MAX_BYTES = 573,000 (measured
+//   + ~5%, rounded up). The entry chunk measures exactly 316,000 bytes
+//   on this tree — at, not over, its unchanged budget; tight, and
+//   flagged for the next growth round rather than bumped here.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -52,7 +61,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 316_000;
-export const TOTAL_MAX_BYTES = 538_000;
+export const TOTAL_MAX_BYTES = 573_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module

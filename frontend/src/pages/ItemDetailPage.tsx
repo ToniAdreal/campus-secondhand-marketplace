@@ -21,6 +21,7 @@ import AddToCartButton from '../components/AddToCartButton';
 import FavoriteButton from '../components/FavoriteButton';
 import GalleryOrderEditor from '../components/GalleryOrderEditor';
 import ListingGallery from '../components/ListingGallery';
+import ListingPhoto from '../components/ListingPhoto';
 import MessageThread from '../components/MessageThread';
 
 export default function ItemDetailPage() {
@@ -341,10 +342,11 @@ export default function ItemDetailPage() {
               return (
                 <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm">
                   {photoUrls.length > 0 ? (
-                    <img
+                    <ListingPhoto
                       src={photoUrls[0]}
                       alt={item.title}
-                      className="mb-3 h-40 w-full rounded object-cover"
+                      imgClassName="mb-3 h-40 w-full rounded object-cover"
+                      placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500"
                     />
                   ) : (
                     <div

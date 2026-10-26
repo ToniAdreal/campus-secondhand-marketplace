@@ -7,6 +7,7 @@ import {
   useRemoveDisputeEvidence,
 } from '../api/disputes';
 import { useAuthStore } from '../store/useAuthStore';
+import ListingPhoto from './ListingPhoto';
 
 /**
  * The evidence panel keyed by order (backlog #200): buyer and seller
@@ -90,10 +91,11 @@ export default function DisputeEvidencePanel({
         <ul className="mt-1 flex flex-wrap gap-2">
           {photos.map((photo) => (
             <li key={photo.id} className="text-center">
-              <img
+              <ListingPhoto
                 src={photo.url}
                 alt={`Evidence photo ${photo.id} uploaded by user ${photo.uploaderId}`}
-                className="h-20 w-20 rounded object-cover"
+                imgClassName="h-20 w-20 rounded object-cover"
+                placeholderClassName="flex h-20 w-20 items-center justify-center overflow-hidden rounded bg-neutral-100 text-[10px] text-neutral-500"
               />
               {(isAdmin || photo.uploaderId === user?.id) && (
                 <button
