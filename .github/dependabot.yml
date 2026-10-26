@@ -1,0 +1,56 @@
+# Dependabot configuration — backlog #231.
+#
+# Cadence: weekly, one config per ecosystem (Maven for the Spring Boot
+# backend, npm for the React frontend). Dependabot opens one pull request
+# per outdated dependency (capped below so a big upstream release week
+# cannot flood the repo).
+#
+# Merge discipline (NOT enforced by branch protection, deliberately):
+# .github/workflows/ci.yml runs on pull_request, so every Dependabot PR
+# carries a CI verdict before it can merge — merge an update PR only when
+# that CI run is green. Branch protection with required checks is NOT
+# enabled here: this repo's commit cadence pushes directly to main, and
+# required checks would block that workflow. Revisit this choice only
+# together with the push workflow, never silently.
+#
+# Major versions stay manual: the ignore rules below stop Dependabot from
+# opening semver-major PRs. A major bump is done by hand, after reading
+# the upstream migration notes, and lands as its own commit — it is never
+# bundled into a minor/patch update PR.
+#
+# Honest scope: Dependabot runs on GitHub's side and cannot be executed
+# locally. Local verification of this file is: YAML parses, both
+# ecosystem directories exist in this repo, and the schedule/ecosystem
+# fields match Dependabot's schema. The first real proof is the first
+# weekly run's PRs (expected: one PR per outdated minor/patch dependency
+# in backend/pom.xml and frontend/package.json; no major-version PRs).
+# A config typo that GitHub rejects surfaces as a Dependabot error on the
+# repo's Insights > Dependency graph page and must be fixed, not ignored.
+
+version: 2
+updates:
+  - package-ecosystem: "maven"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    ignore:
+      # Major bumps stay manual (see header comment).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    ignore:
+      # Major bumps stay manual (see header comment).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
