@@ -168,6 +168,22 @@ public class Order {
   private Instant handoverLockedUntil;
 
   /**
+   * When the current handover code stops being valid (backlog #234,
+   * Flyway V68): minted as now + {@code app.orders.handover.ttl}
+   * (default 7 days) by {@code OrderService} at pay and at every
+   * regeneration. A null expiry means the code predates #234 and is
+   * grandfathered — it never expires by time (see
+   * {@code HandoverProperties} for why: expiring it would strand an
+   * in-flight handover that was valid when issued). The expiry is
+   * checked before the hash comparison, so an expired code answers
+   * 422 pointing at the regenerate endpoint instead of the 400 a
+   * wrong code gets, and presenting it never feeds the failure
+   * counter.
+   */
+  @Column(name = "handover_code_expires_at")
+  private Instant handoverCodeExpiresAt;
+
+  /**
    * When the order became PAID (backlog #180, Flyway V44), stamped by
    * {@code OrderService.pay} from the injected Clock in the same
    * transaction as the PENDING → PAID transition. Nullable until paid;
@@ -297,6 +313,10 @@ public class Order {
   public void setShippedAt(Instant shippedAt) { this.shippedAt = shippedAt; }
   public void setHandoverLockedUntil(Instant handoverLockedUntil) {
     this.handoverLockedUntil = handoverLockedUntil;
+  }
+  public Instant getHandoverCodeExpiresAt() { return handoverCodeExpiresAt; }
+  public void setHandoverCodeExpiresAt(Instant handoverCodeExpiresAt) {
+    this.handoverCodeExpiresAt = handoverCodeExpiresAt;
   }
   public Long getActiveItemId() { return activeItemId; }
   public Instant getCreatedAt() { return createdAt; }

@@ -24,6 +24,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>Defaults mirror the login/TOTP lockouts: 5 failures, 15-minute
  * lock. Override with e.g. {@code app.orders.handover.max-attempts=3}.
+ *
+ * <p>Backlog #234 adds a code lifetime: a minted code expires
+ * {@code ttl} after minting (default 7 days — long enough for a buyer
+ * and seller to meet, short enough that a leaked code dies on its
+ * own). An expired code is refused at complete with 422 pointing at
+ * the regenerate endpoint, and presenting it never feeds the failure
+ * counter — expiry is a state, not a guess. Codes minted before #234
+ * carry a null expiry and are grandfathered: they never expire by
+ * time (they still die on use, regeneration, or a terminal order
+ * transition), so this change cannot strand an in-flight handover
+ * that was valid when it was issued.
  */
 @ConfigurationProperties(prefix = "app.orders.handover")
 public class HandoverProperties {
@@ -33,6 +44,9 @@ public class HandoverProperties {
 
   /** How long the handover code stays locked. Must be positive. */
   private Duration lockDuration = Duration.ofMinutes(15);
+
+  /** How long a minted handover code stays valid. Must be positive. */
+  private Duration ttl = Duration.ofDays(7);
 
   public int getMaxAttempts() {
     return maxAttempts;
@@ -48,5 +62,13 @@ public class HandoverProperties {
 
   public void setLockDuration(Duration lockDuration) {
     this.lockDuration = lockDuration;
+  }
+
+  public Duration getTtl() {
+    return ttl;
+  }
+
+  public void setTtl(Duration ttl) {
+    this.ttl = ttl;
   }
 }

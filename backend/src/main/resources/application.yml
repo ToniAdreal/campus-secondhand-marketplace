@@ -402,6 +402,14 @@ app:
       # dispute path — and the buyer can always regenerate a fresh code.
       max-attempts: 5
       lock-duration: 15m
+      # Handover-code lifetime (backlog #234): a code minted at pay (or
+      # regenerated) is valid for ttl, then the complete exchange
+      # answers 422 naming the regenerate endpoint instead of the 400
+      # a wrong code gets; presenting an expired code never feeds the
+      # failure counter. Codes minted before #234 carry no expiry and
+      # are grandfathered — they never expire by time, so this change
+      # cannot strand an in-flight handover that was valid when issued.
+      ttl: 7d
   offers:
     # Pending-offer expiry (OfferExpiryService, @Scheduled every 5
     # minutes server-local; decision endpoints also check the deadline

@@ -213,12 +213,16 @@ public class OrderService {
    * lock, and returns the plaintext for its single disclosure to the
    * buyer. The order is managed inside the surrounding transaction, so
    * setting the fields persists at flush — no explicit save needed.
+   * Backlog #234: the mint also stamps the code's expiry (now +
+   * {@code app.orders.handover.ttl}), so a pay-time code and a
+   * regenerated code carry the same lifetime.
    */
   private String mintHandoverCode(Order order) {
     String code = String.format("%06d", new SecureRandom().nextInt(1_000_000));
     order.setHandoverCodeHash(handoverHash(code));
     order.setHandoverFailedAttempts(0);
     order.setHandoverLockedUntil(null);
+    order.setHandoverCodeExpiresAt(clock().instant().plus(handoverProps().getTtl()));
     return code;
   }
 
@@ -932,8 +936,13 @@ public class OrderService {
    *       the code locks for {@code app.orders.handover.lock-duration}
    *       and even the correct code gets the same 400 until it expires.
    *       The lock gates only this exchange — never the buyer's dispute
-   *       path. An ADMIN caller needs no code: that completion is an
-   *       explicit override and is audited as
+   *       path. Backlog #234: the code itself also expires
+   *       ({@code app.orders.handover.ttl}, default 7 days after
+   *       minting) — an expired code answers 422 naming the regenerate
+   *       endpoint, without feeding the failure counter, and codes
+   *       minted before #234 (null expiry) are grandfathered rather
+   *       than stranded. An ADMIN caller needs no code: that completion
+   *       is an explicit override and is audited as
    *       {@code ORDER_COMPLETED_ADMIN_OVERRIDE}, never as a
    *       code-verified {@code ORDER_COMPLETED}.</li>
    *   <li>The listing flips RESERVED → SOLD in the same transaction, so the
@@ -1156,6 +1165,14 @@ public class OrderService {
    * service's own transaction; a locked code refuses without counting
    * (the lock is already engaged). The comparison is constant-time
    * ({@link MessageDigest#isEqual} over the two hashes).
+   *
+   * <p>Backlog #234 exception to the identical-400 rule: an EXPIRED
+   * code is a state the seller can act on, not a guess to hide, so it
+   * answers 422 naming the regenerate endpoint — and it is checked
+   * before the hash comparison, after the lock check, and without
+   * feeding the failure counter. A null expiry is a pre-#234 code and
+   * is grandfathered (never expires by time). The boundary is
+   * inclusive: at exactly the expiry instant the code is already dead.
    */
   private void verifyHandoverCode(Order order, String handoverCode) {
     Instant now = clock().instant();
@@ -1163,6 +1180,12 @@ public class OrderService {
     if (lockedUntil != null && now.isBefore(lockedUntil)) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
           "invalid handover code");
+    }
+    Instant expiresAt = order.getHandoverCodeExpiresAt();
+    if (expiresAt != null && !now.isBefore(expiresAt)) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "handover code expired — ask the buyer to regenerate it via "
+              + "POST /api/orders/{id}/handover-code/regenerate");
     }
     boolean matches = handoverCode != null && !handoverCode.isBlank()
         && order.getHandoverCodeHash() != null
@@ -1188,6 +1211,9 @@ public class OrderService {
    * anything else is 422. Regeneration also clears the failed-attempt
    * counter and any lock: the buyer must never be locked out of
    * receiving their own item by a seller-side guessing streak.
+   * Backlog #234: regeneration restamps the expiry (now + ttl), so a
+   * code regenerated after expiry carries a fresh lifetime — it is
+   * the recovery path for an expired code, not just a lost one.
    */
   @Transactional
   public OrderDto regenerateHandoverCode(Long buyerId, Long orderId) {
