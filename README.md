@@ -170,7 +170,12 @@ audit/       AuditService — append-only trail (Flyway V22 audit_log:
              rolled-back transition leaves no row and idempotent no-op
              repeats write none. Read side (backlog #109):
              GET /api/admin/audit-log (ADMIN-only, paginated, exact-match
-             filters actorUserId / action / targetType+targetId).
+             filters actorUserId / action / targetType+targetId). Export
+             (backlog #232): GET /api/admin/audit-log/export?format=csv
+             (ADMIN-only, same filters, text/csv attachment with a dated
+             filename, newest first, capped at 100 rows per the #75
+             discipline with X-Audit-Export-Truncated when the trail is
+             longer).
 ```
 
 Intended package dependency direction (enforced by ArchUnit — see

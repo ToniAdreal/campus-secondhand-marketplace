@@ -62,6 +62,7 @@ class OpenApiContractTest {
       "/api/admin/appeals/{id}/reject",
       "/api/admin/appeals/{id}/uphold",
       "/api/admin/audit-log",
+      "/api/admin/audit-log/export",
       "/api/admin/dashboard",
       "/api/admin/disputes",
       "/api/admin/disputes/{id}/resolve-refund",

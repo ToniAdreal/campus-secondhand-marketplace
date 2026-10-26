@@ -60,6 +60,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     this(jwt, users, null);
   }
 
+  /**
+   * Async dispatches re-authenticate (backlog #232): a streaming endpoint
+   * (e.g. the audit-log CSV export) returns its body asynchronously, and
+   * the filter chain runs again on the async dispatch — where
+   * {@code OncePerRequestFilter} would otherwise skip this filter and
+   * leave the dispatch anonymous, so the chain's
+   * {@code anyRequest().authenticated()} rule denies it even though the
+   * initial dispatch authenticated fine. Re-running is safe because the
+   * filter is stateless and idempotent: it re-reads the same
+   * Authorization header, re-validates the token and re-checks
+   * staleness, installing the identical authentication (or clearing it
+   * if the token was revoked in between, which is the correct answer).
+   * The rate-limit filter is untouched — it still counts the initial
+   * request only.
+   */
+  @Override
+  protected boolean shouldNotFilterAsyncDispatch() {
+    return false;
+  }
+
   @Override
   protected void doFilterInternal(HttpServletRequest request,
                                   HttpServletResponse response,
