@@ -14,7 +14,7 @@ import { useAuthStore } from '../store/useAuthStore';
  * In-app notifications (backlog #157) — GET /api/notifications rendered
  * newest first: one row per order transition that concerned the caller
  * (their listing was paid/cancelled, or their order was
- * completed/refunded/expired). Unread rows carry a Mark read button;
+ * shipped/completed/refunded/expired). Unread rows carry a Mark read button;
  * read rows show their stamp. Each row links to the order it names.
  * Anonymous visitors bounce to /login like the other buyer pages.
  * In-app only — nothing here claims email or push delivery.

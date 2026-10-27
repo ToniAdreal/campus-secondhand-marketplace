@@ -4,7 +4,7 @@ package com.toni.marketplace.notification;
  * The events a user is notified about (backlog #157). Each value names
  * the transition, not the recipient: the recipient is derived from the
  * transition in {@code OrderService} (pay/cancel go to the seller,
- * complete/refund/expire go to the buyer).
+ * ship/complete/refund/expire go to the buyer).
  *
  * <p>Backlog #216 adds the per-type preference catalogue data to each
  * constant: a human {@code label} (the settings UI renders exactly
@@ -18,6 +18,13 @@ package com.toni.marketplace.notification;
  */
 public enum NotificationType {
   ORDER_PAID("Order paid", false),
+  /**
+   * The seller shipped the buyer's PAID order (backlog #238). Mutable
+   * per backlog #216 — a buyer who muted this type hears nothing, like
+   * the other order types. The row carries the order id; the carrier
+   * and tracking number live on the order itself, not on this row.
+   */
+  ORDER_SHIPPED("Order shipped", false),
   ORDER_COMPLETED("Order completed", false),
   ORDER_REFUNDED("Order refunded", false),
   ORDER_CANCELLED("Order cancelled", false),

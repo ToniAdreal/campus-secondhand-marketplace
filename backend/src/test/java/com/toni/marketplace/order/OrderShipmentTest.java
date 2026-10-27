@@ -20,6 +20,8 @@ import com.toni.marketplace.dispute.OrderDisputeRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationPreferenceRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import java.util.EnumSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -83,8 +85,16 @@ class OrderShipmentTest {
   @Autowired
   private SellerPayoutRepository payouts;
 
+  @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
+  private NotificationPreferenceRepository preferences;
+
   @AfterEach
   void cleanUp() {
+    preferences.deleteAll();
+    notifications.deleteAll();
     disputes.deleteAll();
     auditLog.deleteAll();
     payouts.deleteAll();

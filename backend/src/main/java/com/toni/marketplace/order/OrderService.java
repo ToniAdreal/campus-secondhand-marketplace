@@ -1015,6 +1015,12 @@ public class OrderService {
    *       view and confirms receipt by hand. A SHIPPED order can still
    *       be disputed inside the #169 window (see
    *       {@code DisputeService}).</li>
+   *   <li>Backlog #238: the buyer is notified in the same transaction
+   *       ({@code ORDER_SHIPPED}, mutable per #216) — the tracking
+   *       number is only useful if the buyer learns the parcel exists.
+   *       The 422 re-ship above returns before this point, so a
+   *       rejected re-ship writes no second row; the shipper is never
+   *       the recipient, whether seller or ADMIN.</li>
    * </ul>
    */
   @Transactional
@@ -1045,6 +1051,11 @@ public class OrderService {
       orders.flush();
       audit().record(callerId, AuditAction.ORDER_SHIPPED,
           AuditTargetType.ORDER, orderId);
+      // Backlog #238: notify the buyer in the same transaction — a
+      // rollback writes no row, and the 422 re-ship above returns
+      // before this point, so a rejected re-ship notifies nobody.
+      notifications().record(order.getBuyerId(),
+          NotificationType.ORDER_SHIPPED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,

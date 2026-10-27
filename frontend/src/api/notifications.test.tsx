@@ -147,6 +147,8 @@ describe('notifications api hooks (#157)', () => {
 
   it('describes every notification type in words', () => {
     expect(describeNotification('ORDER_PAID')).toMatch(/paid/i);
+    // #238: the shipped line names the transition for the buyer.
+    expect(describeNotification('ORDER_SHIPPED')).toMatch(/shipped/i);
     expect(describeNotification('ORDER_COMPLETED')).toMatch(/completed/i);
     expect(describeNotification('ORDER_REFUNDED')).toMatch(/refunded/i);
     expect(describeNotification('ORDER_CANCELLED')).toMatch(/cancelled/i);

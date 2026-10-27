@@ -5,6 +5,7 @@ import type { ApiResponse, Page } from './items';
 
 export type NotificationType =
   | 'ORDER_PAID'
+  | 'ORDER_SHIPPED'
   | 'ORDER_COMPLETED'
   | 'ORDER_REFUNDED'
   | 'ORDER_CANCELLED'
@@ -95,6 +96,10 @@ export function describeNotification(
   switch (type) {
     case 'ORDER_PAID':
       return 'An order for your listing was paid.';
+    case 'ORDER_SHIPPED':
+      // Backlog #238: the buyer learns the parcel exists — the
+      // carrier and tracking number live on the linked order page.
+      return 'Your order was shipped.';
     case 'ORDER_COMPLETED':
       return 'Your order was completed.';
     case 'ORDER_REFUNDED':
