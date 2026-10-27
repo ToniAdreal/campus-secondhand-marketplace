@@ -121,6 +121,45 @@ describe('LoginPage', () => {
     expect(currentPath).toBe('/login');
   });
 
+  it('a 429 with Retry-After shows the wait copy, not the generic failure (backlog #242)', async () => {
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        headers: { 'Retry-After': '45' },
+        data: { code: 429, message: 'too many requests', data: null },
+      },
+    });
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Too many attempts — try again in 45 seconds',
+    );
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('a 429 without Retry-After falls back to the generic copy (backlog #242)', async () => {
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        data: { code: 429, message: 'too many requests', data: null },
+      },
+    });
+    renderLogin('/login');
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), { target: { value: 'toni' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Login failed');
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
   it('links to /forgot-password (backlog #99)', () => {
     renderLogin('/login');
 

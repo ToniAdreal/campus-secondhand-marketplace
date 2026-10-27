@@ -117,4 +117,33 @@ describe('RegisterPage', () => {
     expect(alert.textContent).toContain('username is already taken');
     expect(useAuthStore.getState().user).toBeNull();
   });
+
+  it('a 429 with Retry-After shows the wait copy, not the generic failure (backlog #242)', async () => {
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        headers: { 'retry-after': '60' },
+        data: { code: 429, message: 'too many requests', data: null },
+      },
+    });
+    renderRegister();
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Too many attempts — try again in 60 seconds');
+    expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('a 429 without Retry-After falls back to the generic copy (backlog #242)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(429, 'too many requests'));
+    renderRegister();
+    fillForm();
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Registration failed');
+    expect(useAuthStore.getState().user).toBeNull();
+  });
 });

@@ -3,10 +3,20 @@ import { type FormEvent, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { register, resendEmailVerification } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
+import { throttleWaitCopy } from './authThrottle';
 
-/** Reads the human message out of the backend {code,message,data} envelope. */
+/**
+ * Reads the human message out of the backend {code,message,data} envelope.
+ * Backlog #242: a 429 carrying Retry-After renders the wait copy instead,
+ * and a 429 without a usable header falls back to the generic copy — with
+ * no number there is no wait to show. Every other status keeps the
+ * previous mapping untouched.
+ */
 function envelopeMessage(err: unknown, fallback: string): string {
+  const waitCopy = throttleWaitCopy(err);
+  if (waitCopy) return waitCopy;
   if (axios.isAxiosError(err)) {
+    if (err.response?.status === 429) return fallback;
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
     if (!err.response) return 'Network error — is the backend running?';
