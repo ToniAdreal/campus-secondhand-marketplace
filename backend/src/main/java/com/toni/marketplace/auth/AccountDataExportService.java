@@ -11,9 +11,14 @@ import com.toni.marketplace.message.MessageDto;
 import com.toni.marketplace.message.MessageRepository;
 import com.toni.marketplace.order.OrderDto;
 import com.toni.marketplace.order.OrderRepository;
+import com.toni.marketplace.review.SellerReview;
+import com.toni.marketplace.review.SellerReviewDto;
+import com.toni.marketplace.review.SellerReviewRepository;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -47,7 +52,15 @@ import org.springframework.web.server.ResponseStatusException;
  *   <li>favorites — {@link FavoriteService#listFavorites} as-is;</li>
  *   <li>saved searches — {@link SavedSearchService#listSavedSearches}
  *       as-is, so each row carries the same live match count the SPA
- *       shows.</li>
+ *       shows;</li>
+ *   <li>reviews — both directions (backlog #243), through the same
+ *       {@link SellerReviewDto} the public seller page shows: reviews
+ *       the caller wrote as a buyer (order ids included) and reviews
+ *       the caller received as a seller (ratings included). The
+ *       received rows resolve their reviewers' usernames in one batch
+ *       lookup, mirroring {@code ReviewService.listReviews}; a review
+ *       whose reviewer row is gone reads as a null username, never as
+ *       another user's review.</li>
  * </ul>
  * No entity is ever serialized: every section is a DTO projection.
  */
@@ -63,6 +76,7 @@ public class AccountDataExportService {
   private final MessageRepository messages;
   private final FavoriteService favoriteService;
   private final SavedSearchService savedSearchService;
+  private final SellerReviewRepository reviews;
   private final AuditService audit;
   private final Clock clock;
   private final DataExportGrantService exportGrants;
@@ -71,6 +85,7 @@ public class AccountDataExportService {
                                   OrderRepository orders, MessageRepository messages,
                                   FavoriteService favoriteService,
                                   SavedSearchService savedSearchService,
+                                  SellerReviewRepository reviews,
                                   AuditService audit, Clock clock,
                                   DataExportGrantService exportGrants) {
     this.users = users;
@@ -79,6 +94,7 @@ public class AccountDataExportService {
     this.messages = messages;
     this.favoriteService = favoriteService;
     this.savedSearchService = savedSearchService;
+    this.reviews = reviews;
     this.audit = audit;
     this.clock = clock;
     this.exportGrants = exportGrants;
@@ -110,9 +126,28 @@ public class AccountDataExportService {
         messages.findExportByParticipant(userId).stream()
             .map(MessageDto::from).toList(),
         favoriteService.listFavorites(userId),
-        savedSearchService.listSavedSearches(userId));
+        savedSearchService.listSavedSearches(userId),
+        reviewsWritten(user, userId),
+        reviewsReceived(userId));
     audit.record(userId, AuditAction.DATA_EXPORTED, AuditTargetType.USER, userId);
     return dto;
+  }
+
+  /** Reviews the caller wrote as a buyer, newest first; the reviewer is the caller. */
+  private List<SellerReviewDto> reviewsWritten(User user, long userId) {
+    return reviews.findByBuyerIdOrderByCreatedAtDescIdDesc(userId).stream()
+        .map(r -> SellerReviewDto.from(r, user.getUsername())).toList();
+  }
+
+  /** Reviews the caller received as a seller, newest first; reviewers resolved in one batch. */
+  private List<SellerReviewDto> reviewsReceived(long userId) {
+    List<SellerReview> rows =
+        reviews.findBySellerIdOrderByCreatedAtDescIdDesc(userId);
+    Map<Long, String> usernames = new HashMap<>();
+    users.findAllById(rows.stream().map(SellerReview::getBuyerId).toList())
+        .forEach(u -> usernames.put(u.getId(), u.getUsername()));
+    return rows.stream()
+        .map(r -> SellerReviewDto.from(r, usernames.get(r.getBuyerId()))).toList();
   }
 
   /** Every page of the caller's seller-scoped list view, newest first. */

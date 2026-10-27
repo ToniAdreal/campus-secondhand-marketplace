@@ -20,6 +20,8 @@ import com.toni.marketplace.message.Message;
 import com.toni.marketplace.message.MessageRepository;
 import com.toni.marketplace.order.Order;
 import com.toni.marketplace.order.OrderRepository;
+import com.toni.marketplace.review.SellerReview;
+import com.toni.marketplace.review.SellerReviewRepository;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -41,7 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Self-service account data export (backlog #172):
  * {@code GET /api/users/me/export} returns the caller's own data as one
  * JSON download — profile, listings, orders as buyer and as seller,
- * messages, favorites and saved searches — each section through the
+ * messages, favorites, saved searches and reviews written and received
+ * (backlog #243) — each section through the
  * DTO projection its own API already shows.
  *
  * <p>Pinned here: section completeness against seeded data, the
@@ -65,6 +68,7 @@ class AccountDataExportTest {
   @Autowired private MessageRepository messages;
   @Autowired private FavoriteRepository favorites;
   @Autowired private SavedSearchRepository savedSearches;
+  @Autowired private SellerReviewRepository reviews;
   @Autowired private AuditLogRepository auditLog;
   @Autowired private PasswordService passwords;
   @Autowired private JwtTokenService jwt;
@@ -75,6 +79,8 @@ class AccountDataExportTest {
   private User third;
   private Item exporterListing;
   private Item otherListing;
+  private Order exporterBuyOrder;
+  private Order exporterSellOrder;
   private String exporterToken;
 
   @BeforeEach
@@ -102,10 +108,22 @@ class AccountDataExportTest {
 
     // The exporter as buyer (an order on the other user's listing) and
     // as seller (the other user ordered the exporter's listing).
-    orders.save(new Order(otherListing, exporter.getId(), 3000L));
-    orders.save(new Order(exporterListing, other.getId(), 50000L));
+    exporterBuyOrder = orders.save(new Order(otherListing, exporter.getId(), 3000L));
+    exporterSellOrder = orders.save(new Order(exporterListing, other.getId(), 50000L));
     // A trade between the other two users — absent from the export.
-    orders.save(new Order(thirdListing, other.getId(), 1500L));
+    Order thirdTradeOrder = orders.save(new Order(thirdListing, other.getId(), 1500L));
+
+    // Reviews in both directions for the exporter, plus one review on
+    // a trade the exporter is neither buyer nor seller of — it must
+    // appear in neither side of the exporter's export (backlog #243).
+    // Seeded straight through the repository: the service's
+    // COMPLETED-only create rule is a write guard, not a read shape.
+    reviews.save(new SellerReview(exporterBuyOrder.getId(), exporter.getId(),
+        other.getId(), 5, "fast handover, exactly as described"));
+    reviews.save(new SellerReview(exporterSellOrder.getId(), other.getId(),
+        exporter.getId(), 4, "great seller, smooth trade"));
+    reviews.save(new SellerReview(thirdTradeOrder.getId(), other.getId(),
+        third.getId(), 3, "unrelated review between others"));
 
     // Messages the exporter sent and received, plus a thread between
     // two users who are neither the exporter nor the other user — it
@@ -220,6 +238,44 @@ class AccountDataExportTest {
     assertThat(searches.size()).isEqualTo(1);
     assertThat(searches.get(0).path("keyword").asText()).isEqualTo("road bike");
     assertThat(searches.get(0).has("matchCount")).isTrue();
+
+    // Reviews in both directions (backlog #243): the one the exporter
+    // wrote carries its order id, the one received carries its rating
+    // and the reviewer's username; the third-party review is in
+    // neither section.
+    JsonNode written = doc.path("reviewsWritten");
+    assertThat(written.size()).isEqualTo(1);
+    assertThat(written.get(0).path("orderId").asLong())
+        .isEqualTo(exporterBuyOrder.getId());
+    assertThat(written.get(0).path("rating").asInt()).isEqualTo(5);
+    assertThat(written.get(0).path("body").asText())
+        .isEqualTo("fast handover, exactly as described");
+    assertThat(written.get(0).path("reviewerUsername").asText())
+        .isEqualTo(exporter.getUsername());
+    JsonNode received = doc.path("reviewsReceived");
+    assertThat(received.size()).isEqualTo(1);
+    assertThat(received.get(0).path("orderId").asLong())
+        .isEqualTo(exporterSellOrder.getId());
+    assertThat(received.get(0).path("rating").asInt()).isEqualTo(4);
+    assertThat(received.get(0).path("body").asText())
+        .isEqualTo("great seller, smooth trade");
+    assertThat(received.get(0).path("reviewerUsername").asText())
+        .isEqualTo(other.getUsername());
+    assertThat(bodies(written)).doesNotContain("unrelated review between others");
+    assertThat(bodies(received)).doesNotContain("unrelated review between others");
+  }
+
+  @Test
+  void exportWithoutAnyReviewsRendersEmptyReviewLists() throws Exception {
+    User fresh = users.save(new User("export-noreviews",
+        "export-noreviews@example.com", passwords.encode("export-password-9")));
+    JsonNode doc = objectMapper.readTree(
+        exportAs(jwt.createTokenPair(fresh).accessToken(), "export-password-9")
+            .getResponse().getContentAsString());
+    assertThat(doc.path("reviewsWritten").isArray()).isTrue();
+    assertThat(doc.path("reviewsWritten").size()).isEqualTo(0);
+    assertThat(doc.path("reviewsReceived").isArray()).isTrue();
+    assertThat(doc.path("reviewsReceived").size()).isEqualTo(0);
   }
 
   @Test
@@ -250,6 +306,15 @@ class AccountDataExportTest {
         "exporter asks about the lamp", "other replies to the exporter");
     assertThat(doc.path("savedSearches").get(0).path("keyword").asText())
         .isEqualTo("desk lamp");
+    // The other user's review sections are their own (backlog #243):
+    // written = both reviews the other user authored (one about the
+    // exporter, one about the third user); received = the exporter's
+    // review of the other user as a seller. No section carries a
+    // review the other user neither wrote nor received.
+    assertThat(bodies(doc.path("reviewsWritten"))).containsExactlyInAnyOrder(
+        "great seller, smooth trade", "unrelated review between others");
+    assertThat(bodies(doc.path("reviewsReceived"))).containsExactly(
+        "fast handover, exactly as described");
   }
 
   @Test

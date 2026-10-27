@@ -1,5 +1,6 @@
 package com.toni.marketplace.review;
 
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -19,6 +20,20 @@ public interface SellerReviewRepository extends JpaRepository<SellerReview, Long
 
   /** One seller's reviews; the service supplies the newest-first sort. */
   Page<SellerReview> findBySellerId(Long sellerId, Pageable pageable);
+
+  /**
+   * Every review one user wrote as a buyer, newest first — the
+   * "written" half of the account data export (backlog #243). A
+   * derived list query, not a page: an export is a complete archive,
+   * not a browsed view.
+   */
+  List<SellerReview> findByBuyerIdOrderByCreatedAtDescIdDesc(Long buyerId);
+
+  /**
+   * Every review one user received as a seller, newest first — the
+   * "received" half of the account data export (backlog #243).
+   */
+  List<SellerReview> findBySellerIdOrderByCreatedAtDescIdDesc(Long sellerId);
 
   /**
    * One row of a seller's rating aggregate: the mean rating and the

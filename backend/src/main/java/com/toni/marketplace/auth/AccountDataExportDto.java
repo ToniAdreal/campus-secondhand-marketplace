@@ -4,6 +4,7 @@ import com.toni.marketplace.item.ItemDto;
 import com.toni.marketplace.item.SavedSearchDto;
 import com.toni.marketplace.message.MessageDto;
 import com.toni.marketplace.order.OrderDto;
+import com.toni.marketplace.review.SellerReviewDto;
 import java.time.Instant;
 import java.util.List;
 
@@ -15,7 +16,10 @@ import java.util.List;
  * <p>Every section reuses the DTO projection its own API already shows —
  * {@link ItemDto} for listings and favorites, {@link OrderDto} for orders,
  * {@link MessageDto} for messages, {@link SavedSearchDto} for saved
- * searches — and the profile is built field-by-field below, so the export
+ * searches, {@link SellerReviewDto} for reviews written and received
+ * (backlog #243 — a review is the user's own words in both directions,
+ * so an export without them is incomplete on its face) — and the profile
+ * is built field-by-field below, so the export
  * cannot leak a field the API itself never shows. In particular the
  * profile carries ONLY id, username, email, roles and createdAt: the
  * password hash, the TOTP secret and every token artifact are excluded
@@ -34,7 +38,9 @@ public record AccountDataExportDto(
     List<OrderDto> ordersAsSeller,
     List<MessageDto> messages,
     List<ItemDto> favorites,
-    List<SavedSearchDto> savedSearches) {
+    List<SavedSearchDto> savedSearches,
+    List<SellerReviewDto> reviewsWritten,
+    List<SellerReviewDto> reviewsReceived) {
 
   /**
    * The export's profile section: exactly the fields named in backlog
