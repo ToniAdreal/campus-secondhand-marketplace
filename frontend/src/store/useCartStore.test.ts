@@ -4,6 +4,7 @@ import {
   cartTotalCents,
   checkoutCart,
   deriveCartIdempotencyKey,
+  revalidateCartItems,
   useCartStore,
   type CartItem,
 } from './useCartStore';
@@ -147,5 +148,107 @@ describe('checkoutCart', () => {
     createOrder.mockClear();
     await checkoutCart([book, lamp], 'batch-9', createOrder);
     expect(createOrder.mock.calls.map((call) => call[1])).toEqual(firstKeys);
+  });
+});
+
+describe('revalidateCartItems (backlog #244)', () => {
+  const fresh = (overrides: Partial<import('./useCartStore').FreshListing> & { id: number }) => ({
+    title: 'Algorithms textbook',
+    priceCents: 4500,
+    status: 'AVAILABLE',
+    expiresAt: null,
+    ...overrides,
+  });
+
+  it('refreshes a stale price and title in place and flags the change', () => {
+    const result = revalidateCartItems(
+      [book],
+      new Map([[7, fresh({ id: 7, title: 'Algorithms textbook, 3rd ed.', priceCents: 5000 })]]),
+    );
+    expect(result.kept).toEqual([
+      { ...book, title: 'Algorithms textbook, 3rd ed.', priceCents: 5000 },
+    ]);
+    expect(result.dropped).toEqual([]);
+    expect(result.pricesChanged).toBe(true);
+  });
+
+  it('keeps an unchanged listing untouched and does not flag a price change', () => {
+    const result = revalidateCartItems([book], new Map([[7, fresh({ id: 7 })]]));
+    expect(result.kept).toEqual([book]);
+    expect(result.pricesChanged).toBe(false);
+  });
+
+  it('drops SOLD, WITHDRAWN and EXPIRED rows with named reasons', () => {
+    const result = revalidateCartItems(
+      [book, lamp],
+      new Map([
+        [7, fresh({ id: 7, status: 'SOLD' })],
+        [8, fresh({ id: 8, status: 'WITHDRAWN' })],
+      ]),
+    );
+    expect(result.kept).toEqual([]);
+    expect(result.dropped).toEqual([
+      { itemId: 7, title: book.title, reason: 'sold' },
+      { itemId: 8, title: lamp.title, reason: 'withdrawn' },
+    ]);
+    const expired = revalidateCartItems(
+      [book],
+      new Map([[7, fresh({ id: 7, status: 'EXPIRED' })]]),
+    );
+    expect(expired.dropped).toEqual([{ itemId: 7, title: book.title, reason: 'expired' }]);
+  });
+
+  it('drops an AVAILABLE row past its deadline as expired, keeps one still inside it', () => {
+    const now = new Date('2026-10-27T12:00:00Z');
+    const past = revalidateCartItems(
+      [book],
+      new Map([[7, fresh({ id: 7, expiresAt: '2026-10-27T11:59:59Z' })]]),
+      now,
+    );
+    expect(past.dropped).toEqual([{ itemId: 7, title: book.title, reason: 'expired' }]);
+    const live = revalidateCartItems(
+      [book],
+      new Map([[7, fresh({ id: 7, expiresAt: '2026-10-27T12:00:01Z' })]]),
+      now,
+    );
+    expect(live.kept).toEqual([book]);
+    expect(live.dropped).toEqual([]);
+  });
+
+  it('drops a 404 row as unavailable and keeps a RESERVED row for checkout to report', () => {
+    const result = revalidateCartItems(
+      [book, lamp],
+      new Map([
+        [7, null],
+        [8, fresh({ id: 8, title: 'Desk lamp', priceCents: 2000, status: 'RESERVED' })],
+      ]),
+    );
+    expect(result.kept).toEqual([lamp]);
+    expect(result.dropped).toEqual([{ itemId: 7, title: book.title, reason: 'unavailable' }]);
+  });
+
+  it('keeps a row with no fresh read at all — never drops on missing evidence', () => {
+    const result = revalidateCartItems([book, lamp], new Map([[7, fresh({ id: 7 })]]));
+    expect(result.kept).toEqual([book, lamp]);
+    expect(result.dropped).toEqual([]);
+  });
+});
+
+describe('applyRevalidation (backlog #244)', () => {
+  it('keeps the batch id while anything is kept, so checkout keys stay stable', () => {
+    useCartStore.getState().addItem(book);
+    const batchBefore = useCartStore.getState().batchId;
+    useCartStore.getState().applyRevalidation([{ ...book, priceCents: 5000 }]);
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([{ ...book, priceCents: 5000 }]);
+    expect(state.batchId).toBe(batchBefore);
+    expect(state.sellerId).toBe(3);
+  });
+
+  it('empties the cart — batch included — when nothing is kept', () => {
+    useCartStore.getState().addItem(book);
+    useCartStore.getState().applyRevalidation([]);
+    expect(useCartStore.getState().items).toEqual([]);
+    expect(useCartStore.getState().batchId).toBeNull();
   });
 });

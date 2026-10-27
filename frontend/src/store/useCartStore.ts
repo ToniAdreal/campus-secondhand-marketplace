@@ -64,6 +64,14 @@ interface CartState {
   replaceCartWith: (item: CartItem) => void;
   removeItem: (itemId: number) => void;
   removeItems: (itemIds: number[]) => void;
+  /**
+   * Applies a revalidation result (backlog #244): the kept rows replace
+   * the cart, but the batch id is preserved while anything is kept, so
+   * a revalidated checkout reuses the same idempotency keys and never
+   * double-orders. An empty kept list empties the cart (new batch on
+   * the next add), which is safe — there is nothing left to reorder.
+   */
+  applyRevalidation: (kept: CartItem[]) => void;
   clear: () => void;
 }
 
@@ -103,12 +111,103 @@ export const useCartStore = create<CartState>((set, get) => ({
     const remaining = get().items.filter((held) => !itemIds.includes(held.itemId));
     set(remaining.length === 0 ? { ...emptyCart } : { items: remaining });
   },
+  applyRevalidation: (kept) => {
+    set(kept.length === 0 ? { ...emptyCart } : { items: kept });
+  },
   clear: () => set({ ...emptyCart }),
 }));
 
 /** The cart's total in cents — a plain sum of the held listings' prices. */
 export function cartTotalCents(items: CartItem[]): number {
   return items.reduce((sum, item) => sum + item.priceCents, 0);
+}
+
+export type CartRevalidationReason = 'sold' | 'withdrawn' | 'expired' | 'unavailable';
+
+export interface CartRevalidationDrop {
+  itemId: number;
+  title: string;
+  reason: CartRevalidationReason;
+}
+
+/**
+ * The fresh-read shape revalidation needs. Structural on purpose: this
+ * store module is imported by the eager App shell for the nav badge,
+ * so it must never import the items API module (which would drag
+ * TanStack Query into the entry chunk); the cart page maps the real
+ * Item DTO onto this shape.
+ */
+export interface FreshListing {
+  id: number;
+  title: string;
+  priceCents: number;
+  status: string;
+  expiresAt?: string | null;
+}
+
+export interface CartRevalidation {
+  kept: CartItem[];
+  dropped: CartRevalidationDrop[];
+  /** True when any kept item's title or price changed. */
+  pricesChanged: boolean;
+}
+
+/**
+ * Revalidates held cart rows against fresh listing reads (backlog
+ * #244). Title/price refresh in place; SOLD, WITHDRAWN and expired
+ * rows drop with a named reason. An expired row is the EXPIRED status
+ * or an AVAILABLE row past its deadline — the same rule as the
+ * listing-expiry helper, repeated here so the store stays free of the
+ * items module (see FreshListing). A 404 from the detail read lands
+ * here as a null fresh row and drops as 'unavailable': the backend
+ * 404s deleted, expired and draft-hidden listings alike, so the copy
+ * must not claim a more specific reason than the read disclosed.
+ * RESERVED and DRAFT rows are kept — the drop set is exactly
+ * sold/withdrawn/expired, and checkout's per-item outcome reports a
+ * raced RESERVED row honestly. An id with no fresh read at all is
+ * kept, never dropped on missing evidence.
+ */
+export function revalidateCartItems(
+  items: CartItem[],
+  freshById: Map<number, FreshListing | null>,
+  now = new Date(),
+): CartRevalidation {
+  const kept: CartItem[] = [];
+  const dropped: CartRevalidationDrop[] = [];
+  let pricesChanged = false;
+  for (const item of items) {
+    if (!freshById.has(item.itemId)) {
+      kept.push(item);
+      continue;
+    }
+    const fresh = freshById.get(item.itemId) as FreshListing | null;
+    if (fresh === null) {
+      dropped.push({ itemId: item.itemId, title: item.title, reason: 'unavailable' });
+      continue;
+    }
+    if (fresh.status === 'SOLD') {
+      dropped.push({ itemId: item.itemId, title: item.title, reason: 'sold' });
+      continue;
+    }
+    if (fresh.status === 'WITHDRAWN') {
+      dropped.push({ itemId: item.itemId, title: item.title, reason: 'withdrawn' });
+      continue;
+    }
+    if (
+      fresh.status === 'EXPIRED' ||
+      (fresh.status === 'AVAILABLE' &&
+        fresh.expiresAt != null &&
+        new Date(fresh.expiresAt).getTime() <= now.getTime())
+    ) {
+      dropped.push({ itemId: item.itemId, title: item.title, reason: 'expired' });
+      continue;
+    }
+    if (fresh.title !== item.title || fresh.priceCents !== item.priceCents) {
+      pricesChanged = true;
+    }
+    kept.push({ ...item, title: fresh.title, priceCents: fresh.priceCents });
+  }
+  return { kept, dropped, pricesChanged };
 }
 
 /**
