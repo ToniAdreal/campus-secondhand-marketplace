@@ -112,4 +112,58 @@ class AuthRateLimiterTest {
   void retryAfterIsZeroWhenTokenAvailable() {
     assertThat(limiter.retryAfterSeconds("10.0.0.9")).isEqualTo(0);
   }
+
+  @Test
+  void snapshotReportsFullBucketBeforeAnyConsume() {
+    AuthRateLimiter.RateLimitState state = limiter.snapshot("10.0.0.10");
+    assertThat(state.limit()).isEqualTo(5);
+    assertThat(state.remaining()).isEqualTo(5);
+    assertThat(state.resetSeconds()).isEqualTo(0);
+  }
+
+  @Test
+  void snapshotRemainingDecrementsAcrossSuccessiveConsumes() {
+    // The 429 itself consumes nothing, so the decrement is pinned here at
+    // the limiter level: 5 -> 4 -> 3 -> 2 -> 1 -> 0 across the burst.
+    for (int i = 0; i < 5; i++) {
+      assertThat(limiter.tryConsume("10.0.0.11")).isTrue();
+      assertThat(limiter.snapshot("10.0.0.11").remaining())
+          .as("remaining after consume %d", i + 1)
+          .isEqualTo(4 - i);
+    }
+    assertThat(limiter.snapshot("10.0.0.11").remaining()).isEqualTo(0);
+  }
+
+  @Test
+  void snapshotOnExhaustedBucketReportsZeroRemainingAndFullReset() {
+    for (int i = 0; i < 5; i++) {
+      limiter.tryConsume("10.0.0.12");
+    }
+    AuthRateLimiter.RateLimitState state = limiter.snapshot("10.0.0.12");
+    assertThat(state.limit()).isEqualTo(5);
+    assertThat(state.remaining()).isEqualTo(0);
+    // 5 tokens at 5/min: a full refill takes exactly 60 s.
+    assertThat(state.resetSeconds()).isEqualTo(60);
+  }
+
+  @Test
+  void snapshotDoesNotConsumeAndResetCountsDownWithRefill() {
+    for (int i = 0; i < 5; i++) {
+      limiter.tryConsume("10.0.0.13");
+    }
+    assertThat(limiter.snapshot("10.0.0.13").resetSeconds()).isEqualTo(60);
+    assertThat(limiter.snapshot("10.0.0.13").resetSeconds())
+        .as("snapshot itself consumes nothing")
+        .isEqualTo(60);
+    // Denied attempts consume nothing either.
+    assertThat(limiter.tryConsume("10.0.0.13")).isFalse();
+    assertThat(limiter.snapshot("10.0.0.13").remaining()).isEqualTo(0);
+    assertThat(limiter.snapshot("10.0.0.13").resetSeconds()).isEqualTo(60);
+
+    clock.advance(Duration.ofSeconds(6)); // half a token refilled
+    assertThat(limiter.snapshot("10.0.0.13").remaining())
+        .as("half a token is not a whole token")
+        .isEqualTo(0);
+    assertThat(limiter.snapshot("10.0.0.13").resetSeconds()).isEqualTo(54);
+  }
 }

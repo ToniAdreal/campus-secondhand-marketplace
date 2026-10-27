@@ -156,8 +156,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       refresh has a separate one; message sends have a per-user one.</li>
  *   <li>An empty bucket short-circuits with {@code 429} in the project's
  *       {@code {code,message,data}} envelope plus a {@code Retry-After}
- *       header (seconds until the next token). The security chain is never
- *       reached.</li>
+ *       header (seconds until the next token) and the draft-ietf
+ *       {@code RateLimit-Limit} / {@code RateLimit-Remaining} /
+ *       {@code RateLimit-Reset} headers for the refusing bucket (backlog
+ *       #236). The security chain is never reached.</li>
  *   <li>A <em>successful</em> login (2xx) resets the caller's credential
  *       bucket, so legitimate users are not punished for earlier typos.
  *       Register does not reset — the natural next step is a login, which
@@ -390,7 +392,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // for the heaviest read in the app.
       String key = messageKey(request);
       if (!dataExportLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, dataExportLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, dataExportLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -399,7 +401,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     if (MESSAGE_PATH.equals(path) || isMessageItemPath(path)) {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, messageLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, messageLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -412,7 +414,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // allowance.
       String key = messageKey(request);
       if (!reportLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, reportLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, reportLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -426,7 +428,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // trusted-proxy-aware client IP is the only identity available.
       String ip = clientIp(request);
       if (!cspReportLimiter.tryConsume(ip)) {
-        writeTooManyRequests(response, cspReportLimiter.retryAfterSeconds(ip));
+        writeTooManyRequests(response, cspReportLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
@@ -442,7 +444,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // can otherwise flood the log/metric pipeline.
       String ip = clientIp(request);
       if (!telemetryErrorLimiter.tryConsume(ip)) {
-        writeTooManyRequests(response, telemetryErrorLimiter.retryAfterSeconds(ip));
+        writeTooManyRequests(response, telemetryErrorLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
@@ -455,7 +457,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // unlimited tries.
       String key = messageKey(request);
       if (!stepUpLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, stepUpLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, stepUpLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -470,7 +472,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // listing-spam allowance.
       String key = messageKey(request);
       if (!listingCreateLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, listingCreateLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, listingCreateLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -484,7 +486,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // ceiling apart from the listing bucket.
       String key = messageKey(request);
       if (!orderCreateLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, orderCreateLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, orderCreateLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -500,7 +502,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // touch the order-create bucket.
       String key = messageKey(request);
       if (!orderTransitionLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, orderTransitionLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, orderTransitionLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -515,7 +517,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // the POST shapes (photo/photos/renew/publish) via the matcher.
       String key = messageKey(request);
       if (!itemMutationLimiter.tryConsume(key)) {
-        writeTooManyRequests(response, itemMutationLimiter.retryAfterSeconds(key));
+        writeTooManyRequests(response, itemMutationLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -528,7 +530,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // success: a completed reset must not refill a guesser's budget.
       String ip = clientIp(request);
       if (!passwordResetLimiter.tryConsume(ip)) {
-        writeTooManyRequests(response, passwordResetLimiter.retryAfterSeconds(ip));
+        writeTooManyRequests(response, passwordResetLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
@@ -539,7 +541,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // reset on success (same rationale as the reset bucket above).
       String ip = clientIp(request);
       if (!totpLimiter.tryConsume(ip)) {
-        writeTooManyRequests(response, totpLimiter.retryAfterSeconds(ip));
+        writeTooManyRequests(response, totpLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
@@ -556,7 +558,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // budget (the backlog #101 pattern).
       String ip = clientIp(request);
       if (!emailVerificationLimiter.tryConsume(ip)) {
-        writeTooManyRequests(response, emailVerificationLimiter.retryAfterSeconds(ip));
+        writeTooManyRequests(response, emailVerificationLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
@@ -565,7 +567,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     AuthRateLimiter limiter = REFRESH_PATH.equals(path) ? refreshLimiter : credentialLimiter;
     String ip = clientIp(request);
     if (!limiter.tryConsume(ip)) {
-      writeTooManyRequests(response, limiter.retryAfterSeconds(ip));
+      writeTooManyRequests(response, limiter, ip);
       return;
     }
     if (LOGIN_PATH.equals(path)) {
@@ -660,12 +662,29 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return path != null && path.matches("/api/messages/\\d+");
   }
 
-  private void writeTooManyRequests(HttpServletResponse response, long retryAfterSeconds)
-      throws IOException {
+  /**
+   * Writes the 429 envelope for a throttled request (backlog #236): the
+   * existing {@code Retry-After} (seconds until the next single token)
+   * plus the draft-ietf {@code RateLimit-*} headers for the bucket that
+   * refused — {@code RateLimit-Limit} (the bucket quota),
+   * {@code RateLimit-Remaining} (whole tokens left, 0 on a denial since a
+   * denied request consumes nothing) and {@code RateLimit-Reset}
+   * (seconds until the bucket is full again). The headers ride only the
+   * 429: successful and unthrottled responses carry none of them, so a
+   * client can tell "throttled, and by how much" without tripping the
+   * limit to learn it — it still has to trip it once, since only the
+   * refusal reveals the budget.
+   */
+  private void writeTooManyRequests(HttpServletResponse response, AuthRateLimiter limiter,
+                                    String key) throws IOException {
     response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
     response.setCharacterEncoding("UTF-8");
-    response.setHeader(RETRY_AFTER_HEADER, Long.toString(retryAfterSeconds));
+    response.setHeader(RETRY_AFTER_HEADER, Long.toString(limiter.retryAfterSeconds(key)));
+    AuthRateLimiter.RateLimitState state = limiter.snapshot(key);
+    response.setHeader("RateLimit-Limit", Integer.toString(state.limit()));
+    response.setHeader("RateLimit-Remaining", Long.toString(state.remaining()));
+    response.setHeader("RateLimit-Reset", Long.toString(state.resetSeconds()));
     mapper.writeValue(response.getWriter(),
         ApiResponse.fail(HttpStatus.TOO_MANY_REQUESTS.value(), "too many requests"));
   }

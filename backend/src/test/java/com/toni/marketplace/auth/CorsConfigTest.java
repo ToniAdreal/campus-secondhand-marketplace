@@ -101,6 +101,17 @@ class CorsConfigTest {
   }
 
   @Test
+  void crossOriginResponsesExposeRateLimitHeaders() throws Exception {
+    // A throttled SPA client (#236) reads the budget out of the 429's
+    // RateLimit-* headers in the browser; cross-origin those headers are
+    // only visible when the CORS config exposes them.
+    mockMvc.perform(get("/api/items").header("Origin", VITE_ORIGIN))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().string("Access-Control-Expose-Headers",
+            org.hamcrest.Matchers.containsString("RateLimit-Remaining")));
+  }
+
+  @Test
   void simpleRequestFromUnlistedOriginIsRejectedWithoutEchoHeader() throws Exception {
     // Spring's DefaultCorsProcessor fail-closes an actual request from an
     // unlisted origin with 403 ("Invalid CORS request") instead of letting

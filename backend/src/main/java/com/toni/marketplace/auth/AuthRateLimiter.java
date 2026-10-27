@@ -80,6 +80,48 @@ public class AuthRateLimiter {
   }
 
   /**
+   * Point-in-time view of a key's bucket for the draft-ietf
+   * {@code RateLimit-*} response headers (backlog #236). Read-only: taking a
+   * snapshot never consumes a token, so a denied request reports the same
+   * state a second denied request would.
+   *
+   * <ul>
+   *   <li>{@code limit} — the bucket's quota ({@code attemptsPerMinute}).</li>
+   *   <li>{@code remaining} — whole tokens currently available, floored at
+   *       0. A denied request consumes nothing, so a 429 always reports 0
+   *       here; the decrement across successive requests is visible in the
+   *       snapshots taken before the bucket empties.</li>
+   *   <li>{@code resetSeconds} — seconds until the bucket is full again
+   *       (the draft's "quota resets" moment), distinct from
+   *       {@link #retryAfterSeconds} which is the wait for the <em>next
+   *       single</em> token. 0 when the bucket is already full (or the
+   *       limiter is disabled).</li>
+   * </ul>
+   */
+  public record RateLimitState(int limit, long remaining, long resetSeconds) {
+  }
+
+  /** Snapshot of {@code key}'s bucket without consuming a token. */
+  public RateLimitState snapshot(String key) {
+    if (!enabled) {
+      return new RateLimitState(capacity, capacity, 0);
+    }
+    long now = clock.millis();
+    Bucket bucket = buckets.computeIfAbsent(normalize(key), k -> new Bucket(now));
+    synchronized (bucket) {
+      bucket.refill(now);
+      long remaining = Math.max(0, (long) Math.floor(bucket.tokens));
+      long resetSeconds = 0;
+      if (bucket.tokens < capacity) {
+        double deficitMillis = (capacity - bucket.tokens) / refillTokensPerMillis;
+        long millis = (long) Math.ceil(deficitMillis - 1e-9);
+        resetSeconds = (millis + 999) / 1000;
+      }
+      return new RateLimitState(capacity, remaining, resetSeconds);
+    }
+  }
+
+  /**
    * Whole seconds until the next token becomes available for {@code key},
    * for the {@code Retry-After} header. Returns 0 when a token is available
    * right now (or the limiter is disabled).
