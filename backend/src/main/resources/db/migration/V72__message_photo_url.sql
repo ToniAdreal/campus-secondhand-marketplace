@@ -1,0 +1,13 @@
+-- V72: message photo attachment (backlog #245).
+-- Runs on both MySQL 8 (prod/CI) and H2 in MySQL-compatibility mode (local dev).
+--
+-- One optional photo per message: the row stores only the public path
+-- ("/uploads/<uuid>.<ext>") returned by ImageStorageService, exactly like
+-- item.photo_url (V6) and the gallery rows (V15) — the files themselves
+-- live on disk under app.uploads.dir and are served by the existing
+-- /uploads/** static mapping, never by the database. NULL means the
+-- message carries no photo (every pre-#245 row, and every JSON send).
+-- A soft-deleted message (backlog #206) has its photo_url cleared at
+-- delete time by Message.softDelete, so a retracted message's photo
+-- cannot keep rendering from the tombstone row.
+ALTER TABLE messages ADD COLUMN photo_url VARCHAR(255) NULL;

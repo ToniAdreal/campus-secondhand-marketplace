@@ -216,6 +216,18 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
   private static final String EMAIL_CHANGE_CONFIRM_PATH = "/api/auth/email-change/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
+  private static final String MESSAGE_PHOTO_PATH = "/api/messages/photo";
+
+  /**
+   * True for the message-send paths (backlog #245): the JSON send and
+   * its multipart photo twin share the #76 per-user message bucket, so
+   * a photo send can never bypass the throttle a text send hits. The
+   * single-message edit/delete paths ({@code /api/messages/{id}}) are
+   * matched separately by {@link #isMessageItemPath}.
+   */
+  private static boolean isMessageSendPath(String path) {
+    return MESSAGE_PATH.equals(path) || MESSAGE_PHOTO_PATH.equals(path);
+  }
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
@@ -314,7 +326,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
-    if (MESSAGE_PATH.equals(path)) {
+    if (isMessageSendPath(path)) {
       return !messageLimiter.isEnabled();
     }
     if (CSP_REPORT_PATH.equals(path)) {
@@ -398,7 +410,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
-    if (MESSAGE_PATH.equals(path) || isMessageItemPath(path)) {
+    if (isMessageSendPath(path) || isMessageItemPath(path)) {
       String key = messageKey(request);
       if (!messageLimiter.tryConsume(key)) {
         writeTooManyRequests(response, messageLimiter, key);

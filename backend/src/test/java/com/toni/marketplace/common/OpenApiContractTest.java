@@ -129,6 +129,7 @@ class OpenApiContractTest {
       "/api/items/{id}/report",
       "/api/items/{id}/status",
       "/api/messages",
+      "/api/messages/photo",
       "/api/messages/unread-count",
       "/api/messages/{id}",
       "/api/notifications",

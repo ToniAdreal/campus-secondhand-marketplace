@@ -37,6 +37,7 @@ function msg(id: number, body = `message ${id}`): Message {
     readAt: null,
     editedAt: null,
     deletedAt: null,
+    photoUrl: null,
   };
 }
 
@@ -181,6 +182,36 @@ describe('useSendMessage', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.thread(42) });
   });
 
+  it('posts FormData to /messages/photo when a photo is attached (backlog #245)', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const created = { ...msg(9, 'Scratch on the corner'), photoUrl: '/uploads/abc.png' };
+    postSpy.mockResolvedValueOnce(envelope(created));
+    const photo = new File(['fake-png'], 'condition.png', { type: 'image/png' });
+
+    const { result } = renderHook(() => useSendMessage(), { wrapper: wrapperFor(queryClient) });
+    const returned = await result.current.mutateAsync({
+      itemId: 42,
+      receiverId: 3,
+      body: 'Scratch on the corner',
+      photo,
+    });
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).toHaveBeenCalledWith('/messages/photo', expect.any(FormData));
+    const form = postSpy.mock.calls[0][1] as FormData;
+    expect(form.get('itemId')).toBe('42');
+    expect(form.get('receiverId')).toBe('3');
+    expect(form.get('body')).toBe('Scratch on the corner');
+    // FormData may wrap the file, so assert its identity by name/type, not reference.
+    const attached = form.get('file') as File;
+    expect(attached).toBeInstanceOf(File);
+    expect(attached.name).toBe('condition.png');
+    expect(attached.type).toBe('image/png');
+    expect(returned).toEqual(created);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageKeys.thread(42) });
+  });
+
   it('does not invalidate the thread when the send fails', async () => {
     const queryClient = makeClient();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -230,6 +261,7 @@ describe('useDeleteMessage (backlog #206)', () => {
     const tombstone = {
       ...msg(9, 'This message was deleted'),
       deletedAt: '2026-10-09T08:05:00Z',
+      photoUrl: null,
     };
     deleteSpy.mockResolvedValueOnce(envelope(tombstone));
 
@@ -352,6 +384,11 @@ describe('describeMessageError', () => {
       'non-sender edit/delete (backlog #206)',
       envelopeError(403, 'only the sender can edit this message'),
       'You can only edit or delete your own messages.',
+    ],
+    [
+      'photo attachment rejected (backlog #245)',
+      envelopeError(400, 'unsupported image type: text/plain'),
+      'That photo could not be attached — use a PNG, JPEG, WebP or GIF under 5 MB.',
     ],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],

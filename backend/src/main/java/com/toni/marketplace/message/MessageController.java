@@ -3,6 +3,7 @@ package com.toni.marketplace.message;
 import com.toni.marketplace.common.ApiResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(name = "messages", description = "Offline messages between listing participants")
@@ -39,6 +41,39 @@ public class MessageController {
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     return ApiResponse.ok(messageService.send(
         senderId, request.itemId(), request.receiverId(), request.body()));
+  }
+
+  /**
+   * Sends one message with one photo attachment (backlog #245): the
+   * multipart twin of {@link #send}. Same sender rule (JWT principal),
+   * same pairing/block guards, same per-user message rate-limit bucket
+   * — the file is validated by {@code ImageStorageService} (image
+   * type, 5 MB cap, magic-byte gate) and its public
+   * {@code /uploads/<uuid>.<ext>} path is what the row references, so
+   * the thread renders it through the #233 photo fallback. The JSON
+   * send is untouched: a photo-less message still posts JSON and its
+   * {@code photoUrl} stays {@code null}.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "blank/overlong body, or an invalid photo (type, size, content) (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not a participant in this conversation (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing or receiver (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "429",
+          description = "message rate limit (envelope)")})
+  @PostMapping(value = "/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ApiResponse<MessageDto> sendWithPhoto(@RequestParam Long itemId,
+                                               @RequestParam Long receiverId,
+                                               @RequestParam String body,
+                                               @RequestParam("file") MultipartFile photo) {
+    Long senderId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(messageService.sendWithPhoto(
+        senderId, itemId, receiverId, body, photo));
   }
 
   /**

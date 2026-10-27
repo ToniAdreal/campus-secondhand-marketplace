@@ -25,6 +25,7 @@ const msg1: Message = {
   readAt: null,
   editedAt: null,
   deletedAt: null,
+  photoUrl: null,
 };
 const msg2: Message = {
   id: 2,
@@ -36,6 +37,7 @@ const msg2: Message = {
   readAt: null,
   editedAt: null,
   deletedAt: null,
+  photoUrl: null,
 };
 
 function envelope(data: unknown) {
@@ -105,6 +107,7 @@ describe('MessageThread', () => {
       readAt: null,
       editedAt: null,
       deletedAt: null,
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2, msg3])); // refetch after send
@@ -136,6 +139,77 @@ describe('MessageThread', () => {
     ).toBe('');
   });
 
+  it('renders a photo attachment through the ListingPhoto fallback (backlog #245)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const withPhoto: Message = { ...msg2, photoUrl: '/uploads/condition.png' };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, withPhoto]));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy());
+    const img = screen.getByAltText('Photo attached to this message') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/uploads/condition.png');
+    expect(screen.queryByTestId('no-photo-placeholder')).toBeNull();
+  });
+
+  it('a broken attachment degrades to the No photo block, never a broken-image icon (backlog #245)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const withPhoto: Message = { ...msg2, photoUrl: '/uploads/gone.png' };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, withPhoto]));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Yes — pickup this weekend works.')).toBeTruthy());
+    const img = screen.getByAltText('Photo attached to this message');
+    fireEvent.error(img);
+
+    await waitFor(() => expect(screen.getByTestId('no-photo-placeholder')).toBeTruthy());
+    expect(screen.getByTestId('no-photo-placeholder').textContent).toBe('No photo');
+  });
+
+  it('sending with a photo posts FormData to /messages/photo (backlog #245)', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    const msg3: Message = {
+      id: 3,
+      itemId: 7,
+      senderId: 5,
+      receiverId: 3,
+      body: 'Scratch on the corner, see photo',
+      createdAt: '2026-10-07T03:00:00Z',
+      readAt: null,
+      editedAt: null,
+      deletedAt: null,
+      photoUrl: '/uploads/condition.png',
+    };
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2])); // initial thread load
+    getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2, msg3])); // refetch after send
+    postSpy.mockResolvedValueOnce(envelope(msg3));
+    renderThread();
+
+    await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/message the seller/i), {
+      target: { value: 'Scratch on the corner, see photo' },
+    });
+    const file = new File(['fake-png'], 'condition.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText(/photo \(optional\)/i), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/messages/photo', expect.any(FormData));
+    const form = postSpy.mock.calls[0][1] as FormData;
+    expect(form.get('itemId')).toBe('7');
+    expect(form.get('receiverId')).toBe('3');
+    expect(form.get('body')).toBe('Scratch on the corner, see photo');
+    // FormData may wrap the file, so assert its identity by name/type, not reference.
+    const attached = form.get('file') as File;
+    expect(attached).toBeInstanceOf(File);
+    expect(attached.name).toBe('condition.png');
+    expect(attached.type).toBe('image/png');
+
+    await waitFor(() => expect(screen.getByText('Scratch on the corner, see photo')).toBeTruthy());
+  });
+
   it('a 403 hides the thread behind a privacy note, never the raw message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockRejectedValueOnce(axiosFailure(403, 'not a participant in this conversation'));
@@ -162,6 +236,7 @@ describe('MessageThread', () => {
       readAt: null,
       editedAt: null,
       deletedAt: null,
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, reply])); // refetch after send
@@ -204,6 +279,7 @@ describe('MessageThread', () => {
       readAt: null,
       editedAt: null,
       deletedAt: null,
+      photoUrl: null,
     };
     const replyToNine: Message = {
       id: 5,
@@ -215,6 +291,7 @@ describe('MessageThread', () => {
       readAt: null,
       editedAt: null,
       deletedAt: null,
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg]));
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, otherBuyerMsg, replyToNine]));
@@ -305,6 +382,7 @@ describe('MessageThread', () => {
       readAt: null,
       editedAt: null,
       deletedAt: null,
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([msg2], 0, 2)); // initial newest page
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1], 1, 2)); // load earlier
@@ -385,6 +463,7 @@ describe('MessageThread', () => {
       ...fresh,
       body: 'This message was deleted',
       deletedAt: new Date().toISOString(),
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([fresh])); // initial thread load
     getSpy.mockResolvedValueOnce(pageEnvelope([tombstone])); // refetch after delete
@@ -408,6 +487,7 @@ describe('MessageThread', () => {
       ...msg1,
       body: 'This message was deleted',
       deletedAt: '2026-10-07T01:05:00Z',
+      photoUrl: null,
     };
     getSpy.mockResolvedValueOnce(pageEnvelope([tombstone, msg2]));
     renderThread();

@@ -11,6 +11,11 @@ import java.time.Instant;
  * {@code body} is always {@link Message#TOMBSTONE_BODY} — the DTO is
  * built from the stored row, whose body was replaced at delete time,
  * so no read path can leak the original wording.
+ * {@code photoUrl} (backlog #245, Flyway V72) is the public
+ * {@code /uploads/<uuid>.<ext>} path of the message's one optional
+ * photo attachment, or {@code null} when the message carries no photo
+ * — including a soft-deleted message, whose attachment is cleared at
+ * delete time together with its body.
  */
 public record MessageDto(
     Long id,
@@ -21,7 +26,8 @@ public record MessageDto(
     Instant createdAt,
     Instant readAt,
     Instant editedAt,
-    Instant deletedAt) {
+    Instant deletedAt,
+    String photoUrl) {
 
   public static MessageDto from(Message message) {
     return new MessageDto(
@@ -33,6 +39,7 @@ public record MessageDto(
         message.getCreatedAt(),
         message.getReadAt(),
         message.getEditedAt(),
-        message.getDeletedAt());
+        message.getDeletedAt(),
+        message.getPhotoUrl());
   }
 }

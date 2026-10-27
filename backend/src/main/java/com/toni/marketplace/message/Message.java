@@ -56,6 +56,17 @@ public class Message {
   @Column(name = "message_body", nullable = false, length = MAX_BODY_LENGTH)
   private String body;
 
+  /**
+   * Public path ("/uploads/&lt;uuid&gt;.&lt;ext&gt;") of the message's one
+   * optional photo attachment (Flyway V72, backlog #245); {@code null}
+   * while the message carries no photo. The file itself lives on disk
+   * under {@code app.uploads.dir} and is served by the existing
+   * {@code /uploads/**} mapping — the same storage shape as the listing
+   * photo columns — so this column is a reference, never the bytes.
+   */
+  @Column(name = "photo_url")
+  private String photoUrl;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -88,10 +99,15 @@ public class Message {
   protected Message() {}
 
   public Message(Long itemId, Long senderId, Long receiverId, String body) {
+    this(itemId, senderId, receiverId, body, null);
+  }
+
+  public Message(Long itemId, Long senderId, Long receiverId, String body, String photoUrl) {
     this.itemId = itemId;
     this.senderId = senderId;
     this.receiverId = receiverId;
     this.body = body;
+    this.photoUrl = photoUrl;
   }
 
   @PrePersist
@@ -104,6 +120,7 @@ public class Message {
   public Long getSenderId() { return senderId; }
   public Long getReceiverId() { return receiverId; }
   public String getBody() { return body; }
+  public String getPhotoUrl() { return photoUrl; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getReadAt() { return readAt; }
   public Instant getEditedAt() { return editedAt; }
@@ -137,12 +154,16 @@ public class Message {
    * Soft-deletes this message (backlog #206): stamps {@code deletedAt}
    * and replaces the stored body with {@link #TOMBSTONE_BODY}. A repeat
    * delete keeps the first stamp (idempotent, mirroring
-   * {@link #markRead}).
+   * {@link #markRead}). A photo attachment (backlog #245) is cleared
+   * with the body: a retracted message must not keep rendering its
+   * photo from the tombstone row — the file on disk becomes an orphan,
+   * like a deleted listing's photo file, rather than a leak.
    */
   public void softDelete(Instant when) {
     if (this.deletedAt == null) {
       this.deletedAt = when;
       this.body = TOMBSTONE_BODY;
+      this.photoUrl = null;
     }
   }
 }

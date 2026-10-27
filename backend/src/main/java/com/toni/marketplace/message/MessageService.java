@@ -2,6 +2,7 @@ package com.toni.marketplace.message;
 
 import com.toni.marketplace.auth.UserBlockRepository;
 import com.toni.marketplace.auth.UserRepository;
+import com.toni.marketplace.item.ImageStorageService;
 import com.toni.marketplace.item.ItemRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -16,6 +17,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -60,16 +62,19 @@ public class MessageService {
   private final UserBlockRepository blocks;
   private final MessageProperties messageProps;
   private final Clock clock;
+  private final ImageStorageService images;
 
   public MessageService(MessageRepository messages, ItemRepository items,
                         UserRepository users, UserBlockRepository blocks,
-                        MessageProperties messageProps, Clock clock) {
+                        MessageProperties messageProps, Clock clock,
+                        ImageStorageService images) {
     this.messages = messages;
     this.items = items;
     this.users = users;
     this.blocks = blocks;
     this.messageProps = messageProps;
     this.clock = clock;
+    this.images = images;
   }
 
   /** Clock with a system fallback, mirroring ItemService's pattern. */
@@ -85,6 +90,52 @@ public class MessageService {
 
   @Transactional
   public MessageDto send(Long senderId, Long itemId, Long receiverId, String body) {
+    checkSendGuards(senderId, itemId, receiverId);
+    Message saved = messages.save(new Message(itemId, senderId, receiverId, body));
+    return MessageDto.from(saved);
+  }
+
+  /**
+   * Sends a message with one optional photo attachment (backlog #245).
+   * The JSON send's guards run first and unchanged — a photo must never
+   * widen who may message whom — and only then is the file validated
+   * and stored through {@link ImageStorageService} (allowlisted image
+   * types, 5 MB cap, magic-byte gate, JPEG/PNG metadata stripping, the
+   * listing-photo rules exactly), so a rejected send leaves no file
+   * behind and a rejected file leaves no row behind. The stored public
+   * {@code /uploads/<uuid>.<ext>} path is what the row references; the
+   * thread renders it through the #233 photo fallback.
+   *
+   * <p>Multipart requests carry no Jakarta-validated DTO, so the body
+   * rules the JSON path gets from {@code MessageCreateRequest} are
+   * checked here instead: blank or over-2000-character bodies are 400.
+   * A missing {@code file} part is a 400 from Spring before this method
+   * is reached (the controller's {@code @RequestParam} is required).
+   */
+  @Transactional
+  public MessageDto sendWithPhoto(Long senderId, Long itemId, Long receiverId,
+                                  String body, MultipartFile photo) {
+    if (body == null || body.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "body must not be blank");
+    }
+    if (body.length() > Message.MAX_BODY_LENGTH) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "body is too long (max 2000 characters)");
+    }
+    checkSendGuards(senderId, itemId, receiverId);
+    String photoUrl = images.store(photo);
+    Message saved = messages.save(new Message(itemId, senderId, receiverId, body, photoUrl));
+    return MessageDto.from(saved);
+  }
+
+  /**
+   * The send guards shared by the JSON send and the photo send (backlog
+   * #245): existence, not-self, the #112 participant rule and the #187
+   * block rule, in that order. The answers are identical on both paths
+   * on purpose — the attachment variant must not leak a different
+   * oracle for a blocked or non-participant sender.
+   */
+  private void checkSendGuards(Long senderId, Long itemId, Long receiverId) {
     var item = items.findById(itemId).orElseThrow(() ->
         new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
     if (!users.existsById(receiverId)) {
@@ -117,8 +168,6 @@ public class MessageService {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "not a participant in this conversation");
     }
-    Message saved = messages.save(new Message(itemId, senderId, receiverId, body));
-    return MessageDto.from(saved);
   }
 
   /**

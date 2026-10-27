@@ -19,6 +19,13 @@ export interface Message {
    * original wording no longer exists on the server.
    */
   deletedAt: string | null;
+  /**
+   * Public path ("/uploads/<uuid>.<ext>") of the message's one optional
+   * photo attachment (backlog #245); null when the message carries no
+   * photo — including a soft-deleted message, whose attachment the
+   * backend clears at delete time together with its body.
+   */
+  photoUrl: string | null;
 }
 
 /** The backend edit window (app.messages.edit-window, #206): 15 minutes from send. */
@@ -104,21 +111,39 @@ export interface SendMessageInput {
   itemId: number;
   receiverId: number;
   body: string;
+  /** One optional photo attachment (backlog #245); without it the send stays JSON. */
+  photo?: File;
 }
 
 /**
- * POST /api/messages. The sender is the JWT principal, never a request
- * field. On success the thread query is invalidated and refetched — the
- * new message's server-assigned id and timestamp cannot be computed
+ * POST /api/messages, or POST /api/messages/photo (multipart) when a
+ * photo is attached (backlog #245). The sender is the JWT principal,
+ * never a request field. The photo branch builds FormData and lets
+ * Axios set the multipart Content-Type + boundary itself, like the
+ * listing-photo upload; the JSON branch is byte-identical to before,
+ * so a photo-less message posts exactly what it always posted. On
+ * success the thread query is invalidated and refetched — the new
+ * message's server-assigned id and timestamp cannot be computed
  * locally, so no cache hand-editing (same doctrine as #16).
  */
 export function useSendMessage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: SendMessageInput) =>
-      api
+    mutationFn: (input: SendMessageInput) => {
+      if (input.photo) {
+        const form = new FormData();
+        form.append('itemId', String(input.itemId));
+        form.append('receiverId', String(input.receiverId));
+        form.append('body', input.body);
+        form.append('file', input.photo, input.photo.name);
+        return api
+          .post<ApiResponse<Message>>('/messages/photo', form)
+          .then((res) => res.data.data);
+      }
+      return api
         .post<ApiResponse<Message>>('/messages', input)
-        .then((res) => res.data.data),
+        .then((res) => res.data.data);
+    },
     onSuccess: (_message, input) => {
       void queryClient.invalidateQueries({ queryKey: messageKeys.thread(input.itemId) });
       // A send can be the caller's first step into a thread whose
@@ -202,6 +227,17 @@ export function describeMessageError(error: unknown): string {
   }
   if (code === 422 || /yourself/i.test(message)) {
     return 'You cannot message yourself.';
+  }
+  // Photo-attachment failures (backlog #245): the backend's
+  // ImageStorageService wording (unsupported type, size cap, magic
+  // mismatch, malformed content) maps to one friendly line — the raw
+  // type string or byte detail never reaches the UI.
+  if (
+    /unsupported image|image too large|image content does not match|malformed image/i.test(
+      message,
+    )
+  ) {
+    return 'That photo could not be attached — use a PNG, JPEG, WebP or GIF under 5 MB.';
   }
   if (code === 400 || /blank|too long/i.test(message)) {
     return 'Your message is empty or too long (2000 characters max).';

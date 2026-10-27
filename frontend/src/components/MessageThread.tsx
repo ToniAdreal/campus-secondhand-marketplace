@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   describeMessageError,
   isMessageEditable,
@@ -9,6 +9,7 @@ import {
   useSendMessage,
   type Message,
 } from '../api/messages';
+import ListingPhoto from './ListingPhoto';
 import { useAuthStore } from '../store/useAuthStore';
 
 interface MessageThreadProps {
@@ -57,6 +58,12 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
   const deleteMessage = useDeleteMessage();
   const [draft, setDraft] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  // One optional photo attachment for the next send (backlog #245).
+  // The body stays required — the backend's photo endpoint rejects a
+  // blank body exactly like the JSON send — so the photo only ever
+  // rides along with text, never alone.
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [pickedBuyerId, setPickedBuyerId] = useState<number | null>(null);
   // Edit state for the one message currently being edited (backlog
   // #206): its id + the in-progress replacement text + any error.
@@ -133,9 +140,15 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
     if (body === '' || receiverId === null) return;
     setSendError(null);
     sendMessage.mutate(
-      { itemId, receiverId, body },
+      { itemId, receiverId, body, photo: photoFile ?? undefined },
       {
-        onSuccess: () => setDraft(''),
+        onSuccess: () => {
+          setDraft('');
+          setPhotoFile(null);
+          // File inputs are uncontrolled: clearing state alone leaves
+          // the picked file in the DOM input for the next send.
+          if (photoInputRef.current) photoInputRef.current.value = '';
+        },
         onError: (err) => setSendError(describeMessageError(err)),
       },
     );
@@ -252,6 +265,16 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
                           <span className="ml-1 text-xs opacity-75">(edited)</span>
                         )}
                       </p>
+                      {!deleted && m.photoUrl !== null && (
+                        <span className="mt-2 block">
+                          <ListingPhoto
+                            src={m.photoUrl}
+                            alt="Photo attached to this message"
+                            imgClassName="inline-block max-h-48 max-w-full rounded-lg object-cover"
+                            placeholderClassName="inline-block rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-500"
+                          />
+                        </span>
+                      )}
                       {mine && !deleted && (
                         <span className="mt-1 flex justify-end gap-2">
                           <button
@@ -298,6 +321,17 @@ export default function MessageThread({ itemId, sellerId }: MessageThreadProps) 
             rows={3}
             placeholder="Ask about pickup, condition, price…"
             className="w-full rounded border px-3 py-2 text-sm"
+          />
+          <label htmlFor="message-photo" className="mb-1 mt-2 block text-sm font-medium">
+            Photo (optional)
+          </label>
+          <input
+            id="message-photo"
+            ref={photoInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+            className="text-sm"
           />
           <button
             type="submit"
