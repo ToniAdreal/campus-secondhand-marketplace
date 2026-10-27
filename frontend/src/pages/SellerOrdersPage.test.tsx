@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, setAccessToken } from '../api/client';
@@ -86,11 +86,17 @@ describe('SellerOrdersPage', () => {
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
 
-    // both orders render with their status chips (the shared chip component)
+    // both orders render with their status chips (the shared chip component;
+    // scoped to the row link because the #237 filter select renders the
+    // same status strings as <option> text)
     expect(screen.getByText('Order #9')).toBeTruthy();
-    expect(screen.getByText('PENDING')).toBeTruthy();
+    expect(
+      within(screen.getByText('Order #9').closest('a') as HTMLElement).getByText('PENDING'),
+    ).toBeTruthy();
     expect(screen.getByText('Order #10')).toBeTruthy();
-    expect(screen.getByText('PAID')).toBeTruthy();
+    expect(
+      within(screen.getByText('Order #10').closest('a') as HTMLElement).getByText('PAID'),
+    ).toBeTruthy();
 
     // the seller view shows the buyer identity and the amount
     expect(screen.getByText('Buyer #5')).toBeTruthy();
@@ -467,12 +473,126 @@ describe('SellerOrdersPage', () => {
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
 
-    expect(screen.getByText('SHIPPED')).toBeTruthy();
+    // chip scoped to the row link: the #237 filter select also renders
+    // a SHIPPED <option> with identical text
+    expect(
+      within(screen.getByText('Order #10').closest('a') as HTMLElement).getByText('SHIPPED'),
+    ).toBeTruthy();
     expect(
       screen.getByText(
         'Shipped via SF Express — tracking SF123456789. The listing stays reserved until the buyer confirms receipt.',
       ),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Ship order' })).toBeNull();
+  });
+
+  it('selecting a status fires the request with ?status= (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'PAID' } });
+
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/seller/orders', {
+        params: { page: 0, size: 20, status: 'PAID' },
+      }),
+    );
+    expect(
+      (screen.getByLabelText('Filter by status') as HTMLSelectElement).value,
+    ).toBe('PAID');
+  });
+
+  it('a prefilled ?status=PAID requests with the param on first load (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+
+    renderAt('/seller/orders?status=PAID');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+
+    expect(
+      (screen.getByLabelText('Filter by status') as HTMLSelectElement).value,
+    ).toBe('PAID');
+    expect(getSpy).toHaveBeenCalledWith('/seller/orders', {
+      params: { page: 0, size: 20, status: 'PAID' },
+    });
+  });
+
+  it('clearing the filter removes ?status= from the request (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1, order2], 0, 1));
+
+    renderAt('/seller/orders?status=PAID');
+    await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: '' } });
+
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/seller/orders', {
+        params: { page: 0, size: 20 },
+      }),
+    );
+    expect(
+      (screen.getByLabelText('Filter by status') as HTMLSelectElement).value,
+    ).toBe('');
+  });
+
+  it('combined status + paging stitches pages that both carry the status (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockImplementation(((path: string, config?: { params?: { page?: number } }) => {
+      if (path === '/seller/orders') {
+        const page = config?.params?.page ?? 0;
+        return Promise.resolve(
+          page === 0 ? pageEnvelope([order1], 0, 2) : pageEnvelope([order2], 1, 2),
+        );
+      }
+      // the summary query gets a page-shaped payload -> header stays hidden
+      return Promise.resolve(pageEnvelope([], 0, 1));
+    }) as never);
+
+    renderAt('/seller/orders?status=PAID');
+    await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
+    expect(screen.queryByText('Order #10')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    expect(getSpy).toHaveBeenCalledWith('/seller/orders', {
+      params: { page: 0, size: 20, status: 'PAID' },
+    });
+    expect(getSpy).toHaveBeenCalledWith('/seller/orders', {
+      params: { page: 1, size: 20, status: 'PAID' },
+    });
+  });
+
+  it('an invalid ?status= falls back to All statuses and sends no param (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order1], 0, 1));
+
+    renderAt('/seller/orders?status=BOGUS');
+    await waitFor(() => expect(screen.getByText('Order #9')).toBeTruthy());
+
+    expect(
+      (screen.getByLabelText('Filter by status') as HTMLSelectElement).value,
+    ).toBe('');
+    const listCalls = getSpy.mock.calls.filter((call) => call[0] === '/seller/orders');
+    expect(listCalls.length).toBeGreaterThan(0);
+    for (const call of listCalls) {
+      expect((call[1] as { params?: Record<string, unknown> }).params).not.toHaveProperty(
+        'status',
+      );
+    }
+  });
+
+  it('a filtered empty ledger names the status in the empty state (backlog #237)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([], 0, 1));
+
+    renderAt('/seller/orders?status=PAID');
+    await waitFor(() =>
+      expect(screen.getByText('No PAID orders on your listings yet.')).toBeTruthy(),
+    );
   });
 });

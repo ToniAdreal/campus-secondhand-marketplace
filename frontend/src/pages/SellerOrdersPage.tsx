@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import axios from 'axios';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
+  ORDER_STATUSES,
   describeCompleteError,
   describeOrderError,
   describeRefundError,
@@ -62,19 +63,38 @@ import { useAuthStore } from '../store/useAuthStore';
  * per order, and the server rejects the other path's transition with
  * 422 afterwards. SHIPPED rows show the recorded carrier + tracking
  * number; the listing stays RESERVED until the buyer confirms receipt.
+ *
+ * Status filter (backlog #237): a dropdown above the list, URL-synced
+ * (?status=, like #84's category filter) and combinable with the
+ * infinite scroll — the backend already accepted ?status= (#123), but
+ * the page rendered no filter, so a seller with a long ledger could not
+ * narrow to PAID or SHIPPED without paging. "All statuses" clears it.
  */
 
 function isUnauthorized(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 401;
 }
 
+// A hand-typed ?status= that is not an OrderStatus value falls back to
+// "All statuses" instead of reaching the backend's enum-bound ?status=
+// (#123), which would 400 — the select only ever offers valid values.
+function allowlisted(raw: string | null): string {
+  return raw !== null && (ORDER_STATUSES as readonly string[]).includes(raw) ? raw : '';
+}
+
 export default function SellerOrdersPage() {
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
+  // Status filter (backlog #237): URL-synced like #84's category filter
+  // and the admin disputes filter — refresh-safe, shareable, and it
+  // composes with the infinite scroll (the status rides the query key,
+  // so a new filter restarts at page 0). "All statuses" deletes ?status=.
+  const status = allowlisted(searchParams.get('status'));
   // Anonymous visitors never fire the list request — they bounce to /login
   // on the next render; the mid-session 401 path still handles the
   // credential-died-after-login case.
-  const orders = useSellerOrdersInfinite(20, user !== null);
+  const orders = useSellerOrdersInfinite(20, user !== null, status);
   // Sales summary header (backlog #108): one summary query, independent
   // of the list — a summary failure hides the header instead of blocking
   // the orders below, which stay the authoritative view.
@@ -114,6 +134,21 @@ export default function SellerOrdersPage() {
   }
 
   const stitched = orders.data?.pages.flatMap((page) => page.content) ?? [];
+
+  const setStatusParam = (value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value === '') {
+          next.delete('status');
+        } else {
+          next.set('status', value);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   const handleComplete = (orderId: number) => {
     setActionError(null);
@@ -190,6 +225,25 @@ export default function SellerOrdersPage() {
   return (
     <div>
       <h1 className="mb-4 text-2xl font-bold">Orders on my listings</h1>
+      <div className="mb-4">
+        <label htmlFor="seller-order-status" className="sr-only">
+          Filter by status
+        </label>
+        <select
+          id="seller-order-status"
+          aria-label="Filter by status"
+          value={status}
+          onChange={(e) => setStatusParam(e.target.value)}
+          className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm focus:border-sky-500 focus:outline-none sm:w-64"
+        >
+          <option value="">All statuses</option>
+          {ORDER_STATUSES.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+      </div>
       {showSummary && (
         <section aria-label="Sales summary" className="mb-4 rounded-lg bg-white p-4 shadow-sm">
           <p className="font-semibold">
@@ -216,7 +270,11 @@ export default function SellerOrdersPage() {
       )}
       {orders.isSuccess && stitched.length === 0 && (
         <div className="rounded-lg bg-white p-6 text-center shadow-sm">
-          <p className="text-neutral-600">No orders on your listings yet.</p>
+          <p className="text-neutral-600">
+            {status !== ''
+              ? `No ${status} orders on your listings yet.`
+              : 'No orders on your listings yet.'}
+          </p>
           <Link to="/items/new" className="mt-2 inline-block text-sm text-blue-600 hover:underline">
             Sell an item
           </Link>

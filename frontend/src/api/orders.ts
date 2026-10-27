@@ -58,7 +58,7 @@ export const orderKeys = {
   list: () => [...orderKeys.all, 'list'] as const,
   detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
   /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
-  sellerList: () => [...orderKeys.all, 'seller', 'list'] as const,
+  sellerList: (status = '') => [...orderKeys.all, 'seller', 'list', status] as const,
   sellerSummary: () => [...orderKeys.all, 'seller', 'summary'] as const,
   receipt: (id: number) => [...orderKeys.all, 'receipt', id] as const,
 };
@@ -208,12 +208,32 @@ export function useSellerSalesSummary(enabled = true) {
   });
 }
 
-export function useSellerOrdersInfinite(size = 20, enabled = true) {
+/**
+ * Every OrderStatus value, in lifecycle order — the seller-orders status
+ * filter (backlog #237) renders exactly these, so the select can never
+ * offer a value the backend's enum-bound ?status= (#123) would 400 on.
+ */
+export const ORDER_STATUSES: Order['status'][] = [
+  'PENDING',
+  'PAID',
+  'SHIPPED',
+  'COMPLETED',
+  'CANCELLED',
+  'REFUNDED',
+  'DISPUTED',
+];
+
+export function useSellerOrdersInfinite(size = 20, enabled = true, status = '') {
   return useInfiniteQuery({
-    queryKey: orderKeys.sellerList(),
+    // The status rides the query key, so switching the filter drops the
+    // previous filter's stitched pages instead of showing them under the
+    // new filter while the refetch is in flight.
+    queryKey: orderKeys.sellerList(status),
     queryFn: ({ pageParam = 0 }) =>
       api
-        .get<ApiResponse<Page<Order>>>('/seller/orders', { params: { page: pageParam, size } })
+        .get<ApiResponse<Page<Order>>>('/seller/orders', {
+          params: { page: pageParam, size, ...(status ? { status } : {}) },
+        })
         .then((res) => res.data.data),
     getNextPageParam: (lastPage) =>
       lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
