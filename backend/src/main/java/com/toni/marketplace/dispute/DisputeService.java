@@ -62,6 +62,12 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>Resolution (ADMIN only, on the controllers):
  * <ul>
+ *   <li>Both resolutions require a resolution note (backlog #240,
+ *       validated at the request boundary: blank/absent/over-1000
+ *       chars → 400), stored on the dispute row and shown to both
+ *       parties. The first resolution's note stands — an idempotent
+ *       re-resolve never rewrites it, and a 422 opposite resolution
+ *       throws before any write.</li>
  *   <li>{@link #resolveRefund}: runs the existing mock refund seam
  *       exactly once — the order's stored refund idempotency key
  *       (generated here if the seller never refunded, the #65 pattern),
@@ -257,9 +263,12 @@ public class DisputeService {
    * Resolves a dispute by refunding the order through the mock PSP
    * seam (see the class javadoc). ADMIN authorization lives on the
    * controller; {@code adminId} is the audit actor.
+   * {@code resolutionNote} is the ADMIN's reason for the verdict
+   * (backlog #240, validated at the request boundary) and is stored
+   * on the dispute row alongside the verdict.
    */
   @Transactional
-  public DisputeDto resolveRefund(Long adminId, Long disputeId) {
+  public DisputeDto resolveRefund(Long adminId, Long disputeId, String resolutionNote) {
     OrderDispute dispute = requireDispute(disputeId);
     if (dispute.getStatus() == DisputeStatus.RESOLVED_REFUND) {
       return DisputeDto.from(dispute);
@@ -313,6 +322,7 @@ public class DisputeService {
       }
       dispute.setStatus(DisputeStatus.RESOLVED_REFUND);
       dispute.setListingRestored(restored);
+      dispute.setResolutionNote(resolutionNote);
       dispute.setResolvedAt(clock().instant());
       DisputeDto dto = DisputeDto.from(disputes.save(dispute));
       disputes.flush();
@@ -333,9 +343,12 @@ public class DisputeService {
    * Resolves a dispute by releasing the order back to its recorded
    * pre-dispute status (see the class javadoc). ADMIN authorization
    * lives on the controller; {@code adminId} is the audit actor.
+   * {@code resolutionNote} is the ADMIN's reason for the verdict
+   * (backlog #240, validated at the request boundary) and is stored
+   * on the dispute row alongside the verdict.
    */
   @Transactional
-  public DisputeDto resolveRelease(Long adminId, Long disputeId) {
+  public DisputeDto resolveRelease(Long adminId, Long disputeId, String resolutionNote) {
     OrderDispute dispute = requireDispute(disputeId);
     if (dispute.getStatus() == DisputeStatus.RESOLVED_RELEASE) {
       return DisputeDto.from(dispute);
@@ -352,6 +365,7 @@ public class DisputeService {
       orders.save(order);
       orders.flush();
       dispute.setStatus(DisputeStatus.RESOLVED_RELEASE);
+      dispute.setResolutionNote(resolutionNote);
       dispute.setResolvedAt(clock().instant());
       DisputeDto dto = DisputeDto.from(disputes.save(dispute));
       disputes.flush();

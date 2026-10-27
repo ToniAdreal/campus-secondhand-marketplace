@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import DisputeEvidencePanel from './DisputeEvidencePanel';
+import DisputeEvidencePanel, { OrderDisputeEvidence } from './DisputeEvidencePanel';
 import { useAuthStore } from '../store/useAuthStore';
 import type { AuthUser } from '../api/auth';
-import type { DisputeEvidence } from '../api/disputes';
+import type { DisputeEvidence, OrderDispute } from '../api/disputes';
 
 // Controllable evidence list + mutation spies, in the mocking style of
 // FavoriteButton.test: the panel derives everything from the hooks.
 let mockEvidence: DisputeEvidence[] = [];
+let mockDispute: OrderDispute | undefined;
 const addMutate = vi.fn((_input: unknown, opts?: { onError?: (e: unknown) => void }) => {
   void opts;
 });
@@ -15,7 +16,7 @@ const removeMutate = vi.fn();
 
 vi.mock('../api/disputes', () => ({
   useDisputeEvidence: () => ({ data: mockEvidence, isError: false, error: null }),
-  useOrderDispute: () => ({ data: undefined }),
+  useOrderDispute: () => ({ data: mockDispute }),
   useAddDisputeEvidence: () => ({ mutate: addMutate, isLoading: false }),
   useRemoveDisputeEvidence: () => ({ mutate: removeMutate, isLoading: false }),
   describeDisputeEvidenceError: () => 'Something went wrong. Please try again.',
@@ -40,6 +41,7 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: buyer });
     mockEvidence = [];
+    mockDispute = undefined;
   });
 
   afterEach(() => {
@@ -84,5 +86,28 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
 
     expect(screen.queryByLabelText('Attach evidence photo')).toBeNull();
     expect(screen.getAllByRole('img')).toHaveLength(1);
+  });
+
+  it('the order wrapper shows the resolution note on a resolved dispute, never on an open one', () => {
+    mockDispute = {
+      id: 3,
+      orderId: 9,
+      buyerId: 5,
+      sellerId: 3,
+      reason: 'the parcel never arrived',
+      status: 'RESOLVED_REFUND',
+      previousStatus: 'PAID',
+      listingRestored: true,
+      createdAt: '2026-10-14T08:00:00Z',
+      resolvedAt: '2026-10-15T08:00:00Z',
+      resolutionNote: 'Carrier confirms non-delivery.',
+    };
+    render(<OrderDisputeEvidence orderId={9} />);
+    expect(screen.getByText('Carrier confirms non-delivery.')).toBeTruthy();
+
+    cleanup();
+    mockDispute = { ...mockDispute, status: 'OPEN', resolvedAt: null, resolutionNote: null };
+    render(<OrderDisputeEvidence orderId={9} />);
+    expect(screen.queryByText(/resolution note/i)).toBeNull();
   });
 });

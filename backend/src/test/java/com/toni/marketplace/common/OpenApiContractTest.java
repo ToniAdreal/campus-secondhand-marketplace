@@ -431,9 +431,9 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/admin/disputes", "get"))
         .contains("401", "403");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-refund", "post"))
-        .contains("401", "403", "404", "409", "422");
+        .contains("400", "401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-release", "post"))
-        .contains("401", "403", "404", "409", "422");
+        .contains("400", "401", "403", "404", "409", "422");
     // Dispute evidence (#200): the by-order read pins its
     // no-existence-leak 404; the evidence endpoints pin the bad-file
     // 400 and resolved-dispute 422 on upload, the not-uploader 403 on

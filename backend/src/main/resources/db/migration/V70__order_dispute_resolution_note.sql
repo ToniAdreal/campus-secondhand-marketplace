@@ -1,0 +1,14 @@
+-- V70: ADMIN resolution note on the dispute row (backlog #240).
+--
+-- Before #240 a dispute resolution recorded only the verdict
+-- (RESOLVED_REFUND / RESOLVED_RELEASE): the buyer and seller saw
+-- what the ADMIN decided but never why. Both resolve endpoints now
+-- require a resolution note (max 1000 chars, blank or absent -> 400
+-- at the request boundary), stored here and surfaced on the dispute
+-- detail view for both parties and on the ADMIN disputes page. The
+-- column stays NULL on OPEN rows and on disputes resolved before
+-- this migration — no backfill is invented for verdicts whose
+-- reasoning was never recorded. Direct refunds keep their own
+-- reason on the payment-attempt row (#239); this column is the
+-- dispute-resolution note only, never the two confused.
+ALTER TABLE order_dispute ADD COLUMN resolution_note VARCHAR(1000);

@@ -461,6 +461,9 @@ test('buyer disputes a paid order, admin resolves with a refund, and the buyer s
   await expect(page.getByRole('heading', { name: 'Admin disputes' })).toBeVisible();
   const disputeRow = page.locator('tr', { hasText: `Order #${orderId}` });
   await expect(disputeRow).toContainText('OPEN');
+  // Backlog #240: every resolution requires a note — the buttons stay
+  // disabled until one is typed.
+  await disputeRow.getByLabel('Resolution note').fill('Carrier confirms non-delivery.');
   await disputeRow.getByRole('button', { name: 'Resolve with refund' }).click();
   await expect(disputeRow).toContainText('RESOLVED_REFUND');
 

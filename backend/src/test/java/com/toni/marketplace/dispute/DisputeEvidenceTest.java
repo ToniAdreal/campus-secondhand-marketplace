@@ -285,7 +285,9 @@ class DisputeEvidenceTest {
     User admin = newAdmin();
     long disputeId = openDispute(buyer, seller);
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Evidence test release.\"}"))
         .andExpect(status().isOk());
 
     mockMvc.perform(upload(disputeId, buyer))

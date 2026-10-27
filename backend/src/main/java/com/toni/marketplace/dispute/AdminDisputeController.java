@@ -1,6 +1,7 @@
 package com.toni.marketplace.dispute;
 
 import com.toni.marketplace.common.ApiResponse;
+import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -10,6 +11,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -57,12 +59,17 @@ class AdminDisputeController {
   /**
    * Resolves a dispute by refunding the order through the mock PSP
    * seam (exactly once) and returning the listing to AVAILABLE unless
-   * it was already SOLD. Idempotent on an already-refunded dispute;
-   * 422 on a released one; 404 on an unknown id.
+   * it was already SOLD. Requires a resolution note (backlog #240:
+   * blank/absent/over-1000 chars → 400); the note is stored on the
+   * dispute row and shown to both parties. Idempotent on an
+   * already-refunded dispute (the first note stands); 422 on a
+   * released one; 404 on an unknown id.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
           description = "dispute resolved by refund — or already resolved that way (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "resolution note missing/blank or over 1000 characters (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
@@ -74,18 +81,25 @@ class AdminDisputeController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
           description = "dispute already resolved by release (envelope)")})
   @PostMapping("/{id}/resolve-refund")
-  public ApiResponse<DisputeDto> resolveRefund(@PathVariable Long id) {
-    return ApiResponse.ok(disputeService.resolveRefund(currentUserId(), id));
+  public ApiResponse<DisputeDto> resolveRefund(@PathVariable Long id,
+                                               @Valid @RequestBody DisputeResolveRequest request) {
+    return ApiResponse.ok(
+        disputeService.resolveRefund(currentUserId(), id, request.resolutionNote()));
   }
 
   /**
    * Resolves a dispute by releasing the order back to its recorded
-   * pre-dispute status. Idempotent on an already-released dispute; 422
-   * on a refunded one; 404 on an unknown id.
+   * pre-dispute status. Requires a resolution note (backlog #240:
+   * blank/absent/over-1000 chars → 400); the note is stored on the
+   * dispute row and shown to both parties. Idempotent on an
+   * already-released dispute (the first note stands); 422 on a
+   * refunded one; 404 on an unknown id.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
           description = "dispute resolved by release — or already resolved that way (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "resolution note missing/blank or over 1000 characters (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
@@ -97,8 +111,10 @@ class AdminDisputeController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
           description = "dispute already resolved by refund (envelope)")})
   @PostMapping("/{id}/resolve-release")
-  public ApiResponse<DisputeDto> resolveRelease(@PathVariable Long id) {
-    return ApiResponse.ok(disputeService.resolveRelease(currentUserId(), id));
+  public ApiResponse<DisputeDto> resolveRelease(@PathVariable Long id,
+                                                @Valid @RequestBody DisputeResolveRequest request) {
+    return ApiResponse.ok(
+        disputeService.resolveRelease(currentUserId(), id, request.resolutionNote()));
   }
 
   private static Long currentUserId() {

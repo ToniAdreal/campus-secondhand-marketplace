@@ -8,7 +8,9 @@ import { orderKeys } from './orders';
  * `previousStatus` is the order status the dispute froze (PAID or
  * COMPLETED); `listingRestored` is null until a refund resolution
  * writes it — true when the listing went back to AVAILABLE, false when
- * it was already SOLD and stayed SOLD.
+ * it was already SOLD and stayed SOLD. `resolutionNote` is the ADMIN's
+ * reason for the verdict (backlog #240) — null while OPEN and on
+ * pre-#240 resolutions, never blank once written.
  */
 export interface OrderDispute {
   id: number;
@@ -21,6 +23,7 @@ export interface OrderDispute {
   listingRestored: boolean | null;
   createdAt: string;
   resolvedAt: string | null;
+  resolutionNote: string | null;
 }
 
 /** Allowlisted dispute statuses (backend DisputeStatus enum, source of truth). */
@@ -241,17 +244,22 @@ export function useAdminDisputes(page = 0, status = '', enabled = true, size = 2
 /**
  * POST /api/admin/disputes/{id}/resolve-refund — resolves a dispute by
  * refunding the order through the mock PSP (exactly once server-side;
- * repeating the same resolution is idempotent). On success the
- * disputes, orders and items subtrees are invalidated: the queue row,
- * the order's REFUNDED chip and the listing's restored AVAILABLE badge
- * all refetch.
+ * repeating the same resolution is idempotent, and the first
+ * resolution's note stands). The ADMIN's resolution note is required
+ * (backlog #240: blank/absent/over-1000 chars → 400) and travels in
+ * the body, never as a query param. On success the disputes, orders
+ * and items subtrees are invalidated: the queue row, the order's
+ * REFUNDED chip and the listing's restored AVAILABLE badge all
+ * refetch.
  */
 export function useResolveDisputeRefund() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (input: { id: number; resolutionNote: string }) =>
       api
-        .post<ApiResponse<OrderDispute>>(`/admin/disputes/${id}/resolve-refund`, {})
+        .post<ApiResponse<OrderDispute>>(`/admin/disputes/${input.id}/resolve-refund`, {
+          resolutionNote: input.resolutionNote,
+        })
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminDisputeKeys.all });
@@ -264,15 +272,18 @@ export function useResolveDisputeRefund() {
 /**
  * POST /api/admin/disputes/{id}/resolve-release — resolves a dispute by
  * releasing the order back to its pre-dispute status. Idempotent
- * server-side on an already-released dispute; a refunded one answers
- * 422. Invalidations mirror the refund mutation.
+ * server-side on an already-released dispute (the first note stands);
+ * a refunded one answers 422. The resolution note is required, as for
+ * the refund mutation. Invalidations mirror the refund mutation.
  */
 export function useResolveDisputeRelease() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (input: { id: number; resolutionNote: string }) =>
       api
-        .post<ApiResponse<OrderDispute>>(`/admin/disputes/${id}/resolve-release`, {})
+        .post<ApiResponse<OrderDispute>>(`/admin/disputes/${input.id}/resolve-release`, {
+          resolutionNote: input.resolutionNote,
+        })
         .then((res) => res.data.data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminDisputeKeys.all });

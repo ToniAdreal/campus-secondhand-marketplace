@@ -391,10 +391,14 @@ class OrderDisputeTest {
     long refundsBefore = payments.refundsIssued();
 
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Parcel never arrived; refunding the buyer.\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("RESOLVED_REFUND"))
         .andExpect(jsonPath("$.data.listingRestored").value(true))
+        .andExpect(jsonPath("$.data.resolutionNote")
+            .value("Parcel never arrived; refunding the buyer."))
         .andExpect(jsonPath("$.data.resolvedAt").exists());
 
     assertThat(orders.findById(orderId).orElseThrow().getStatus())
@@ -412,18 +416,27 @@ class OrderDisputeTest {
     assertThat(auditActionsFor(orderId))
         .contains(AuditAction.ORDER_DISPUTE_RESOLVED_REFUND);
 
-    // Idempotent re-resolve: no second PSP refund, no second audit row.
+    // Idempotent re-resolve: no second PSP refund, no second audit row —
+    // and the first resolution's note stands even when the repeat
+    // carries a different note (backlog #240: a re-resolve never
+    // rewrites history).
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"A different note on the repeat.\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.status").value("RESOLVED_REFUND"));
+        .andExpect(jsonPath("$.data.status").value("RESOLVED_REFUND"))
+        .andExpect(jsonPath("$.data.resolutionNote")
+            .value("Parcel never arrived; refunding the buyer."));
     assertThat(payments.refundsIssued() - refundsBefore).isEqualTo(1);
     assertThat(auditActionsFor(orderId))
         .filteredOn(a -> a == AuditAction.ORDER_DISPUTE_RESOLVED_REFUND).hasSize(1);
 
     // The opposite resolution on a resolved dispute is 422.
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Releasing instead.\"}"))
         .andExpect(status().isUnprocessableEntity());
   }
 
@@ -439,9 +452,12 @@ class OrderDisputeTest {
     long refundsBefore = payments.refundsIssued();
 
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Item arrived damaged; refunding.\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.listingRestored").value(false));
+        .andExpect(jsonPath("$.data.listingRestored").value(false))
+        .andExpect(jsonPath("$.data.resolutionNote").value("Item arrived damaged; refunding."));
 
     assertThat(orders.findById(orderId).orElseThrow().getStatus())
         .isEqualTo(OrderStatus.REFUNDED);
@@ -460,9 +476,13 @@ class OrderDisputeTest {
     long disputeId = openDispute(buyer, orderId, "slow post, actually fine");
 
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Tracking shows delivery; releasing the order.\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("RESOLVED_RELEASE"))
+        .andExpect(jsonPath("$.data.resolutionNote")
+            .value("Tracking shows delivery; releasing the order."))
         .andExpect(jsonPath("$.data.listingRestored").value(org.hamcrest.Matchers.nullValue()));
 
     assertThat(orders.findById(orderId).orElseThrow().getStatus())
@@ -509,10 +529,94 @@ class OrderDisputeTest {
     mockMvc.perform(get("/api/admin/disputes"))
         .andExpect(status().isUnauthorized());
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", 999_999L)
-            .header("Authorization", "Bearer " + token(buyer)))
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Not my call to make.\"}"))
         .andExpect(status().isForbidden());
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", 999_999L)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"No such dispute.\"}"))
         .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void resolutionNote_required_persistsBothPaths_reresolve422KeepsOriginal_anonymous401()
+      throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    long disputeId = openDispute(buyer, orderId, "never arrived");
+
+    // Anonymous callers get the 401 envelope before any validation.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"No session.\"}"))
+        .andExpect(status().isUnauthorized());
+
+    // Without a note — absent field, blank string, or over 1000 chars — both
+    // resolutions answer 400, and the dispute stays OPEN with no note.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+        .andExpect(status().isBadRequest());
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"   \"}"))
+        .andExpect(status().isBadRequest());
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"" + "x".repeat(1001) + "\"}"))
+        .andExpect(status().isBadRequest());
+    assertThat(disputes.findById(disputeId).orElseThrow().getStatus())
+        .isEqualTo(DisputeStatus.OPEN);
+    assertThat(disputes.findById(disputeId).orElseThrow().getResolutionNote()).isNull();
+
+    // The refund path persists the note, and both parties can read it
+    // through the by-order dispute read.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Carrier confirms non-delivery.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote").value("Carrier confirms non-delivery."));
+    mockMvc.perform(get("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote").value("Carrier confirms non-delivery."));
+    mockMvc.perform(get("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote").value("Carrier confirms non-delivery."));
+
+    // The opposite resolution is 422 and leaves the original note untouched.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Changed my mind.\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findById(disputeId).orElseThrow().getResolutionNote())
+        .isEqualTo("Carrier confirms non-delivery.");
+
+    // The release path persists its note on a second, fresh dispute.
+    Item item2 = newItem(seller, 12_000L);
+    long orderId2 = paidOrder(buyer, seller, item2);
+    long disputeId2 = openDispute(buyer, orderId2, "slow post, actually fine");
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId2)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Delivered late but intact.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote").value("Delivered late but intact."));
+    mockMvc.perform(get("/api/admin/disputes")
+            .header("Authorization", "Bearer " + token(admin)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.content[?(@.id == " + disputeId2 + ")].resolutionNote")
+            .value(org.hamcrest.Matchers.hasItem("Delivered late but intact.")));
   }
 }

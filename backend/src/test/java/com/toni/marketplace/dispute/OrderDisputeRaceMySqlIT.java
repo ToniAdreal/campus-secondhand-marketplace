@@ -154,7 +154,7 @@ class OrderDisputeRaceMySqlIT {
         Future<Object> refund = pool.submit(() -> {
           start.await();
           try {
-            return disputeService.resolveRefund(admin.getId(), dispute.id());
+            return disputeService.resolveRefund(admin.getId(), dispute.id(), "Race test refund.");
           } catch (ResponseStatusException e) {
             return e;
           }
@@ -162,7 +162,7 @@ class OrderDisputeRaceMySqlIT {
         Future<Object> release = pool.submit(() -> {
           start.await();
           try {
-            return disputeService.resolveRelease(admin.getId(), dispute.id());
+            return disputeService.resolveRelease(admin.getId(), dispute.id(), "Race test release.");
           } catch (ResponseStatusException e) {
             return e;
           }
@@ -213,7 +213,7 @@ class OrderDisputeRaceMySqlIT {
     orderService.complete(seller.getId(), false, orderId, regenerated.handoverCode());
     DisputeDto dispute = disputeService.openDispute(buyer.getId(), orderId, "broken");
 
-    DisputeDto resolved = disputeService.resolveRefund(admin.getId(), dispute.id());
+    DisputeDto resolved = disputeService.resolveRefund(admin.getId(), dispute.id(), "Race test refund.");
 
     assertThat(resolved.status()).isEqualTo(DisputeStatus.RESOLVED_REFUND);
     assertThat(resolved.listingRestored()).isFalse();

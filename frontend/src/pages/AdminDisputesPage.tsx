@@ -36,6 +36,14 @@ function allowlisted(raw: string | null, values: readonly string[]): string {
  * "Resolve with refund" runs the mock PSP refund (no real money moves)
  * and restores the listing to AVAILABLE unless it was already SOLD —
  * each row shows which case applied once resolved.
+ *
+ * Every resolution requires a resolution note (backlog #240): the
+ * ADMIN writes why this verdict before either button enables, the note
+ * travels in the resolve body, and resolved rows render it in the
+ * Resolution column — the buyer and seller read the same note on
+ * their order rows. A repeat of the same resolution never rewrites
+ * the first note server-side, so the column is the verdict's history,
+ * not its latest draft.
  */
 export default function AdminDisputesPage() {
   const user = useAuthStore((s) => s.user);
@@ -43,6 +51,9 @@ export default function AdminDisputesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The per-row resolution note draft (backlog #240); a row's resolve
+  // buttons stay disabled until its note has non-blank text.
+  const [notes, setNotes] = useState<Record<number, string>>({});
 
   const status = allowlisted(searchParams.get('status'), DISPUTE_STATUSES);
 
@@ -88,16 +99,22 @@ export default function AdminDisputesPage() {
 
   const handleRefund = (id: number) => {
     setActionError(null);
-    resolveRefund.mutate(id, {
-      onError: (error) => setActionError(describeAdminDisputesError(error)),
-    });
+    resolveRefund.mutate(
+      { id, resolutionNote: notes[id] ?? '' },
+      {
+        onError: (error) => setActionError(describeAdminDisputesError(error)),
+      },
+    );
   };
 
   const handleRelease = (id: number) => {
     setActionError(null);
-    resolveRelease.mutate(id, {
-      onError: (error) => setActionError(describeAdminDisputesError(error)),
-    });
+    resolveRelease.mutate(
+      { id, resolutionNote: notes[id] ?? '' },
+      {
+        onError: (error) => setActionError(describeAdminDisputesError(error)),
+      },
+    );
   };
 
   const rows: OrderDispute[] = disputes.data?.content ?? [];
@@ -162,6 +179,7 @@ export default function AdminDisputesPage() {
                   <th scope="col" className="px-4 py-3 font-medium">Status</th>
                   <th scope="col" className="px-4 py-3 font-medium">Listing</th>
                   <th scope="col" className="px-4 py-3 font-medium">Time</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Resolution</th>
                   <th scope="col" className="px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
@@ -187,12 +205,33 @@ export default function AdminDisputesPage() {
                     </td>
                     <td className="px-4 py-3">{new Date(row.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-3">
+                      {row.status === 'OPEN' ? (
+                        <input
+                          type="text"
+                          aria-label="Resolution note"
+                          placeholder="Why this verdict?"
+                          maxLength={1000}
+                          value={notes[row.id] ?? ''}
+                          onChange={(e) =>
+                            setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))
+                          }
+                          className="w-full min-w-48 rounded border border-neutral-300 px-2 py-1 text-sm focus:border-sky-500 focus:outline-none"
+                        />
+                      ) : (
+                        (row.resolutionNote ?? '—')
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       {row.status === 'OPEN' && (
                         <span className="flex gap-2">
                           <button
                             type="button"
                             onClick={() => handleRelease(row.id)}
-                            disabled={resolveRefund.isLoading || resolveRelease.isLoading}
+                            disabled={
+                              (notes[row.id] ?? '').trim() === '' ||
+                              resolveRefund.isLoading ||
+                              resolveRelease.isLoading
+                            }
                             className="rounded bg-neutral-200 px-3 py-1 text-xs font-medium text-neutral-800 hover:bg-neutral-300 disabled:opacity-50"
                           >
                             Release order
@@ -200,7 +239,11 @@ export default function AdminDisputesPage() {
                           <button
                             type="button"
                             onClick={() => handleRefund(row.id)}
-                            disabled={resolveRefund.isLoading || resolveRelease.isLoading}
+                            disabled={
+                              (notes[row.id] ?? '').trim() === '' ||
+                              resolveRefund.isLoading ||
+                              resolveRelease.isLoading
+                            }
                             className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
                           >
                             Resolve with refund

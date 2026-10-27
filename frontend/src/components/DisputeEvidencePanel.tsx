@@ -22,7 +22,15 @@ export function OrderDisputeEvidence({ orderId }: { orderId: number }) {
     return null;
   }
   return (
-    <DisputeEvidencePanel disputeId={dispute.data.id} disputeStatus={dispute.data.status} />
+    <div>
+      {dispute.data.status !== 'OPEN' && dispute.data.resolutionNote && (
+        <p className="mt-2 text-sm text-neutral-600">
+          <span className="font-medium text-neutral-800">Admin&apos;s resolution note: </span>
+          {dispute.data.resolutionNote}
+        </p>
+      )}
+      <DisputeEvidencePanel disputeId={dispute.data.id} disputeStatus={dispute.data.status} />
+    </div>
   );
 }
 

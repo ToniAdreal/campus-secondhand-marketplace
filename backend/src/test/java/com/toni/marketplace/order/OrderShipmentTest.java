@@ -379,7 +379,9 @@ class OrderShipmentTest {
         .andExpect(jsonPath("$.data.status").value("DISPUTED"));
 
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
-            .header("Authorization", "Bearer " + token(admin)))
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Shipment test release.\"}"))
         .andExpect(status().isOk());
     mockMvc.perform(get("/api/orders/{id}", orderId)
             .header("Authorization", "Bearer " + token(buyer)))

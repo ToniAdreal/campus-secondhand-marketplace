@@ -29,6 +29,7 @@ const openDispute: OrderDispute = {
   listingRestored: null,
   createdAt: '2026-10-14T10:00:00Z',
   resolvedAt: null,
+  resolutionNote: null,
 };
 const refundedDispute: OrderDispute = {
   id: 8,
@@ -41,6 +42,7 @@ const refundedDispute: OrderDispute = {
   listingRestored: false,
   createdAt: '2026-10-12T10:00:00Z',
   resolvedAt: '2026-10-13T10:00:00Z',
+  resolutionNote: 'Item arrived damaged; refunding.',
 };
 
 function pageEnvelope(content: OrderDispute[], number: number, totalPages: number) {
@@ -108,6 +110,10 @@ describe('AdminDisputesPage', () => {
     expect(screen.getByRole('cell', { name: 'RESOLVED_REFUND' })).toBeTruthy();
     // The refunded COMPLETED dispute records that its listing stayed SOLD.
     expect(screen.getByText('Stayed SOLD')).toBeTruthy();
+    // The resolved row renders its resolution note; the OPEN row offers
+    // the note input instead (backlog #240).
+    expect(screen.getByText('Item arrived damaged; refunding.')).toBeTruthy();
+    expect(screen.getByLabelText('Resolution note')).toBeTruthy();
     // Resolution buttons render only on the OPEN row.
     expect(screen.getByRole('button', { name: 'Resolve with refund' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Release order' })).toBeTruthy();
@@ -127,7 +133,7 @@ describe('AdminDisputesPage', () => {
     expect(getSpy).not.toHaveBeenCalled();
   });
 
-  it('resolving with refund posts to the resolve-refund route', async () => {
+  it('resolving with refund posts to the resolve-refund route with the note', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     mockGets(pageEnvelope([openDispute], 0, 1));
     postSpy.mockResolvedValue(
@@ -137,9 +143,23 @@ describe('AdminDisputesPage', () => {
     renderAt('/admin/disputes');
     await waitFor(() => expect(screen.getByText('the parcel never arrived')).toBeTruthy());
 
+    // The buttons stay disabled until a note is typed (backlog #240).
+    expect(screen.getByRole('button', { name: 'Resolve with refund' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(screen.getByRole('button', { name: 'Release order' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    fireEvent.change(screen.getByLabelText('Resolution note'), {
+      target: { value: 'Carrier confirms non-delivery.' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Resolve with refund' }));
     await waitFor(() =>
-      expect(postSpy).toHaveBeenCalledWith('/admin/disputes/10/resolve-refund', {}),
+      expect(postSpy).toHaveBeenCalledWith('/admin/disputes/10/resolve-refund', {
+        resolutionNote: 'Carrier confirms non-delivery.',
+      }),
     );
   });
 

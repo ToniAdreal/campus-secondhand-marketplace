@@ -42,6 +42,7 @@ const fakeDispute: OrderDispute = {
   listingRestored: null,
   createdAt: '2026-10-14T08:00:00Z',
   resolvedAt: null,
+  resolutionNote: null,
 };
 
 function makeClient() {
@@ -139,10 +140,12 @@ describe('dispute hooks', () => {
       wrapper: wrapperFor(client),
     });
 
-    result.current.mutate(3);
+    result.current.mutate({ id: 3, resolutionNote: 'Carrier confirms non-delivery.' });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(postSpy).toHaveBeenCalledWith('/admin/disputes/3/resolve-refund', {});
+    expect(postSpy).toHaveBeenCalledWith('/admin/disputes/3/resolve-refund', {
+      resolutionNote: 'Carrier confirms non-delivery.',
+    });
     expect(result.current.data).toEqual(resolved);
   });
 });

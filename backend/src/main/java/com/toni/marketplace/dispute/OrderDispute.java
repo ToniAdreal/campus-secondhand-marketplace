@@ -39,6 +39,15 @@ import org.hibernate.type.SqlTypes;
  * dispute fail fast instead of both applying; the loser is mapped to
  * 409. The DB-generated {@code open_order_id} guard column enforces
  * "one OPEN dispute per order" at the database level.
+ *
+ * <p>{@code resolutionNote} (backlog #240, Flyway V70) is the ADMIN's
+ * reason for the verdict, required on both resolutions and null while
+ * OPEN: the buyer and seller see why the ADMIN chose refund or
+ * release instead of just the verdict. It is written exactly once —
+ * the first resolution's note stands; an idempotent re-resolve of the
+ * same kind returns the dispute unchanged (a different note on the
+ * repeat does not rewrite history) and a 422 opposite resolution
+ * throws before any write, so neither path can touch the stored note.
  */
 @Entity
 @Table(name = "order_dispute")
@@ -94,6 +103,10 @@ public class OrderDispute {
   @Column(name = "resolved_at")
   private Instant resolvedAt;
 
+  /** The ADMIN's resolution note (backlog #240); null while OPEN, written once by the first resolution. */
+  @Column(name = "resolution_note", length = 1000)
+  private String resolutionNote;
+
   protected OrderDispute() {}
 
   public OrderDispute(Long orderId, Long buyerId, Long sellerId, String reason,
@@ -134,4 +147,8 @@ public class OrderDispute {
   public Instant getUpdatedAt() { return updatedAt; }
   public Instant getResolvedAt() { return resolvedAt; }
   public void setResolvedAt(Instant resolvedAt) { this.resolvedAt = resolvedAt; }
+  public String getResolutionNote() { return resolutionNote; }
+  public void setResolutionNote(String resolutionNote) {
+    this.resolutionNote = resolutionNote;
+  }
 }

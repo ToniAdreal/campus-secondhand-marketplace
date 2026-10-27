@@ -286,7 +286,7 @@ class SellerPayoutTest {
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
             .header("Authorization", "Bearer " + token(admin))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{}"))
+            .content("{\"resolutionNote\":\"Payout sweep test release.\"}"))
         .andExpect(status().isOk());
 
     assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
@@ -307,7 +307,7 @@ class SellerPayoutTest {
     mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
             .header("Authorization", "Bearer " + token(admin))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{}"))
+            .content("{\"resolutionNote\":\"Payout sweep test refund.\"}"))
         .andExpect(status().isOk());
 
     String list = payoutListJson(seller);

@@ -9,6 +9,8 @@ import java.time.Instant;
  * status the dispute froze; {@code listingRestored} is null until a
  * refund resolution writes it (see {@link OrderDispute});
  * {@code resolvedAt} is null while the dispute is OPEN.
+ * {@code resolutionNote} (backlog #240) is the ADMIN's reason for the
+ * verdict — null while OPEN and on pre-#240 resolutions, never blank.
  */
 public record DisputeDto(
     Long id,
@@ -20,7 +22,8 @@ public record DisputeDto(
     OrderStatus previousStatus,
     Boolean listingRestored,
     Instant createdAt,
-    Instant resolvedAt) {
+    Instant resolvedAt,
+    String resolutionNote) {
 
   public static DisputeDto from(OrderDispute dispute) {
     return new DisputeDto(
@@ -33,6 +36,7 @@ public record DisputeDto(
         dispute.getPreviousStatus(),
         dispute.getListingRestored(),
         dispute.getCreatedAt(),
-        dispute.getResolvedAt());
+        dispute.getResolvedAt(),
+        dispute.getResolutionNote());
   }
 }
