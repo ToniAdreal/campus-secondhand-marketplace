@@ -93,6 +93,12 @@ export default function OrderReceipt({ orderId }: { orderId: number }) {
                 <dd>{receipt.data.refundId}</dd>
               </div>
             )}
+            {receipt.data.refundReason && (
+              <div className="flex gap-2">
+                <dt className="text-neutral-500">Refund reason:</dt>
+                <dd>{receipt.data.refundReason}</dd>
+              </div>
+            )}
           </dl>
           {!receipt.data.paid && (
             <p className="mt-2 text-neutral-500">

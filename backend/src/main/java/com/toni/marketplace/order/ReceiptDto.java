@@ -22,6 +22,10 @@ import java.time.Instant;
  *       backfilled from {@code updatedAt}.</li>
  *   <li>{@code captureId}/{@code refundId} are the mock PSP's demo
  *       references (#114), not a real processor receipt.</li>
+ *   <li>{@code refundReason} is the reason from the latest direct
+ *       refund's REFUNDED payment-attempt row (#239); null when the
+ *       order was never directly refunded — including dispute-resolved
+ *       refunds, whose note is backlog #240, not this field.</li>
  *   <li>{@code formattedPrice} is derived from {@code amountCents}
  *       server-side so the printed page and the API can never disagree
  *       about the amount.</li>
@@ -41,7 +45,8 @@ public record ReceiptDto(
     Instant paidAt,
     Instant completedAt,
     String captureId,
-    String refundId) {
+    String refundId,
+    String refundReason) {
 
   /** Formats cents as the SPA does: {@code ¥} + yuan with two decimals. */
   static String formatPrice(long amountCents) {

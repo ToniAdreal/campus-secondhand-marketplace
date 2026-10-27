@@ -175,7 +175,7 @@ class SellerPayoutTest {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
             .header("Authorization", "Bearer " + token(seller))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amountCents\":" + amountCents + "}"))
+            .content("{\"amountCents\":" + amountCents + ",\"reason\":\"item damaged\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("PAID"));
   }

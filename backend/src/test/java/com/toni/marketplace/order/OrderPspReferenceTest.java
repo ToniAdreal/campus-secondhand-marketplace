@@ -118,6 +118,8 @@ class OrderPspReferenceTest {
 
   private String refundBody(User seller, long orderId) throws Exception {
     return mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andReturn().getResponse().getContentAsString();

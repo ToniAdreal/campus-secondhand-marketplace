@@ -210,9 +210,12 @@ describe('SellerOrdersPage', () => {
     expect(screen.queryByText(/Refund reference/)).toBeNull();
 
     // Backlog #210: the refund dialog opens first (amount prefilled with
-    // the full remaining amount), and confirming untouched posts the
-    // pre-#210 empty body — a full refund.
+    // the full remaining amount); confirming untouched posts a full
+    // refund — and backlog #239 requires a reason, typed in the dialog.
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.change(screen.getByLabelText('Refund reason'), {
+      target: { value: 'Item arrived damaged' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
 
     // the mutation result carries the refund id; the invalidated list
@@ -221,7 +224,9 @@ describe('SellerOrdersPage', () => {
       expect(screen.getByText('Refund reference (demo): rfd_mock_cccccccccccccccc')).toBeTruthy(),
     );
     expect(screen.getByText('Payment reference (demo): cap_mock_cccccccccccccccc')).toBeTruthy();
-    expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {});
+    expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {
+      reason: 'Item arrived damaged',
+    });
   });
 
   it('Complete fires POST /orders/{id}/complete with the typed handover code and refetches the seller list', async () => {
@@ -260,8 +265,15 @@ describe('SellerOrdersPage', () => {
     expect(amountInput.value).toBe('45.00');
     expect(postSpy).not.toHaveBeenCalled();
 
+    fireEvent.change(screen.getByLabelText('Refund reason'), {
+      target: { value: 'Item arrived damaged' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
-    await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {}));
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {
+        reason: 'Item arrived damaged',
+      }),
+    );
   });
 
   it('cancelling the refund dialog fires no request', async () => {
@@ -298,15 +310,34 @@ describe('SellerOrdersPage', () => {
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
     fireEvent.change(screen.getByLabelText('Refund amount (¥)'), { target: { value: '20.00' } });
+    fireEvent.change(screen.getByLabelText('Refund reason'), {
+      target: { value: 'Missing accessory' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
 
     await waitFor(() =>
-      expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', { amountCents: 2000 }),
+      expect(postSpy).toHaveBeenCalledWith('/orders/10/refund', {
+        amountCents: 2000,
+        reason: 'Missing accessory',
+      }),
     );
     // The refetched PAID row renders the cumulative partial note.
     await waitFor(() =>
       expect(screen.getByText('Partially refunded: ¥20.00 of ¥45.00')).toBeTruthy(),
     );
+  });
+
+  it('confirming a refund with a blank reason posts nothing and shows the reason copy (backlog #239)', async () => {
+    useAuthStore.getState().login(seller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
+
+    renderAt('/seller/orders');
+    await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
+
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter a reason for the refund.')).toBeTruthy();
   });
 
   it('a logged-in buyer (no listings of their own) sees no orders and no action buttons', async () => {
@@ -362,6 +393,9 @@ describe('SellerOrdersPage', () => {
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Refund order' }));
+    fireEvent.change(screen.getByLabelText('Refund reason'), {
+      target: { value: 'Item arrived damaged' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm refund' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());

@@ -229,9 +229,12 @@ public class OrderController {
    * optional body may carry {@code amountCents} — the order then stays
    * PAID with a cumulative {@code refundedAmountCents} until the
    * refunded total reaches the order amount; an absent amount refunds
-   * everything still refundable.
+   * everything still refundable. A reason is required on every call
+   * (backlog #239): blank or absent → 400, over 500 chars → 400; the
+   * reason is stored on a REFUNDED payment-attempt row and surfaced in
+   * the ADMIN attempt viewer and on the order receipt.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "missing, blank or over-500-char refund reason (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the listing's seller or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "version conflict with a concurrent transition (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "order is not PAID (envelope)")})
   @PostMapping("/{id}/refund")
   public ApiResponse<OrderDto> refund(
       @PathVariable Long id, @RequestBody(required = false) RefundOrderRequest request) {
@@ -241,6 +244,7 @@ public class OrderController {
     boolean admin = authentication.getAuthorities().stream()
         .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     return ApiResponse.ok(orderService.refund(callerId, admin, id,
-        request == null ? null : request.amountCents()));
+        request == null ? null : request.amountCents(),
+        request == null ? null : request.reason()));
   }
 }

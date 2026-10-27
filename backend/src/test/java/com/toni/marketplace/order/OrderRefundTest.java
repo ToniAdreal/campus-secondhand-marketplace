@@ -137,6 +137,8 @@ class OrderRefundTest {
     assertItemStatusInListView(buyer, "Film camera", "RESERVED");
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.code").value(0))
@@ -163,6 +165,8 @@ class OrderRefundTest {
     payOrder(buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(admin)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"));
@@ -182,10 +186,14 @@ class OrderRefundTest {
     long before = payments.refundsIssued();
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"));
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"));
@@ -206,6 +214,8 @@ class OrderRefundTest {
     payOrder(buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(buyer)))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value(403));
@@ -226,6 +236,8 @@ class OrderRefundTest {
     payOrder(buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(intruder)))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value(403));
@@ -242,6 +254,8 @@ class OrderRefundTest {
     long orderId = createOrder(buyer, item);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.code").value(422));
@@ -262,6 +276,8 @@ class OrderRefundTest {
     });
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.code").value(422));
@@ -283,6 +299,8 @@ class OrderRefundTest {
     });
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.code").value(422));
@@ -296,6 +314,8 @@ class OrderRefundTest {
     User seller = newUser("seller");
 
     mockMvc.perform(post("/api/orders/{id}/refund", 987654321L)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.code").value(404));

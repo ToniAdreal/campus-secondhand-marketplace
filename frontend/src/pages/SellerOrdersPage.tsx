@@ -116,13 +116,16 @@ export default function SellerOrdersPage() {
   // amount, so confirming untouched is exactly the old full refund).
   const [refundDialogOrderId, setRefundDialogOrderId] = useState<number | null>(null);
   const [refundAmountYuan, setRefundAmountYuan] = useState<string>('');
+  // Refund reason (backlog #239): required by the backend on every
+  // direct refund, blank → 400. Collected in the same dialog as the
+  // amount, so the seller states why the money moves back.
+  const [refundReason, setRefundReason] = useState<string>('');
 
   const refundPendingFor = (orderId: number): boolean => {
-    const variables = refundOrder.variables;
-    return (
-      variables === orderId ||
-      (typeof variables === 'object' && variables !== null && variables.orderId === orderId)
-    );
+    // Backlog #239: RefundInput is always an object now (a bare order id
+    // can no longer refund, since the reason is required), so the only
+    // pending check is the object's orderId.
+    return refundOrder.variables?.orderId === orderId;
   };
 
   if (!user) {
@@ -183,6 +186,7 @@ export default function SellerOrdersPage() {
     setActionError(null);
     const remainingCents = order.amountCents - (order.refundedAmountCents ?? 0);
     setRefundAmountYuan((remainingCents / 100).toFixed(2));
+    setRefundReason('');
     setRefundDialogOrderId(order.id);
   };
 
@@ -203,12 +207,22 @@ export default function SellerOrdersPage() {
       setActionError('That amount is more than what is left to refund on this order.');
       return;
     }
+    if (refundReason.trim() === '') {
+      setActionError('Enter a reason for the refund.');
+      return;
+    }
     const onError = (error: unknown) => setActionError(describeRefundError(error));
-    const onSuccess = () => setRefundDialogOrderId(null);
+    const onSuccess = () => {
+      setRefundDialogOrderId(null);
+      setRefundReason('');
+    };
     if (cents === remainingCents) {
-      refundOrder.mutate(order.id, { onError, onSuccess });
+      refundOrder.mutate({ orderId: order.id, reason: refundReason.trim() }, { onError, onSuccess });
     } else {
-      refundOrder.mutate({ orderId: order.id, amountCents: cents }, { onError, onSuccess });
+      refundOrder.mutate(
+        { orderId: order.id, amountCents: cents, reason: refundReason.trim() },
+        { onError, onSuccess },
+      );
     }
   };
 
@@ -431,6 +445,18 @@ export default function SellerOrdersPage() {
                       still refundable — a partial refund keeps the order paid; refunding the rest
                       re-lists the item.
                     </span>
+                    <label className="flex w-full items-center gap-2 text-sm text-neutral-700">
+                      Refund reason
+                      <textarea
+                        aria-label="Refund reason"
+                        value={refundReason}
+                        onChange={(event) => setRefundReason(event.target.value)}
+                        maxLength={500}
+                        rows={2}
+                        placeholder="Why is this order being refunded?"
+                        className="flex-1 rounded border border-neutral-300 px-2 py-1.5 text-sm"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={() => handleRefund(order)}

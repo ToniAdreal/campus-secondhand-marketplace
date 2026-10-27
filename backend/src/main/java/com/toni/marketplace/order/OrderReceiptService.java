@@ -27,10 +27,13 @@ public class OrderReceiptService {
 
   private final OrderRepository orders;
   private final UserRepository users;
+  private final PaymentAttemptRecorder attempts;
 
-  public OrderReceiptService(OrderRepository orders, UserRepository users) {
+  public OrderReceiptService(OrderRepository orders, UserRepository users,
+                             PaymentAttemptRecorder attempts) {
     this.orders = orders;
     this.users = users;
+    this.attempts = attempts;
   }
 
   @Transactional(readOnly = true)
@@ -63,7 +66,9 @@ public class OrderReceiptService {
         order.getPaidAt(),
         order.getCompletedAt(),
         order.getCaptureId(),
-        order.getRefundId());
+        order.getRefundId(),
+        attempts.findLatestRefunded(orderId).map(PaymentAttempt::getRefundReason)
+            .orElse(null));
   }
 
   private String usernameOf(Long userId) {

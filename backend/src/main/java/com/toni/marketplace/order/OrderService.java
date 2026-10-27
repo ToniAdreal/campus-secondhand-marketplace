@@ -1275,6 +1275,13 @@ public class OrderService {
    *       REFUNDED exactly when it reaches it — and only that flip
    *       releases the listing (next rule) and counts the
    *       {@code orders.refunded} transition metric.</li>
+   *   <li>Reason (backlog #239): a reason is required on every direct
+   *       refund call (blank → 400, over 500 chars → 400), validated
+   *       before the idempotent re-refund return, and stored on a
+   *       REFUNDED payment-attempt row in the same transaction — the
+   *       row the ADMIN attempt viewer and the order receipt surface.
+   *       Dispute-resolved refunds do not write this row; their note
+   *       is backlog #240.</li>
    *   <li>On the completing flip the listing goes RESERVED → AVAILABLE
    *       in the same transaction, so the list view offers the refunded
    *       item again. The flip only runs when the item is actually
@@ -1295,20 +1302,35 @@ public class OrderService {
    *       (see {@link #nextRefundKeyFor(Order)}).</li>
    * </ul>
    */
+  /**
+   * Refund with a required reason (backlog #239) — see
+   * {@link #refund(Long, boolean, Long, Long, String)}. The older
+   * no-reason overloads are gone on purpose: a service-level caller
+   * must not be able to move money back without saying why, any more
+   * than the HTTP endpoint can.
+   */
   @Transactional
-  public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId) {
-    return refund(callerId, callerIsAdmin, orderId, null);
-  }
-
-  /** Amount-aware refund (backlog #210) — see {@link #refund(Long, boolean, Long)}. */
-  @Transactional
-  public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId, Long amountCents) {
+  public OrderDto refund(Long callerId, boolean callerIsAdmin, Long orderId,
+                         Long amountCents, String reason) {
     Order order = orders.findById(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
     if (!callerIsAdmin && !order.getItem().getSellerId().equals(callerId)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "only the seller can refund this order");
+    }
+    // Backlog #239: reason validation runs before the idempotent
+    // re-refund return — a request without a reason is malformed even
+    // when the money has already moved, and silently returning the
+    // order would hide that. The trimmed reason is what gets stored.
+    String trimmedReason = reason == null ? null : reason.strip();
+    if (trimmedReason == null || trimmedReason.isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "refund reason is required");
+    }
+    if (trimmedReason.length() > 500) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "refund reason must be at most 500 characters");
     }
     if (order.getStatus() == OrderStatus.REFUNDED) {
       return OrderDto.from(order);
@@ -1362,6 +1384,11 @@ public class OrderService {
       // the PSP replay entry; a 409 race loser threw at the flush above
       // and never reaches this line, so it cannot forget the winner's entry.
       payments.forgetRefund(refundKey);
+      // Backlog #239: one REFUNDED payment-attempt row per accepted
+      // refund, in this same transaction (so a later rollback erases
+      // it) and after the flush (so a 409 loser records nothing).
+      // The row is what the ADMIN attempt viewer and the receipt read.
+      paymentAttempts().recordRefunded(orderId, refundKey, trimmedReason);
       if (completesRefund) {
         metrics().refunded();
       }

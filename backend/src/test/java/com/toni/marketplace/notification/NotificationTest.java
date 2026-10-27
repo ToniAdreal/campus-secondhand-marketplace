@@ -113,8 +113,15 @@ class NotificationTest {
   }
 
   private void transition(User caller, long orderId, String action) throws Exception {
-    mockMvc.perform(post("/api/orders/{id}/" + action, orderId)
-            .header("Authorization", "Bearer " + token(caller)))
+    var request = post("/api/orders/{id}/" + action, orderId)
+        .header("Authorization", "Bearer " + token(caller));
+    // Backlog #239: direct refunds require a reason — the generic
+    // transition helper carries one for the refund action only.
+    if ("refund".equals(action)) {
+      request = request.contentType(MediaType.APPLICATION_JSON)
+          .content("{\"reason\":\"item damaged\"}");
+    }
+    mockMvc.perform(request)
         .andExpect(status().isOk());
   }
 

@@ -234,7 +234,8 @@ class PaymentAttemptTest {
         .map(Field::getName)
         .toList();
     assertThat(entityFields)
-        .containsExactlyInAnyOrder("id", "orderId", "outcome", "idempotencyKey", "createdAt");
+        .containsExactlyInAnyOrder("id", "orderId", "outcome", "idempotencyKey",
+            "refundReason", "createdAt");
     assertThat(entityFields).noneMatch(name -> name.toLowerCase().contains("token"));
 
     // DTO key-set pin: the ADMIN projection exposes no token either.
@@ -242,7 +243,8 @@ class PaymentAttemptTest {
         .map(c -> c.getName())
         .toList();
     assertThat(dtoKeys)
-        .containsExactlyInAnyOrder("id", "orderId", "outcome", "idempotencyKey", "createdAt");
+        .containsExactlyInAnyOrder("id", "orderId", "outcome", "idempotencyKey",
+            "refundReason", "createdAt");
     assertThat(dtoKeys).noneMatch(name -> name.toLowerCase().contains("token"));
 
     // Value pin: no stored column value equals the decline token.

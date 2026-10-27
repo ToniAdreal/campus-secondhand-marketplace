@@ -45,7 +45,7 @@ class OrderReceiptTest {
   private static final Set<String> RECEIPT_KEYS = Set.of(
       "orderId", "status", "paid", "itemId", "itemTitle", "amountCents",
       "formattedPrice", "buyerUsername", "sellerUsername", "createdAt",
-      "paidAt", "completedAt", "captureId", "refundId");
+      "paidAt", "completedAt", "captureId", "refundId", "refundReason");
 
   @Autowired
   private MockMvc mockMvc;
@@ -253,6 +253,8 @@ class OrderReceiptTest {
     pay(buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk());
 

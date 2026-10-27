@@ -139,6 +139,8 @@ class SellerSalesSummaryTest {
 
   private void refund(User seller, long orderId) throws Exception {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk());
   }

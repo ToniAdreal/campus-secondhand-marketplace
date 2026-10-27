@@ -27,6 +27,7 @@ const paidReceipt: ReceiptData = {
   completedAt: null,
   captureId: 'cap_mock_0123456789abcdef',
   refundId: null,
+  refundReason: null,
 };
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -93,6 +94,23 @@ describe('OrderReceipt (backlog #180)', () => {
       screen.getByText('This order has not been paid yet — no payment reference exists.'),
     ).toBeTruthy();
     expect(screen.queryByText(/Payment reference/)).toBeNull();
+  });
+
+  it('renders the refund reason on a refunded receipt (backlog #239)', async () => {
+    getSpy.mockResolvedValue(
+      envelope({
+        ...paidReceipt,
+        status: 'REFUNDED',
+        refundId: 'rfd_mock_0123456789abcdef',
+        refundReason: 'Item arrived damaged',
+      }),
+    );
+    render(<OrderReceipt orderId={9} />, { wrapper });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Receipt' }));
+
+    expect(await screen.findByText('Refund reason:')).toBeTruthy();
+    expect(screen.getByText('Item arrived damaged')).toBeTruthy();
   });
 
   it('maps a 404 to the generic not-available copy', async () => {

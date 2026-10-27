@@ -274,6 +274,7 @@ describe('AdminPaymentsPage', () => {
       orderId: 42,
       outcome: 'DECLINED',
       idempotencyKey: 'cap_attempt42',
+      refundReason: null,
       createdAt: '2026-01-12T00:00:00Z',
     },
     {
@@ -281,6 +282,7 @@ describe('AdminPaymentsPage', () => {
       orderId: 41,
       outcome: 'DECLINED',
       idempotencyKey: 'cap_attempt41',
+      refundReason: null,
       createdAt: '2026-01-11T00:00:00Z',
     },
   ];
@@ -339,6 +341,30 @@ describe('AdminPaymentsPage', () => {
         params: { page: 0, size: 20, outcome: 'SUCCEEDED' },
       }),
     );
+  });
+
+  it('renders the refund reason on REFUNDED attempt rows (backlog #239)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPayments({
+      content: [
+        {
+          id: 9,
+          orderId: 43,
+          outcome: 'REFUNDED',
+          idempotencyKey: 'rfd_attempt43',
+          refundReason: 'Item arrived damaged',
+          createdAt: '2026-01-13T00:00:00Z',
+        },
+      ],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('#43')).toBeTruthy());
+    expect(screen.getByText('Item arrived damaged')).toBeTruthy();
   });
 
   it('renders the attempts empty state when no declined attempts exist', async () => {

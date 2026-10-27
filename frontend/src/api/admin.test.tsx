@@ -560,6 +560,7 @@ const attemptPageFixture: Page<PaymentAttemptEntry> = {
       orderId: 42,
       outcome: 'DECLINED',
       idempotencyKey: 'cap_attempt42',
+      refundReason: null,
       createdAt: '2026-01-12T00:00:00Z',
     },
   ],

@@ -22,6 +22,13 @@ import org.hibernate.type.SqlTypes;
  * transaction so a pay that later rolls back (e.g. the 409 flush) leaves
  * no success claim behind.
  *
+ * <p>Backlog #239 extends the ledger to direct refunds: a REFUNDED row
+ * joins the refund transaction (same durability rule as SUCCEEDED) and
+ * carries the seller/ADMIN-supplied refund reason (Flyway V69, max 500
+ * chars, required on the direct refund endpoint). Capture rows keep a
+ * null reason; dispute-resolved refunds carry no row here — their note
+ * is backlog #240's separate field, not this one.
+ *
  * <p>The row carries the order id as a plain column (no FK — like
  * {@link WebhookEvent} this is an audit ledger, not a second source of
  * truth for order state), the attempt {@link Outcome}, and the
@@ -37,7 +44,9 @@ public class PaymentAttempt {
   /** Outcome of one capture attempt (backlog #211). */
   public enum Outcome {
     SUCCEEDED,
-    DECLINED
+    DECLINED,
+    /** A direct seller/ADMIN refund (backlog #239) — never a capture. */
+    REFUNDED
   }
 
   @Id
@@ -57,15 +66,25 @@ public class PaymentAttempt {
   @Column(name = "idempotency_key", length = 64)
   private String idempotencyKey;
 
+  /** Direct-refund reason (backlog #239); null on capture rows. */
+  @Column(name = "refund_reason", length = 500)
+  private String refundReason;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
   protected PaymentAttempt() {}
 
   public PaymentAttempt(long orderId, Outcome outcome, String idempotencyKey) {
+    this(orderId, outcome, idempotencyKey, null);
+  }
+
+  public PaymentAttempt(long orderId, Outcome outcome, String idempotencyKey,
+                        String refundReason) {
     this.orderId = orderId;
     this.outcome = outcome;
     this.idempotencyKey = idempotencyKey;
+    this.refundReason = refundReason;
   }
 
   @PrePersist
@@ -77,5 +96,6 @@ public class PaymentAttempt {
   public long getOrderId() { return orderId; }
   public Outcome getOutcome() { return outcome; }
   public String getIdempotencyKey() { return idempotencyKey; }
+  public String getRefundReason() { return refundReason; }
   public Instant getCreatedAt() { return createdAt; }
 }

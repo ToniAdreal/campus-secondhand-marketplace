@@ -374,20 +374,23 @@ export function describeWebhookEventsError(error: unknown): string {
 }
 
 /** Allowlisted payment-attempt outcomes (backend PaymentAttempt.Outcome). */
-export const PAYMENT_ATTEMPT_OUTCOMES = ['SUCCEEDED', 'DECLINED'] as const;
+export const PAYMENT_ATTEMPT_OUTCOMES = ['SUCCEEDED', 'DECLINED', 'REFUNDED'] as const;
 
 /**
  * One row of the ADMIN payment-attempt viewer, mirroring the backend's
  * PaymentAttemptDto (GET /api/admin/payments/attempts, backlog #211).
  * The ledger records the order, the outcome and the order-scoped PSP
  * idempotency key the attempt ran under — the buyer's payment token is
- * never stored by the backend, so none exists here either.
+ * never stored by the backend, so none exists here either. REFUNDED
+ * rows (backlog #239) additionally carry the direct-refund reason;
+ * capture rows keep a null reason.
  */
 export interface PaymentAttemptEntry {
   id: number;
   orderId: number;
   outcome: string;
   idempotencyKey: string | null;
+  refundReason: string | null;
   createdAt: string;
 }
 

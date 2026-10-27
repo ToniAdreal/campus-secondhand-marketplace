@@ -157,6 +157,8 @@ class PaymentIdempotencyTest {
     pay(buyer, orderId);
 
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"));
@@ -301,6 +303,8 @@ class PaymentIdempotencyTest {
     long issuedBefore = payments.refundsIssued();
     int rememberedBefore = payments.refundsRemembered();
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}")
             .header("Authorization", "Bearer " + token(seller)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"));

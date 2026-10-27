@@ -324,7 +324,8 @@ export default function AdminPaymentsPage() {
           declined attempts by default, so the orders whose buyers keep failing to
           pay are visible at a glance. The idempotency key is the order-scoped key
           the attempt ran under; the buyer&apos;s payment token is not stored, so
-          it is not shown here.
+          it is not shown here. REFUNDED rows carry the direct-refund reason
+          (backlog #239); capture rows show no reason.
         </p>
         <div className="mb-4">
           <label htmlFor="attempt-outcome" className="sr-only">
@@ -370,6 +371,7 @@ export default function AdminPaymentsPage() {
                     <th scope="col" className="px-4 py-3 font-medium">Order</th>
                     <th scope="col" className="px-4 py-3 font-medium">Outcome</th>
                     <th scope="col" className="px-4 py-3 font-medium">Idempotency key</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Refund reason</th>
                     <th scope="col" className="px-4 py-3 font-medium">Attempted</th>
                   </tr>
                 </thead>
@@ -389,6 +391,7 @@ export default function AdminPaymentsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">{row.idempotencyKey ?? '—'}</td>
+                      <td className="px-4 py-3">{row.refundReason ?? '—'}</td>
                       <td className="px-4 py-3">{new Date(row.createdAt).toLocaleString()}</td>
                     </tr>
                   ))}

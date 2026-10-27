@@ -89,6 +89,7 @@ export interface OrderReceipt {
   completedAt: string | null;
   captureId: string | null;
   refundId: string | null;
+  refundReason: string | null;
 }
 
 /**
@@ -674,6 +675,9 @@ export function describeRefundError(error: unknown): string {
     }
     return 'Only a paid order can be refunded — this one is not paid yet, or is already finished.';
   }
+  if (code === 400 && /reason/i.test(message)) {
+    return 'Enter a reason for the refund.';
+  }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
     return 'Someone just acted on this order — please refresh and try again.';
   }
@@ -697,22 +701,23 @@ export function describeRefundError(error: unknown): string {
  * `orderKeys.all`). The buyer cannot self-refund — that is a deliberate
  * backend design decision, so this hook only belongs on seller surfaces.
  */
-export type RefundInput = number | { orderId: number; amountCents?: number };
+export type RefundInput = { orderId: number; amountCents?: number; reason: string };
 
 export function useRefundOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: RefundInput) => {
-      // A bare order id (or an input without amountCents) posts the
-      // pre-#210 empty body — the backend reads an absent amount as
-      // "refund everything still refundable". A partial refund posts
-      // {amountCents} (backlog #210).
-      const orderId = typeof input === 'number' ? input : input.orderId;
-      const amountCents = typeof input === 'number' ? undefined : input.amountCents;
+      // An input without amountCents posts a reason-only body — the
+      // backend reads an absent amount as "refund everything still
+      // refundable". A partial refund posts {amountCents, reason}
+      // (backlog #210). The reason is required by the backend
+      // (backlog #239): a bare order id can no longer refund, so the
+      // type no longer admits one.
+      const { orderId, amountCents, reason } = input;
       return api
         .post<ApiResponse<Order>>(
           `/orders/${orderId}/refund`,
-          amountCents == null ? {} : { amountCents },
+          amountCents == null ? { reason } : { amountCents, reason },
         )
         .then((res) => res.data.data);
     },

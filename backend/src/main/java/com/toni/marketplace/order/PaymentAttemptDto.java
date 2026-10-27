@@ -17,10 +17,10 @@ import java.time.Instant;
  * to leak here.
  */
 public record PaymentAttemptDto(long id, long orderId, PaymentAttempt.Outcome outcome,
-                                String idempotencyKey, Instant createdAt) {
+                                String idempotencyKey, String refundReason, Instant createdAt) {
 
   public static PaymentAttemptDto of(PaymentAttempt row) {
     return new PaymentAttemptDto(row.getId(), row.getOrderId(), row.getOutcome(),
-        row.getIdempotencyKey(), row.getCreatedAt());
+        row.getIdempotencyKey(), row.getRefundReason(), row.getCreatedAt());
   }
 }

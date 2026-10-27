@@ -63,6 +63,27 @@ public class PaymentAttemptRecorder {
         new PaymentAttempt(orderId, PaymentAttempt.Outcome.SUCCEEDED, idempotencyKey));
   }
 
+  /**
+   * Appends a REFUNDED row inside the caller's refund transaction
+   * (backlog #239) — same durability rule as {@link #recordSucceeded}:
+   * it commits if and only if the refund commits, so a 409 race loser
+   * (whose flush throws before this call) leaves no refund claim
+   * behind. The reason is already validated (required, max 500 chars)
+   * by {@code OrderService.refund} before this point.
+   */
+  @Transactional
+  public PaymentAttempt recordRefunded(long orderId, String refundKey, String reason) {
+    return attempts.save(
+        new PaymentAttempt(orderId, PaymentAttempt.Outcome.REFUNDED, refundKey, reason));
+  }
+
+  /** The most recent direct-refund row against one order, if any. */
+  @Transactional(readOnly = true)
+  public Optional<PaymentAttempt> findLatestRefunded(long orderId) {
+    return attempts.findFirstByOrderIdAndOutcomeOrderByCreatedAtDescIdDesc(
+        orderId, PaymentAttempt.Outcome.REFUNDED);
+  }
+
   /** The most recent attempt against one order, if any. */
   @Transactional(readOnly = true)
   public Optional<PaymentAttempt> findLatest(long orderId) {

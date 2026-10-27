@@ -246,9 +246,9 @@ describe('order mutation invalidation', () => {
     postSpy.mockResolvedValueOnce(envelope({ ...fakeOrder, status: 'REFUNDED' }));
 
     const { result } = renderHook(() => useRefundOrder(), { wrapper: wrapperFor(queryClient) });
-    await result.current.mutateAsync(9);
+    await result.current.mutateAsync({ orderId: 9, reason: 'Item arrived damaged' });
 
-    expect(postSpy).toHaveBeenCalledWith('/orders/9/refund', {});
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/refund', { reason: 'Item arrived damaged' });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: orderKeys.all });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: itemKeys.all });
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
@@ -261,9 +261,16 @@ describe('order mutation invalidation', () => {
     );
 
     const { result } = renderHook(() => useRefundOrder(), { wrapper: wrapperFor(queryClient) });
-    const refunded = await result.current.mutateAsync({ orderId: 9, amountCents: 2000 });
+    const refunded = await result.current.mutateAsync({
+      orderId: 9,
+      amountCents: 2000,
+      reason: 'Missing accessory',
+    });
 
-    expect(postSpy).toHaveBeenCalledWith('/orders/9/refund', { amountCents: 2000 });
+    expect(postSpy).toHaveBeenCalledWith('/orders/9/refund', {
+      amountCents: 2000,
+      reason: 'Missing accessory',
+    });
     expect(refunded.refundedAmountCents).toBe(2000);
     expect(refunded.status).toBe('PAID');
   });
@@ -298,7 +305,10 @@ describe('order mutation invalidation', () => {
     const { result: refundResult } = renderHook(() => useRefundOrder(), {
       wrapper: wrapperFor(queryClient),
     });
-    const refunded = await refundResult.current.mutateAsync(9);
+    const refunded = await refundResult.current.mutateAsync({
+      orderId: 9,
+      reason: 'Item arrived damaged',
+    });
 
     // a REFUNDED order keeps its capture id and gains the refund id — both
     // ride the mutation payload, no extra fetch is needed to display them
@@ -396,6 +406,7 @@ describe('order mutation invalidation', () => {
       completedAt: null,
       captureId: 'cap_mock_0123456789abcdef',
       refundId: null,
+      refundReason: null,
     };
     getSpy.mockResolvedValue(envelope(receipt));
 

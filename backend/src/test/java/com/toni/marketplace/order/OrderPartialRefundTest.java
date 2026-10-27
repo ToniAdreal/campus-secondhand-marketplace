@@ -141,9 +141,13 @@ class OrderPartialRefundTest {
   private void refund(User caller, long orderId, String body) throws Exception {
     var request = post("/api/orders/{id}/refund", orderId)
         .header("Authorization", "Bearer " + token(caller));
-    if (body != null) {
-      request = request.contentType(MediaType.APPLICATION_JSON).content(body);
-    }
+    // Backlog #239: every direct refund carries a reason. The helper
+    // appends it to amount-only bodies, and sends a reason-only body
+    // for the pre-#210 no-body shape (refund the remainder).
+    String effectiveBody = body == null
+        ? "{\"reason\":\"item damaged\"}"
+        : body.substring(0, body.length() - 1) + ",\"reason\":\"item damaged\"}";
+    request = request.contentType(MediaType.APPLICATION_JSON).content(effectiveBody);
     mockMvc.perform(request)
         .andExpect(status().isOk());
   }
@@ -160,7 +164,7 @@ class OrderPartialRefundTest {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
             .header("Authorization", "Bearer " + token(seller))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amountCents\":30000}"))
+            .content("{\"amountCents\":30000,\"reason\":\"item damaged\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("PAID"))
         .andExpect(jsonPath("$.data.refundedAmountCents").value(30_000));
@@ -180,7 +184,7 @@ class OrderPartialRefundTest {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
             .header("Authorization", "Bearer " + token(seller))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amountCents\":58000}"))
+            .content("{\"amountCents\":58000,\"reason\":\"item damaged\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("REFUNDED"))
         .andExpect(jsonPath("$.data.refundedAmountCents").value(88_000));
@@ -229,7 +233,7 @@ class OrderPartialRefundTest {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
             .header("Authorization", "Bearer " + token(seller))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amountCents\":88001}"))
+            .content("{\"amountCents\":88001,\"reason\":\"item damaged\"}"))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.code").value(422));
 
@@ -238,7 +242,7 @@ class OrderPartialRefundTest {
     mockMvc.perform(post("/api/orders/{id}/refund", orderId)
             .header("Authorization", "Bearer " + token(seller))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"amountCents\":8001}"))
+            .content("{\"amountCents\":8001,\"reason\":\"item damaged\"}"))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.code").value(422));
 
@@ -258,7 +262,7 @@ class OrderPartialRefundTest {
     long orderId = paidOrder(seller, buyer, item);
     long pspBefore = payments.refundsIssued();
 
-    for (String body : List.of("{\"amountCents\":0}", "{\"amountCents\":-500}")) {
+    for (String body : List.of("{\"amountCents\":0,\"reason\":\"item damaged\"}", "{\"amountCents\":-500,\"reason\":\"item damaged\"}")) {
       mockMvc.perform(post("/api/orders/{id}/refund", orderId)
               .header("Authorization", "Bearer " + token(seller))
               .contentType(MediaType.APPLICATION_JSON)
@@ -314,7 +318,7 @@ class OrderPartialRefundTest {
       futures.add(pool.submit(() -> {
         start.await();
         try {
-          orderService.refund(seller.getId(), false, orderId, partial);
+          orderService.refund(seller.getId(), false, orderId, partial, "item damaged");
           return HttpStatus.OK;
         } catch (ResponseStatusException e) {
           return HttpStatus.valueOf(e.getStatusCode().value());
