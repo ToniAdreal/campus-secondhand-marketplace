@@ -17,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -297,7 +298,8 @@ public class AuthController {
       @AuthenticationPrincipal Long userId,
       @Valid @RequestBody PasskeyRegistrationRequest request) {
     return ResponseEntity.ok(ApiResponse.ok(
-        new PasskeyRegistrationResult(auth.finishPasskeyRegistration(userId, request.credential()))));
+        new PasskeyRegistrationResult(
+            auth.finishPasskeyRegistration(userId, request.credential(), request.name()))));
   }
 
   /**
@@ -331,6 +333,26 @@ public class AuthController {
       @PathVariable("id") long passkeyId) {
     auth.deletePasskey(userId, passkeyId);
     return ResponseEntity.ok(ApiResponse.ok(null));
+  }
+
+  /**
+   * Renames one of the caller's enrolled passkeys (backlog #241,
+   * authenticated — SecurityConfig): the display-only friendly name.
+   * The presented access token must carry a FRESH credential proof
+   * (backlog #218 step-up), like enrolment and removal — renaming
+   * must not let a merely-authenticated session relabel keys into a
+   * deletion mistake. A blank name clears the label (the list then
+   * renders the enrolment-date label); an overlong name is a 400.
+   * Unknown ids — or ids belonging to another user — are 404 (no
+   * cross-user oracle), mirroring the delete endpoint.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "passkey renamed; the updated row (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "name over 100 characters (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credential proof older than the step-up window — re-prove at /api/auth/step-up (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown id, or another user's passkey (envelope)")})
+  @PatchMapping("/2fa/passkeys/{id}")
+  public ResponseEntity<ApiResponse<PasskeyInfo>> renamePasskey(
+      @AuthenticationPrincipal Long userId,
+      @PathVariable("id") long passkeyId,
+      @Valid @RequestBody PasskeyRenameRequest request) {
+    return ResponseEntity.ok(ApiResponse.ok(auth.renamePasskey(userId, passkeyId, request.name())));
   }
 
   /**

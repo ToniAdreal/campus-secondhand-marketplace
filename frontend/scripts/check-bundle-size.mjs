@@ -47,6 +47,15 @@
 //   + ~5%, rounded up). The entry chunk measures exactly 316,000 bytes
 //   on this tree — at, not over, its unchanged budget; tight, and
 //   flagged for the next growth round rather than bumped here.
+//   Bump 2026-10-27 (backlog #241): the flagged entry growth arrived —
+//   the #240 tree already measures 316,052 bytes (52 over budget, so
+//   CI's frontend job was already failing at the size step on main
+//   before this change) and this tree measures 316,210 bytes (+158
+//   more; the rename wiring in the shared auth module plus the
+//   PasskeySection name/rename UI, the latter landing mostly in the
+//   SettingsPage chunk, 26.86 kB → 28.52 kB). ENTRY_MAX_BYTES =
+//   332,000 (316,210 measured + ~5%, rounded to the nearest 1,000).
+//   TOTAL_MAX_BYTES stays 573,000 (this tree measures 551,184).
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -60,7 +69,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const ENTRY_MAX_BYTES = 316_000;
+export const ENTRY_MAX_BYTES = 332_000;
 export const TOTAL_MAX_BYTES = 573_000;
 
 /**

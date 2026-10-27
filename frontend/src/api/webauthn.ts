@@ -60,12 +60,18 @@ export interface PasskeyAssertionOptions {
   userVerification: string;
 }
 
-/** One enrolled passkey as the settings surface lists it (no public key — never exposed). */
+/**
+ * One enrolled passkey as the settings surface lists it (no public key — never exposed).
+ * Backlog #241: `name` is the display-only friendly label; it is null for rows enrolled
+ * before #241 and for rows renamed to blank — the settings surface renders those with
+ * the enrolment-date label, never a blank row.
+ */
 export interface PasskeyInfo {
   id: number;
   credentialId: string;
   createdAt: string;
   signCount: number;
+  name: string | null;
 }
 
 function toDescriptor(id: string): PublicKeyCredentialDescriptor {

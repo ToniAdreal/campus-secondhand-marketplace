@@ -4,6 +4,7 @@ import {
   deletePasskey,
   finishPasskeyRegistration,
   listPasskeys,
+  renamePasskey,
   startPasskeyRegistration,
   withStepUpRetry,
   type PasskeyInfo,
@@ -32,6 +33,16 @@ function formatEnrolledAt(iso: string): string {
 }
 
 /**
+ * The row label (backlog #241): the friendly name when the row has
+ * one, otherwise the pre-#241 date label — a row is never rendered
+ * blank, and pre-#241 rows (name null) keep exactly the old label.
+ */
+function displayPasskeyName(pk: PasskeyInfo): string {
+  const name = pk.name?.trim();
+  return name ? name : `Passkey added ${formatEnrolledAt(pk.createdAt)}`;
+}
+
+/**
  * Passkey management inside the two-factor section (backlog #220):
  * WebAuthn passkeys as an alternative second factor next to TOTP.
  * Rendered only where the browser supports WebAuthn — the caller gates
@@ -44,11 +55,20 @@ function formatEnrolledAt(iso: string): string {
  * actions: a stale token re-proves transparently with the typed
  * credentials and retries exactly once. The list itself is a plain
  * authenticated read.
+ *
+ * Backlog #241: each row carries a friendly name — given at enrolment
+ * (optional) or edited inline (Rename) — and the remove button's
+ * aria-label names the row, so a holder with several passkeys cannot
+ * delete the wrong one by mistake. Rows without a name (pre-#241 rows
+ * and blank renames) render the enrolment-date label instead.
  */
 export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null>(null);
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -109,11 +129,12 @@ export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
         return;
       }
       await withStepUpRetry(
-        () => finishPasskeyRegistration(serializeRegistrationCredential(credential)),
+        () => finishPasskeyRegistration(serializeRegistrationCredential(credential), name),
         p,
       );
       setPassword('');
       setCode('');
+      setName('');
       setPasskeys(await listPasskeys());
       setDone('Passkey added. It now works as a second factor at login.');
     } catch (err) {
@@ -143,6 +164,29 @@ export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
     }
   }
 
+  async function onRename(id: number) {
+    if (!requireProof()) return;
+    setPending(true);
+    setError(null);
+    setDone(null);
+    try {
+      // Renaming is display-only, but it is a passkey mutation — the
+      // same freshness gate as add/remove, so a stale token cannot
+      // relabel keys into a deletion mistake (backlog #241).
+      await withStepUpRetry(() => renamePasskey(id, renameValue), proof());
+      setPassword('');
+      setCode('');
+      setRenamingId(null);
+      setRenameValue('');
+      setPasskeys(await listPasskeys());
+      setDone('Passkey renamed.');
+    } catch (err) {
+      setError(describePasskeyError(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <div className="mt-4 border-t border-neutral-200 pt-3">
       <h3 className="mb-1 text-sm font-semibold">Passkeys</h3>
@@ -165,20 +209,66 @@ export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
           {passkeys.map((pk) => (
             <li
               key={pk.id}
-              className="flex items-center justify-between rounded border border-neutral-200 px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-2 rounded border border-neutral-200 px-3 py-2 text-sm"
             >
-              <span className="text-neutral-700">
-                Passkey added {formatEnrolledAt(pk.createdAt)}
-              </span>
-              <button
-                type="button"
-                onClick={() => onDelete(pk.id)}
-                disabled={pending}
-                aria-label={`Remove passkey added ${formatEnrolledAt(pk.createdAt)}`}
-                className="rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-              >
-                Remove
-              </button>
+              {renamingId === pk.id ? (
+                <>
+                  <input
+                    aria-label={`New name for ${displayPasskeyName(pk)}`}
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    placeholder="Leave blank for the date label"
+                    className="min-w-0 flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onRename(pk.id)}
+                    disabled={pending}
+                    className="rounded border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingId(null);
+                      setRenameValue('');
+                    }}
+                    disabled={pending}
+                    className="rounded border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 text-neutral-700">
+                    {displayPasskeyName(pk)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingId(pk.id);
+                      setRenameValue(pk.name ?? '');
+                    }}
+                    disabled={pending}
+                    aria-label={`Rename ${displayPasskeyName(pk)}`}
+                    className="rounded border border-neutral-300 px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(pk.id)}
+                    disabled={pending}
+                    aria-label={`Remove ${displayPasskeyName(pk)}`}
+                    className="rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>
@@ -212,6 +302,19 @@ export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
             />
           </div>
         )}
+        <div>
+          <label htmlFor="settings-passkey-name" className="mb-1 block text-sm font-medium">
+            Name this passkey (optional)
+          </label>
+          <input
+            id="settings-passkey-name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. My phone — blank keeps the date label"
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+          />
+        </div>
         <button
           type="submit"
           disabled={pending}

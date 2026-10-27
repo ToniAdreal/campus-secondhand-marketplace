@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -159,6 +160,15 @@ class PasskeyCeremonyTest {
 
   /** Drives options → create → verify through MockMvc; returns the enrolled credential id. */
   private String enrollPasskey(User user, String bearer) throws Exception {
+    return enrollPasskey(user, bearer, null);
+  }
+
+  /**
+   * The named variant (backlog #241): the verify body carries the
+   * optional friendly name, exactly as the SPA sends it; a null name
+   * is omitted, matching an unnamed enrolment.
+   */
+  private String enrollPasskey(User user, String bearer, String name) throws Exception {
     MvcResult options = mockMvc.perform(post("/api/auth/2fa/passkeys/registration/options")
             .header("Authorization", "Bearer " + bearer))
         .andExpect(status().isOk())
@@ -166,10 +176,15 @@ class PasskeyCeremonyTest {
     JsonNode data = dataOf(options);
     String credentialJson = webauthnConverter.getJsonConverter()
         .writeValueAsString(clientPlatform().create(creationOptions(data)));
+    java.util.Map<String, Object> body = new java.util.HashMap<>();
+    body.put("credential", credentialJson);
+    if (name != null) {
+      body.put("name", name);
+    }
     MvcResult verify = mockMvc.perform(post("/api/auth/2fa/passkeys/registration/verify")
             .header("Authorization", "Bearer " + bearer)
             .contentType(MediaType.APPLICATION_JSON)
-            .content(json.writeValueAsString(Map.of("credential", credentialJson))))
+            .content(json.writeValueAsString(body)))
         .andExpect(status().isOk())
         .andReturn();
     String credentialId = dataOf(verify).path("credentialId").asText();
@@ -437,6 +452,90 @@ class PasskeyCeremonyTest {
         .andReturn();
     assertThat(staleDelete.getResponse().getStatus()).isEqualTo(403);
 
+    mockMvc.perform(delete("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + passkeyBearer(user)))
+        .andExpect(status().isOk());
+    assertThat(passkeyCredentials.countByUserId(user.getId())).isZero();
+    assertThat(auditLogs.findByActorUserIdOrderByIdAsc(user.getId())).anySatisfy(
+        log -> assertThat(log.getAction()).isEqualTo(AuditAction.PASSKEY_REMOVED));
+  }
+
+  @Test
+  void passkeyFriendlyNamePersistsRenamesAndBlankFallsBack() throws Exception {
+    // An unnamed enrolment stores NULL, not a blank string — the
+    // settings surface's date label is the fallback for exactly this.
+    User unnamed = freshUser();
+    enrollPasskey(unnamed, bearer(unnamed));
+    MvcResult unnamedList = mockMvc.perform(get("/api/auth/2fa/passkeys")
+            .header("Authorization", "Bearer " + passkeyBearer(unnamed)))
+        .andExpect(status().isOk())
+        .andReturn();
+    JsonNode unnamedRows = dataOf(unnamedList);
+    assertThat(unnamedRows.size()).isEqualTo(1);
+    assertThat(unnamedRows.get(0).path("name").isNull()).isTrue();
+
+    // A name given at enrolment persists, trimmed, and never exposes key material.
+    User user = freshUser();
+    enrollPasskey(user, bearer(user), "  My phone  ");
+    MvcResult list = mockMvc.perform(get("/api/auth/2fa/passkeys")
+            .header("Authorization", "Bearer " + passkeyBearer(user)))
+        .andExpect(status().isOk())
+        .andReturn();
+    JsonNode rows = dataOf(list);
+    assertThat(rows.size()).isEqualTo(1);
+    assertThat(rows.get(0).path("name").asText()).isEqualTo("My phone");
+    assertThat(rows.get(0).has("publicKeyCose")).isFalse();
+    long rowId = rows.get(0).path("id").asLong();
+
+    // Rename updates the listed row.
+    MvcResult renamed = mockMvc.perform(patch("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + passkeyBearer(user))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "Work laptop"))))
+        .andExpect(status().isOk())
+        .andReturn();
+    assertThat(dataOf(renamed).path("name").asText()).isEqualTo("Work laptop");
+
+    // Another user's row id — and a missing one — are 404, no cross-user oracle.
+    User other = freshUser();
+    mockMvc.perform(patch("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + bearer(other))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "Not yours"))))
+        .andExpect(status().isNotFound());
+    mockMvc.perform(patch("/api/auth/2fa/passkeys/999999")
+            .header("Authorization", "Bearer " + passkeyBearer(user))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "Ghost"))))
+        .andExpect(status().isNotFound());
+
+    // An overlong name is a 400, never a silent truncation.
+    mockMvc.perform(patch("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + passkeyBearer(user))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "x".repeat(101)))))
+        .andExpect(status().isBadRequest());
+
+    // A blank rename clears the label back to NULL — the row falls
+    // back to the date label instead of rendering blank.
+    MvcResult cleared = mockMvc.perform(patch("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + passkeyBearer(user))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "   "))))
+        .andExpect(status().isOk())
+        .andReturn();
+    assertThat(dataOf(cleared).path("name").isNull()).isTrue();
+
+    // A stale proof cannot rename (step-up gate, like enrolment/removal).
+    String staleProof = passkeyBearer(user);
+    clock.advance(Duration.ofMinutes(11));
+    mockMvc.perform(patch("/api/auth/2fa/passkeys/" + rowId)
+            .header("Authorization", "Bearer " + staleProof)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("name", "Stale"))))
+        .andExpect(status().isForbidden());
+
+    // Removal still fires the PASSKEY_REMOVED alert after renames.
     mockMvc.perform(delete("/api/auth/2fa/passkeys/" + rowId)
             .header("Authorization", "Bearer " + passkeyBearer(user)))
         .andExpect(status().isOk());

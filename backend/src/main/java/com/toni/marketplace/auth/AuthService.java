@@ -1627,10 +1627,17 @@ public class AuthService {
    * key already enrolled on another account — the id is globally
    * unique) is a 409, never a second row.
    *
+   * <p>Backlog #241: {@code name} is the optional display-only
+   * friendly label for the new row. A blank or null name stores
+   * NULL — the settings surface renders such rows with the
+   * enrolment-date label, never a blank row — and an overlong name
+   * is rejected at the controller's validation layer before this
+   * point, never truncated silently.
+   *
    * @return the enrolled credential id (base64url)
    */
   @Transactional
-  public String finishPasskeyRegistration(long userId, String credentialJson) {
+  public String finishPasskeyRegistration(long userId, String credentialJson, String name) {
     stepUp().requireFresh();
     requirePasskeysAvailable();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
@@ -1653,7 +1660,8 @@ public class AuthService {
     com.webauthn4j.data.attestation.authenticator.AAGUID attestedAaguid = data
         .getAttestationObject().getAuthenticatorData().getAttestedCredentialData().getAaguid();
     byte[] aaguid = attestedAaguid == null ? null : attestedAaguid.getBytes();
-    passkeyCredentials.save(new PasskeyCredential(userId, credentialId, coseKey, signCount, aaguid));
+    passkeyCredentials.save(new PasskeyCredential(userId, credentialId, coseKey, signCount, aaguid,
+        normalizePasskeyName(name)));
     // The enrolment is a sensitive transition — append its audit row
     // inside this transaction (a rollback leaves no credential and no
     // row), and notify the holder (security alert, never mutable).
@@ -1675,6 +1683,48 @@ public class AuthService {
     return passkeyCredentials.findByUserIdOrderByCreatedAtDesc(userId).stream()
         .map(PasskeyInfo::of)
         .toList();
+  }
+
+  /**
+   * Normalizes a passkey friendly name (backlog #241): trims
+   * surrounding whitespace, and maps a null or blank name to NULL —
+   * the stored form of "no name", which the settings surface renders
+   * with the enrolment-date label. Never truncates: overlong names
+   * are rejected by validation before they reach this helper.
+   */
+  static String normalizePasskeyName(String name) {
+    if (name == null) {
+      return null;
+    }
+    String trimmed = name.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /**
+   * Renames one of the caller's enrolled passkeys (backlog #241,
+   * authenticated): the same fresh-proof gate as enrolment and
+   * removal — renaming is display-only, but a merely-authenticated
+   * (possibly stolen) token must not be able to relabel the holder's
+   * keys and steer them into deleting the wrong second factor, the
+   * exact confusion #241 exists to prevent. A blank name clears the
+   * label back to NULL (date-label fallback); the rename changes no
+   * credential material and writes no audit row or notification,
+   * unlike enrolment/removal which are security transitions. Unknown
+   * ids — or ids belonging to another user — are 404 (no cross-user
+   * oracle), mirroring {@code deletePasskey}.
+   *
+   * @return the renamed row as listed by {@link #listPasskeys}
+   */
+  @Transactional
+  public PasskeyInfo renamePasskey(long userId, long passkeyId, String name) {
+    stepUp().requireFresh();
+    requirePasskeysAvailable();
+    PasskeyCredential row = passkeyCredentials.findById(passkeyId)
+        .filter(credential -> credential.getUserId() == userId)
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "passkey not found"));
+    row.setName(normalizePasskeyName(name));
+    return PasskeyInfo.of(passkeyCredentials.save(row));
   }
 
   /**

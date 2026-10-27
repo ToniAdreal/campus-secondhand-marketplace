@@ -118,6 +118,7 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/2fa/passkeys/registration/verify",
       "GET /api/auth/2fa/passkeys",
       "DELETE /api/auth/2fa/passkeys/{id}",
+      "PATCH /api/auth/2fa/passkeys/{id}",
       "GET /api/auth/2fa/recovery-codes/count",
       "POST /api/auth/2fa/recovery-codes/regenerate",
       "POST /api/auth/2fa/setup",

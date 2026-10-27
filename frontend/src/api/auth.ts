@@ -348,13 +348,19 @@ export async function startPasskeyRegistration(): Promise<PasskeyRegistrationOpt
  * id (base64url) — the handle the settings surface lists and DELETE
  * addresses. A PASSKEY_REGISTERED audit row and a security notification
  * are recorded server-side.
+ *
+ * Backlog #241: `name` is the optional display-only friendly label for
+ * the new row. A blank name is omitted from the body, so the server
+ * stores NULL and the list renders the enrolment-date label.
  */
 export async function finishPasskeyRegistration(
   credential: string,
+  name?: string,
 ): Promise<{ credentialId: string }> {
+  const trimmed = name?.trim();
   const res = await api.post<ApiResponse<{ credentialId: string }>>(
     '/auth/2fa/passkeys/registration/verify',
-    { credential },
+    trimmed ? { credential, name: trimmed } : { credential },
   );
   return res.data.data;
 }
@@ -377,6 +383,19 @@ export async function listPasskeys(): Promise<PasskeyInfo[]> {
  */
 export async function deletePasskey(id: number): Promise<void> {
   await api.delete(`/auth/2fa/passkeys/${id}`);
+}
+
+/**
+ * PATCH /api/auth/2fa/passkeys/{id} (authenticated, step-up gated —
+ * backlog #241). Renames one of the caller's passkeys: the display-only
+ * friendly label. A blank name clears the label (the server stores
+ * NULL and the list falls back to the enrolment-date label); an
+ * overlong name is a 400. Unknown ids — or ids belonging to another
+ * user — are 404, never a cross-user oracle. Returns the updated row.
+ */
+export async function renamePasskey(id: number, name: string): Promise<PasskeyInfo> {
+  const res = await api.patch<ApiResponse<PasskeyInfo>>(`/auth/2fa/passkeys/${id}`, { name });
+  return res.data.data;
 }
 
 /**

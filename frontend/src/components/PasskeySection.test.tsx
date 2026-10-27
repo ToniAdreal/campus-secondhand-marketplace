@@ -6,6 +6,7 @@ import PasskeySection from './PasskeySection';
 const postSpy = vi.spyOn(api, 'post');
 const getSpy = vi.spyOn(api, 'get');
 const deleteSpy = vi.spyOn(api, 'delete');
+const patchSpy = vi.spyOn(api, 'patch');
 
 function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
@@ -189,5 +190,111 @@ describe('PasskeySection (backlog #220)', () => {
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('lists a named passkey by its name and names it in the remove button (backlog #241)', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
+        { id: 12, credentialId: 'cred-bbb', createdAt: '2026-10-21T01:02:03Z', signCount: 0, name: null },
+      ]),
+    );
+    render(<PasskeySection totpOn={false} />);
+
+    expect(await screen.findByText('My phone')).toBeTruthy();
+    // the unnamed row keeps the pre-#241 date label, never a blank row
+    expect(screen.getByText(/Passkey added/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /remove my phone/i })).toBeTruthy();
+  });
+
+  it('renames a passkey and refreshes the list (backlog #241)', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
+      ]),
+    );
+    render(<PasskeySection totpOn={false} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /rename my phone/i }));
+    const input = screen.getByLabelText(/new name for my phone/i);
+    expect((input as HTMLInputElement).value).toBe('My phone');
+    fireEvent.change(input, { target: { value: 'Work laptop' } });
+
+    patchSpy.mockResolvedValueOnce(
+      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop' }),
+    );
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop' },
+      ]),
+    );
+
+    fireEvent.change(screen.getByLabelText(/current password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(patchSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/11', { name: 'Work laptop' }),
+    );
+    await waitFor(() => expect(screen.getByText('Passkey renamed.')).toBeTruthy());
+    expect(screen.getByText('Work laptop')).toBeTruthy();
+    expect(screen.queryByText('My phone')).toBeNull();
+  });
+
+  it('a blank rename falls back to the date label (backlog #241)', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
+      ]),
+    );
+    render(<PasskeySection totpOn={false} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /rename my phone/i }));
+    fireEvent.change(screen.getByLabelText(/new name for my phone/i), { target: { value: '' } });
+
+    patchSpy.mockResolvedValueOnce(
+      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null }),
+    );
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null },
+      ]),
+    );
+
+    fireEvent.change(screen.getByLabelText(/current password/i), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(patchSpy).toHaveBeenCalledWith('/auth/2fa/passkeys/11', { name: '' }),
+    );
+    await waitFor(() => expect(screen.getByText('Passkey renamed.')).toBeTruthy());
+    expect(screen.queryByText('My phone')).toBeNull();
+    expect(screen.getByText(/Passkey added/)).toBeTruthy();
+  });
+
+  it('sends the enrolment name with the verify call (backlog #241)', async () => {
+    const create = mockWebAuthn();
+    getSpy.mockResolvedValueOnce(envelope([]));
+    render(<PasskeySection totpOn={false} />);
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalled());
+    postSpy.mockResolvedValueOnce(envelope(registrationOptions));
+    postSpy.mockResolvedValueOnce(envelope({ credentialId: 'new-cred-id' }));
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 12, credentialId: 'new-cred-id', createdAt: '2026-10-23T01:02:03Z', signCount: 0, name: 'My phone' },
+      ]),
+    );
+
+    fireEvent.change(screen.getByLabelText(/current password/i), { target: { value: 'secret' } });
+    fireEvent.change(screen.getByLabelText(/name this passkey/i), { target: { value: 'My phone' } });
+    fireEvent.click(screen.getByRole('button', { name: /add a passkey on this device/i }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    const verifyCall = postSpy.mock.calls.find(
+      (c) => c[0] === '/auth/2fa/passkeys/registration/verify',
+    );
+    expect(verifyCall).toBeTruthy();
+    expect((verifyCall![1] as { name?: string }).name).toBe('My phone');
+    await waitFor(() => expect(screen.getByText('My phone')).toBeTruthy());
   });
 });

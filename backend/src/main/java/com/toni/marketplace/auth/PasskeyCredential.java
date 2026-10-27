@@ -23,6 +23,13 @@ import org.hibernate.type.SqlTypes;
  * credential record is rebuilt for assertion verification), and the
  * signature counter for clone detection.
  *
+ * <p>The friendly name (backlog #241) is display-only: it tells the
+ * holder which authenticator a row is ("My phone", "Work laptop") so
+ * they do not delete the wrong second factor. It is never used in
+ * verification, never required, and NULL for rows enrolled before
+ * #241 (Flyway V71 adds the column with no backfill) — the settings
+ * surface falls back to the enrolment-date label for those rows.
+ *
  * <p>Passkeys are a second factor, not a password replacement: a row
  * here joins the 202-challenge family ({@code TOTP code / recovery code
  * / passkey assertion}), and passwordless login is explicitly out of
@@ -71,6 +78,14 @@ public class PasskeyCredential {
   @Column(name = "sign_count", nullable = false)
   private long signCount;
 
+  /**
+   * Display-only friendly name (backlog #241, Flyway V71); NULL for
+   * pre-#241 rows and for enrolments/renames given a blank name — the
+   * settings surface renders those with the enrolment-date label.
+   */
+  @Column(name = "name", length = 100)
+  private String name;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -78,11 +93,17 @@ public class PasskeyCredential {
 
   public PasskeyCredential(Long userId, String credentialId, byte[] publicKeyCose,
                            long signCount, byte[] aaguid) {
+    this(userId, credentialId, publicKeyCose, signCount, aaguid, null);
+  }
+
+  public PasskeyCredential(Long userId, String credentialId, byte[] publicKeyCose,
+                           long signCount, byte[] aaguid, String name) {
     this.userId = userId;
     this.credentialId = credentialId;
     this.publicKeyCose = publicKeyCose;
     this.signCount = signCount;
     this.aaguid = aaguid;
+    this.name = name;
   }
 
   @PrePersist
@@ -97,5 +118,7 @@ public class PasskeyCredential {
   public byte[] getAaguid() { return aaguid; }
   public long getSignCount() { return signCount; }
   public void setSignCount(long signCount) { this.signCount = signCount; }
+  public String getName() { return name; }
+  public void setName(String name) { this.name = name; }
   public Instant getCreatedAt() { return createdAt; }
 }

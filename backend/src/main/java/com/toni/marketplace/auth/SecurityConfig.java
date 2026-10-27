@@ -238,6 +238,7 @@ public class SecurityConfig {
             .requestMatchers(HttpMethod.POST, "/api/auth/2fa/passkeys/registration/verify").authenticated()
             .requestMatchers(HttpMethod.GET, "/api/auth/2fa/passkeys").authenticated()
             .requestMatchers(HttpMethod.DELETE, "/api/auth/2fa/passkeys/**").authenticated()
+            .requestMatchers(HttpMethod.PATCH, "/api/auth/2fa/passkeys/**").authenticated()
             // The passkey assertion options stay public like
             // /api/auth/2fa/authenticate — the 202 challenge token in the
             // body is the credential (backlog #220).
