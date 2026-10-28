@@ -44,6 +44,25 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
   long countByReceiverIdAndReadAtIsNullAndDeletedAtIsNull(Long receiverId);
 
   /**
+   * Cross-thread search (backlog #260): body-text matches over every
+   * thread the caller participates in (sent or received), across all
+   * listings — the same participant predicate the thread read uses, so
+   * rows between two other users are never matched. Only the stored
+   * body is searched: a photo attachment carries no searchable text,
+   * and a soft-deleted row's original wording no longer exists in
+   * storage (it holds the #206 tombstone), so deleted rows are
+   * excluded rather than matching the tombstone text. The caller
+   * passes an already-escaped keyword (see
+   * {@link MessageService#search}); the surrounding {@code %} are the
+   * only wildcards. Runs identically on H2 and MySQL.
+   */
+  @Query("SELECT m FROM Message m WHERE (m.senderId = :userId OR m.receiverId = :userId) "
+      + "AND m.deletedAt IS NULL "
+      + "AND lower(m.body) LIKE lower(concat('%', :keyword, '%')) ESCAPE '\\'")
+  Page<Message> searchByParticipantAndBody(
+      @Param("userId") Long userId, @Param("keyword") String keyword, Pageable pageable);
+
+  /**
    * Every message the user sent or received, for the account data
    * export (backlog #172): chronological ({@code createdAt} asc,
    * {@code id} asc tie-break), so the archive reads in conversation

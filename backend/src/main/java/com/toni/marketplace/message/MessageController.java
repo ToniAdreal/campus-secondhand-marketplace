@@ -94,6 +94,27 @@ public class MessageController {
   }
 
   /**
+   * Searches the caller's own message threads by body text (backlog
+   * #260): sent + received, across all listings, paged like the thread
+   * endpoint (page 0 newest, default {@code size=20}, capped at 50,
+   * chronological within the page). Photo attachments carry no
+   * searchable text and soft-deleted rows are excluded — only live
+   * body text matches. A blank {@code q} answers an empty page, never
+   * 400. Authenticated only (anonymous → 401 envelope, like every
+   * other {@code /api/messages} route); blocked participants are not
+   * filtered, following the existing thread-read rule.
+   */
+  @GetMapping("/search")
+  public ApiResponse<Page<MessageDto>> search(
+      @RequestParam(defaultValue = "") String q,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    Long userId =
+        (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    return ApiResponse.ok(messageService.search(userId, q, page, size));
+  }
+
+  /**
    * The caller's total unread messages across all listings (backlog
    * #106): a bare count for the nav badge — no message bodies, senders
    * or listing ids are exposed. Authenticated only (anonymous → 401

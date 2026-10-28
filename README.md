@@ -139,6 +139,7 @@ order/       OrderController  POST /api/orders (Idempotency-Key header),
              order; concurrent same-key losers get 409 while IN_PROGRESS.
              Tables: orders, idempotency_key.
 message/     MessageController  POST /api/messages, GET /api/messages?itemId=,
+             GET /api/messages/search?q= (own threads, body text only),
              PUT /api/messages/{id} (edit), DELETE /api/messages/{id} (soft delete)
              Offline v1 (no WebSocket). Sender is taken from the JWT principal;
              threads are readable only by participants (third party → 403).

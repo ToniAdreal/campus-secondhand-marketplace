@@ -220,6 +220,46 @@ public class MessageService {
   }
 
   /**
+   * Searches the caller's own message threads by body text (backlog
+   * #260): every thread the caller participates in (sent + received),
+   * across all listings, so a seller with many listings can find a
+   * conversation without opening threads one by one.
+   *
+   * <p>Paging mirrors the thread read exactly: page 0 is the
+   * <em>newest</em> page, {@code size} is clamped to
+   * [1, {@value #MAX_THREAD_PAGE_SIZE}], negative pages to 0, and
+   * messages are chronological <em>within</em> the page. A null,
+   * blank or whitespace-only query answers an empty page — never 400,
+   * never a wildcard dump — mirroring the #235 suggestions rule:
+   * there is nothing to show until the user types.
+   *
+   * <p>Block visibility follows the existing thread rule, no new rule:
+   * blocks stop new sends (#187) but never hid thread reads, so a
+   * search does not filter blocked participants either. Searching
+   * stamps nothing read — only opening a thread does (#106) — and it
+   * never 403s: a caller with no matching thread simply gets an empty
+   * page, since unlike a per-listing thread read there is no single
+   * conversation whose membership would leak.
+   */
+  @Transactional(readOnly = true)
+  public Page<MessageDto> search(Long userId, String rawQuery, int page, int size) {
+    PageRequest pageable = PageRequest.of(
+        Math.max(page, 0),
+        Math.min(Math.max(size, 1), MAX_THREAD_PAGE_SIZE),
+        Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+    if (rawQuery == null || rawQuery.isBlank()) {
+      return new PageImpl<>(List.of(), pageable, 0);
+    }
+    String keyword = rawQuery.trim()
+        .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    Page<Message> fetched = messages.searchByParticipantAndBody(userId, keyword, pageable);
+    List<MessageDto> chronological = new ArrayList<>(
+        fetched.stream().map(MessageDto::from).toList());
+    Collections.reverse(chronological);
+    return new PageImpl<>(chronological, pageable, fetched.getTotalElements());
+  }
+
+  /**
    * The caller's total unread messages across all listings (backlog
    * #106) — a count only; no message body or sender data is exposed.
    */
