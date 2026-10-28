@@ -48,6 +48,13 @@ import org.hibernate.type.SqlTypes;
  * same kind returns the dispute unchanged (a different note on the
  * repeat does not rewrite history) and a 422 opposite resolution
  * throws before any write, so neither path can touch the stored note.
+ *
+ * <p>{@code openedBy} (backlog #255, Flyway V74) records which party
+ * escalated: BUYER for the original #169 path, SELLER for a
+ * seller-opened dispute. It decides who gets the open notification
+ * (the other party) and is exposed on the DTO. Pre-#255 rows backfill
+ * to BUYER — every dispute opened before this change was
+ * buyer-opened by construction.
  */
 @Entity
 @Table(name = "order_dispute")
@@ -107,6 +114,16 @@ public class OrderDispute {
   @Column(name = "resolution_note", length = 1000)
   private String resolutionNote;
 
+  /**
+   * Who opened the dispute (backlog #255). Defaults to BUYER so rows
+   * built with the pre-#255 constructor (e.g. dashboard seeds) keep
+   * the original semantics; DisputeService always sets it explicitly.
+   */
+  @Enumerated(EnumType.STRING)
+  @JdbcTypeCode(SqlTypes.VARCHAR)
+  @Column(name = "opened_by", nullable = false, length = 8)
+  private DisputeOpener openedBy = DisputeOpener.BUYER;
+
   protected OrderDispute() {}
 
   public OrderDispute(Long orderId, Long buyerId, Long sellerId, String reason,
@@ -151,4 +168,6 @@ public class OrderDispute {
   public void setResolutionNote(String resolutionNote) {
     this.resolutionNote = resolutionNote;
   }
+  public DisputeOpener getOpenedBy() { return openedBy; }
+  public void setOpenedBy(DisputeOpener openedBy) { this.openedBy = openedBy; }
 }

@@ -1,0 +1,14 @@
+-- V74: opener of a dispute (backlog #255). Runs on both MySQL 8
+-- (prod/CI) and H2 in MySQL-compatibility mode (local dev).
+--
+-- Before #255 only the buyer could open a dispute, so no column was
+-- needed: the opener was always the buyer. A seller-opened dispute
+-- needs the opener recorded — it decides who gets the open
+-- notification (the other party) and is shown on the dispute DTO.
+-- Existing rows backfill to 'BUYER' via the column DEFAULT: every
+-- dispute opened before this change was buyer-opened by construction,
+-- so the backfill states a fact, not an invention. New rows always
+-- carry an explicit value from DisputeService (the entity field
+-- initializer is BUYER, matching the pre-#255 behaviour for seeded
+-- rows built with the old constructor).
+ALTER TABLE order_dispute ADD COLUMN opened_by VARCHAR(8) NOT NULL DEFAULT 'BUYER';

@@ -12,10 +12,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Buyer dispute opening (backlog #169). Authenticated like every order
- * route (the security chain's anyRequest rule; anonymous callers get
- * the 401 envelope); the buyer scoping lives in {@link DisputeService}.
- * The ADMIN resolution endpoints live on {@link AdminDisputeController}.
+ * Buyer-or-seller dispute opening (backlog #169, seller path #255).
+ * Authenticated like every order route (the security chain's
+ * anyRequest rule; anonymous callers get the 401 envelope); the
+ * party scoping lives in {@link DisputeService}. The ADMIN
+ * resolution endpoints live on {@link AdminDisputeController}.
  */
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(name = "orders", description = "Buyer orders and the mock-PSP payment lifecycle")
@@ -32,7 +33,8 @@ public class DisputeController {
    * Opens a dispute on a PAID, SHIPPED or COMPLETED order: the order moves to
    * DISPUTED (frozen — pay/cancel/complete/ship/confirm-receipt/refund all answer 422 until
    * an ADMIN resolves it) and no money moves. Only the order's buyer
-   * may dispute (403 otherwise); only inside the dispute window
+   * or the listing's seller may dispute (403 otherwise); only inside
+   * the dispute window
    * ({@code app.disputes.window}, default 7 days from the transition —
    * outside it 422); opening while a dispute is already open returns
    * that dispute unchanged.
@@ -43,7 +45,7 @@ public class DisputeController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-          description = "not the order's buyer (envelope)"),
+          description = "not the order's buyer or the listing's seller (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
           description = "unknown order id (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
@@ -53,9 +55,9 @@ public class DisputeController {
   @PostMapping("/{id}/dispute")
   public ApiResponse<DisputeDto> dispute(@PathVariable Long id,
                                          @Valid @RequestBody DisputeCreateRequest request) {
-    Long buyerId =
+    Long callerId =
         (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    return ApiResponse.ok(disputeService.openDispute(buyerId, id, request.reason()));
+    return ApiResponse.ok(disputeService.openDispute(callerId, id, request.reason()));
   }
 
   /**

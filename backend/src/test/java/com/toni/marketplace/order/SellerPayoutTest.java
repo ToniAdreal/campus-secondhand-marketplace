@@ -190,6 +190,18 @@ class SellerPayoutTest {
     return ((Number) JsonPath.read(body, "$.data.id")).longValue();
   }
 
+  /** Backlog #255: the seller opens a dispute on their own order. */
+  private long openDisputeAsSeller(User seller, long orderId) throws Exception {
+    String body = mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"buyer filed a false non-receipt claim\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.openedBy").value("SELLER"))
+        .andReturn().getResponse().getContentAsString();
+    return ((Number) JsonPath.read(body, "$.data.id")).longValue();
+  }
+
   private String payoutListJson(User seller) throws Exception {
     return mockMvc.perform(get("/api/seller/payouts")
             .header("Authorization", "Bearer " + token(seller)))
@@ -287,6 +299,36 @@ class SellerPayoutTest {
             .header("Authorization", "Bearer " + token(admin))
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"resolutionNote\":\"Payout sweep test release.\"}"))
+        .andExpect(status().isOk());
+
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+    assertThat((String) JsonPath.read(payoutListJson(seller), "$.data.content[0].status"))
+        .isEqualTo("PAYABLE");
+  }
+
+  @Test
+  void sellerOpenedDisputeBlocksPromotion_releaseUnblocksIt() throws Exception {
+    // Backlog #255: the payout promotion guard keys on the OPEN
+    // dispute row, not on who opened it — verified here rather than
+    // assumed. A seller-opened dispute blocks promotion exactly like
+    // a buyer-opened one, and a release resolution unblocks it.
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    long disputeId = openDisputeAsSeller(seller, orderId);
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(0);
+    assertThat((String) JsonPath.read(payoutListJson(seller), "$.data.content[0].status"))
+        .isEqualTo("PENDING");
+
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Payout sweep test release of a seller dispute.\"}"))
         .andExpect(status().isOk());
 
     assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);

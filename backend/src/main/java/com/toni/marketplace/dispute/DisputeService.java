@@ -34,8 +34,12 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>Open ({@link #openDispute}):
  * <ul>
- *   <li>Buyer only — anyone else gets 403, checked before any state
- *       guard, mirroring {@code OrderService.pay}, so an order id never
+ *   <li>Buyer or seller only (backlog #255 — before it, buyer only):
+ *       the order's buyer escalates a bad handoff, the listing's
+ *       seller escalates a misbehaving buyer (false non-receipt claim,
+ *       abusive thread) instead of having only the voluntary refund
+ *       path. Anyone else gets 403, checked before any state guard,
+ *       mirroring {@code OrderService.pay}, so an order id never
  *       leaks what the caller may do with it. Unknown order → 404;
  *       anonymous → the chain's 401 envelope.</li>
  *   <li>Only PAID, SHIPPED (backlog #222 — a shipped order that never
@@ -54,10 +58,11 @@ import org.springframework.web.server.ResponseStatusException;
  *       names DISPUTED explicitly.</li>
  *   <li>One dispute per order, ever: opening while one is OPEN is
  *       idempotent and returns the open dispute (no second row, no
- *       second notification, no second audit row); re-disputing an
- *       order whose dispute was already resolved is 422 — the decision
- *       was made. The V36 {@code open_order_id} guard column is the
- *       database-level arbiter for racing opens.</li>
+ *       second notification, no second audit row) — whichever party
+ *       re-opens it, since both parties may already read it;
+ *       re-disputing an order whose dispute was already resolved is
+ *       422 — the decision was made. The V36 {@code open_order_id}
+ *       guard column is the database-level arbiter for racing opens.</li>
  * </ul>
  *
  * <p>Resolution (ADMIN only, on the controllers):
@@ -89,9 +94,10 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>Audit + notifications join each transition's own transaction,
  * mirroring {@code OrderService}: open writes ORDER_DISPUTED (actor =
- * the buyer) and notifies the seller; each resolution writes its own
- * audit action (actor = the resolving ADMIN) and notifies BOTH sides.
- * A rolled-back transition writes neither.
+ * the opener) and notifies the other party (a buyer-opened dispute
+ * notifies the seller, a seller-opened one notifies the buyer); each
+ * resolution writes its own audit action (actor = the resolving ADMIN)
+ * and notifies BOTH sides. A rolled-back transition writes neither.
  *
  * <p>Honest scope: mock PSP only — a "refund" here is the mock seam, no
  * real chargeback exists. The reason is text; photo evidence on an
@@ -157,16 +163,24 @@ public class DisputeService {
   /**
    * Opens a dispute on a PAID/SHIPPED/COMPLETED order (see the class javadoc
    * for the full rule set), or returns the already-open dispute for
-   * the order unchanged.
+   * the order unchanged. The caller must be the order's buyer or the
+   * listing's seller (backlog #255); anyone else gets 403, checked
+   * before any state guard.
    */
   @Transactional
-  public DisputeDto openDispute(Long buyerId, Long orderId, String reason) {
+  public DisputeDto openDispute(Long callerId, Long orderId, String reason) {
     Order order = orders.findById(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
-    if (!order.getBuyerId().equals(buyerId)) {
+    Long sellerId = order.getItem().getSellerId();
+    DisputeOpener opener;
+    if (order.getBuyerId().equals(callerId)) {
+      opener = DisputeOpener.BUYER;
+    } else if (sellerId.equals(callerId)) {
+      opener = DisputeOpener.SELLER;
+    } else {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-          "only the buyer can dispute this order");
+          "only the buyer or the seller can dispute this order");
     }
     if (order.getStatus() == OrderStatus.DISPUTED) {
       // Idempotent re-open: the live dispute is the answer. (A DISPUTED
@@ -203,12 +217,13 @@ public class DisputeService {
       // concurrent transition of the order row surfaces here as a
       // version conflict → 409 instead of a 500 at commit.
       orders.flush();
-      OrderDispute dispute = new OrderDispute(orderId, buyerId,
-          order.getItem().getSellerId(), reason, previous);
+      OrderDispute dispute = new OrderDispute(orderId, order.getBuyerId(),
+          sellerId, reason, previous);
+      dispute.setOpenedBy(opener);
       DisputeDto dto = DisputeDto.from(disputes.save(dispute));
       disputes.flush();
-      audit().record(buyerId, AuditAction.ORDER_DISPUTED, AuditTargetType.ORDER, orderId);
-      notifications().record(order.getItem().getSellerId(),
+      audit().record(callerId, AuditAction.ORDER_DISPUTED, AuditTargetType.ORDER, orderId);
+      notifications().record(opener == DisputeOpener.BUYER ? sellerId : order.getBuyerId(),
           NotificationType.ORDER_DISPUTED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {

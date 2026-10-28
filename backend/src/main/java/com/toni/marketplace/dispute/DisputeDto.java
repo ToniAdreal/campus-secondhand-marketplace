@@ -11,6 +11,8 @@ import java.time.Instant;
  * {@code resolvedAt} is null while the dispute is OPEN.
  * {@code resolutionNote} (backlog #240) is the ADMIN's reason for the
  * verdict — null while OPEN and on pre-#240 resolutions, never blank.
+ * {@code openedBy} (backlog #255) is which party escalated — BUYER
+ * for the original path, SELLER for a seller-opened dispute.
  */
 public record DisputeDto(
     Long id,
@@ -23,7 +25,8 @@ public record DisputeDto(
     Boolean listingRestored,
     Instant createdAt,
     Instant resolvedAt,
-    String resolutionNote) {
+    String resolutionNote,
+    DisputeOpener openedBy) {
 
   public static DisputeDto from(OrderDispute dispute) {
     return new DisputeDto(
@@ -37,6 +40,7 @@ public record DisputeDto(
         dispute.getListingRestored(),
         dispute.getCreatedAt(),
         dispute.getResolvedAt(),
-        dispute.getResolutionNote());
+        dispute.getResolutionNote(),
+        dispute.getOpenedBy());
   }
 }

@@ -242,18 +242,16 @@ class OrderDisputeTest {
   }
 
   @Test
-  void openByNonBuyer_forbidden_anonymous401_unknown404() throws Exception {
+  void openByStranger_forbidden_anonymous401_unknown404() throws Exception {
+    // Backlog #255: the seller may now open a dispute on their own
+    // order, so only a stranger is 403 here (the seller-opened path
+    // has its own tests below).
     User seller = newUser();
     User buyer = newUser();
     User stranger = newUser();
     Item item = newItem(seller, 10_000L);
     long orderId = paidOrder(buyer, seller, item);
 
-    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
-            .header("Authorization", "Bearer " + token(seller))
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"reason\":\"seller cannot dispute\"}"))
-        .andExpect(status().isForbidden());
     mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
             .header("Authorization", "Bearer " + token(stranger))
             .contentType(MediaType.APPLICATION_JSON)
@@ -618,5 +616,174 @@ class OrderDisputeTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.content[?(@.id == " + disputeId2 + ")].resolutionNote")
             .value(org.hamcrest.Matchers.hasItem("Delivered late but intact.")));
+  }
+
+  // ---- Backlog #255: seller-initiated disputes ----
+
+  @Test
+  void openBySeller_freezesOrder_notifiesBuyer_auditsWithSellerActor() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"buyer filed a false non-receipt claim\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.orderId").value(orderId))
+        .andExpect(jsonPath("$.data.buyerId").value(buyer.getId()))
+        .andExpect(jsonPath("$.data.sellerId").value(seller.getId()))
+        .andExpect(jsonPath("$.data.status").value("OPEN"))
+        .andExpect(jsonPath("$.data.previousStatus").value("PAID"))
+        .andExpect(jsonPath("$.data.openedBy").value("SELLER"));
+
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.DISPUTED);
+    // Opening moves no money and no listing state, same as the buyer path.
+    assertThat(items.findById(item.getId()).orElseThrow().getStatus())
+        .isEqualTo(ItemStatus.RESERVED);
+    // The buyer — not the seller — gets the open notification.
+    assertThat(notificationTypesFor(buyer.getId()))
+        .containsExactly(NotificationType.ORDER_DISPUTED);
+    assertThat(notificationTypesFor(seller.getId()))
+        .containsExactly(NotificationType.ORDER_PAID);
+    // The audit actor is the opener, the seller — not the buyer.
+    Long actor = jdbc.queryForObject(
+        "SELECT actor_user_id FROM audit_log WHERE target_type = 'ORDER' AND target_id = ?"
+            + " AND action = 'ORDER_DISPUTED'", Long.class, orderId);
+    assertThat(actor).isEqualTo(seller.getId());
+    assertThat(disputes.findByOrderId(orderId).get(0).getOpenedBy())
+        .isEqualTo(DisputeOpener.SELLER);
+  }
+
+  @Test
+  void openBySellerOnPendingOrder_422() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    String body = mockMvc.perform(post("/api/orders")
+            .header("Authorization", "Bearer " + token(buyer))
+            .header("Idempotency-Key", "dispute-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"itemId\":" + item.getId() + "}"))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long orderId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+
+    // The state guard applies to the seller path exactly as to the buyer path.
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"not paid yet\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findByOrderId(orderId)).isEmpty();
+  }
+
+  @Test
+  void crossPartyReopen_returnsSameDispute_noDuplicateSideEffects() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+
+    // The seller opens; the buyer re-opening returns the same dispute —
+    // one dispute per order, ever, regardless of which party opened it.
+    String firstBody = mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"abusive thread\"}"))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long first = ((Number) JsonPath.read(firstBody, "$.data.id")).longValue();
+    long second = openDispute(buyer, orderId, "never arrived (buyer retry)");
+
+    assertThat(second).isEqualTo(first);
+    assertThat(disputes.findByOrderId(orderId)).hasSize(1);
+    assertThat(disputes.findByOrderId(orderId).get(0).getOpenedBy())
+        .isEqualTo(DisputeOpener.SELLER);
+    // The idempotent re-open wrote no second notification or audit row:
+    // the buyer still holds only the seller-open notification, and the
+    // seller's inbox still holds only the pay notification.
+    assertThat(notificationTypesFor(buyer.getId()))
+        .containsExactly(NotificationType.ORDER_DISPUTED);
+    assertThat(notificationTypesFor(seller.getId()))
+        .containsExactly(NotificationType.ORDER_PAID);
+    assertThat(auditActionsFor(orderId))
+        .filteredOn(a -> a == AuditAction.ORDER_DISPUTED).hasSize(1);
+  }
+
+  @Test
+  void sellerOpenAfterBuyerDisputeResolved_422() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    long disputeId = openDispute(buyer, orderId, "never arrived");
+
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Tracking shows delivery; releasing.\"}"))
+        .andExpect(status().isOk());
+
+    // The decision was made: the seller cannot open a second dispute
+    // on the same order, even though they never opened the first.
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"second bite, seller side\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findByOrderId(orderId)).hasSize(1);
+  }
+
+  @Test
+  void sellerOpenedCompletedDispute_resolveRefund_listingStaysSold_noteShownToBoth()
+      throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    completeWithCode(seller, buyer, orderId);
+
+    String openBody = mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"buyer threatens a chargeback after handoff\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.openedBy").value("SELLER"))
+        .andReturn().getResponse().getContentAsString();
+    long disputeId = ((Number) JsonPath.read(openBody, "$.data.id")).longValue();
+    long refundsBefore = payments.refundsIssued();
+
+    // Resolve paths are unchanged for a seller-opened dispute: the
+    // refund runs the same mock seam once, the SOLD listing stays
+    // SOLD, and the #240 note is shown to both parties.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Handover confirmed but buyer escalated; refunding.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("RESOLVED_REFUND"))
+        .andExpect(jsonPath("$.data.listingRestored").value(false))
+        .andExpect(jsonPath("$.data.openedBy").value("SELLER"));
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.REFUNDED);
+    assertThat(items.findById(item.getId()).orElseThrow().getStatus())
+        .isEqualTo(ItemStatus.SOLD);
+    assertThat(payments.refundsIssued() - refundsBefore).isEqualTo(1);
+    mockMvc.perform(get("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote")
+            .value("Handover confirmed but buyer escalated; refunding."));
+    mockMvc.perform(get("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.resolutionNote")
+            .value("Handover confirmed but buyer escalated; refunding."));
   }
 }

@@ -135,9 +135,10 @@ public enum AuditAction {
   /** A seller (or ADMIN) refunded a PAID order ({@code OrderService.refund}). */
   ORDER_REFUNDED,
   /**
-   * The buyer opened a dispute on a PAID/COMPLETED order
-   * ({@code DisputeService.openDispute}, backlog #169). Actor is the
-   * disputing buyer. An idempotent re-open writes no second row.
+   * A party opened a dispute on a PAID/COMPLETED order
+   * ({@code DisputeService.openDispute}, backlog #169; seller-opened
+   * since backlog #255). Actor is the disputing party. An idempotent
+   * re-open writes no second row.
    */
   ORDER_DISPUTED,
   /**
