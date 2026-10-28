@@ -1,0 +1,1 @@
+{"suppressions":[{"advisory":"999002","package":"example-suppressed-pkg","reason":"Fixture-only suppression proving the gate honours reviewed entries.","reviewed":"2026-10-28"}]}

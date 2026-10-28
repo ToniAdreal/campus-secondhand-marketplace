@@ -308,3 +308,54 @@ jobs:
         run: |
           docker compose -p marketplace-restore-drill down -v || true
           docker compose down -v
+
+  dependency-vuln-gate:
+    # Dependency vulnerability gate (backlog #248): a dedicated job, not a
+    # step buried in another job, so a vulnerable dependency fails the
+    # workflow on its own. Dependabot (#231) opens update PRs, but nothing
+    # before this job failed a build on a vulnerability already in the tree.
+    # Thresholds: npm severity high-or-above; Maven CVSS >= 7.0 (see
+    # scripts/check-vuln-gate.mjs). Reviewed false positives live in
+    # frontend/vuln-suppressions.json and backend/vuln-suppressions.json
+    # (package + advisory + reason + reviewed date; the gate refuses
+    # entries missing any field) — the #165 ratchet discipline, not
+    # silent ignores. Full rationale and measured baselines:
+    # docs/dependency-vuln-gate.md.
+    # Sandbox honesty note: the frontend `npm audit` call below runs for
+    # real here in CI; the local sandbox proxy denies the audit endpoint
+    # (403 policy_denied), so local proof for the npm side is the OSV
+    # cross-check recorded in docs/dependency-vuln-gate.md, and the
+    # backend OSV scan runs identically in both places.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      # Gate script's own tests first, including the job-definition check
+      # that reads this file: a later edit that drops a step below fails
+      # here instead of silently narrowing the gate.
+      - name: Run gate script tests (incl. job-definition check)
+        run: node --test scripts/check-vuln-gate.test.mjs
+      # Frontend: npm audit is the scanner; the gate script is the decider
+      # so reviewed suppressions are honoured. `|| true` on audit itself:
+      # audit exits non-zero when it finds anything, and the script must
+      # see the full report to decide (a malformed report fails closed).
+      # No `npm ci` needed: audit reads package-lock.json only.
+      - name: Frontend npm audit report
+        working-directory: frontend
+        run: npm audit --json > npm-audit.json || true
+      - name: Frontend vulnerability gate (high-or-above, suppressions applied)
+        working-directory: frontend
+        run: node ../scripts/check-vuln-gate.mjs --npm-audit npm-audit.json --npm-suppressions vuln-suppressions.json
+      # Backend: dependency tree + OSV scan (no key, no NVD feed download).
+      # The tree step runs online here; locally the same command runs with
+      # -o and the persistent Maven repo (see docs/dependency-vuln-gate.md).
+      - name: Backend dependency tree
+        run: mvn -B -f backend/pom.xml dependency:tree -DoutputFile="${{ github.workspace }}/backend/maven-tree.txt"
+      - name: Backend vulnerability gate (CVSS >= 7.0, suppressions applied)
+        run: node scripts/check-vuln-gate.mjs --maven-tree backend/maven-tree.txt --maven-suppressions backend/vuln-suppressions.json
