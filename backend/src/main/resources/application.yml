@@ -353,6 +353,11 @@ app:
     #   default 30 — a repeat view refreshes the row, so the window
     #   runs from viewed_at. Deletion is by viewed_at only (never by
     #   user or listing).
+    # notifications-retention: read notification rows (backlog #259)
+    #   kept after they were READ, default 90 — the read marker is
+    #   the row's last interaction, so the window runs from read_at.
+    #   Deletion is by read_at only (never by recipient or type);
+    #   unread rows are never purged.
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30
@@ -361,6 +366,7 @@ app:
     email-verification-token-retention: 30
     login-event-retention: 180
     recently-viewed-retention: 30
+    notifications-retention: 90
   jobs:
     # Single-instance guard for the six mutating @Scheduled jobs
     # (JobLockGuard, backlog #215): a DB-backed lease in the Flyway V61

@@ -1,6 +1,7 @@
 package com.toni.marketplace.notification;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +24,22 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
    * without leaking that the row exists.
    */
   Optional<Notification> findByIdAndRecipientId(Long id, Long recipientId);
+
+  /**
+   * Ids of read rows whose read marker predates {@code readBefore} —
+   * the retention cut-off computed by the nightly purge job (backlog
+   * #259). The predicate is {@code read_at} only, and it excludes
+   * unread rows by construction ({@code read_at is not null}):
+   * an unread notification is never purged, however old, and a
+   * recently-read row survives until its read marker ages out.
+   * Ordered by id so the batch loop can always re-read the first
+   * page without skipping rows. Mirrors
+   * {@code RecentlyViewedRepository.findPurgeableIds}, with the
+   * read marker playing the viewed_at role.
+   */
+  @Query("select n.id from Notification n where n.readAt is not null"
+      + " and n.readAt < :readBefore order by n.id")
+  List<Long> findPurgeableIds(@Param("readBefore") Instant readBefore, Pageable page);
 
   /**
    * Stamps every unread row of one recipient in a single update

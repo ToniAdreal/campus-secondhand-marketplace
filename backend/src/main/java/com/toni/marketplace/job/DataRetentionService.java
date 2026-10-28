@@ -6,6 +6,7 @@ import com.toni.marketplace.auth.LoginEventRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.item.RecentlyViewedRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.IdempotencyStatus;
 import com.toni.marketplace.order.WebhookEventRepository;
@@ -67,7 +68,13 @@ import org.springframework.transaction.annotation.Transactional;
  *   convenience surface, not a record: rows age out by
  *   {@code viewed_at} only (30 days by default), never by user or
  *   listing, and a repeat view refreshes its row, so an actively
- *   revisited listing never ages out from under its viewer.</li>
+ *   revisited listing never ages out from under its viewer;</li>
+ *   <li>read {@code notification} rows past the retention window
+ *   (backlog #259) — the inbox is a derived UI surface, not a
+ *   record: rows age out by {@code read_at} only (90 days by
+ *   default), never by recipient or type, and an unread row
+ *   (null marker) is never selected, so an unopened notification
+ *   survives indefinitely until its recipient reads it.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
@@ -119,6 +126,7 @@ public class DataRetentionService {
   public static final String LOCK_NAME = "data-retention";
 
   private final RecentlyViewedRepository recentlyViewed;
+  private final NotificationRepository notifications;
   private final CleanupProperties props;
   private final Clock clock;
   private final JobLockGuard jobLock;
@@ -132,6 +140,7 @@ public class DataRetentionService {
                               EmailVerificationTokenRepository emailVerificationTokens,
                               LoginEventRepository loginEvents,
                               RecentlyViewedRepository recentlyViewed,
+                              NotificationRepository notifications,
                               CleanupProperties props,
                               Clock clock,
                               JobLockGuard jobLock) {
@@ -143,6 +152,7 @@ public class DataRetentionService {
     this.emailVerificationTokens = emailVerificationTokens;
     this.loginEvents = loginEvents;
     this.recentlyViewed = recentlyViewed;
+    this.notifications = notifications;
     this.props = props;
     this.clock = clock;
     this.jobLock = jobLock;
@@ -157,18 +167,20 @@ public class DataRetentionService {
                               EmailVerificationTokenRepository emailVerificationTokens,
                               LoginEventRepository loginEvents,
                               RecentlyViewedRepository recentlyViewed,
+                              NotificationRepository notifications,
                               CleanupProperties props,
                               Clock clock) {
     this(refreshTokens, idempotencyKeys, passwordResetTokens, auditLog,
         webhookEvents, emailVerificationTokens, loginEvents, recentlyViewed,
-        props, clock, JobLockGuard.disabled());
+        notifications, props, clock, JobLockGuard.disabled());
   }
 
   /** How many rows of each kind one purge run removed. */
   public record PurgeCounts(int refreshTokens, int idempotencyKeys,
                             int passwordResetTokens, int auditLogRows,
                             int webhookEvents, int emailVerificationTokens,
-                            int loginEvents, int recentlyViewedRows) {}
+                            int loginEvents, int recentlyViewedRows,
+                            int notificationRows) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -178,7 +190,7 @@ public class DataRetentionService {
   @Transactional
   public PurgeCounts purgeStaleData() {
     if (!jobLock.tryAcquire(LOCK_NAME)) {
-      return new PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0);
+      return new PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
     try {
       return purgeStaleDataLocked();
@@ -199,14 +211,33 @@ public class DataRetentionService {
     int verifications = purgeEmailVerificationTokens(now);
     int loginEventsCount = purgeLoginEvents(now);
     int trail = purgeRecentlyViewed(now);
+    int readNotifications = purgeNotifications(now);
     log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
         + "{} password_reset_token, {} audit_log, {} webhook_event, "
-        + "{} email_verification_token, {} login_event and "
-        + "{} recently_viewed rows",
+        + "{} email_verification_token, {} login_event, "
+        + "{} recently_viewed and {} notification rows",
         tokens, keys, resets, audit, webhooks, verifications, loginEventsCount,
-        trail);
+        trail, readNotifications);
     return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications,
-        loginEventsCount, trail);
+        loginEventsCount, trail, readNotifications);
+  }
+
+  private int purgeNotifications(Instant now) {
+    // Read notifications are judged by their read marker alone:
+    // read_at past the retention window. The repository query's
+    // non-null predicate is what guarantees an unread row — an
+    // unopened notification — is never selected, regardless of age.
+    Instant readBefore = now.minus(Duration.ofDays(props.getNotificationsRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = notifications.findPurgeableIds(readBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        notifications.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
   }
 
   private int purgeRefreshTokens(Instant now) {

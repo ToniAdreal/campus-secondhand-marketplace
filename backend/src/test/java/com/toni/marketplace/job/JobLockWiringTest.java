@@ -20,6 +20,7 @@ import com.toni.marketplace.item.ItemService;
 import com.toni.marketplace.item.ListingExpiryService;
 import com.toni.marketplace.item.RecentlyViewedRepository;
 import com.toni.marketplace.item.SavedSearchRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.notification.NotificationService;
 import com.toni.marketplace.offer.OfferExpiryService;
 import com.toni.marketplace.offer.OfferService;
@@ -122,15 +123,17 @@ class JobLockWiringTest {
         mock(EmailVerificationTokenRepository.class);
     LoginEventRepository loginEvents = mock(LoginEventRepository.class);
     RecentlyViewedRepository recentlyViewed = mock(RecentlyViewedRepository.class);
+    NotificationRepository notifications = mock(NotificationRepository.class);
     DataRetentionService job = new DataRetentionService(
         refreshTokens, idempotencyKeys, passwordResetTokens, auditLog, webhookEvents,
-        verificationTokens, loginEvents, recentlyViewed, new CleanupProperties(), clock, denied);
+        verificationTokens, loginEvents, recentlyViewed, notifications,
+        new CleanupProperties(), clock, denied);
 
     assertThat(job.purgeStaleData())
-        .isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0));
+        .isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0));
     verify(denied).tryAcquire(DataRetentionService.LOCK_NAME);
     verifyNoInteractions(refreshTokens, idempotencyKeys, passwordResetTokens, auditLog,
-        webhookEvents, verificationTokens, loginEvents, recentlyViewed);
+        webhookEvents, verificationTokens, loginEvents, recentlyViewed, notifications);
   }
 
   @Test

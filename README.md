@@ -153,7 +153,10 @@ job/         DataRetentionService — the nightly @Scheduled sweep (retention
              via app.cleanup.*) that purges stale refresh_token, terminal
              idempotency_key, used-or-expired password_reset_token,
              aged-out audit_log, aged-out webhook_event and used-or-expired
-             email_verification_token rows; OrphanUploadSweeper — the nightly
+             email_verification_token rows, plus read notification rows
+             whose read_at predates app.cleanup.notifications-retention
+             (default 90 days; unread rows are never purged);
+             OrphanUploadSweeper — the nightly
              sweep that deletes
              upload files no item/item_photo row references once they
              outlive app.uploads.orphan-grace (default 24 h). The only

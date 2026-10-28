@@ -26,7 +26,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code recently_viewed} trail rows are kept 30 days after the last
  * view (backlog #195 — a browsing trail is short-lived by nature, and
  * a repeat view refreshes its row, so the window runs from
- * {@code viewed_at}, not from a separate creation time). Override
+ * {@code viewed_at}, not from a separate creation time), and read
+ * {@code notification} rows are kept 90 days after they were read
+ * (backlog #259 — the read marker is the row's last interaction, so
+ * the window runs from {@code read_at}, not from creation; unread
+ * rows are never purged regardless of age). Override
  * with e.g. {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -98,6 +102,15 @@ public class CleanupProperties {
    */
   private long recentlyViewedRetention = 30;
 
+  /**
+   * Days a read {@code notification} row is kept after it was read
+   * before the purge may delete it. Must be &ge; 1. Deletion is by
+   * {@code read_at} only — an unread row (null marker) is never
+   * selected, so an unread notification survives indefinitely until
+   * its recipient reads it (backlog #259).
+   */
+  private long notificationsRetention = 90;
+
   public long getRefreshTokenRetention() {
     return refreshTokenRetention;
   }
@@ -160,5 +173,13 @@ public class CleanupProperties {
 
   public void setRecentlyViewedRetention(long recentlyViewedRetention) {
     this.recentlyViewedRetention = recentlyViewedRetention;
+  }
+
+  public long getNotificationsRetention() {
+    return notificationsRetention;
+  }
+
+  public void setNotificationsRetention(long notificationsRetention) {
+    this.notificationsRetention = notificationsRetention;
   }
 }
