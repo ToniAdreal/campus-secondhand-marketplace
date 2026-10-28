@@ -67,8 +67,17 @@ export default function VerifyEmailPage() {
     // are disjoint and a rejected verification confirm consumes
     // nothing on the change side. Failure renders only when BOTH
     // flows reject the token.
-    confirmEmailVerification({ token })
-      .catch(() => confirmEmailChange({ token }))
+    // Backlog #251: the confirm chain is also aborted on unmount —
+    // the old `cancelled` flag only suppressed the setState, the
+    // request itself kept running after the route changed. An abort
+    // never falls through to the second confirm: the token was not
+    // rejected, the page simply left.
+    const controller = new AbortController();
+    confirmEmailVerification({ token }, controller.signal)
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) throw err;
+        return confirmEmailChange({ token }, controller.signal);
+      })
       .then(() => {
         if (!cancelled) setState('confirmed');
       })
@@ -77,6 +86,7 @@ export default function VerifyEmailPage() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [token]);
 

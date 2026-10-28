@@ -198,7 +198,7 @@ describe('changeEmail', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/auth/email-change/confirm', {
       token: 'raw-token-abc',
-    });
+    }, { signal: undefined });
   });
 
   it('propagates the envelope error (401 wrong current password, 409 taken address)', async () => {
@@ -661,7 +661,7 @@ describe('email verification (backlog #138)', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/confirm', {
       token: 'raw-token-abc',
-    });
+    }, { signal: undefined });
   });
 
   it('posts the address to /auth/email-verification/resend', async () => {

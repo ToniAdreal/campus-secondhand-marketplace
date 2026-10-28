@@ -214,7 +214,11 @@ CategoryRepository directly; it now goes through CategoryService.
 
 Frontend (`frontend/src`) is a React 18 SPA: `api/client.ts` holds the axios
 instance with the in-memory access token and the single-flight 401 refresh queue
-(parallel 401s → one refresh call, then retries); `api/` modules per domain;
+(parallel 401s → one refresh call, then retries), plus a shared 30 s request
+timeout (backlog #251) — a timed-out request surfaces a timeout copy through
+the same envelope path pages already render, and pages that fire a request on
+mount abort it on unmount instead of only suppressing its state update;
+`api/` modules per domain;
 `hooks/useDebouncedSearchParam` syncs search to the URL; `store/useAuthStore`
 is the Zustand auth store; TanStack Query mutations invalidate the shared
 `['items']` query root instead of hand-editing the cache;

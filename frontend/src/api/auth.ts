@@ -151,8 +151,9 @@ export interface ConfirmEmailVerificationPayload {
  */
 export async function confirmEmailVerification(
   payload: ConfirmEmailVerificationPayload,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await api.post('/auth/email-verification/confirm', payload);
+  await api.post('/auth/email-verification/confirm', payload, { signal });
 }
 
 export interface ResendEmailVerificationPayload {
@@ -505,8 +506,11 @@ export interface ConfirmEmailChangePayload {
  */
 export async function confirmEmailChange(
   payload: ConfirmEmailChangePayload,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await api.post<ApiResponse<null>>('/auth/email-change/confirm', payload);
+  await api.post<ApiResponse<null>>('/auth/email-change/confirm', payload, {
+    signal,
+  });
 }
 
 export interface CloseAccountPayload {

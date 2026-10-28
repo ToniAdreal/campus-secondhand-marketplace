@@ -1,10 +1,15 @@
 import axios from 'axios';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+} from '../api/client';
 import { type FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { requestPasswordReset } from '../api/auth';
 
 /** Reads the human message out of the backend {code,message,data} envelope. */
 function envelopeMessage(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;

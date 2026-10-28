@@ -14,7 +14,11 @@ import {
   withStepUpRetry,
   type TotpSetup,
 } from '../api/auth';
-import { setAccessToken } from '../api/client';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+  setAccessToken,
+} from '../api/client';
 import { webauthnSupported } from '../api/webauthn';
 import PasskeySection from '../components/PasskeySection';
 import ThemeControl from '../components/ThemeControl';
@@ -34,6 +38,7 @@ import { useAuthStore } from '../store/useAuthStore';
  * 400 and the backend's strength reason, which we show verbatim.
  */
 function describePasswordChangeError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) return 'Current password is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
@@ -50,6 +55,7 @@ function describePasswordChangeError(err: unknown): string {
  * the backend's envelope message verbatim (e.g. the 422 "not enabled").
  */
 function describeDisableTotpError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) return 'Current password or code is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
@@ -67,6 +73,7 @@ function describeDisableTotpError(err: unknown): string {
  * backend's envelope message verbatim.
  */
 function describeEmailChangeError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) return 'Current password is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
@@ -83,6 +90,7 @@ function describeEmailChangeError(err: unknown): string {
  * other failure shows the backend's envelope message verbatim.
  */
 function describeCloseAccountError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) return 'Current password or code is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
@@ -99,6 +107,7 @@ function describeCloseAccountError(err: unknown): string {
  * nothing else can be read out of it — every other failure is generic.
  */
 function describeDataExportError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 429) {
       return 'Too many downloads in a row — wait a minute, then try again.';
@@ -116,6 +125,7 @@ function describeDataExportError(err: unknown): string {
 
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
 function describeTotpError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;

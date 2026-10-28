@@ -1,4 +1,8 @@
 import axios from 'axios';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+} from '../api/client';
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { confirmPasswordReset } from '../api/auth';
@@ -11,6 +15,7 @@ import { confirmPasswordReset } from '../api/auth';
  * they map to ONE generic message — the page must not distinguish them.
  */
 function describeResetError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) {
       return 'This reset link is invalid or has expired. Request a new one.';

@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import axios from 'axios';
-import { api, setAccessToken, getAccessToken } from './client';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  REQUEST_TIMEOUT_MS,
+  api,
+  describeRequestError,
+  getAccessToken,
+  isRequestTimeout,
+  setAccessToken,
+} from './client';
 
 // Minimal fake adapter: lets us script HTTP behavior without a backend.
 function installAdapter(handler: (config: any) => Promise<any>) {
@@ -16,6 +24,14 @@ function httpError(config: any, status: number, message: string) {
   const err: any = new Error(message);
   err.config = config;
   err.response = { status };
+  return err;
+}
+
+/** The exact shape Axios rejects with when its timeout fires. */
+function timeoutError(config: any) {
+  const err: any = new Error(`timeout of ${REQUEST_TIMEOUT_MS}ms exceeded`);
+  err.config = config;
+  err.code = 'ECONNABORTED';
   return err;
 }
 
@@ -203,6 +219,67 @@ describe('api client', () => {
       headers: { 'X-Request-ID': 'caller-supplied-123' },
     });
     expect(seen).toBe('caller-supplied-123');
+  });
+
+  it('sets the shared 30s timeout on the instance (backlog #251)', () => {
+    expect(REQUEST_TIMEOUT_MS).toBe(30_000);
+    expect(api.defaults.timeout).toBe(REQUEST_TIMEOUT_MS);
+  });
+
+  it('maps a timed-out (never-resolving) request to the timeout copy (backlog #251)', async () => {
+    // A fake adapter bypasses Axios's own timeout timer, so the test
+    // throws the ECONNABORTED shape Axios produces when that timer
+    // fires on a never-resolving request — the mapping, not the timer,
+    // is what this suite can observe.
+    installAdapter(async (config) => {
+      throw timeoutError(config);
+    });
+
+    let caught: unknown;
+    await api.get('/items').catch((err) => {
+      caught = err;
+    });
+
+    expect(isRequestTimeout(caught)).toBe(true);
+    expect(describeRequestError(caught, 'fallback')).toBe(
+      REQUEST_TIMEOUT_MESSAGE,
+    );
+  });
+
+  it('leaves normal requests and envelope errors untouched by the timeout path (backlog #251)', async () => {
+    installAdapter(async (config) => {
+      if (config.url?.includes('/boom')) {
+        const err: any = new Error('server blew up');
+        err.isAxiosError = true;
+        err.config = config;
+        err.response = {
+          status: 500,
+          data: { code: 500, message: 'psp timeout', data: null },
+        };
+        throw err;
+      }
+      return ok(config, { ok: true });
+    });
+
+    const res = await api.get('/items');
+    expect(res.data.ok).toBe(true);
+
+    let caught: unknown;
+    await api.get('/boom').catch((err) => {
+      caught = err;
+    });
+    expect(isRequestTimeout(caught)).toBe(false);
+    // An envelope message wins over the timeout copy — and over the
+    // generic network copy, which is only for responses that never came.
+    expect(describeRequestError(caught, 'fallback')).toBe('psp timeout');
+
+    const networkErr: any = new Error('Network Error');
+    networkErr.isAxiosError = true;
+    networkErr.config = {};
+    expect(isRequestTimeout(networkErr)).toBe(false);
+    expect(describeRequestError(networkErr, 'fallback')).toBe(
+      'Network error — is the backend running?',
+    );
   });
 
   it('rejects without a second refresh when the retried request also 401s', async () => {

@@ -1,4 +1,8 @@
 import axios from 'axios';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+} from '../api/client';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useCategories } from '../api/categories';
@@ -27,6 +31,7 @@ const FIELD_MAP: Record<string, string> = {
 };
 
 function envelopeMessage(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;

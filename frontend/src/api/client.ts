@@ -14,6 +14,16 @@ import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
  *   exact backend log lines. A caller-supplied id is never overwritten,
  *   and a 401-refresh retry reuses the original request's id (it is the
  *   same logical request), while separate actions get distinct ids.
+ * - Every request shares one timeout (backlog #251): a hung backend used
+ *   to leave every page spinning forever, because the instance set no
+ *   timeout at all. REQUEST_TIMEOUT_MS bounds that wait; a timed-out
+ *   request rejects with Axios code `ECONNABORTED`, which
+ *   describeRequestError maps to REQUEST_TIMEOUT_MESSAGE through the
+ *   same envelope path pages already render (envelope message, then
+ *   the no-response network copy, then the caller's fallback) — no
+ *   second copy channel. Callers that need real cancellation (not just
+ *   a deadline) pass their own AbortSignal per request, e.g. a page
+ *   aborting on unmount; the timeout is the backstop, not a substitute.
  *
  * NOTE: POST /api/auth/refresh is served by AuthController (httpOnly cookie,
  * token rotation). The queueing logic is unit-tested via a fake adapter, so it
@@ -32,10 +42,50 @@ export function getAccessToken() {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+/** Shared request deadline (backlog #251): 30 seconds. Per-request
+ *  overrides stay possible via the axios `timeout` config, but no call
+ *  site may silently drop the deadline — a hung backend must surface
+ *  as a timeout error, never as an endless spinner. */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Copy for a timed-out request, surfaced via describeRequestError. */
+export const REQUEST_TIMEOUT_MESSAGE =
+  'The request timed out. Please check your connection and try again.';
+
+/** True when the failure is Axios aborting a request on its timeout. */
+export function isRequestTimeout(error: unknown): boolean {
+  return (
+    (error as { code?: unknown } | null)?.code === 'ECONNABORTED' &&
+    !(error as { response?: unknown } | null)?.response
+  );
+}
+
+/**
+ * Maps a failed request to the copy pages render, through the existing
+ * envelope path: a timeout gets its own copy first (it has no response,
+ * so the envelope branch below can never fire for it), then a backend
+ * envelope message verbatim, then the no-response network copy, then
+ * the caller's fallback. Status-specific branches (401/409/429 …) stay
+ * in the caller's own helper, which delegates the remainder here.
+ */
+export function describeRequestError(error: unknown, fallback: string): string {
+  if (isRequestTimeout(error)) return REQUEST_TIMEOUT_MESSAGE;
+  if (axios.isAxiosError(error)) {
+    const message = (error.response?.data as { message?: string } | undefined)
+      ?.message;
+    if (message) return message;
+    if (!error.response) return 'Network error — is the backend running?';
+  }
+  return fallback;
+}
+
 function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = axios
-      .post('/api/auth/refresh', {}, { withCredentials: true })
+      .post('/api/auth/refresh', {}, {
+        withCredentials: true,
+        timeout: REQUEST_TIMEOUT_MS,
+      })
       .then((res) => {
         const token: string | null = res.data?.data?.accessToken ?? null;
         setAccessToken(token);
@@ -55,6 +105,7 @@ function refreshAccessToken(): Promise<string | null> {
 export const api: AxiosInstance = axios.create({
   baseURL: '/api',
   withCredentials: true,
+  timeout: REQUEST_TIMEOUT_MS,
 });
 
 export const REQUEST_ID_HEADER = 'X-Request-ID';

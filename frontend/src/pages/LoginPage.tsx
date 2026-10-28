@@ -1,4 +1,8 @@
 import axios from 'axios';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+} from '../api/client';
 import { type FormEvent, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { authenticateTotp, login, startPasskeyAssertion } from '../api/auth';
@@ -18,6 +22,7 @@ import { throttleWaitCopy } from './authThrottle';
  * previous mapping untouched.
  */
 function envelopeMessage(err: unknown, fallback: string): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   const waitCopy = throttleWaitCopy(err);
   if (waitCopy) return waitCopy;
   if (axios.isAxiosError(err)) {

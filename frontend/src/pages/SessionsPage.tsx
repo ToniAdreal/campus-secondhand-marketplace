@@ -13,7 +13,11 @@ import {
   type LoginEvent,
   type TrustedDevice,
 } from '../api/auth';
-import { setAccessToken } from '../api/client';
+import {
+  REQUEST_TIMEOUT_MESSAGE,
+  isRequestTimeout,
+  setAccessToken,
+} from '../api/client';
 import { queryClient } from '../queryClient';
 import { useAuthStore } from '../store/useAuthStore';
 import StepUpModal from '../components/StepUpModal';
@@ -57,6 +61,7 @@ function isUnauthorized(error: unknown): boolean {
 
 /** Maps a failed sessions call to UI copy; envelope messages pass through verbatim. */
 function describeSessionError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;

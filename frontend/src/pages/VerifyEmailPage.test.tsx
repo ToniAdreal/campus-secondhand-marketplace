@@ -52,7 +52,7 @@ describe('VerifyEmailPage', () => {
     expect(postSpy).toHaveBeenCalledTimes(1);
     expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/confirm', {
       token: 'raw-token-abc',
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByRole('link', { name: /back to login/i })).toBeTruthy();
   });
 
@@ -72,7 +72,7 @@ describe('VerifyEmailPage', () => {
     await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
     expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/email-change/confirm', {
       token: 'stale-token',
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   // Backlog #230: drive the page to its failed state (both confirms reject),
@@ -150,6 +150,21 @@ describe('VerifyEmailPage', () => {
     expect(postSpy).toHaveBeenCalledTimes(2);
     expect(postSpy).toHaveBeenNthCalledWith(2, '/auth/email-change/confirm', {
       token: 'change-token',
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
+  it('aborts the in-flight confirm on unmount and never falls through to the change confirm (backlog #251)', async () => {
+    // The route leaves while the confirm is still pending: the request
+    // itself must be cancelled, not merely its setState suppressed.
+    postSpy.mockImplementationOnce(() => new Promise(() => {}) as never);
+    const { unmount } = renderAt('/verify-email?token=pending-token');
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    const signal = (
+      postSpy.mock.calls[0][2] as { signal?: AbortSignal } | undefined
+    )?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
 });
