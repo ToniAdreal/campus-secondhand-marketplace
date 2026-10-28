@@ -134,7 +134,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly seven flows: (1) register lands on browse signed in;
+- Exactly eight flows: (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -143,10 +143,12 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   COMPLETED; (6) offer → seller counters → buyer counter-accepts → the
   order is pinned via the API at the counter price → it pays (backlog
   #213); (7) pay → buyer disputes → the ADMIN resolves with a refund →
-  the buyer sees REFUNDED (backlog #213). Flows 5 and 7 seed their PAID
-  orders through the real API (the pay response is where the code is
-  disclosed); the completions/resolutions themselves are driven in the
-  browser. Selectors are role/label based.
+  the buyer sees REFUNDED (backlog #213); (8) cart → cart checkout →
+  pay → seller completes with the handover code → buyer reviews, with
+  the review pinned via the API on the seller's profile (backlog #253).
+  Flows 5 and 7 seed their PAID orders through the real API (the pay
+  response is where the code is disclosed); the completions/resolutions
+  themselves are driven in the browser. Selectors are role/label based.
 - The backend starts with the email-verification gate stubbed off via
   its documented env knob (`APP_AUTH_EMAIL_VERIFICATION_ENABLED=false`):
   the default mail sender is log-only with the token redacted, so no

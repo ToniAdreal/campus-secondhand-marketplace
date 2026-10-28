@@ -1,9 +1,22 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import {
+  createListingViaApi,
+  expectOrderRowStatus,
+  loginThroughUi,
+  logoutThroughUi,
+  newAccount,
+  PASSWORD,
+  registerViaApi,
+  uniqueSuffix,
+  type TestAccount,
+} from './helpers';
 
 /**
  * The seven honest smoke flows (backlog #181, money path added by #194,
  * offer + dispute paths added by #213) — see playwright.config.ts for
- * what this layer does and does not claim.
+ * what this layer does and does not claim. The eighth flow — the cart
+ * checkout journey (backlog #253) — lives in checkout.e2e.ts; both files
+ * share their account/API/login moulds via e2e/helpers.ts.
  * Selectors are role/label based (the SPA's #167 accessibility pass binds
  * every form field to a label), never CSS paths, so a renamed class cannot
  * silently green the suite and a lost label turns it red.
@@ -17,7 +30,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
  * playwright.config.ts) — the same mechanism an operator uses for a real
  * deployment's first admin, never a test-only endpoint.
  *
- * Credential-bucket arithmetic (re-derived for seven flows, #213): login
+ * Credential-bucket arithmetic (re-derived for this file's seven flows, #213): login
  * and register share ONE credential bucket (capacity 5 per IP, refill
  * 5/min, and a successful login resets the bucket to full — see
  * AuthRateLimitFilter). The suite totals 11 registers + 11 logins, but
@@ -34,9 +47,10 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
  * The worst run is 3 of 5, and the 1-token-per-12s refill only widens the
  * margin. Order create/pay/complete calls carry a Bearer token and never
  * touch the credential bucket; logout is not a credential endpoint either.
+ * The checkout journey's own runs are derived in checkout.e2e.ts (worst
+ * run 3 of 5 as well); the two files run serially in one worker and every
+ * login resets the bucket, so the combined worst run stays 3.
  */
-
-const PASSWORD = 'E2eSmoke1234'; // satisfies the 12-char minimum + strength rules
 
 /**
  * The seeded ADMIN account (backlog #213, flow 7). These credentials are
@@ -51,62 +65,6 @@ const ADMIN_ACCOUNT: TestAccount = {
   email: 'e2eadmin@example.com',
   password: PASSWORD,
 };
-
-function uniqueSuffix(): string {
-  return `${Date.now().toString(36)}${Math.floor(Math.random() * 1_000_000).toString(36)}`;
-}
-
-interface TestAccount {
-  username: string;
-  email: string;
-  password: string;
-}
-
-function newAccount(prefix: string): TestAccount {
-  const suffix = uniqueSuffix();
-  return {
-    username: `${prefix}${suffix}`.slice(0, 60),
-    email: `${prefix}${suffix}@example.com`,
-    password: PASSWORD,
-  };
-}
-
-/**
- * Registers through the public API (same origin, through the preview
- * proxy) and returns the access token. With the e2e stack's verification
- * gate stubbed off, registration answers the session token pair.
- */
-async function registerViaApi(
-  request: APIRequestContext,
-  account: TestAccount,
-): Promise<string> {
-  const res = await request.post('/api/auth/register', {
-    data: {
-      username: account.username,
-      email: account.email,
-      password: account.password,
-    },
-  });
-  expect(res.status(), 'API register should succeed in the e2e stack').toBe(200);
-  const body = await res.json();
-  const token = body?.data?.accessToken as string | undefined;
-  expect(token, 'register (gate off) returns an access token').toBeTruthy();
-  return token as string;
-}
-
-async function createListingViaApi(
-  request: APIRequestContext,
-  token: string,
-  title: string,
-): Promise<number> {
-  const res = await request.post('/api/items', {
-    headers: { Authorization: `Bearer ${token}` },
-    data: { title, priceCents: 1999 },
-  });
-  expect(res.status(), 'API create listing should succeed').toBe(200);
-  const body = await res.json();
-  return body.data.id as number;
-}
 
 /**
  * Creates an order through the public API (backlog #194 flow 5 seeds its
@@ -172,40 +130,6 @@ async function getOrderViaApi(
   expect(res.status(), 'API read order should succeed').toBe(200);
   const body = await res.json();
   return body.data as { status: string; amountCents: number };
-}
-
-async function loginThroughUi(
-  page: import('@playwright/test').Page,
-  account: TestAccount,
-): Promise<void> {
-  await page.goto('/login');
-  await page.getByLabel('Username or email').fill(account.username);
-  await page.getByLabel('Password').fill(account.password);
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await expect(page).toHaveURL('/');
-  await expect(page.getByRole('heading', { name: 'Latest listings' })).toBeVisible();
-}
-
-async function logoutThroughUi(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByRole('button', { name: 'Logout' }).click();
-  await expect(page).toHaveURL('/');
-  await expect(page.getByRole('link', { name: 'Login' })).toBeVisible();
-}
-
-/**
- * Asserts the status chip on an order row. The chip lives inside the
- * row's order link (next to the "Order #id" label) — asserting there,
- * rather than on the whole row, keeps the receipt sheet's own PAID /
- * status text on My orders from satisfying (or multiplying) the match.
- */
-async function expectOrderRowStatus(
-  page: import('@playwright/test').Page,
-  orderId: number,
-  status: string,
-): Promise<void> {
-  const row = page.locator('li', { hasText: `Order #${orderId}` });
-  const orderLink = row.getByRole('link', { name: new RegExp(`Order #${orderId}\\b`) });
-  await expect(orderLink).toContainText(status);
 }
 
 test('register lands on browse signed in', async ({ page }) => {
