@@ -166,21 +166,21 @@ export default function LoginPage() {
     (location.state as { passwordReset?: boolean } | null)?.passwordReset === true;
 
   return (
-    <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
-      <h1 className="mb-4 text-xl font-bold">Login</h1>
+    <div className="mx-auto mt-6 max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-blue-100/60 sm:mt-10">
+      <h1 className="mb-5 text-2xl font-extrabold tracking-tight text-neutral-900">Login</h1>
       {passwordResetDone && !challenge && (
-        <p role="status" className="mb-4 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+        <p role="status" className="mb-4 rounded-lg border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-800">
           Password reset complete. You have been signed out everywhere — log in with your
           new password.
         </p>
       )}
       {error && (
-        <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
           {error}
         </p>
       )}
       {challenge ? (
-        <form onSubmit={onCodeSubmit} className="space-y-3">
+        <form onSubmit={onCodeSubmit} className="space-y-4">
           {factors.includes('totp') && (
             <>
               <p className="text-sm text-neutral-600">
@@ -188,7 +188,7 @@ export default function LoginPage() {
                 codes if you no longer have the app.
               </p>
               <div>
-                <label htmlFor="login-totp-code" className="mb-1 block text-sm font-medium">
+                <label htmlFor="login-totp-code" className="mb-1.5 block text-sm font-semibold text-neutral-700">
                   Two-factor code
                 </label>
                 <input
@@ -197,7 +197,7 @@ export default function LoginPage() {
                   autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
                 />
               </div>
             </>
@@ -207,7 +207,7 @@ export default function LoginPage() {
               type="button"
               onClick={onUsePasskey}
               disabled={pending}
-              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-50"
             >
               {pending ? 'Waiting for your passkey…' : 'Use a passkey instead'}
             </button>
@@ -232,7 +232,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={pending}
-              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="w-full rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50"
             >
               {pending ? 'Verifying…' : 'Verify code'}
             </button>
@@ -253,9 +253,9 @@ export default function LoginPage() {
         </form>
       ) : (
         <>
-          <form onSubmit={onSubmit} className="space-y-3">
+          <form onSubmit={onSubmit} className="space-y-4">
             <div>
-              <label htmlFor="login-identifier" className="mb-1 block text-sm font-medium">
+              <label htmlFor="login-identifier" className="mb-1.5 block text-sm font-semibold text-neutral-700">
                 Username or email
               </label>
               <input
@@ -264,11 +264,11 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={usernameOrEmail}
                 onChange={(e) => setUsernameOrEmail(e.target.value)}
-                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
               />
             </div>
             <div>
-              <label htmlFor="login-password" className="mb-1 block text-sm font-medium">
+              <label htmlFor="login-password" className="mb-1.5 block text-sm font-semibold text-neutral-700">
                 Password
               </label>
               <input
@@ -277,13 +277,13 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
               />
             </div>
             <button
               type="submit"
               disabled={pending}
-              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="w-full rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50"
             >
               {pending ? 'Logging in…' : 'Login'}
             </button>

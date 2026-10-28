@@ -26,10 +26,10 @@ function AuthNav() {
   if (!user) {
     return (
       <div className="flex items-center gap-3">
-        <Link to="/login" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/login" className="text-sm font-medium text-neutral-600 transition hover:text-blue-700 dark:text-neutral-300 dark:hover:text-blue-400">
           Login
         </Link>
-        <Link to="/register" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/register" className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
           Register
         </Link>
       </div>
@@ -155,16 +155,16 @@ export default function App() {
   return (
     // Shell palette (backlog #227): dark: variants carry the dark theme
     // on the light surfaces below — palette only, no layout change.
-    <div className="min-h-screen bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
-      <header className="bg-white shadow-sm dark:bg-neutral-800">
-        <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <Link to="/" className="text-lg font-bold">
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-neutral-50 to-neutral-100 text-neutral-900 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-950 dark:text-neutral-100">
+      <header className="sticky top-0 z-20 border-b border-neutral-200/70 bg-white/90 shadow-sm backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-800/90">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
+          <Link to="/" className="text-xl font-extrabold tracking-tight text-blue-700 dark:text-blue-400">
             Campus Marketplace
           </Link>
           <AuthNav />
         </nav>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main className="mx-auto max-w-6xl px-4 py-8">
         {/* Route changes move focus to the new page's heading (#167). */}
         <RouteFocusManager />
         {/* A crashed route renders the boundary's fallback inside the shell

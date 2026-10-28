@@ -194,7 +194,7 @@ export default function HomePage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-bold">Latest listings</h1>
+      <h1 className="mb-5 text-3xl font-extrabold tracking-tight">Latest listings</h1>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
           <label htmlFor="search" className="sr-only">
@@ -312,18 +312,18 @@ export default function HomePage() {
             {recentlyViewed.data.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-                <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
+                <li key={item.id} className="rounded-2xl border border-neutral-200/70 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
                   {photoUrls.length > 0 ? (
                     <ListingPhoto
                       src={photoUrls[0]}
                       alt={item.title}
                       imgClassName="mb-3 h-40 w-full rounded object-cover"
-                      placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
+                      placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                     />
                   ) : (
                     <div
                       data-testid="no-photo-placeholder"
-                      className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
+                      className="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                     >
                       No photo
                     </div>
@@ -334,7 +334,7 @@ export default function HomePage() {
                   <p className="mt-1 text-sm text-neutral-500">
                     ¥{(item.priceCents / 100).toFixed(2)}
                   </p>
-                  <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs dark:bg-neutral-700 dark:text-neutral-200">
+                  <span className="mt-2 inline-block rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-neutral-700 dark:text-neutral-200">
                     {item.status}
                   </span>{' '}
                   <FavoriteButton itemId={item.id} />
@@ -353,18 +353,18 @@ export default function HomePage() {
             {data.content.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-              <li key={item.id} className="rounded-lg bg-white p-4 shadow-sm dark:bg-neutral-800">
+              <li key={item.id} className="rounded-2xl border border-neutral-200/70 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
                 {photoUrls.length > 0 ? (
                   <ListingPhoto
                     src={photoUrls[0]}
                     alt={item.title}
                     imgClassName="mb-3 h-40 w-full rounded object-cover"
-                    placeholderClassName="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
+                    placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                   />
                 ) : (
                   <div
                     data-testid="no-photo-placeholder"
-                    className="mb-3 flex h-40 items-center justify-center rounded bg-neutral-100 text-sm text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300"
+                    className="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                   >
                     No photo
                   </div>
@@ -375,7 +375,7 @@ export default function HomePage() {
                 <p className="mt-1 text-sm text-neutral-500">
                   ¥{(item.priceCents / 100).toFixed(2)}
                 </p>
-                <span className="mt-2 inline-block rounded bg-neutral-200 px-2 py-0.5 text-xs dark:bg-neutral-700 dark:text-neutral-200">
+                <span className="mt-2 inline-block rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-neutral-700 dark:text-neutral-200">
                   {item.status}
                 </span>{' '}
                 <FavoriteButton itemId={item.id} />
@@ -389,7 +389,7 @@ export default function HomePage() {
                 type="button"
                 onClick={() => setPage(page - 1)}
                 disabled={page <= 0}
-                className="rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+                className="rounded-full bg-neutral-900 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-700 disabled:opacity-50"
               >
                 Previous
               </button>
@@ -400,7 +400,7 @@ export default function HomePage() {
                 type="button"
                 onClick={() => setPage(page + 1)}
                 disabled={page + 1 >= data.totalPages}
-                className="rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+                className="rounded-full bg-neutral-900 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-700 disabled:opacity-50"
               >
                 Next
               </button>
