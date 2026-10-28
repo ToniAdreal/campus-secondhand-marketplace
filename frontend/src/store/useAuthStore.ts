@@ -12,6 +12,13 @@ interface AuthState {
    * lives in an httpOnly cookie managed by the browser (see api/client.ts). */
   login: (user: AuthUser, accessToken: string) => void;
   /**
+   * Replaces the stored user summary without touching the in-memory
+   * credential — for server-driven profile updates that move no
+   * credential, like the username change (backlog #256): the session
+   * stays alive, so only the displayed identity needs refreshing.
+   */
+  setUser: (user: AuthUser) => void;
+  /**
    * Server-side logout: calls POST /api/auth/logout so the backend revokes
    * the refresh-token family and the browser drops the httpOnly cookie via
    * the server's expired Set-Cookie. Afterwards clears the in-memory
@@ -46,6 +53,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   login: (user, accessToken) => {
     setAccessToken(accessToken);
+    set({ user });
+  },
+  setUser: (user) => {
     set({ user });
   },
   logout: async () => {

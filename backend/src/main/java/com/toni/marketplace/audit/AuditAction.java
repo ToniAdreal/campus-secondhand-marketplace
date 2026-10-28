@@ -23,6 +23,18 @@ public enum AuditAction {
    */
   EMAIL_CHANGED,
   /**
+   * The account holder changed their username
+   * ({@code AuthService.changeUsername}, backlog #256). Actor and target are
+   * both the account holder, mirroring {@link #EMAIL_CHANGED}. The audit
+   * table deliberately carries no payload column (see AuditLog), so the
+   * old/new names are NOT stored here — the row is evidence that the
+   * change happened, and the names themselves remain only on the user
+   * row's history-free current value. The freed name returns to the pool
+   * immediately (see {@code AuthService.changeUsername}); no reservation
+   * row exists to consult.
+   */
+  USERNAME_CHANGED,
+  /**
    * The account holder closed their own account
    * ({@code AuthService.closeAccount}, backlog #158). Actor and target are
    * both the account holder, mirroring {@link #PASSWORD_CHANGED}. The row

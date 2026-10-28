@@ -1935,6 +1935,59 @@ public class AuthService {
   }
 
   /**
+   * Changes the caller's username (backlog #256, authenticated). Before
+   * this item the only writer of {@code User.username} outside
+   * registration was {@code closeAccount}'s {@code deleted-<id>}
+   * tombstone — there was no user-facing rename path at all.
+   *
+   * <p>Rules, mirroring registration: the new name is canonicalized
+   * exactly like {@link #register} (lowercase, {@link #canonical}) and
+   * must be 3–60 characters (enforced on the request record, like
+   * {@code RegisterRequest}); a name already held by another account
+   * answers 409 with registration's own message, checked
+   * case-insensitively through {@code findByUsernameIgnoreCase}, and
+   * re-submitting the account's own current name (any case) is likewise
+   * a 409 — it is not a change. A {@code USERNAME_CHANGED} audit row is
+   * written in the same transaction (actor = target = the account
+   * holder; the audit table stores no names, by design).
+   *
+   * <p>Reuse rule, decided here: a freed name returns to the pool
+   * immediately — the next registration or rename may take it. That is
+   * safe rather than merely convenient because nothing in the app keys
+   * identity by username: the principal is the numeric id, seller
+   * profiles resolve by id ({@code /api/users/{id}/profile}), and order
+   * parties, receipts and reviews resolve usernames from user rows at
+   * read time — so a reused name inherits no profile, listings, orders
+   * or reviews of the previous holder, and the previous holder's
+   * surfaces follow the new name automatically.
+   *
+   * <p>Sessions are deliberately untouched: no tokenVersion bump, no
+   * refresh revocation — a rename moves no credential, so (unlike a
+   * password or email change) there is nothing for other sessions to
+   * lose. The one honest staleness: an already-issued access token
+   * still carries the old name in its {@code username} claim until it
+   * expires (≤15 min) or rotates; the returned user summary already
+   * carries the new name, and {@code GET /api/auth/me} agrees at once.
+   *
+   * @return the updated user row, for the controller's user summary
+   */
+  @Transactional
+  public User changeUsername(long userId, String newUsername) {
+    User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
+    String canonicalNew = canonical(newUsername);
+    if (canonicalNew.equals(user.getUsername())) {
+      throw new DuplicateUserException("new username must differ from the current username");
+    }
+    if (users.findByUsernameIgnoreCase(canonicalNew).isPresent()) {
+      throw new DuplicateUserException("username is already taken");
+    }
+    user.setUsername(canonicalNew);
+    users.save(user);
+    audit().record(userId, AuditAction.USERNAME_CHANGED, AuditTargetType.USER, userId);
+    return user;
+  }
+
+  /**
    * Requests an email change (backlog #150, reworked by #208). Before
    * #150 no change-email path existed anywhere; #150 flipped the
    * address immediately after the password check — nothing proved the

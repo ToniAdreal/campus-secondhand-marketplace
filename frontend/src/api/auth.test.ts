@@ -5,6 +5,7 @@ import {
   me,
   changePassword,
   changeEmail,
+  changeUsername,
   confirmEmailChange,
   closeAccount,
   listSessions,
@@ -214,6 +215,35 @@ describe('changeEmail', () => {
     await expect(
       changeEmail({ currentPassword: 'old', newEmail: 'taken@example.com' }),
     ).rejects.toBe(failure);
+  });
+});
+
+describe('changeUsername', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts to /auth/username and returns the updated user summary from the envelope', async () => {
+    const updated = { id: 5, username: 'toni2', email: 'toni@example.com', roles: ['USER'] };
+    postSpy.mockResolvedValueOnce(envelope(updated));
+
+    const result = await changeUsername({ username: 'toni2' });
+
+    expect(postSpy).toHaveBeenCalledWith('/auth/username', { username: 'toni2' });
+    expect(result).toEqual(updated);
+  });
+
+  it('propagates the envelope error (409 taken name)', async () => {
+    const failure = {
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: { code: 409, message: 'username is already taken', data: null },
+      },
+    };
+    postSpy.mockRejectedValueOnce(failure);
+
+    await expect(changeUsername({ username: 'taken' })).rejects.toBe(failure);
   });
 });
 

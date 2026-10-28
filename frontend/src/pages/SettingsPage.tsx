@@ -4,6 +4,7 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
   changeEmail,
   changePassword,
+  changeUsername,
   closeAccount,
   confirmDataExport,
   disableTotp,
@@ -72,6 +73,22 @@ function describeDisableTotpError(err: unknown): string {
  * unchanged) address fails 409 and every other failure shows the
  * backend's envelope message verbatim.
  */
+/**
+ * Maps a failed username-change call to UI copy (backlog #256). There
+ * is no password proof on this form, so no 401 phrasing applies — a
+ * taken name (or the caller's own current name) fails 409 and every
+ * other failure shows the backend's envelope message verbatim.
+ */
+function describeUsernameChangeError(err: unknown): string {
+  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
+  if (axios.isAxiosError(err)) {
+    const message = (err.response?.data as { message?: string } | undefined)?.message;
+    if (message) return message;
+    if (!err.response) return 'Network error — is the backend running?';
+  }
+  return 'Username change failed';
+}
+
 function describeEmailChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
@@ -145,6 +162,7 @@ export default function SettingsPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const storeLogin = useAuthStore((s) => s.login);
+  const setUser = useAuthStore((s) => s.setUser);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -152,6 +170,16 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pending, setPending] = useState(false);
+
+  // Username change (backlog #256). A successful submit renames at
+  // once — no staged/confirm step, unlike email — and the session
+  // stays alive, so the page only swaps the stored user summary for
+  // the response (the header's "Signed in as" follows immediately) and
+  // shows a done panel. The freed name returns to the pool at once.
+  const [newUsername, setNewUsername] = useState('');
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameDone, setUsernameDone] = useState<string | null>(null);
+  const [usernamePending, setUsernamePending] = useState(false);
 
   // Email change (backlog #150, reworked by #208). A successful submit
   // only REQUESTS the change: the backend stages the new address as
@@ -288,6 +316,29 @@ export default function SettingsPage() {
       setEmailError(describeEmailChangeError(err));
     } finally {
       setEmailPending(false);
+    }
+  }
+
+  async function onChangeUsername(e: FormEvent) {
+    e.preventDefault();
+    if (newUsername.trim() === '') {
+      setUsernameError('Enter the new username.');
+      return;
+    }
+    setUsernamePending(true);
+    setUsernameError(null);
+    try {
+      const target = newUsername.trim();
+      const updated = await changeUsername({ username: target });
+      // Backlog #256: the session stays alive — no credential moves —
+      // so only the stored user summary needs swapping.
+      setUser(updated);
+      setNewUsername('');
+      setUsernameDone(updated.username);
+    } catch (err) {
+      setUsernameError(describeUsernameChangeError(err));
+    } finally {
+      setUsernamePending(false);
     }
   }
 
@@ -515,6 +566,48 @@ export default function SettingsPage() {
           stray toggle — and the section renders for every signed-in user. */}
       <div className="mt-6 border-t border-neutral-200 pt-4 dark:border-neutral-700">
         <ThemeControl />
+      </div>
+      <div className="mt-6 border-t border-neutral-200 pt-4">
+        <h2 className="mb-1 text-sm font-semibold">Username</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Currently {user.username}. A change takes effect immediately and
+          keeps you signed in on every device; your old username becomes
+          available for anyone to take.
+        </p>
+        {usernameDone ? (
+          <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+            Username changed to {usernameDone}. Seller profiles, orders and
+            receipts now show the new name.
+          </p>
+        ) : (
+          <form onSubmit={onChangeUsername} className="space-y-3">
+            {usernameError && (
+              <p role="alert" className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+                {usernameError}
+              </p>
+            )}
+            <div>
+              <label htmlFor="settings-new-username" className="mb-1 block text-sm font-medium">
+                New username
+              </label>
+              <input
+                id="settings-new-username"
+                type="text"
+                autoComplete="username"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={usernamePending}
+              className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {usernamePending ? 'Changing…' : 'Change username'}
+            </button>
+          </form>
+        )}
       </div>
       <div className="mt-6 border-t border-neutral-200 pt-4">
         <h2 className="mb-1 text-sm font-semibold">Email address</h2>

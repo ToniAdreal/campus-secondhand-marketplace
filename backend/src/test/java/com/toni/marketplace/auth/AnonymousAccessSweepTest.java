@@ -142,6 +142,7 @@ class AnonymousAccessSweepTest {
       "POST /api/auth/step-up",
       "GET /api/auth/trusted-devices",
       "DELETE /api/auth/trusted-devices/{id}",
+      "POST /api/auth/username",
       "GET /api/categories",
       "POST /api/categories",
       "PATCH /api/categories/{id}",

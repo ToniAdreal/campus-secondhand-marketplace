@@ -515,6 +515,30 @@ public class AuthController {
   }
 
   /**
+   * Changes the caller's username (backlog #256, authenticated —
+   * SecurityConfig). The format rules mirror registration (3–60
+   * characters, stored canonical-lowercase); a name held by another
+   * account — or the caller's own current name, any case — is a 409.
+   * The change is immediate (no staged/confirm step, unlike email):
+   * seller profiles, order parties and receipts resolve usernames from
+   * user rows at read time, so they follow the new name at once, and
+   * the freed name returns to the pool immediately. Sessions are
+   * untouched — no tokenVersion bump, no refresh revocation — so the
+   * caller stays signed in; the response's user summary already
+   * carries the new name (an already-issued access token's username
+   * claim goes stale until it expires or rotates, ≤15 min). A
+   * USERNAME_CHANGED audit row is written in the same transaction.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "username changed; the updated user summary (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — blank or outside 3-60 characters (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username already taken, or equal to the current username (envelope)")})
+  @PostMapping("/username")
+  public ResponseEntity<ApiResponse<AuthResponse.UserSummary>> changeUsername(
+      @AuthenticationPrincipal Long userId,
+      @Valid @RequestBody UsernameChangeRequest request) {
+    return ResponseEntity.ok(
+        ApiResponse.ok(AuthResponse.UserSummary.of(auth.changeUsername(userId, request.username()))));
+  }
+
+  /**
    * Requests an email change (backlog #150, reworked by #208,
    * authenticated \u2014 SecurityConfig). The current password proves
    * possession (wrong \u2192 the identical 401); a taken address \u2014 or

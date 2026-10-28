@@ -491,6 +491,27 @@ export async function changeEmail(payload: ChangeEmailPayload): Promise<void> {
   await api.post<ApiResponse<null>>('/auth/email-change', payload);
 }
 
+export interface ChangeUsernamePayload {
+  username: string;
+}
+
+/**
+ * POST /api/auth/username (backlog #256). The rename is immediate —
+ * unlike email there is no staged/confirm step — and the session stays
+ * alive: no token rotation, no refresh revocation. The response carries
+ * the updated user summary, which callers store so the header shows the
+ * new name at once (an already-issued access token's username claim
+ * goes stale until it expires or rotates, ≤15 min).
+ *
+ * Throws the Axios error on failure; the backend wraps failures in the
+ * {code,message,data} envelope (400 bad format, 409 taken name or the
+ * caller's own current name).
+ */
+export async function changeUsername(payload: ChangeUsernamePayload): Promise<AuthUser> {
+  const res = await api.post<ApiResponse<AuthUser>>('/auth/username', payload);
+  return res.data.data;
+}
+
 export interface ConfirmEmailChangePayload {
   token: string;
 }

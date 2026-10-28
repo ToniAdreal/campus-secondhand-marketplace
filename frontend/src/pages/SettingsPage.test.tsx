@@ -338,6 +338,39 @@ describe('SettingsPage', () => {
     expect(alert.textContent).toBe('email is already registered');
   });
 
+  it('posts the change-username payload, swaps the stored user and keeps the session alive (backlog #256)', async () => {
+    postSpy.mockResolvedValueOnce(
+      envelope({ id: 5, username: 'toni2', email: 'toni@example.com', roles: ['USER'] }),
+    );
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New username'), {
+      target: { value: 'toni2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change username' }));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy).toHaveBeenCalledWith('/auth/username', { username: 'toni2' });
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Username changed to toni2');
+    // the header follows the new name at once, and the session is untouched
+    expect(useAuthStore.getState().user?.username).toBe('toni2');
+    expect(getAccessToken()).toBe('old-credential');
+    expect(screen.queryByRole('button', { name: 'Change username' })).toBeNull();
+  });
+
+  it('maps a change-username 409 to the backend message verbatim (backlog #256)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(409, 'username is already taken'));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New username'), {
+      target: { value: 'taken' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change username' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('username is already taken');
+    expect(useAuthStore.getState().user?.username).toBe('toni');
+  });
+
   it('closes the account from the danger zone after the typed confirmation (backlog #158)', async () => {
     deleteSpy.mockResolvedValueOnce(envelope(null));
     renderAt('/settings');
