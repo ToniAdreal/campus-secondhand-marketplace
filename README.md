@@ -353,9 +353,15 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   $PWD/frontend/openapi.json mvn -f backend/pom.xml test
   -Dtest=com.toni.marketplace.common.OpenApiExportTest` — and is a
   gitignored build artifact, never a committed copy. CI runs both steps
-  in the `api-drift` job. Honest scope: this pins paths and methods
-  only, not payload shapes — a renamed DTO field passes this gate and
-  remains the api modules' TypeScript types' problem.
+  in the `api-drift` job. Shape pinning (backlog #258): the same run
+  also checks the pinned tranche in
+  `frontend/scripts/api-shape-pins.mjs` (auth session core + orders
+  surface) and fails when a field the SPA reads or sends disappears
+  from the document or changes type. Honest scope: unpinned surfaces
+  (2FA/passkey/session/device auth; items/messages/notifications/
+  reviews until backlog #264) stay path+method-only, and register/
+  login success bodies are unpinned because springdoc cannot type
+  their `ResponseEntity<?>` returns (backlog #271).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
