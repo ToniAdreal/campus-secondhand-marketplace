@@ -55,7 +55,8 @@ export interface Order {
  */
 export const orderKeys = {
   all: ['orders'] as const,
-  list: () => [...orderKeys.all, 'list'] as const,
+  /** The buyer list key carries the status filter, like sellerList below. */
+  list: (status = '') => [...orderKeys.all, 'list', status] as const,
   detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
   /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
   sellerList: (status = '') => [...orderKeys.all, 'seller', 'list', status] as const,
@@ -169,13 +170,21 @@ export function useOrder(id: number) {
  * orders can share a createdAt instant); the My-orders page stitches pages
  * behind a "Load more" button. New pages stop when the server says there
  * are no more (number+1 >= totalPages).
+ *
+ * The status filter (backlog #249, mirroring the seller filter #237)
+ * rides the query key and the request params: switching it drops the
+ * previous filter's stitched pages and restarts at page 0, and an empty
+ * status sends no param at all — the backend's ?status= is enum-bound
+ * (#123), so only ORDER_STATUSES values ever reach it.
  */
-export function useOrdersInfinite(size = 20, enabled = true) {
+export function useOrdersInfinite(size = 20, enabled = true, status = '') {
   return useInfiniteQuery({
-    queryKey: orderKeys.list(),
+    queryKey: orderKeys.list(status),
     queryFn: ({ pageParam = 0 }) =>
       api
-        .get<ApiResponse<Page<Order>>>('/orders', { params: { page: pageParam, size } })
+        .get<ApiResponse<Page<Order>>>('/orders', {
+          params: { page: pageParam, size, ...(status ? { status } : {}) },
+        })
         .then((res) => res.data.data),
     getNextPageParam: (lastPage) =>
       lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
@@ -211,8 +220,9 @@ export function useSellerSalesSummary(enabled = true) {
 
 /**
  * Every OrderStatus value, in lifecycle order — the seller-orders status
- * filter (backlog #237) renders exactly these, so the select can never
- * offer a value the backend's enum-bound ?status= (#123) would 400 on.
+ * filter (backlog #237) and the buyer-orders status filter (backlog #249)
+ * render exactly these, so the selects can never offer a value the
+ * backend's enum-bound ?status= (#123) would 400 on.
  */
 export const ORDER_STATUSES: Order['status'][] = [
   'PENDING',

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, setAccessToken } from '../api/client';
@@ -113,7 +113,11 @@ describe('MyOrdersPage dispute control (backlog #169)', () => {
     // Exactly one "Report a problem" — the PAID row; PENDING cannot be
     // disputed and the DISPUTED row shows its frozen state instead.
     expect(screen.getAllByRole('button', { name: 'Report a problem' })).toHaveLength(1);
-    expect(screen.getByText('DISPUTED')).toBeTruthy();
+    // Chip scoped to the row link: the #249 filter select renders the
+    // same status strings as <option> text (the #237 collision).
+    expect(
+      within(screen.getByText('Order #11').closest('a') as HTMLElement).getByText('DISPUTED'),
+    ).toBeTruthy();
     expect(
       screen.getByText('Dispute open — this order is frozen while an admin reviews it.'),
     ).toBeTruthy();

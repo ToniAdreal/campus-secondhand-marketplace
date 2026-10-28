@@ -1,8 +1,13 @@
 import axios from 'axios';
 import { useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { describeDisputeError, useOpenDispute } from '../api/disputes';
-import { describeOrderError, useOrdersInfinite, type Order } from '../api/orders';
+import {
+  describeOrderError,
+  ORDER_STATUSES,
+  useOrdersInfinite,
+  type Order,
+} from '../api/orders';
 import { describeReviewError, useCreateReview } from '../api/reviews';
 import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
 import OrderPspReferences from '../components/OrderPspReferences';
@@ -24,6 +29,13 @@ import { useAuthStore } from '../store/useAuthStore';
  * Auth: anonymous visitors bounce to /login like the other buyer pages. A
  * 401 mid-session means the credential and the httpOnly cookie both died,
  * so the store's user is gone too — bounce to /login there as well.
+ *
+ * Status filter (backlog #249): a dropdown above the list, URL-synced
+ * (?status=, like #84's category filter and #237's seller-orders filter)
+ * and combinable with the infinite scroll — the backend already accepted
+ * ?status= (#123), but the buyer page rendered no filter, so a buyer with
+ * a long history could not narrow to PAID or REFUNDED without paging.
+ * "All statuses" clears it. No backend work; this page only.
  */
 
 function isUnauthorized(error: unknown): boolean {
@@ -230,13 +242,27 @@ function OrderReviewControl({ order }: { order: Order }) {
   );
 }
 
+// A hand-typed ?status= that is not an OrderStatus value falls back to
+// "All statuses" instead of reaching the backend's enum-bound ?status=
+// (#123), which would 400 — the select only ever offers valid values.
+// Same allowlist as the seller-orders filter (backlog #237).
+function allowlisted(raw: string | null): string {
+  return raw !== null && (ORDER_STATUSES as readonly string[]).includes(raw) ? raw : '';
+}
+
 export default function MyOrdersPage() {
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
+  // Status filter (backlog #249): URL-synced like #84's category filter
+  // and #237's seller filter — refresh-safe, shareable, and it composes
+  // with the infinite scroll (the status rides the query key, so a new
+  // filter restarts at page 0). "All statuses" deletes ?status=.
+  const status = allowlisted(searchParams.get('status'));
   // Anonymous visitors never fire the list request — they bounce to /login
   // on the next render; the mid-session 401 path still handles the
   // credential-died-after-login case.
-  const orders = useOrdersInfinite(20, user !== null);
+  const orders = useOrdersInfinite(20, user !== null, status);
 
   if (!user) {
     // Buying requires a session; LoginPage bounces back here afterwards.
@@ -249,9 +275,43 @@ export default function MyOrdersPage() {
 
   const stitched = orders.data?.pages.flatMap((page) => page.content) ?? [];
 
+  const setStatusParam = (value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value === '') {
+          next.delete('status');
+        } else {
+          next.set('status', value);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
   return (
     <div>
       <h1 className="mb-4 text-2xl font-bold">My orders</h1>
+      <div className="mb-4">
+        <label htmlFor="buyer-order-status" className="sr-only">
+          Filter by status
+        </label>
+        <select
+          id="buyer-order-status"
+          aria-label="Filter by status"
+          value={status}
+          onChange={(e) => setStatusParam(e.target.value)}
+          className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm focus:border-sky-500 focus:outline-none sm:w-64"
+        >
+          <option value="">All statuses</option>
+          {ORDER_STATUSES.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+      </div>
       {orders.isLoading && <p>Loading orders…</p>}
       {orders.isError && (
         <p role="alert" className="text-red-600">
@@ -260,7 +320,11 @@ export default function MyOrdersPage() {
       )}
       {orders.isSuccess && stitched.length === 0 && (
         <div className="rounded-lg bg-white p-6 text-center shadow-sm">
-          <p className="text-neutral-600">You haven&apos;t bought anything yet.</p>
+          {status !== '' ? (
+            <p className="text-neutral-600">No {status} orders yet.</p>
+          ) : (
+            <p className="text-neutral-600">You haven&apos;t bought anything yet.</p>
+          )}
           <Link to="/" className="mt-2 inline-block text-sm text-blue-600 hover:underline">
             Browse listings
           </Link>
