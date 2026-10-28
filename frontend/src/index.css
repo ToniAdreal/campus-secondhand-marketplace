@@ -1,6 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Apple design language base: parchment canvas behind the app shell
+ * (visible only before the shell paints) and the focus-blue selection.
+ */
+body {
+  background-color: #f5f5f7;
+}
+
+::selection {
+  background-color: #0071e3;
+  color: #ffffff;
+}
 
 /*
  * Receipt printing (backlog #180): printing a page that shows a receipt

@@ -100,20 +100,20 @@ export default function RegisterPage() {
 
   if (awaitingVerification) {
     return (
-      <div className="mx-auto mt-6 max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-blue-100/60 sm:mt-10">
-        <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/30">
+      <div className="mx-auto mt-6 max-w-md rounded-[20px] border border-apple-hairline bg-white p-6 sm:mt-10 sm:p-8">
+        <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-apple-ink text-white">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
         </svg>
       </div>
-      <h1 className="mb-5 text-center text-2xl font-extrabold tracking-tight text-neutral-900">Check your inbox</h1>
-        <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-800">
+      <h1 className="mb-5 text-center text-2xl font-bold tracking-tight text-apple-ink">Check your inbox</h1>
+        <p role="status" className="rounded-[10px] border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-800">
           Account created for {awaitingVerification}. Confirm your email address with the
           verification link before logging in — no session has been started yet. In this
           demo the default mail sender is log-only, so no email is actually delivered.
         </p>
         {error && (
-          <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+          <p role="alert" className="mt-4 rounded-[10px] border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
             {error}
           </p>
         )}
@@ -126,12 +126,12 @@ export default function RegisterPage() {
             type="button"
             onClick={onResend}
             disabled={resending}
-            className="mt-4 w-full rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 px-3 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-700 hover:to-blue-800 active:scale-[0.99] disabled:opacity-50"
+            className="mt-4 w-full rounded-full bg-apple-blue px-3 py-3 text-[17px] font-semibold text-white transition hover:bg-apple-focus active:scale-[0.99] disabled:opacity-50"
           >
             {resending ? 'Resending…' : 'Resend verification link'}
           </button>
         )}
-        <p className="mt-6 border-t border-neutral-100 pt-5 text-center text-sm text-neutral-500">
+        <p className="mt-6 border-t border-apple-soft pt-5 text-center text-sm text-apple-muted">
           Already confirmed?{' '}
           <Link to="/login" className="font-semibold text-blue-600 hover:underline">
             Back to login
@@ -142,22 +142,22 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="mx-auto mt-6 max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-blue-100/60 sm:mt-10">
-      <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/30">
+    <div className="mx-auto mt-6 max-w-md rounded-[20px] border border-apple-hairline bg-white p-6 sm:mt-10 sm:p-8">
+      <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-apple-ink text-white">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
         </svg>
       </div>
-      <h1 className="mb-2 text-center text-2xl font-extrabold tracking-tight text-neutral-900">Register</h1>
-      <p className="mb-6 text-center text-sm text-neutral-500">Join Campus Marketplace to buy and sell on campus</p>
+      <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-apple-ink">Register</h1>
+      <p className="mb-6 text-center text-sm text-apple-muted">Join Campus Marketplace to buy and sell on campus</p>
       {error && (
-        <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-[10px] border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
           {error}
         </p>
       )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label htmlFor="register-username" className="mb-1.5 block text-sm font-semibold text-neutral-700">
+          <label htmlFor="register-username" className="mb-1 block text-sm font-semibold text-apple-softink">
             Username
           </label>
           <div className="relative">
@@ -170,12 +170,12 @@ export default function RegisterPage() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white py-3 pl-11 pr-3.5 text-[17px] outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>
         <div>
-          <label htmlFor="register-email" className="mb-1.5 block text-sm font-semibold text-neutral-700">
+          <label htmlFor="register-email" className="mb-1 block text-sm font-semibold text-apple-softink">
             Email
           </label>
           <div className="relative">
@@ -188,12 +188,12 @@ export default function RegisterPage() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white py-3 pl-11 pr-3.5 text-[17px] outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>
         <div>
-          <label htmlFor="register-password" className="mb-1.5 block text-sm font-semibold text-neutral-700">
+          <label htmlFor="register-password" className="mb-1 block text-sm font-semibold text-apple-softink">
             Password
           </label>
           <div className="relative">
@@ -206,19 +206,19 @@ export default function RegisterPage() {
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white py-3 pl-11 pr-3.5 text-[17px] outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 px-3 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-700 hover:to-blue-800 active:scale-[0.99] disabled:opacity-50"
+          className="w-full rounded-full bg-apple-blue px-3 py-3 text-[17px] font-semibold text-white transition hover:bg-apple-focus active:scale-[0.99] disabled:opacity-50"
         >
           {pending ? 'Creating account…' : 'Create account'}
         </button>
       </form>
-      <p className="mt-6 border-t border-neutral-100 pt-5 text-center text-sm text-neutral-500">
+      <p className="mt-6 border-t border-apple-soft pt-5 text-center text-sm text-apple-muted">
         Already have an account?{' '}
         <Link to="/login" className="font-semibold text-blue-600 hover:underline">
           Back to login

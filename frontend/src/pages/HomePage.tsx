@@ -194,8 +194,8 @@ export default function HomePage() {
 
   return (
     <div>
-      <h1 className="mb-5 text-3xl font-extrabold tracking-tight">Latest listings</h1>
-      <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200/70 bg-white p-3 shadow-sm sm:flex-row dark:border-neutral-700 dark:bg-neutral-800">
+      <h1 className="mb-5 text-[40px] font-bold leading-tight tracking-tight text-apple-ink dark:text-white">Latest listings</h1>
+      <div className="mb-6 flex flex-col gap-3 rounded-[14px] border border-apple-hairline bg-white p-3 sm:flex-row dark:border-neutral-700 dark:bg-neutral-800">
         <div className="relative flex-1">
           <label htmlFor="search" className="sr-only">
             Search listings
@@ -211,8 +211,8 @@ export default function HomePage() {
               }
             }}
             placeholder="Search listings…"
-            className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 shadow-sm
-                       focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/15"
+            className="w-full rounded-lg border border-transparent bg-apple-parchment px-4 py-2.5
+                       focus:border-apple-focus focus:bg-white focus:outline-none"
           />
           {suggestionsOpen && (
             <SearchSuggestions
@@ -231,8 +231,8 @@ export default function HomePage() {
             value={categoryId === null ? '' : String(categoryId)}
             onChange={(e) => setCategoryId(e.target.value)}
             disabled={categoriesQuery.isLoading || categoriesQuery.isError}
-            className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 shadow-sm
-                       focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/15 sm:w-auto"
+            className="w-full rounded-lg border border-transparent bg-apple-parchment px-4 py-2.5
+                       focus:border-apple-focus focus:bg-white focus:outline-none sm:w-auto"
           >
             <option value="">All categories</option>
             {(categoriesQuery.data ?? []).map((c) => (
@@ -258,8 +258,8 @@ export default function HomePage() {
             value={minPriceInput}
             onChange={(e) => setMinPriceInput(e.target.value)}
             placeholder="Min ¥"
-            className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 shadow-sm
-                       focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/15 sm:w-28"
+            className="w-full rounded-lg border border-transparent bg-apple-parchment px-4 py-2.5
+                       focus:border-apple-focus focus:bg-white focus:outline-none sm:w-28"
           />
         </div>
         <div>
@@ -273,8 +273,8 @@ export default function HomePage() {
             value={maxPriceInput}
             onChange={(e) => setMaxPriceInput(e.target.value)}
             placeholder="Max ¥"
-            className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 shadow-sm
-                       focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/15 sm:w-28"
+            className="w-full rounded-lg border border-transparent bg-apple-parchment px-4 py-2.5
+                       focus:border-apple-focus focus:bg-white focus:outline-none sm:w-28"
           />
         </div>
         <div>
@@ -285,8 +285,8 @@ export default function HomePage() {
             id="sort-listings"
             value={sort === 'newest' ? '' : sort}
             onChange={(e) => setSort(e.target.value)}
-            className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 shadow-sm
-                       focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-500/15 sm:w-auto"
+            className="w-full rounded-lg border border-transparent bg-apple-parchment px-4 py-2.5
+                       focus:border-apple-focus focus:bg-white focus:outline-none sm:w-auto"
           >
             <option value="">Newest first</option>
             <option value="price-asc">Price: low to high</option>
@@ -307,23 +307,23 @@ export default function HomePage() {
       )}
       {user !== null && recentlyViewed.data && recentlyViewed.data.length > 0 && (
         <section aria-label="Recently viewed" className="mb-6">
-          <h2 className="mb-3 text-xl font-extrabold tracking-tight">Recently viewed</h2>
+          <h2 className="mb-3 text-xl font-bold tracking-tight">Recently viewed</h2>
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recentlyViewed.data.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-                <li key={item.id} className="rounded-2xl border border-neutral-200/70 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
+                <li key={item.id} className="rounded-[14px] border border-apple-hairline bg-white p-4 transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-800">
                   {photoUrls.length > 0 ? (
                     <ListingPhoto
                       src={photoUrls[0]}
                       alt={item.title}
                       imgClassName="mb-3 h-40 w-full rounded object-cover"
-                      placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100/80 via-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
+                      placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-apple-parchment text-sm text-apple-muted dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                     />
                   ) : (
                     <div
                       data-testid="no-photo-placeholder"
-                      className="mb-3 flex h-44 flex-col items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-blue-100/80 via-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
+                      className="mb-3 flex h-44 flex-col items-center justify-center gap-2 rounded-xl bg-apple-parchment text-sm text-apple-muted dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                     >
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-8 w-8 text-neutral-400 dark:text-neutral-400">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
@@ -334,10 +334,10 @@ export default function HomePage() {
                   <Link to={`/items/${item.id}`} className="font-semibold hover:underline">
                     {item.title}
                   </Link>
-                  <p className="mt-1.5 text-lg font-bold tracking-tight text-neutral-900 dark:text-neutral-50">
+                  <p className="mt-1.5 text-[20px] font-bold tracking-tight text-apple-ink dark:text-neutral-50">
                     ¥{(item.priceCents / 100).toFixed(2)}
                 </p>
-                  <span className="mt-2 inline-block rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-neutral-700 dark:text-neutral-200">
+                  <span className="mt-2 inline-block rounded-full bg-apple-parchment px-2.5 py-0.5 text-xs font-semibold text-apple-softink dark:bg-neutral-700 dark:text-neutral-200">
                     {item.status}
                   </span>{' '}
                   <FavoriteButton itemId={item.id} />
@@ -356,18 +356,18 @@ export default function HomePage() {
             {data.content.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
-              <li key={item.id} className="rounded-2xl border border-neutral-200/70 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
+              <li key={item.id} className="rounded-[14px] border border-apple-hairline bg-white p-4 transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-800">
                 {photoUrls.length > 0 ? (
                   <ListingPhoto
                     src={photoUrls[0]}
                     alt={item.title}
                     imgClassName="mb-3 h-40 w-full rounded object-cover"
-                    placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100/80 via-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
+                    placeholderClassName="mb-3 flex h-44 items-center justify-center rounded-xl bg-apple-parchment text-sm text-apple-muted dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                   />
                 ) : (
                   <div
                     data-testid="no-photo-placeholder"
-                    className="mb-3 flex h-44 flex-col items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-blue-100/80 via-blue-50 to-neutral-100 text-sm text-neutral-500 dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
+                    className="mb-3 flex h-44 flex-col items-center justify-center gap-2 rounded-xl bg-apple-parchment text-sm text-apple-muted dark:from-neutral-700 dark:to-neutral-800 dark:text-neutral-300"
                   >
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-8 w-8 text-neutral-400 dark:text-neutral-400">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
@@ -378,10 +378,10 @@ export default function HomePage() {
                 <Link to={`/items/${item.id}`} className="font-semibold hover:underline">
                   {item.title}
                 </Link>
-                <p className="mt-1.5 text-lg font-bold tracking-tight text-neutral-900 dark:text-neutral-50">
+                <p className="mt-1.5 text-[20px] font-bold tracking-tight text-apple-ink dark:text-neutral-50">
                   ¥{(item.priceCents / 100).toFixed(2)}
                   </p>
-                <span className="mt-2 inline-block rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-neutral-700 dark:text-neutral-200">
+                <span className="mt-2 inline-block rounded-full bg-apple-parchment px-2.5 py-0.5 text-xs font-semibold text-apple-softink dark:bg-neutral-700 dark:text-neutral-200">
                   {item.status}
                 </span>{' '}
                 <FavoriteButton itemId={item.id} />
@@ -395,7 +395,7 @@ export default function HomePage() {
                 type="button"
                 onClick={() => setPage(page - 1)}
                 disabled={page <= 0}
-                className="rounded-full bg-neutral-900 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-700 disabled:opacity-50"
+                className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
               >
                 Previous
               </button>
@@ -406,7 +406,7 @@ export default function HomePage() {
                 type="button"
                 onClick={() => setPage(page + 1)}
                 disabled={page + 1 >= data.totalPages}
-                className="rounded-full bg-neutral-900 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-700 disabled:opacity-50"
+                className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
               >
                 Next
               </button>

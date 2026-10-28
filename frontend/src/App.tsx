@@ -26,10 +26,10 @@ function AuthNav() {
   if (!user) {
     return (
       <div className="flex items-center gap-3">
-        <Link to="/login" className="text-sm font-medium text-neutral-600 transition hover:text-blue-700 dark:text-neutral-300 dark:hover:text-blue-400">
+        <Link to="/login" className="text-[15px] text-apple-blue transition hover:underline dark:text-apple-sky">
           Login
         </Link>
-        <Link to="/register" className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+        <Link to="/register" className="rounded-full bg-apple-blue px-4 py-1.5 text-[15px] font-semibold text-white transition hover:bg-apple-focus">
           Register
         </Link>
       </div>
@@ -38,10 +38,10 @@ function AuthNav() {
 
   return (
     <div className="flex items-center gap-3">
-      <Link to="/orders" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/orders" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         My orders
       </Link>
-      <Link to="/cart" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/cart" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Cart
         {cartCount > 0 && (
           <span
@@ -52,13 +52,13 @@ function AuthNav() {
           </span>
         )}
       </Link>
-      <Link to="/offers" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/offers" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Offers
       </Link>
-      <Link to="/favorites" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/favorites" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Favorites
       </Link>
-      <Link to="/notifications" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/notifications" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Notifications
         {unreadNotifications !== undefined && unreadNotifications > 0 && (
           <span
@@ -69,58 +69,58 @@ function AuthNav() {
           </span>
         )}
       </Link>
-      <Link to="/my-listings" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/my-listings" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         My listings
       </Link>
-      <Link to="/seller/orders" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/seller/orders" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Sales
       </Link>
-      <Link to="/seller/payouts" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/seller/payouts" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Payouts
       </Link>
-      <Link to="/items/new" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/items/new" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Sell an item
       </Link>
-      <Link to="/settings" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+      <Link to="/settings" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Settings
       </Link>
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/users" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/users" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin users
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/audit-log" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/audit-log" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin audit log
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/payments" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/payments" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin payments
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/reports" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/reports" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin reports
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/categories" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/categories" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin categories
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/disputes" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/disputes" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin disputes
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/appeals" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/appeals" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin appeals
         </Link>
       )}
       {user.roles.includes('ADMIN') && (
-        <Link to="/admin/dashboard" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+        <Link to="/admin/dashboard" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
           Admin dashboard
         </Link>
       )}
@@ -143,7 +143,7 @@ function AuthNav() {
             () => navigate('/'),
           );
         }}
-        className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+        className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white"
       >
         Logout
       </button>
@@ -155,20 +155,16 @@ export default function App() {
   return (
     // Shell palette (backlog #227): dark: variants carry the dark theme
     // on the light surfaces below — palette only, no layout change.
-    <div className="relative flex min-h-screen flex-col bg-gradient-to-b from-blue-50 via-neutral-50 to-neutral-100 antialiased text-neutral-900 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-950 dark:text-neutral-100">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-32 right-[12%] h-80 w-80 rounded-full bg-blue-400/20 blur-3xl" />
-        <div className="absolute bottom-10 left-[6%] h-72 w-72 rounded-full bg-sky-300/20 blur-3xl" />
-      </div>
-      <header className="sticky top-0 z-20 border-b border-neutral-200/70 bg-white/90 shadow-sm backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-800/90">
+    <div className="flex min-h-screen flex-col bg-apple-parchment font-sans text-apple-ink antialiased dark:bg-black dark:text-neutral-100">
+      <header className="sticky top-0 z-20 border-b border-black/[0.08] bg-white/80 backdrop-blur-xl backdrop-saturate-150 dark:border-white/10 dark:bg-neutral-900/80">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
           <Link
             to="/"
-            className="inline-flex items-center text-xl font-extrabold tracking-tight text-blue-700 dark:text-blue-400"
+            className="inline-flex items-center text-xl font-semibold tracking-tight text-apple-ink dark:text-white"
           >
             <span
               aria-hidden="true"
-              className="mr-2.5 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/30"
+              className="mr-2.5 inline-flex h-8 w-8 items-center justify-center rounded-[9px] bg-apple-ink text-white dark:bg-white dark:text-black"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
@@ -198,8 +194,8 @@ export default function App() {
           </Suspense>
         </ErrorBoundary>
       </main>
-      <footer className="relative border-t border-neutral-200/70 py-6 dark:border-neutral-700/60">
-        <p className="mx-auto max-w-6xl px-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
+      <footer className="relative border-t border-black/[0.08] py-6 dark:border-white/10">
+        <p className="mx-auto max-w-6xl px-4 text-center text-xs text-apple-muted">
           Campus Marketplace — a portfolio project. Demo only: no real orders or payments.
         </p>
       </footer>
