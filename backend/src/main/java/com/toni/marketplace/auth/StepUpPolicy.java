@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
  * Step-up re-authentication gate (backlog #218): decides whether the
  * presented access token carries a recent enough credential proof for
  * the sensitive set — sessions revoke-others, the data-export grant,
- * TOTP disable and account closure.
+ * TOTP setup (backlog #250) and disable, account closure, and passkey
+ * enrolment/management.
  *
  * <p>The proof instant is the token's {@code auth_time} claim (see
  * {@link JwtTokenService}), read from the request's

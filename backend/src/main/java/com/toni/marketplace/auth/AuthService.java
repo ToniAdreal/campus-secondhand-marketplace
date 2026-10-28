@@ -877,8 +877,17 @@ public class AuthService {
    * the secret plus the otpauth:// provisioning URI for the authenticator
    * app. Re-running setup regenerates the secret and resets enrollment —
    * the previous authenticator stops working until /enable is completed
-   * again. The endpoint requires authentication (SecurityConfig), so only
-   * the account holder (or someone holding their session) can enroll.
+   * again.
+   *
+   * <p>Backlog #250: issuing the shared secret is the sensitive step —
+   * the presented access token must carry a FRESH credential proof
+   * ({@link StepUpPolicy#requireFresh}, same seam as passkey
+   * registration), so a merely-authenticated (possibly stolen) session
+   * cannot enroll its own authenticator and lock the real holder out.
+   * A stale token answers the dedicated 403 step-up envelope before
+   * any secret is minted or stored; re-prove at
+   * {@code POST /api/auth/step-up} and retry. {@code /enable} keeps
+   * only its code verification against the stored secret.
    *
    * <p>Encryption at rest (backlog #89): only the {@link TotpSecretCipher}
    * {@code v1:} form reaches the database; the plaintext secret exists
@@ -887,6 +896,9 @@ public class AuthService {
    */
   @Transactional
   public TotpSetup setupTotp(long userId) {
+    // Backlog #250: the gate fires before any secret is minted — a
+    // refused setup must leave the previous enrollment untouched.
+    stepUp().requireFresh();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String secret = totp.generateSecret();
     user.setTotpSecret(cipher().encrypt(secret));

@@ -184,7 +184,13 @@ public class AuthController {
    * Base32 shared secret and the otpauth:// URI to scan into an
    * authenticator app. Re-running setup regenerates the secret and resets
    * enrollment — complete {@code /2fa/enable} again afterwards.
+   * Backlog #250: issuing the secret is step-up gated — the presented
+   * access token must carry a fresh credential proof, like passkey
+   * registration; a stale token answers the dedicated 403 step-up
+   * envelope and mints nothing, so a stolen session cannot enroll its
+   * own authenticator. Re-prove at {@code /api/auth/step-up} and retry.
    */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "shared secret + otpauth URI (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "credential proof older than the step-up window — re-prove at /api/auth/step-up (envelope)")})
   @PostMapping("/2fa/setup")
   public ResponseEntity<ApiResponse<TotpSetupResponse>> setupTotp(
       @AuthenticationPrincipal Long userId) {

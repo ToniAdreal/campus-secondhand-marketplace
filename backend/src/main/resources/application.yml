@@ -261,8 +261,9 @@ app:
       # instant of the holder's last credential proof (password login,
       # TOTP-exchange completion, password change, registration, or the
       # POST /api/auth/step-up re-proof). The sensitive set — sessions
-      # revoke-others, the data-export grant, TOTP disable, account
-      # closure — refuses a token whose proof is older than max-age
+      # revoke-others, the data-export grant, TOTP setup (backlog #250)
+      # and disable, account closure, passkey enrolment/management —
+      # refuses a token whose proof is older than max-age
       # with a dedicated 403 step-up envelope (never a 401); the SPA's
       # re-auth modal re-proves and retries the action once. Refresh
       # rotation preserves the claim and never freshens it — a rotation

@@ -238,6 +238,10 @@ export interface TotpSetup {
  * enrollment: returns the Base32 shared secret and the otpauth:// URI to
  * enter into an authenticator app (rendered as text — no QR library).
  * Re-running setup regenerates the secret and resets enrollment.
+ * Backlog #250: issuing the secret is step-up gated server-side — a
+ * stale token answers the dedicated 403 step-up envelope and mints
+ * nothing; the settings setup button surfaces that envelope message,
+ * and a modal re-proof retry for setup itself is a follow-up.
  *
  * Throws the Axios error on failure.
  */
