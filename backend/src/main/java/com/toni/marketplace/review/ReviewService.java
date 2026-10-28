@@ -44,6 +44,16 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>Append-only in v1: no edit, no delete, no moderation surface —
  * the #160 report flow remains the abuse path.
+ *
+ * <p>Seller responses (backlog #246) are the one exception, and only
+ * for the response column: {@link #respondToReview} lets the review's
+ * seller set or replace the public reply. Seller only — anyone else
+ * gets 403, checked after the 404 so a review id never leaks what
+ * the caller may do with it, mirroring {@code createReview}'s order.
+ * The response is trimmed at write time (blank is rejected at the
+ * boundary, like the #240 dispute note); the rating and body are
+ * never touched here, and the aggregate reads the rating column
+ * alone, so a response cannot move a seller's average.
  */
 @Service
 public class ReviewService {
@@ -91,6 +101,25 @@ public class ReviewService {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "this order already has a review");
     }
+  }
+
+  /**
+   * Sets (or replaces) the seller's public response on one review.
+   * Unknown review → 404; anyone but the review's seller → 403. The
+   * response overwrites the single column — there is no second row
+   * and no history, so "one response per review" holds structurally.
+   */
+  @Transactional
+  public SellerReviewDto respondToReview(Long sellerId, Long reviewId, String response) {
+    SellerReview review = reviews.findById(reviewId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "review not found"));
+    if (!review.getSellerId().equals(sellerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the seller can respond to this review");
+    }
+    review.setSellerResponse(response == null ? null : response.trim());
+    return SellerReviewDto.from(reviews.save(review), usernameOf(review.getBuyerId()));
   }
 
   /** One seller's reviews, paginated (the controller supplies newest-first). */

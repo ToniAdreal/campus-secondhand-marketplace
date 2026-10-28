@@ -1,0 +1,18 @@
+-- V73: seller response on a review (backlog #246). Runs on both
+-- MySQL 8 (prod/CI) and H2 in MySQL-compatibility mode (local dev).
+--
+-- Before #246 a complaint on the public seller profile (#174) stood
+-- publicly unanswered: ReviewService exposed only create/list/
+-- aggregate, so the seller's only recourse was outside the product.
+-- One response per review is structural, not enforced by a unique
+-- key: the response lives in a single nullable column on the review
+-- row itself, so a review can never carry two responses and an edit
+-- is an UPDATE of this column, never a second row. The column stays
+-- NULL on every pre-#246 row and on reviews the seller never answers
+-- — no backfill is invented for responses that were never written.
+-- The response is capped at 1000 chars (the same bound the #240
+-- dispute note uses); the boundary enforces it, this column only
+-- stores what passed. The rating aggregate is computed from the
+-- rating column alone, so a response can never move a seller's
+-- average — the #246 tests pin that.
+ALTER TABLE seller_review ADD COLUMN seller_response VARCHAR(1000) NULL;

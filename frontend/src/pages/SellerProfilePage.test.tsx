@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import SellerProfilePage from './SellerProfilePage';
 import { useAuthStore } from '../store/useAuthStore';
@@ -11,6 +11,7 @@ let mockProfile: SellerProfile | undefined;
 let mockProfileError = false;
 let mockListings: Page<Item> | undefined;
 let mockReviews: Page<SellerReview> | undefined;
+let mockRespondMutate: (input: { reviewId: number; response: string }) => void = () => {};
 
 vi.mock('../api/sellers', async (importOriginal) => {
   const original = await importOriginal<typeof import('../api/sellers')>();
@@ -37,6 +38,16 @@ vi.mock('../api/reviews', async (importOriginal) => {
       data: mockReviews,
       isLoading: false,
       isError: false,
+    }),
+    // The response form reads this hook; stub the mutation so the
+    // page renders without a query client, and let #246 tests swap
+    // in a capturing mutate.
+    useRespondToReview: () => ({
+      mutate: (input: { reviewId: number; response: string }) =>
+        mockRespondMutate(input),
+      isLoading: false,
+      isError: false,
+      error: null,
     }),
   };
 });
@@ -120,6 +131,7 @@ const review: SellerReview = {
   sellerId: 3,
   rating: 4,
   body: 'Fast handover, item as described',
+  sellerResponse: null,
   createdAt: '2026-10-05T00:00:00Z',
 };
 
@@ -239,5 +251,93 @@ describe('SellerProfilePage follow control (#217)', () => {
     });
     renderPage();
     expect(screen.queryByRole('button', { name: /[Ff]ollow seller/ })).toBeNull();
+  });
+});
+
+describe('SellerProfilePage seller responses (#246)', () => {
+  afterEach(() => {
+    cleanup();
+    mockProfile = undefined;
+    mockProfileError = false;
+    mockListings = undefined;
+    mockReviews = undefined;
+    mockRespondMutate = () => {};
+    useAuthStore.setState({ user: null });
+  });
+
+  it('renders the seller response under its review for every visitor', () => {
+    useAuthStore.setState({ user: null });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = {
+      content: [{ ...review, sellerResponse: 'Thanks — happy trading!' }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+
+    renderPage();
+
+    expect(screen.getByText("Seller's response")).toBeTruthy();
+    expect(screen.getByText('Thanks — happy trading!')).toBeTruthy();
+    // Anonymous visitors never see the form.
+    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+  });
+
+  it('shows the Respond form to the seller and submits the draft', () => {
+    useAuthStore.setState({
+      user: { id: 3, username: 'seller', email: 's@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = { content: [review], totalElements: 1, totalPages: 1, number: 0 };
+    const submitted: { reviewId: number; response: string }[] = [];
+    mockRespondMutate = (input) => {
+      submitted.push(input);
+    };
+
+    renderPage();
+
+    const box = screen.getByLabelText(/Seller response to buyer's review/);
+    fireEvent.change(box, { target: { value: 'Thanks for the review!' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+
+    expect(submitted).toEqual([{ reviewId: 21, response: 'Thanks for the review!' }]);
+  });
+
+  it('shows the edit form prefilled when a response already exists', () => {
+    useAuthStore.setState({
+      user: { id: 3, username: 'seller', email: 's@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = {
+      content: [{ ...review, sellerResponse: 'Old reply' }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+
+    renderPage();
+
+    const box = screen.getByLabelText(
+      /Seller response to buyer's review/,
+    ) as HTMLTextAreaElement;
+    expect(box.value).toBe('Old reply');
+    expect(screen.getByRole('button', { name: 'Save response' })).toBeTruthy();
+  });
+
+  it('hides the form from a signed-in visitor who is not the seller', () => {
+    useAuthStore.setState({
+      user: { id: 5, username: 'buyer', email: 'b@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = { content: [review], totalElements: 1, totalPages: 1, number: 0 };
+
+    renderPage();
+
+    expect(screen.queryByLabelText(/Seller response/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
   });
 });

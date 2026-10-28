@@ -25,6 +25,12 @@ import java.time.Instant;
  * {@code uq_review_order} unique key is the "one review per trade"
  * rule. Abuse handling stays with the #160 listing-report flow; no
  * moderation surface is built here.
+ *
+ * <p>The one sanctioned mutation is the seller response (backlog
+ * #246): {@code sellerResponse} is the seller's public reply, set and
+ * re-set through {@link ReviewService#respondToReview} only. It lives
+ * in a single nullable column, so one review can never carry two
+ * responses, and it is never part of the rating aggregate.
  */
 @Entity
 @Table(name = "seller_review")
@@ -52,6 +58,17 @@ public class SellerReview {
   @Column(length = 500)
   private String body;
 
+  /**
+   * The seller's public response (backlog #246, Flyway V73): null
+   * until the seller answers, then the trimmed response text
+   * (length-capped at the boundary, like {@code body}). Editing the
+   * response overwrites this column — there is deliberately no
+   * response history table, so the profile always shows the current
+   * reply and nothing else.
+   */
+  @Column(name = "seller_response", length = 1000)
+  private String sellerResponse;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -76,5 +93,11 @@ public class SellerReview {
   public Long getSellerId() { return sellerId; }
   public int getRating() { return rating; }
   public String getBody() { return body; }
+  public String getSellerResponse() { return sellerResponse; }
   public Instant getCreatedAt() { return createdAt; }
+
+  /** The #246 mutation: only ReviewService calls this, after the seller check. */
+  public void setSellerResponse(String sellerResponse) {
+    this.sellerResponse = sellerResponse;
+  }
 }

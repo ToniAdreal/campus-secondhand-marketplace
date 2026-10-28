@@ -7,7 +7,10 @@ import { sellerKeys } from './sellers';
 /**
  * One seller review, mirroring the backend's SellerReviewDto (backlog
  * #175). `body` is null for a star-only review; `reviewerUsername` is
- * resolved server-side from the buyer id the row stores.
+ * resolved server-side from the buyer id the row stores. Backlog #246
+ * adds `sellerResponse`: the seller's public reply, null until the
+ * seller answers — it rides this same shape, so the profile, the
+ * review list and the account export all show the same reply.
  */
 export interface SellerReview {
   id: number;
@@ -17,6 +20,7 @@ export interface SellerReview {
   sellerId: number;
   rating: number;
   body: string | null;
+  sellerResponse: string | null;
   createdAt: string;
 }
 
@@ -46,6 +50,31 @@ export function useCreateReview() {
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: sellerKeys.all });
       void queryClient.invalidateQueries({ queryKey: reviewKeys.all });
+    },
+  });
+}
+
+/**
+ * PUT /api/reviews/{id}/response — the seller answers one review:
+ * the first response and every edit are the same idempotent PUT
+ * (backlog #246). One response per review is structural server-side
+ * (a single column on the review row), so this call can never create
+ * a second reply. On success the reviews subtree (the list the
+ * profile renders) and the sellers subtree are invalidated; the
+ * aggregate never moves, because it reads the rating column alone.
+ */
+export function useRespondToReview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reviewId: number; response: string }) =>
+      api
+        .put<ApiResponse<SellerReview>>(`/reviews/${input.reviewId}/response`, {
+          response: input.response,
+        })
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: reviewKeys.all });
+      void queryClient.invalidateQueries({ queryKey: sellerKeys.all });
     },
   });
 }
@@ -87,6 +116,27 @@ export function describeReviewError(error: unknown): string {
   }
   if (code === 404) {
     return 'This order no longer exists.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/** Maps a failed seller-response call to user-facing copy. */
+export function describeReviewResponseError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 400) {
+    return 'Please write a response up to 1000 characters.';
+  }
+  if (code === 403) {
+    return 'Only the seller can respond to this review.';
+  }
+  if (code === 401) {
+    return 'Please log in to respond.';
+  }
+  if (code === 404) {
+    return 'This review no longer exists.';
   }
   return message || 'Something went wrong. Please try again.';
 }

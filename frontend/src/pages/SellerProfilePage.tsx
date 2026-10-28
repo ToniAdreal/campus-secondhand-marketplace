@@ -1,12 +1,66 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useBlockUser, useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useFollowSeller, useMyFollows, useUnfollowSeller } from '../api/follows';
 import { listingPhotoUrls } from '../api/items';
-import { useSellerReviews } from '../api/reviews';
+import {
+  describeReviewResponseError,
+  useRespondToReview,
+  useSellerReviews,
+  type SellerReview,
+} from '../api/reviews';
 import { useSellerListings, useSellerProfile } from '../api/sellers';
 import { useAuthStore } from '../store/useAuthStore';
 import FavoriteButton from '../components/FavoriteButton';
 import ListingPhoto from '../components/ListingPhoto';
+
+/**
+ * The seller's response form for one review (backlog #246): a
+ * textarea prefilled with the current reply (empty when the seller
+ * has not answered yet) and one submit — the first response and
+ * every edit are the same idempotent PUT, so there is no separate
+ * "edit" mode. The parent keys this form by the server reply, so a
+ * successful submit (which invalidates the reviews query) resets
+ * the draft to the fresh server text instead of leaving stale input.
+ */
+function SellerResponseForm({ review }: { review: SellerReview }) {
+  const [draft, setDraft] = useState(review.sellerResponse ?? '');
+  const respond = useRespondToReview();
+  return (
+    <form
+      className="mt-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        respond.mutate({ reviewId: review.id, response: draft });
+      }}
+    >
+      <label className="text-xs font-medium text-neutral-600" htmlFor={`response-${review.id}`}>
+        {review.sellerResponse ? 'Edit your response' : 'Respond to this review'}
+      </label>
+      <textarea
+        id={`response-${review.id}`}
+        aria-label={`Seller response to ${review.reviewerUsername ?? 'this buyer'}'s review`}
+        className="mt-1 block w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        rows={3}
+        maxLength={1000}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <button
+        type="submit"
+        disabled={respond.isLoading || draft.trim() === ''}
+        className="mt-2 rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {review.sellerResponse ? 'Save response' : 'Respond'}
+      </button>
+      {respond.isError && (
+        <p className="mt-1 text-sm text-red-600">
+          {describeReviewResponseError(respond.error)}
+        </p>
+      )}
+    </form>
+  );
+}
 
 /**
  * Public seller profile (backlog #174): the storefront behind a
@@ -16,6 +70,10 @@ import ListingPhoto from '../components/ListingPhoto';
  * Backlog #175 adds the trust signal below the header: the review
  * aggregate the profile carries (average + count, computed server-side
  * from the review rows) and the newest-first review list itself.
+ * Backlog #246 adds the seller's reply under each review, plus the
+ * response form when the viewer is the seller — this page is both
+ * the public profile and the seller's own review list, so one
+ * surface covers both renders the spec asks for.
  * Unknown or disabled sellers answer 404 on the backend, which this
  * page renders as a plain "not found" note.
  */
@@ -126,6 +184,18 @@ export default function SellerProfilePage() {
                 {review.reviewerUsername ?? 'A buyer'}
               </p>
               {review.body && <p className="mt-1 text-sm">{review.body}</p>}
+              {review.sellerResponse && (
+                <div className="mt-2 rounded bg-neutral-50 p-3">
+                  <p className="text-xs font-medium text-neutral-600">Seller&apos;s response</p>
+                  <p className="mt-1 text-sm">{review.sellerResponse}</p>
+                </div>
+              )}
+              {user !== null && user.id === sellerId && (
+                <SellerResponseForm
+                  key={`${review.id}:${review.sellerResponse ?? ''}`}
+                  review={review}
+                />
+              )}
               <p className="mt-1 text-xs text-neutral-500">
                 {new Date(review.createdAt).toLocaleDateString()}
               </p>

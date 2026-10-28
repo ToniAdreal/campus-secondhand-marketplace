@@ -182,6 +182,7 @@ class OpenApiContractTest {
       "/api/users/{id}/listings",
       "/api/users/{id}/profile",
       "/api/users/{id}/reviews",
+      "/api/reviews/{id}/response",
       "/api/users/me/blocks",
       "/api/users/me/follows",
       "/api/users/me/follows/{sellerId}");
@@ -385,6 +386,11 @@ class OpenApiContractTest {
         .contains("400", "401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/users/{id}/reviews", "get"))
         .contains("200", "401", "404");
+    // Seller response (#246): PUT pins the seller-only 403 and the
+    // blank/overlong 400 alongside the anonymous 401 and unknown 404;
+    // the response never changes the rating, so no 422/409 exists here.
+    assertThat(responseCodes(docs, "/api/reviews/{id}/response", "put"))
+        .contains("200", "400", "401", "403", "404");
     // User blocking (#187): block pins unknown 404 + self-block 422,
     // unblock pins unknown 404, and the blocked list pins anonymous 401.
     assertThat(responseCodes(docs, "/api/users/{id}/block", "post"))
