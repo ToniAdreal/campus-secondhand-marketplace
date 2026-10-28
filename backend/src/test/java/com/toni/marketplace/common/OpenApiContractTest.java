@@ -182,6 +182,7 @@ class OpenApiContractTest {
       "/api/users/{id}/listings",
       "/api/users/{id}/profile",
       "/api/users/{id}/reviews",
+      "/api/reviews/{id}",
       "/api/reviews/{id}/response",
       "/api/users/me/blocks",
       "/api/users/me/follows",
@@ -391,6 +392,11 @@ class OpenApiContractTest {
     // the response never changes the rating, so no 422/409 exists here.
     assertThat(responseCodes(docs, "/api/reviews/{id}/response", "put"))
         .contains("200", "400", "401", "403", "404");
+    // Buyer review edit (#254): PUT pins the buyer-only 403, the
+    // rating/text 400, and the window-closed / already-answered 422
+    // alongside the anonymous 401 and unknown 404.
+    assertThat(responseCodes(docs, "/api/reviews/{id}", "put"))
+        .contains("200", "400", "401", "403", "404", "422");
     // User blocking (#187): block pins unknown 404 + self-block 422,
     // unblock pins unknown 404, and the blocked list pins anonymous 401.
     assertThat(responseCodes(docs, "/api/users/{id}/block", "post"))

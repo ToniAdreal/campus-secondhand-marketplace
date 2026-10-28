@@ -4,9 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
 import {
+  describeReviewEditError,
   describeReviewError,
   describeReviewResponseError,
   useCreateReview,
+  useEditReview,
   useRespondToReview,
   useSellerReviews,
   type SellerReview,
@@ -146,6 +148,52 @@ describe('seller responses api hook (#246)', () => {
     );
     expect(describeReviewResponseError(errorWith(401))).toBe('Please log in to respond.');
     expect(describeReviewResponseError(errorWith(404))).toBe(
+      'This review no longer exists.',
+    );
+  });
+});
+
+describe('buyer review edits api hook (#254)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('PUTs /reviews/{id} with the full replacement rating and body', async () => {
+    putSpy.mockResolvedValueOnce(
+      envelope({ ...review, rating: 5, body: 'On reflection, perfect' }),
+    );
+
+    const { result } = renderHook(() => useEditReview(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    result.current.mutate({ reviewId: 21, rating: 5, body: 'On reflection, perfect' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(putSpy).toHaveBeenCalledWith('/reviews/21', {
+      rating: 5,
+      body: 'On reflection, perfect',
+    });
+    expect(result.current.data).toEqual({
+      ...review,
+      rating: 5,
+      body: 'On reflection, perfect',
+    });
+  });
+
+  it('maps edit errors to plain copy', () => {
+    expect(describeReviewEditError(errorWith(422))).toBe(
+      'This review can no longer be edited — the edit window has closed or the seller has already responded.',
+    );
+    expect(describeReviewEditError(errorWith(400))).toBe(
+      'Please pick a rating from 1 to 5 (text up to 500 characters).',
+    );
+    expect(describeReviewEditError(errorWith(403))).toBe(
+      'Only the buyer of this order can edit it.',
+    );
+    expect(describeReviewEditError(errorWith(401))).toBe(
+      'Please log in to edit your review.',
+    );
+    expect(describeReviewEditError(errorWith(404))).toBe(
       'This review no longer exists.',
     );
   });

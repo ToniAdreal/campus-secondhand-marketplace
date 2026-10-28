@@ -29,7 +29,9 @@ public class ReviewController {
   /**
    * Reviews a COMPLETED order: one review per trade, buyer only. Any
    * other order status is 422; a second review of the same order is
-   * 409. Reviews are append-only in v1 — there is no edit or delete.
+   * 409. There is no delete; the one edit path is the buyer's
+   * windowed PUT /api/reviews/{id} (backlog #254, see
+   * {@link ReviewEditController}).
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",

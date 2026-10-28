@@ -430,6 +430,17 @@ app:
     # conversation cannot be quietly rewritten. Soft delete
     # (DELETE /api/messages/{id}) is deliberately not windowed.
     edit-window: 15m
+  reviews:
+    # Review edit window (ReviewService, backlog #254): how long
+    # after writing the buyer may still edit a review via
+    # PUT /api/reviews/{id}; an edit landing exactly at
+    # createdAt + edit-window is accepted, later is 422. Default
+    # 15 minutes, mirroring the #206 message window — long enough
+    # for a typo, short enough that a read review cannot be quietly
+    # rewritten. A seller response freezes the review even inside
+    # the window, so the window is not a promise that an edit will
+    # succeed for its whole length.
+    edit-window: 15m
   disputes:
     # Order-dispute window (DisputeService, backlog #169): how long after
     # an order's PAID / COMPLETED transition its buyer may still open a

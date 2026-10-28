@@ -145,11 +145,12 @@ function OrderDisputeControl({ order }: { order: Order }) {
 /**
  * Per-order review control (backlog #175). Only COMPLETED rows can be
  * reviewed: the button reveals a rating form (1–5 select + optional
- * text), and submitting posts the trade's one review — reviews are
- * append-only, so there is no edit affordance afterwards. The SPA
- * cannot know whether this order was already reviewed (the order shape
- * carries no review flag), so a repeat attempt maps the server's 409
- * to plain copy via describeReviewError.
+ * text), and submitting posts the trade's one review — there is no
+ * edit affordance on this row afterwards (the buyer edit lives on
+ * the seller profile, backlog #254, where the review id exists).
+ * The SPA cannot know whether this order was already reviewed (the
+ * order shape carries no review flag), so a repeat attempt maps the
+ * server's 409 to plain copy via describeReviewError.
  */
 function OrderReviewControl({ order }: { order: Order }) {
   const [open, setOpen] = useState(false);

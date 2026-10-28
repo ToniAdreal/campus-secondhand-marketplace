@@ -4,7 +4,9 @@ import { useBlockUser, useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useFollowSeller, useMyFollows, useUnfollowSeller } from '../api/follows';
 import { listingPhotoUrls } from '../api/items';
 import {
+  describeReviewEditError,
   describeReviewResponseError,
+  useEditReview,
   useRespondToReview,
   useSellerReviews,
   type SellerReview,
@@ -56,6 +58,72 @@ function SellerResponseForm({ review }: { review: SellerReview }) {
       {respond.isError && (
         <p className="mt-1 text-sm text-red-600">
           {describeReviewResponseError(respond.error)}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/**
+ * The buyer's edit form for one review (backlog #254): a rating
+ * select + text area prefilled with the current values, one submit —
+ * the edit is a full replacement, so clearing the text is a star-only
+ * edit, not a partial update. The parent keys this form by the server
+ * values, so a successful submit (which invalidates the reviews
+ * query) resets the draft to the fresh server text instead of leaving
+ * stale input. The form renders only while the seller has not
+ * responded (a response freezes the review server-side); the edit
+ * window itself is enforced server-side, so a stale form maps the
+ * server's 422 to plain copy rather than disappearing by its own
+ * clock.
+ */
+function BuyerReviewEditForm({ review }: { review: SellerReview }) {
+  const [rating, setRating] = useState(review.rating);
+  const [body, setBody] = useState(review.body ?? '');
+  const edit = useEditReview();
+  return (
+    <form
+      className="mt-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        edit.mutate({ reviewId: review.id, rating, body });
+      }}
+    >
+      <label className="text-xs font-medium text-neutral-600" htmlFor={`edit-rating-${review.id}`}>
+        Edit your review
+      </label>
+      <select
+        id={`edit-rating-${review.id}`}
+        aria-label="Edited rating"
+        className="mt-1 block rounded border border-neutral-300 px-2 py-1 text-sm"
+        value={rating}
+        onChange={(e) => setRating(Number(e.target.value))}
+      >
+        {[1, 2, 3, 4, 5].map((stars) => (
+          <option key={stars} value={stars}>
+            {stars} star{stars === 1 ? '' : 's'}
+          </option>
+        ))}
+      </select>
+      <textarea
+        id={`edit-body-${review.id}`}
+        aria-label="Edited review text"
+        className="mt-1 block w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        rows={3}
+        maxLength={500}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <button
+        type="submit"
+        disabled={edit.isLoading}
+        className="mt-2 rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        Save edit
+      </button>
+      {edit.isError && (
+        <p className="mt-1 text-sm text-red-600">
+          {describeReviewEditError(edit.error)}
         </p>
       )}
     </form>
@@ -193,6 +261,12 @@ export default function SellerProfilePage() {
               {user !== null && user.id === sellerId && (
                 <SellerResponseForm
                   key={`${review.id}:${review.sellerResponse ?? ''}`}
+                  review={review}
+                />
+              )}
+              {user !== null && user.id === review.buyerId && review.sellerResponse === null && (
+                <BuyerReviewEditForm
+                  key={`${review.id}:${review.rating}:${review.body ?? ''}`}
                   review={review}
                 />
               )}

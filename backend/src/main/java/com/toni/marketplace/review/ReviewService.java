@@ -5,6 +5,9 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.order.Order;
 import com.toni.marketplace.order.OrderRepository;
 import com.toni.marketplace.order.OrderStatus;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -42,18 +45,30 @@ import org.springframework.web.server.ResponseStatusException;
  * (see {@link SellerReviewRepository#summarizeBySellerId}); the
  * profile folds it in, nothing stores an average.
  *
- * <p>Append-only in v1: no edit, no delete, no moderation surface —
- * the #160 report flow remains the abuse path.
+ * <p>No delete, no moderation surface — the #160 report flow remains
+ * the abuse path.
  *
- * <p>Seller responses (backlog #246) are the one exception, and only
- * for the response column: {@link #respondToReview} lets the review's
- * seller set or replace the public reply. Seller only — anyone else
- * gets 403, checked after the 404 so a review id never leaks what
- * the caller may do with it, mirroring {@code createReview}'s order.
- * The response is trimmed at write time (blank is rejected at the
- * boundary, like the #240 dispute note); the rating and body are
- * never touched here, and the aggregate reads the rating column
- * alone, so a response cannot move a seller's average.
+ * <p>Seller responses (backlog #246) are one sanctioned mutation, and
+ * only for the response column: {@link #respondToReview} lets the
+ * review's seller set or replace the public reply. Seller only —
+ * anyone else gets 403, checked after the 404 so a review id never
+ * leaks what the caller may do with it, mirroring
+ * {@code createReview}'s order. The response is trimmed at write time
+ * (blank is rejected at the boundary, like the #240 dispute note);
+ * the rating and body are never touched here, and the aggregate reads
+ * the rating column alone, so a response cannot move a seller's
+ * average.
+ *
+ * <p>Buyer edits (backlog #254) are the other sanctioned mutation:
+ * {@link #editReview} lets the review's buyer replace the rating and
+ * body inside {@code app.reviews.edit-window} (default 15 minutes from
+ * {@code createdAt}, boundary inclusive, mirroring #206's message
+ * edit). The aggregate is computed from the rows on every read, so an
+ * edited rating moves the seller's average with nothing to resync.
+ * Once the seller has responded, edits stop with 422 even inside the
+ * window — a response must never end up answering a changed review.
+ * The window and the response guard are both 422; the response guard
+ * is checked first, mirroring #206's deleted-before-window order.
  */
 @Service
 public class ReviewService {
@@ -61,12 +76,28 @@ public class ReviewService {
   private final SellerReviewRepository reviews;
   private final OrderRepository orders;
   private final UserRepository users;
+  private final ReviewProperties reviewProps;
+  private final Clock clock;
 
   public ReviewService(SellerReviewRepository reviews, OrderRepository orders,
-                       UserRepository users) {
+                       UserRepository users, ReviewProperties reviewProps,
+                       Clock clock) {
     this.reviews = reviews;
     this.orders = orders;
     this.users = users;
+    this.reviewProps = reviewProps;
+    this.clock = clock;
+  }
+
+  /** Clock with a system fallback, mirroring MessageService's pattern. */
+  private Clock clock() {
+    return clock != null ? clock : Clock.systemUTC();
+  }
+
+  /** Edit window with the documented 15-minute default as fallback. */
+  private Duration editWindow() {
+    return reviewProps != null && reviewProps.getEditWindow() != null
+        ? reviewProps.getEditWindow() : Duration.ofMinutes(15);
   }
 
   @Transactional
@@ -119,6 +150,52 @@ public class ReviewService {
           "only the seller can respond to this review");
     }
     review.setSellerResponse(response == null ? null : response.trim());
+    return SellerReviewDto.from(reviews.save(review), usernameOf(review.getBuyerId()));
+  }
+
+  /**
+   * Edits one of the caller's own reviews (backlog #254).
+   *
+   * <ul>
+   *   <li>404 — no review with that id (checked before ownership,
+   *   mirroring {@code respondToReview}).</li>
+   *   <li>403 — the caller is not the review's buyer. Only the buyer
+   *   may edit; the seller, a stranger and ADMIN get no edit right —
+   *   the seller's write path is the response, not this endpoint.</li>
+   *   <li>422 — the seller has already responded, or the edit window
+   *   ({@code app.reviews.edit-window}, default 15 minutes from
+   *   {@code createdAt}) has closed. The boundary is inclusive: an
+   *   edit landing exactly at {@code createdAt + window} is
+   *   accepted, mirroring #206.</li>
+   * </ul>
+   *
+   * <p>An edit replaces the rating and the body (blank body
+   * normalises to null, like create) and leaves {@code createdAt}
+   * untouched, so list order and the #175 pagination contract are
+   * untouched. There is no edit history: the row simply carries the
+   * new values, and the next aggregate read computes from them.
+   */
+  @Transactional
+  public SellerReviewDto editReview(Long buyerId, Long reviewId, Integer rating,
+                                    String body) {
+    SellerReview review = reviews.findById(reviewId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "review not found"));
+    if (!review.getBuyerId().equals(buyerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "only the buyer can edit this review");
+    }
+    if (review.getSellerResponse() != null) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "this review already has a seller response and can no longer be edited");
+    }
+    Instant now = clock().instant();
+    if (now.isAfter(review.getCreatedAt().plus(editWindow()))) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "the edit window for this review has closed");
+    }
+    review.setRating(rating);
+    review.setBody(body == null || body.isBlank() ? null : body.trim());
     return SellerReviewDto.from(reviews.save(review), usernameOf(review.getBuyerId()));
   }
 

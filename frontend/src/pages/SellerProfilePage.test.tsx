@@ -12,6 +12,8 @@ let mockProfileError = false;
 let mockListings: Page<Item> | undefined;
 let mockReviews: Page<SellerReview> | undefined;
 let mockRespondMutate: (input: { reviewId: number; response: string }) => void = () => {};
+let mockEditMutate: (input: { reviewId: number; rating: number; body: string }) => void =
+  () => {};
 
 vi.mock('../api/sellers', async (importOriginal) => {
   const original = await importOriginal<typeof import('../api/sellers')>();
@@ -45,6 +47,15 @@ vi.mock('../api/reviews', async (importOriginal) => {
     useRespondToReview: () => ({
       mutate: (input: { reviewId: number; response: string }) =>
         mockRespondMutate(input),
+      isLoading: false,
+      isError: false,
+      error: null,
+    }),
+    // The buyer edit form reads this hook; stubbed for the same
+    // reason, with #254 tests swapping in a capturing mutate.
+    useEditReview: () => ({
+      mutate: (input: { reviewId: number; rating: number; body: string }) =>
+        mockEditMutate(input),
       isLoading: false,
       isError: false,
       error: null,
@@ -339,5 +350,84 @@ describe('SellerProfilePage seller responses (#246)', () => {
 
     expect(screen.queryByLabelText(/Seller response/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+  });
+});
+
+describe('SellerProfilePage buyer review edits (#254)', () => {
+  afterEach(() => {
+    cleanup();
+    mockProfile = undefined;
+    mockProfileError = false;
+    mockListings = undefined;
+    mockReviews = undefined;
+    mockEditMutate = () => {};
+    useAuthStore.setState({ user: null });
+  });
+
+  function renderAsBuyer(reviewOverride: Partial<SellerReview> = {}) {
+    useAuthStore.setState({
+      user: { id: 5, username: 'buyer', email: 'b@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = {
+      content: [{ ...review, ...reviewOverride }],
+      totalElements: 1,
+      totalPages: 1,
+      number: 0,
+    };
+    renderPage();
+  }
+
+  it('shows the edit form to the buyer prefilled and submits the replacement', () => {
+    renderAsBuyer();
+    const submitted: { reviewId: number; rating: number; body: string }[] = [];
+    mockEditMutate = (input) => {
+      submitted.push(input);
+    };
+
+    const rating = screen.getByLabelText('Edited rating') as HTMLSelectElement;
+    const text = screen.getByLabelText('Edited review text') as HTMLTextAreaElement;
+    expect(rating.value).toBe('4');
+    expect(text.value).toBe('Fast handover, item as described');
+    fireEvent.change(rating, { target: { value: '5' } });
+    fireEvent.change(text, { target: { value: 'On reflection, perfect' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save edit' }));
+
+    expect(submitted).toEqual([
+      { reviewId: 21, rating: 5, body: 'On reflection, perfect' },
+    ]);
+  });
+
+  it('hides the edit form once the seller has responded', () => {
+    renderAsBuyer({ sellerResponse: 'Thanks — happy trading!' });
+
+    expect(screen.queryByLabelText('Edited review text')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save edit' })).toBeNull();
+  });
+
+  it('hides the edit form from the seller, strangers and anonymous visitors', () => {
+    useAuthStore.setState({
+      user: { id: 3, username: 'seller', email: 's@x.com', roles: ['USER'] },
+    });
+    mockProfile = profile;
+    mockListings = { content: [], totalElements: 0, totalPages: 0, number: 0 };
+    mockReviews = { content: [review], totalElements: 1, totalPages: 1, number: 0 };
+    renderPage();
+    expect(screen.queryByLabelText('Edited review text')).toBeNull();
+    cleanup();
+
+    useAuthStore.setState({
+      user: { id: 9, username: 'stranger', email: 'x@x.com', roles: ['USER'] },
+    });
+    mockReviews = { content: [review], totalElements: 1, totalPages: 1, number: 0 };
+    renderPage();
+    expect(screen.queryByLabelText('Edited review text')).toBeNull();
+    cleanup();
+
+    useAuthStore.setState({ user: null });
+    mockReviews = { content: [review], totalElements: 1, totalPages: 1, number: 0 };
+    renderPage();
+    expect(screen.queryByLabelText('Edited review text')).toBeNull();
   });
 });

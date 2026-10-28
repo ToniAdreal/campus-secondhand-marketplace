@@ -19,18 +19,24 @@ import java.time.Instant;
  * listing at write time (a listing's seller never changes, so the copy
  * cannot drift).
  *
- * <p>Reviews are append-only in v1 — there is deliberately no update
- * or delete path, no status, and no {@code @Version}: a row is written
- * once and never mutated, mirroring the audit log's discipline. The
- * {@code uq_review_order} unique key is the "one review per trade"
+ * <p>Reviews are append-only except for the two sanctioned mutations,
+ * and there is no delete path, no status, and no {@code @Version}.
+ * The {@code uq_review_order} unique key is the "one review per trade"
  * rule. Abuse handling stays with the #160 listing-report flow; no
  * moderation surface is built here.
  *
- * <p>The one sanctioned mutation is the seller response (backlog
+ * <p>The sanctioned mutations are the seller response (backlog
  * #246): {@code sellerResponse} is the seller's public reply, set and
  * re-set through {@link ReviewService#respondToReview} only. It lives
  * in a single nullable column, so one review can never carry two
- * responses, and it is never part of the rating aggregate.
+ * responses, and it is never part of the rating aggregate — and the
+ * buyer edit (backlog #254): the rating and body, set through
+ * {@link ReviewService#editReview} only, inside the edit window and
+ * only while no seller response has landed. There is deliberately no
+ * edit history and no {@code editedAt} column: an edit overwrites the
+ * two columns, {@code createdAt} never moves, and the aggregate —
+ * computed from the rows on every read — follows the edited rating
+ * with nothing to resync.
  */
 @Entity
 @Table(name = "seller_review")
@@ -99,5 +105,14 @@ public class SellerReview {
   /** The #246 mutation: only ReviewService calls this, after the seller check. */
   public void setSellerResponse(String sellerResponse) {
     this.sellerResponse = sellerResponse;
+  }
+
+  /** The #254 mutations: only ReviewService calls these, after the buyer + window checks. */
+  public void setRating(int rating) {
+    this.rating = rating;
+  }
+
+  public void setBody(String body) {
+    this.body = body;
   }
 }
