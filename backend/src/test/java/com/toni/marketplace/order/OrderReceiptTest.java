@@ -9,12 +9,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.auth.JwtTokenService;
 import com.toni.marketplace.auth.PasswordService;
 import com.toni.marketplace.auth.RefreshTokenRepository;
 import com.toni.marketplace.auth.Role;
 import com.toni.marketplace.auth.User;
 import com.toni.marketplace.auth.UserRepository;
+import com.toni.marketplace.dispute.OrderDisputeRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import java.util.EnumSet;
@@ -45,7 +48,8 @@ class OrderReceiptTest {
   private static final Set<String> RECEIPT_KEYS = Set.of(
       "orderId", "status", "paid", "itemId", "itemTitle", "amountCents",
       "formattedPrice", "buyerUsername", "sellerUsername", "createdAt",
-      "paidAt", "completedAt", "captureId", "refundId", "refundReason");
+      "paidAt", "completedAt", "captureId", "refundId", "refundReason",
+      "refundedAmountCents", "disputeResolutionNote");
 
   @Autowired
   private MockMvc mockMvc;
@@ -63,6 +67,15 @@ class OrderReceiptTest {
   private IdempotencyKeyRepository keys;
 
   @Autowired
+  private OrderDisputeRepository disputes;
+
+  @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
+  private AuditLogRepository auditLog;
+
+  @Autowired
   private RefreshTokenRepository refreshTokens;
 
   @Autowired
@@ -76,6 +89,9 @@ class OrderReceiptTest {
 
   @AfterEach
   void cleanUp() {
+    disputes.deleteAll();
+    notifications.deleteAll();
+    auditLog.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
     refreshTokens.deleteAll();
@@ -122,6 +138,25 @@ class OrderReceiptTest {
         .andReturn().getResponse().getContentAsString();
   }
 
+  private long openDispute(User buyer, long orderId, String reason) throws Exception {
+    String body = mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"" + reason + "\"}"))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    return ((Number) JsonPath.read(body, "$.data.id")).longValue();
+  }
+
+  private void resolveDispute(User admin, long disputeId, String endpoint,
+                              String note) throws Exception {
+    mockMvc.perform(post("/api/admin/disputes/{id}/" + endpoint, disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"" + note + "\"}"))
+        .andExpect(status().isOk());
+  }
+
   private Set<String> dataKeys(String body) throws Exception {
     JsonNode data = objectMapper.readTree(body).get("data");
     Set<String> keys = new TreeSet<>();
@@ -153,6 +188,9 @@ class OrderReceiptTest {
         .andExpect(jsonPath("$.data.completedAt").isEmpty())
         .andExpect(jsonPath("$.data.captureId").isEmpty())
         .andExpect(jsonPath("$.data.refundId").isEmpty())
+        .andExpect(jsonPath("$.data.refundReason").isEmpty())
+        .andExpect(jsonPath("$.data.refundedAmountCents").isEmpty())
+        .andExpect(jsonPath("$.data.disputeResolutionNote").isEmpty())
         .andReturn().getResponse().getContentAsString();
 
     // The exact key set is the leak pin: no idempotency keys, no
@@ -219,7 +257,9 @@ class OrderReceiptTest {
         .andExpect(jsonPath("$.data.paidAt").isNotEmpty())
         .andExpect(jsonPath("$.data.captureId").isNotEmpty())
         .andExpect(jsonPath("$.data.completedAt").isEmpty())
-        .andExpect(jsonPath("$.data.refundId").isEmpty());
+        .andExpect(jsonPath("$.data.refundId").isEmpty())
+        .andExpect(jsonPath("$.data.refundedAmountCents").isEmpty())
+        .andExpect(jsonPath("$.data.disputeResolutionNote").isEmpty());
   }
 
   @Test
@@ -264,6 +304,75 @@ class OrderReceiptTest {
         .andExpect(jsonPath("$.data.status").value("REFUNDED"))
         .andExpect(jsonPath("$.data.paid").value(true))
         .andExpect(jsonPath("$.data.captureId").isNotEmpty())
-        .andExpect(jsonPath("$.data.refundId").isNotEmpty());
+        .andExpect(jsonPath("$.data.refundId").isNotEmpty())
+        .andExpect(jsonPath("$.data.refundReason").value("item damaged"))
+        .andExpect(jsonPath("$.data.refundedAmountCents").value(88000))
+        .andExpect(jsonPath("$.data.disputeResolutionNote").isEmpty());
+  }
+
+  @Test
+  void partialRefundReceipt_showsRefundedTotal_orderStaysPaid() throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    long orderId = createOrder(buyer, newItem(seller));
+    pay(buyer, orderId);
+
+    mockMvc.perform(post("/api/orders/{id}/refund", orderId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"amountCents\":30000,\"reason\":\"partial damage\"}")
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isOk());
+
+    mockMvc.perform(get("/api/orders/{id}/receipt", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("PAID"))
+        .andExpect(jsonPath("$.data.amountCents").value(88000))
+        .andExpect(jsonPath("$.data.refundedAmountCents").value(30000))
+        .andExpect(jsonPath("$.data.refundReason").value("partial damage"))
+        .andExpect(jsonPath("$.data.disputeResolutionNote").isEmpty());
+  }
+
+  @Test
+  void disputeRefundedReceipt_showsFullTotalAndResolutionNote_noDirectReason()
+      throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    User admin = newUser("admin", true);
+    long orderId = createOrder(buyer, newItem(seller));
+    pay(buyer, orderId);
+    long disputeId = openDispute(buyer, orderId, "never arrived");
+    resolveDispute(admin, disputeId, "resolve-refund",
+        "Parcel never arrived; refunding the buyer.");
+
+    mockMvc.perform(get("/api/orders/{id}/receipt", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("REFUNDED"))
+        .andExpect(jsonPath("$.data.refundedAmountCents").value(88000))
+        .andExpect(jsonPath("$.data.disputeResolutionNote")
+            .value("Parcel never arrived; refunding the buyer."))
+        // Dispute-resolved refunds write no REFUNDED payment-attempt row
+        // (#239/#240): the direct-refund reason field stays null.
+        .andExpect(jsonPath("$.data.refundReason").isEmpty());
+  }
+
+  @Test
+  void releaseResolvedReceipt_showsNoDisputeRefundNote() throws Exception {
+    User seller = newUser("seller", false);
+    User buyer = newUser("buyer", false);
+    User admin = newUser("admin", true);
+    long orderId = createOrder(buyer, newItem(seller));
+    pay(buyer, orderId);
+    long disputeId = openDispute(buyer, orderId, "slow post, actually fine");
+    resolveDispute(admin, disputeId, "resolve-release",
+        "Tracking shows delivery; releasing the payment.");
+
+    mockMvc.perform(get("/api/orders/{id}/receipt", orderId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("PAID"))
+        .andExpect(jsonPath("$.data.refundedAmountCents").isEmpty())
+        .andExpect(jsonPath("$.data.disputeResolutionNote").isEmpty());
   }
 }

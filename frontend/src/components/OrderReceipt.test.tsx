@@ -28,6 +28,8 @@ const paidReceipt: ReceiptData = {
   captureId: 'cap_mock_0123456789abcdef',
   refundId: null,
   refundReason: null,
+  refundedAmountCents: null,
+  disputeResolutionNote: null,
 };
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -111,6 +113,27 @@ describe('OrderReceipt (backlog #180)', () => {
 
     expect(await screen.findByText('Refund reason:')).toBeTruthy();
     expect(screen.getByText('Item arrived damaged')).toBeTruthy();
+  });
+
+  it('renders the refunded total and dispute note on a dispute-refunded receipt (backlog #257)', async () => {
+    getSpy.mockResolvedValue(
+      envelope({
+        ...paidReceipt,
+        status: 'REFUNDED',
+        refundId: 'rfd_mock_0123456789abcdef',
+        refundedAmountCents: 88000,
+        disputeResolutionNote: 'Parcel never arrived; refunding the buyer.',
+      }),
+    );
+    render(<OrderReceipt orderId={9} />, { wrapper });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Receipt' }));
+
+    expect(await screen.findByText('Refunded:')).toBeTruthy();
+    // ¥880.00 appears twice: the order amount and the refunded total.
+    expect(screen.getAllByText('¥880.00').length).toBe(2);
+    expect(screen.getByText('Dispute resolution:')).toBeTruthy();
+    expect(screen.getByText('Parcel never arrived; refunding the buyer.')).toBeTruthy();
   });
 
   it('maps a 404 to the generic not-available copy', async () => {

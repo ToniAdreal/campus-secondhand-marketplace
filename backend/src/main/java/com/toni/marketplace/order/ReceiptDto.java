@@ -26,6 +26,19 @@ import java.time.Instant;
  *       refund's REFUNDED payment-attempt row (#239); null when the
  *       order was never directly refunded — including dispute-resolved
  *       refunds, whose note is backlog #240, not this field.</li>
+ *   <li>{@code refundedAmountCents} (backlog #257) is the cumulative
+ *       amount refunded so far ({@code Order.refundedAmountCents},
+ *       #210): null while nothing has been refunded, the partial total
+ *       while a PAID order is partly refunded, exactly
+ *       {@code amountCents} once fully refunded — so a partially- or
+ *       fully-refunded receipt no longer reads like a full-price paid
+ *       receipt.</li>
+ *   <li>{@code disputeResolutionNote} (backlog #257) is the ADMIN's
+ *       resolution note from the order's RESOLVED_REFUND dispute row
+ *       (#240); null when the order has no such dispute — including
+ *       OPEN disputes and RESOLVED_RELEASE resolutions, whose note
+ *       explains a release, not a refund, and must never surface as a
+ *       refund note.</li>
  *   <li>{@code formattedPrice} is derived from {@code amountCents}
  *       server-side so the printed page and the API can never disagree
  *       about the amount.</li>
@@ -46,7 +59,9 @@ public record ReceiptDto(
     Instant completedAt,
     String captureId,
     String refundId,
-    String refundReason) {
+    String refundReason,
+    Long refundedAmountCents,
+    String disputeResolutionNote) {
 
   /** Formats cents as the SPA does: {@code ¥} + yuan with two decimals. */
   static String formatPrice(long amountCents) {

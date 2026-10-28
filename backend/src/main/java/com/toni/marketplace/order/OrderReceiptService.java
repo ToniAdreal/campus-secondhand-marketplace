@@ -1,6 +1,9 @@
 package com.toni.marketplace.order;
 
 import com.toni.marketplace.auth.UserRepository;
+import com.toni.marketplace.dispute.DisputeStatus;
+import com.toni.marketplace.dispute.OrderDispute;
+import com.toni.marketplace.dispute.OrderDisputeRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,12 +31,15 @@ public class OrderReceiptService {
   private final OrderRepository orders;
   private final UserRepository users;
   private final PaymentAttemptRecorder attempts;
+  private final OrderDisputeRepository disputes;
 
   public OrderReceiptService(OrderRepository orders, UserRepository users,
-                             PaymentAttemptRecorder attempts) {
+                             PaymentAttemptRecorder attempts,
+                             OrderDisputeRepository disputes) {
     this.orders = orders;
     this.users = users;
     this.attempts = attempts;
+    this.disputes = disputes;
   }
 
   @Transactional(readOnly = true)
@@ -52,6 +58,17 @@ public class OrderReceiptService {
         || order.getStatus() == OrderStatus.COMPLETED
         || order.getStatus() == OrderStatus.REFUNDED
         || order.getStatus() == OrderStatus.DISPUTED;
+    // Backlog #257: the order's cumulative refunded total is 0 until the
+    // first refund — a receipt must not print "refunded ¥0.00" on an
+    // order that was never refunded, so 0 maps to null here.
+    Long refundedAmountCents = order.getRefundedAmountCents() > 0
+        ? order.getRefundedAmountCents() : null;
+    // Only a RESOLVED_REFUND dispute's note is a refund note: a release
+    // resolution's note explains why money stayed with the seller.
+    String disputeResolutionNote = disputes
+        .findByOrderIdAndStatus(orderId, DisputeStatus.RESOLVED_REFUND)
+        .map(OrderDispute::getResolutionNote)
+        .orElse(null);
     return new ReceiptDto(
         order.getId(),
         order.getStatus(),
@@ -68,7 +85,9 @@ public class OrderReceiptService {
         order.getCaptureId(),
         order.getRefundId(),
         attempts.findLatestRefunded(orderId).map(PaymentAttempt::getRefundReason)
-            .orElse(null));
+            .orElse(null),
+        refundedAmountCents,
+        disputeResolutionNote);
   }
 
   private String usernameOf(Long userId) {

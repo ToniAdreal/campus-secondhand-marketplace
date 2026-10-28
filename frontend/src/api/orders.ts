@@ -91,6 +91,10 @@ export interface OrderReceipt {
   captureId: string | null;
   refundId: string | null;
   refundReason: string | null;
+  /** Cumulative refunded total in cents (backlog #257); null until the first refund. */
+  refundedAmountCents: number | null;
+  /** ADMIN resolution note of a RESOLVED_REFUND dispute (backlog #257); null otherwise. */
+  disputeResolutionNote: string | null;
 }
 
 /**

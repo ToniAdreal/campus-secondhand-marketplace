@@ -7,6 +7,8 @@ import { describeReceiptError, useOrderReceipt } from '../api/orders';
  * the user asks for it — and renders the dedicated ReceiptDto: order,
  * listing, amount, both parties, transition timestamps and the mock
  * PSP references. A PENDING receipt is explicitly marked UNPAID.
+ * Backlog #257: a refunded receipt also states the refunded total
+ * and, for dispute-resolved refunds, the ADMIN's resolution note.
  *
  * Printing is the browser's own print-to-PDF (no PDF library): the
  * Print button calls window.print(), and the print stylesheet in
@@ -97,6 +99,20 @@ export default function OrderReceipt({ orderId }: { orderId: number }) {
               <div className="flex gap-2">
                 <dt className="text-neutral-500">Refund reason:</dt>
                 <dd>{receipt.data.refundReason}</dd>
+              </div>
+            )}
+            {receipt.data.refundedAmountCents != null && (
+              <div className="flex gap-2">
+                <dt className="text-neutral-500">Refunded:</dt>
+                <dd>
+                  ¥{(receipt.data.refundedAmountCents / 100).toFixed(2)}
+                </dd>
+              </div>
+            )}
+            {receipt.data.disputeResolutionNote && (
+              <div className="flex gap-2">
+                <dt className="text-neutral-500">Dispute resolution:</dt>
+                <dd>{receipt.data.disputeResolutionNote}</dd>
               </div>
             )}
           </dl>

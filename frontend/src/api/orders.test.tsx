@@ -407,6 +407,8 @@ describe('order mutation invalidation', () => {
       captureId: 'cap_mock_0123456789abcdef',
       refundId: null,
       refundReason: null,
+      refundedAmountCents: null,
+      disputeResolutionNote: null,
     };
     getSpy.mockResolvedValue(envelope(receipt));
 
