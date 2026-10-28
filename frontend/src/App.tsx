@@ -155,16 +155,31 @@ export default function App() {
   return (
     // Shell palette (backlog #227): dark: variants carry the dark theme
     // on the light surfaces below — palette only, no layout change.
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-neutral-50 to-neutral-100 text-neutral-900 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-950 dark:text-neutral-100">
+    <div className="relative flex min-h-screen flex-col bg-gradient-to-b from-blue-50 via-neutral-50 to-neutral-100 antialiased text-neutral-900 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-950 dark:text-neutral-100">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -top-32 right-[12%] h-80 w-80 rounded-full bg-blue-400/20 blur-3xl" />
+        <div className="absolute bottom-10 left-[6%] h-72 w-72 rounded-full bg-sky-300/20 blur-3xl" />
+      </div>
       <header className="sticky top-0 z-20 border-b border-neutral-200/70 bg-white/90 shadow-sm backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-800/90">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5">
-          <Link to="/" className="text-xl font-extrabold tracking-tight text-blue-700 dark:text-blue-400">
+          <Link
+            to="/"
+            className="inline-flex items-center text-xl font-extrabold tracking-tight text-blue-700 dark:text-blue-400"
+          >
+            <span
+              aria-hidden="true"
+              className="mr-2.5 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/30"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
+              </svg>
+            </span>
             Campus Marketplace
           </Link>
           <AuthNav />
         </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">
+      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 py-8">
         {/* Route changes move focus to the new page's heading (#167). */}
         <RouteFocusManager />
         {/* A crashed route renders the boundary's fallback inside the shell
@@ -183,6 +198,11 @@ export default function App() {
           </Suspense>
         </ErrorBoundary>
       </main>
+      <footer className="relative border-t border-neutral-200/70 py-6 dark:border-neutral-700/60">
+        <p className="mx-auto max-w-6xl px-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
+          Campus Marketplace — a portfolio project. Demo only: no real orders or payments.
+        </p>
+      </footer>
     </div>
   );
 }

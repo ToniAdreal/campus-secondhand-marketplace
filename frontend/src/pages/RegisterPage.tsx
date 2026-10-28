@@ -101,7 +101,12 @@ export default function RegisterPage() {
   if (awaitingVerification) {
     return (
       <div className="mx-auto mt-6 max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-blue-100/60 sm:mt-10">
-        <h1 className="mb-5 text-2xl font-extrabold tracking-tight text-neutral-900">Check your inbox</h1>
+        <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/30">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
+        </svg>
+      </div>
+      <h1 className="mb-5 text-center text-2xl font-extrabold tracking-tight text-neutral-900">Check your inbox</h1>
         <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-800">
           Account created for {awaitingVerification}. Confirm your email address with the
           verification link before logging in — no session has been started yet. In this
@@ -121,14 +126,14 @@ export default function RegisterPage() {
             type="button"
             onClick={onResend}
             disabled={resending}
-            className="mt-4 w-full rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50"
+            className="mt-4 w-full rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 px-3 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-700 hover:to-blue-800 active:scale-[0.99] disabled:opacity-50"
           >
             {resending ? 'Resending…' : 'Resend verification link'}
           </button>
         )}
-        <p className="mt-4 text-sm text-neutral-500">
+        <p className="mt-6 border-t border-neutral-100 pt-5 text-center text-sm text-neutral-500">
           Already confirmed?{' '}
-          <Link to="/login" className="text-blue-600 hover:underline">
+          <Link to="/login" className="font-semibold text-blue-600 hover:underline">
             Back to login
           </Link>
         </p>
@@ -138,7 +143,13 @@ export default function RegisterPage() {
 
   return (
     <div className="mx-auto mt-6 max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-blue-100/60 sm:mt-10">
-      <h1 className="mb-5 text-2xl font-extrabold tracking-tight text-neutral-900">Register</h1>
+      <div aria-hidden="true" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/30">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
+        </svg>
+      </div>
+      <h1 className="mb-2 text-center text-2xl font-extrabold tracking-tight text-neutral-900">Register</h1>
+      <p className="mb-6 text-center text-sm text-neutral-500">Join Campus Marketplace to buy and sell on campus</p>
       {error && (
         <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
           {error}
@@ -149,52 +160,67 @@ export default function RegisterPage() {
           <label htmlFor="register-username" className="mb-1.5 block text-sm font-semibold text-neutral-700">
             Username
           </label>
-          <input
-            id="register-username"
-            type="text"
-            autoComplete="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
-          />
+          <div className="relative">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-neutral-400">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+            </svg>
+            <input
+              id="register-username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+            />
+          </div>
         </div>
         <div>
           <label htmlFor="register-email" className="mb-1.5 block text-sm font-semibold text-neutral-700">
             Email
           </label>
-          <input
-            id="register-email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
-          />
+          <div className="relative">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-neutral-400">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+            </svg>
+            <input
+              id="register-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+            />
+          </div>
         </div>
         <div>
           <label htmlFor="register-password" className="mb-1.5 block text-sm font-semibold text-neutral-700">
             Password
           </label>
-          <input
-            id="register-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 px-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
-          />
+          <div className="relative">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-neutral-400">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+            <input
+              id="register-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-neutral-300 bg-neutral-50/60 pl-11 pr-3.5 py-2.5 text-sm shadow-inner outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/15"
+            />
+          </div>
         </div>
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50"
+          className="w-full rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 px-3 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-700 hover:to-blue-800 active:scale-[0.99] disabled:opacity-50"
         >
           {pending ? 'Creating account…' : 'Create account'}
         </button>
       </form>
-      <p className="mt-4 text-sm text-neutral-500">
+      <p className="mt-6 border-t border-neutral-100 pt-5 text-center text-sm text-neutral-500">
         Already have an account?{' '}
-        <Link to="/login" className="text-blue-600 hover:underline">
+        <Link to="/login" className="font-semibold text-blue-600 hover:underline">
           Back to login
         </Link>
       </p>
