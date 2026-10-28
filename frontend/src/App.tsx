@@ -162,14 +162,6 @@ export default function App() {
             to="/"
             className="inline-flex items-center text-xl font-semibold tracking-tight text-apple-ink dark:text-white"
           >
-            <span
-              aria-hidden="true"
-              className="mr-2.5 inline-flex h-8 w-8 items-center justify-center rounded-[9px] bg-apple-ink text-white dark:bg-white dark:text-black"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
-              </svg>
-            </span>
             Campus Marketplace
           </Link>
           <AuthNav />
