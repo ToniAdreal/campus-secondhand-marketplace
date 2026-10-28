@@ -8,11 +8,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.toni.marketplace.audit.AuditLogRepository;
+import com.toni.marketplace.auth.DataExportGrantRepository;
+import com.toni.marketplace.auth.EmailChangeTokenRepository;
 import com.toni.marketplace.auth.EmailVerificationTokenRepository;
 import com.toni.marketplace.auth.LoginEventRepository;
 import com.toni.marketplace.auth.MutableClock;
+import com.toni.marketplace.auth.PasskeyChallengeRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
+import com.toni.marketplace.auth.TotpRecoveryCodeRepository;
 import com.toni.marketplace.dispute.DisputeEvidenceRepository;
 import com.toni.marketplace.item.ItemPhotoRepository;
 import com.toni.marketplace.item.ItemRepository;
@@ -124,16 +128,22 @@ class JobLockWiringTest {
     LoginEventRepository loginEvents = mock(LoginEventRepository.class);
     RecentlyViewedRepository recentlyViewed = mock(RecentlyViewedRepository.class);
     NotificationRepository notifications = mock(NotificationRepository.class);
+    TotpRecoveryCodeRepository totpRecoveryCodes = mock(TotpRecoveryCodeRepository.class);
+    PasskeyChallengeRepository passkeyChallenges = mock(PasskeyChallengeRepository.class);
+    EmailChangeTokenRepository emailChangeTokens = mock(EmailChangeTokenRepository.class);
+    DataExportGrantRepository dataExportGrants = mock(DataExportGrantRepository.class);
     DataRetentionService job = new DataRetentionService(
         refreshTokens, idempotencyKeys, passwordResetTokens, auditLog, webhookEvents,
         verificationTokens, loginEvents, recentlyViewed, notifications,
+        totpRecoveryCodes, passkeyChallenges, emailChangeTokens, dataExportGrants,
         new CleanupProperties(), clock, denied);
 
     assertThat(job.purgeStaleData())
-        .isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0));
+        .isEqualTo(new DataRetentionService.PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     verify(denied).tryAcquire(DataRetentionService.LOCK_NAME);
     verifyNoInteractions(refreshTokens, idempotencyKeys, passwordResetTokens, auditLog,
-        webhookEvents, verificationTokens, loginEvents, recentlyViewed, notifications);
+        webhookEvents, verificationTokens, loginEvents, recentlyViewed, notifications,
+        totpRecoveryCodes, passkeyChallenges, emailChangeTokens, dataExportGrants);
   }
 
   @Test

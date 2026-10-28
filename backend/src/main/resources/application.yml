@@ -358,6 +358,19 @@ app:
     #   the row's last interaction, so the window runs from read_at.
     #   Deletion is by read_at only (never by recipient or type);
     #   unread rows are never purged.
+    # totp-recovery-code-retention: used totp_recovery_code rows
+    #   (backlog #262) kept after creation, default 30. Recovery codes
+    #   carry no expiry, so only used rows are ever selected; unused
+    #   rows are live backup credentials and are never purged.
+    # passkey-challenge-retention: used-or-expired passkey_challenge
+    #   rows (backlog #262) kept after creation, default 30.
+    #   Still-valid unused challenges are never purged.
+    # email-change-token-retention: used-or-expired email_change_token
+    #   rows (backlog #262) kept after creation, default 30.
+    #   Still-valid unused tokens are never purged.
+    # data-export-grant-retention: used-or-expired data_export_grant
+    #   rows (backlog #262) kept after creation, default 30.
+    #   Still-valid unused grants are never purged.
     refresh-token-retention: 30
     idempotency-retention: 90
     password-reset-retention: 30

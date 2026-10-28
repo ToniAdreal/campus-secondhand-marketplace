@@ -30,7 +30,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code notification} rows are kept 90 days after they were read
  * (backlog #259 — the read marker is the row's last interaction, so
  * the window runs from {@code read_at}, not from creation; unread
- * rows are never purged regardless of age). Override
+ * rows are never purged regardless of age), and the four stale auth
+ * bookkeeping kinds of backlog #262 — used {@code totp_recovery_code}
+ * rows, used-or-expired {@code passkey_challenge} rows, used-or-expired
+ * {@code email_change_token} rows and used-or-expired
+ * {@code data_export_grant} rows — are each kept 30 days after creation
+ * (aligned with the password-reset / email-verification token windows;
+ * a still-valid unused row of any of the four is never purged, and a
+ * TOTP recovery code has no expiry at all, so only its used rows are
+ * ever selected). Override
  * with e.g. {@code app.cleanup.refresh-token-retention=7}.
  */
 @ConfigurationProperties(prefix = "app.cleanup")
@@ -181,5 +189,70 @@ public class CleanupProperties {
 
   public void setNotificationsRetention(long notificationsRetention) {
     this.notificationsRetention = notificationsRetention;
+  }
+
+  /**
+   * Days a used {@code totp_recovery_code} row is kept after its
+   * creation before the purge may delete it. Must be &ge; 1. An unused
+   * code is a live backup credential and is never purged regardless of
+   * age — recovery codes carry no expiry, so only the used marker
+   * selects a row (backlog #262).
+   */
+  private long totpRecoveryCodeRetention = 30;
+
+  /**
+   * Days a used-or-expired {@code passkey_challenge} row is kept after
+   * its creation before the purge may delete it. Must be &ge; 1. A
+   * still-valid unused challenge is never purged regardless of age —
+   * the purge must not kill an in-flight ceremony (backlog #262).
+   */
+  private long passkeyChallengeRetention = 30;
+
+  /**
+   * Days a used-or-expired {@code email_change_token} row is kept after
+   * its creation before the purge may delete it. Must be &ge; 1. A
+   * still-valid unused token is never purged regardless of age — the
+   * purge must not kill an in-flight email change (backlog #262).
+   */
+  private long emailChangeTokenRetention = 30;
+
+  /**
+   * Days a used-or-expired {@code data_export_grant} row is kept after
+   * its creation before the purge may delete it. Must be &ge; 1. A
+   * still-valid unused grant is never purged regardless of age — the
+   * purge must not kill an in-flight export download (backlog #262).
+   */
+  private long dataExportGrantRetention = 30;
+
+  public long getTotpRecoveryCodeRetention() {
+    return totpRecoveryCodeRetention;
+  }
+
+  public void setTotpRecoveryCodeRetention(long totpRecoveryCodeRetention) {
+    this.totpRecoveryCodeRetention = totpRecoveryCodeRetention;
+  }
+
+  public long getPasskeyChallengeRetention() {
+    return passkeyChallengeRetention;
+  }
+
+  public void setPasskeyChallengeRetention(long passkeyChallengeRetention) {
+    this.passkeyChallengeRetention = passkeyChallengeRetention;
+  }
+
+  public long getEmailChangeTokenRetention() {
+    return emailChangeTokenRetention;
+  }
+
+  public void setEmailChangeTokenRetention(long emailChangeTokenRetention) {
+    this.emailChangeTokenRetention = emailChangeTokenRetention;
+  }
+
+  public long getDataExportGrantRetention() {
+    return dataExportGrantRetention;
+  }
+
+  public void setDataExportGrantRetention(long dataExportGrantRetention) {
+    this.dataExportGrantRetention = dataExportGrantRetention;
   }
 }

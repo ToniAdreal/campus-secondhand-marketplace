@@ -1,10 +1,14 @@
 package com.toni.marketplace.job;
 
 import com.toni.marketplace.audit.AuditLogRepository;
+import com.toni.marketplace.auth.DataExportGrantRepository;
+import com.toni.marketplace.auth.EmailChangeTokenRepository;
 import com.toni.marketplace.auth.EmailVerificationTokenRepository;
 import com.toni.marketplace.auth.LoginEventRepository;
+import com.toni.marketplace.auth.PasskeyChallengeRepository;
 import com.toni.marketplace.auth.PasswordResetTokenRepository;
 import com.toni.marketplace.auth.RefreshTokenRepository;
+import com.toni.marketplace.auth.TotpRecoveryCodeRepository;
 import com.toni.marketplace.item.RecentlyViewedRepository;
 import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
@@ -74,7 +78,22 @@ import org.springframework.transaction.annotation.Transactional;
  *   record: rows age out by {@code read_at} only (90 days by
  *   default), never by recipient or type, and an unread row
  *   (null marker) is never selected, so an unopened notification
- *   survives indefinitely until its recipient reads it.</li>
+ *   survives indefinitely until its recipient reads it;</li>
+ *   <li>stale auth bookkeeping rows (backlog #262) — the four kinds
+ *   the earlier purges never touched, each kept 30 days after creation
+ *   by default: used {@code totp_recovery_code} rows (unused codes are
+ *   live backup credentials with no expiry, so only the used marker
+ *   selects a row); used-or-expired {@code passkey_challenge} rows
+ *   (the per-purpose options-path replacement only retires rows for
+ *   that user and purpose, so expired rows of accounts that never call
+ *   options again would otherwise linger); used-or-expired
+ *   {@code email_change_token} rows (confirm stamps {@code usedAt} but
+ *   keeps the row, and request/confirm only retire unused rows of the
+ *   same user); and used-or-expired {@code data_export_grant} rows
+ *   (a fresh confirm retires every prior grant, so only the account's
+ *   latest grant can linger, once spent or expired). In every case a
+ *   still-valid unused row is never selected: a purge must not kill an
+ *   in-flight ceremony, email change or export download.</li>
  * </ul>
  *
  * <p>All purges delete in batches of {@value #BATCH_SIZE} so no single
@@ -127,6 +146,10 @@ public class DataRetentionService {
 
   private final RecentlyViewedRepository recentlyViewed;
   private final NotificationRepository notifications;
+  private final TotpRecoveryCodeRepository totpRecoveryCodes;
+  private final PasskeyChallengeRepository passkeyChallenges;
+  private final EmailChangeTokenRepository emailChangeTokens;
+  private final DataExportGrantRepository dataExportGrants;
   private final CleanupProperties props;
   private final Clock clock;
   private final JobLockGuard jobLock;
@@ -141,6 +164,10 @@ public class DataRetentionService {
                               LoginEventRepository loginEvents,
                               RecentlyViewedRepository recentlyViewed,
                               NotificationRepository notifications,
+                              TotpRecoveryCodeRepository totpRecoveryCodes,
+                              PasskeyChallengeRepository passkeyChallenges,
+                              EmailChangeTokenRepository emailChangeTokens,
+                              DataExportGrantRepository dataExportGrants,
                               CleanupProperties props,
                               Clock clock,
                               JobLockGuard jobLock) {
@@ -153,6 +180,10 @@ public class DataRetentionService {
     this.loginEvents = loginEvents;
     this.recentlyViewed = recentlyViewed;
     this.notifications = notifications;
+    this.totpRecoveryCodes = totpRecoveryCodes;
+    this.passkeyChallenges = passkeyChallenges;
+    this.emailChangeTokens = emailChangeTokens;
+    this.dataExportGrants = dataExportGrants;
     this.props = props;
     this.clock = clock;
     this.jobLock = jobLock;
@@ -168,11 +199,16 @@ public class DataRetentionService {
                               LoginEventRepository loginEvents,
                               RecentlyViewedRepository recentlyViewed,
                               NotificationRepository notifications,
+                              TotpRecoveryCodeRepository totpRecoveryCodes,
+                              PasskeyChallengeRepository passkeyChallenges,
+                              EmailChangeTokenRepository emailChangeTokens,
+                              DataExportGrantRepository dataExportGrants,
                               CleanupProperties props,
                               Clock clock) {
     this(refreshTokens, idempotencyKeys, passwordResetTokens, auditLog,
         webhookEvents, emailVerificationTokens, loginEvents, recentlyViewed,
-        notifications, props, clock, JobLockGuard.disabled());
+        notifications, totpRecoveryCodes, passkeyChallenges, emailChangeTokens,
+        dataExportGrants, props, clock, JobLockGuard.disabled());
   }
 
   /** How many rows of each kind one purge run removed. */
@@ -180,7 +216,9 @@ public class DataRetentionService {
                             int passwordResetTokens, int auditLogRows,
                             int webhookEvents, int emailVerificationTokens,
                             int loginEvents, int recentlyViewedRows,
-                            int notificationRows) {}
+                            int notificationRows, int totpRecoveryCodes,
+                            int passkeyChallenges, int emailChangeTokens,
+                            int dataExportGrants) {}
 
   /**
    * Runs nightly at 03:00 server-local time. Also callable directly in tests
@@ -190,7 +228,7 @@ public class DataRetentionService {
   @Transactional
   public PurgeCounts purgeStaleData() {
     if (!jobLock.tryAcquire(LOCK_NAME)) {
-      return new PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0);
+      return new PurgeCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
     try {
       return purgeStaleDataLocked();
@@ -212,14 +250,22 @@ public class DataRetentionService {
     int loginEventsCount = purgeLoginEvents(now);
     int trail = purgeRecentlyViewed(now);
     int readNotifications = purgeNotifications(now);
+    int usedRecoveryCodes = purgeTotpRecoveryCodes(now);
+    int deadChallenges = purgePasskeyChallenges(now);
+    int deadEmailChanges = purgeEmailChangeTokens(now);
+    int deadExportGrants = purgeDataExportGrants(now);
     log.info("stale-data purge removed {} refresh_token, {} idempotency_key, "
         + "{} password_reset_token, {} audit_log, {} webhook_event, "
         + "{} email_verification_token, {} login_event, "
-        + "{} recently_viewed and {} notification rows",
+        + "{} recently_viewed, {} notification, {} totp_recovery_code, "
+        + "{} passkey_challenge, {} email_change_token and "
+        + "{} data_export_grant rows",
         tokens, keys, resets, audit, webhooks, verifications, loginEventsCount,
-        trail, readNotifications);
+        trail, readNotifications, usedRecoveryCodes, deadChallenges,
+        deadEmailChanges, deadExportGrants);
     return new PurgeCounts(tokens, keys, resets, audit, webhooks, verifications,
-        loginEventsCount, trail, readNotifications);
+        loginEventsCount, trail, readNotifications, usedRecoveryCodes,
+        deadChallenges, deadEmailChanges, deadExportGrants);
   }
 
   private int purgeNotifications(Instant now) {
@@ -369,6 +415,88 @@ public class DataRetentionService {
       ids = recentlyViewed.findPurgeableIds(viewedBefore, PageRequest.of(0, BATCH_SIZE));
       if (!ids.isEmpty()) {
         recentlyViewed.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeTotpRecoveryCodes(Instant now) {
+    // Recovery codes carry no expiry, so the used marker alone decides
+    // death: an unused row is a live backup credential and is never
+    // selected, regardless of age. The retention window runs from
+    // creation, mirroring the password-reset purge.
+    Instant createdBefore =
+        now.minus(Duration.ofDays(props.getTotpRecoveryCodeRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = totpRecoveryCodes.findPurgeableIds(createdBefore, PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        totpRecoveryCodes.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgePasskeyChallenges(Instant now) {
+    // Mirror of the password-reset purge: a challenge row is purgeable
+    // only once it is dead (used, or expired as of now) AND past the
+    // retention window after its creation. The repository query's
+    // dead-row predicate is what guarantees a still-valid unused
+    // challenge — an in-flight ceremony — is never selected.
+    Instant createdBefore =
+        now.minus(Duration.ofDays(props.getPasskeyChallengeRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = passkeyChallenges.findPurgeableIds(now, createdBefore,
+          PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        passkeyChallenges.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeEmailChangeTokens(Instant now) {
+    // Mirror of the password-reset purge: a token row is purgeable only
+    // once it is dead (used, or expired as of now) AND past the
+    // retention window after its creation. The repository query's
+    // dead-row predicate is what guarantees a still-valid unused token
+    // — an in-flight email change — is never selected.
+    Instant createdBefore =
+        now.minus(Duration.ofDays(props.getEmailChangeTokenRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = emailChangeTokens.findPurgeableIds(now, createdBefore,
+          PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        emailChangeTokens.deleteAllByIdInBatch(ids);
+        deleted += ids.size();
+      }
+    } while (ids.size() == BATCH_SIZE);
+    return deleted;
+  }
+
+  private int purgeDataExportGrants(Instant now) {
+    // Mirror of the password-reset purge: a grant row is purgeable only
+    // once it is dead (used, or expired as of now) AND past the
+    // retention window after its creation. The repository query's
+    // dead-row predicate is what guarantees a still-valid unused grant
+    // — an in-flight export download — is never selected.
+    Instant createdBefore =
+        now.minus(Duration.ofDays(props.getDataExportGrantRetention()));
+    int deleted = 0;
+    List<Long> ids;
+    do {
+      ids = dataExportGrants.findPurgeableIds(now, createdBefore,
+          PageRequest.of(0, BATCH_SIZE));
+      if (!ids.isEmpty()) {
+        dataExportGrants.deleteAllByIdInBatch(ids);
         deleted += ids.size();
       }
     } while (ids.size() == BATCH_SIZE);

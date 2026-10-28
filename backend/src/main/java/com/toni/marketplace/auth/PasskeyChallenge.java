@@ -22,11 +22,13 @@ import java.time.Instant;
  * at most one live row exists per (user, purpose): issuing new options
  * deletes the user's prior unused row for that purpose first.
  *
- * <p>No scheduled purge is wired for this table (unlike the #90/#138
- * token tables): the one-live-row-per-purpose discipline bounds it —
- * rows are created only on an explicit options call and superseded by
- * the next one — and expired-unused rows are deleted with the next
- * options call for the same user and purpose.
+ * <p>The nightly stale-data purge (backlog #262,
+ * {@code DataRetentionService}) sweeps used-or-expired rows past the
+ * retention window; the one-live-row-per-purpose discipline still
+ * bounds the live set — rows are created only on an explicit options
+ * call and superseded by the next one — but the purge is what removes
+ * the expired rows of accounts that never call options again. A
+ * still-valid unused row is never purged.
  */
 @Entity
 @Table(name = "passkey_challenge")
