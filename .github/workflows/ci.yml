@@ -68,7 +68,20 @@ jobs:
       # Bundle-size budget (backlog #165): fail if the entry chunk or the
       # total JS outgrows the ratchet in frontend/scripts/check-bundle-size.mjs.
       - run: npm run size --prefix frontend
-      - run: npm test --prefix frontend -- --run --passWithNoTests
+      # Frontend coverage gate (backlog #247): this runs the full suite
+      # with coverage, and vitest fails the job when any metric falls
+      # below the thresholds in frontend/vite.config.ts (measured floor
+      # at head d6f294b, floored to whole percents — the #165 ratchet
+      # discipline, mirroring the backend JaCoCo gate in backend-unit).
+      # It replaces the plain `npm test` step: the coverage run executes
+      # the same suite, so a separate uncovered run would only double
+      # the job's test time.
+      - run: npm run test:coverage --prefix frontend
+      # CI-config check: fails if this job ever stops running the
+      # coverage script or the config loses a metric threshold.
+      - name: Check coverage gate wiring
+        working-directory: frontend
+        run: node scripts/check-coverage-gate.mjs
 
   api-drift:
     # API drift gate (backlog #205): the frontend api modules are
