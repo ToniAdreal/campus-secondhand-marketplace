@@ -10,6 +10,7 @@ import {
   disableTotp,
   downloadMyData,
   enableTotp,
+  isStepUpRequired,
   recoveryCodeCount,
   setupTotp,
   withStepUpRetry,
@@ -22,6 +23,7 @@ import {
 } from '../api/client';
 import { webauthnSupported } from '../api/webauthn';
 import PasskeySection from '../components/PasskeySection';
+import StepUpModal from '../components/StepUpModal';
 import ThemeControl from '../components/ThemeControl';
 import { useMyBlocks, useUnblockUser } from '../api/blocks';
 import { useMyFollows, useUnfollowSeller } from '../api/follows';
@@ -74,10 +76,12 @@ function describeDisableTotpError(err: unknown): string {
  * backend's envelope message verbatim.
  */
 /**
- * Maps a failed username-change call to UI copy (backlog #256). There
- * is no password proof on this form, so no 401 phrasing applies — a
- * taken name (or the caller's own current name) fails 409 and every
- * other failure shows the backend's envelope message verbatim.
+ * Maps a failed username-change call to UI copy (backlog #256, step-up
+ * gate #261). There is no password proof on this form, so no 401
+ * phrasing applies — a taken name (or the caller's own current name)
+ * fails 409 and every other failure shows the backend's envelope
+ * message verbatim. A step-up 403 that survives the modal's single
+ * retry reaches here the same way, verbatim.
  */
 function describeUsernameChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
@@ -180,6 +184,14 @@ export default function SettingsPage() {
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameDone, setUsernameDone] = useState<string | null>(null);
   const [usernamePending, setUsernamePending] = useState(false);
+  // Step-up re-auth (backlog #261, the SessionsPage modal pattern):
+  // a rename whose token proof is stale answers the dedicated 403
+  // step-up envelope — the dialog below re-proves and the saved target
+  // retries exactly once. The retry flag is structural: the dialog's
+  // onProven calls attemptChangeUsername(target, true), and a second
+  // 403 surfaces as a real error instead of reopening the dialog.
+  const [usernameStepUpOpen, setUsernameStepUpOpen] = useState(false);
+  const [usernameStepUpTarget, setUsernameStepUpTarget] = useState<string | null>(null);
 
   // Email change (backlog #150, reworked by #208). A successful submit
   // only REQUESTS the change: the backend stages the new address as
@@ -319,27 +331,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function attemptChangeUsername(target: string, isRetry: boolean) {
+    setUsernamePending(true);
+    setUsernameError(null);
+    try {
+      const updated = await changeUsername({ username: target });
+      // Backlog #256: the session stays alive — no credential moves —
+      // so only the stored user summary needs swapping.
+      setUser(updated);
+      setNewUsername('');
+      setUsernameStepUpTarget(null);
+      setUsernameDone(updated.username);
+    } catch (err) {
+      // Backlog #261: a stale proof opens the re-auth dialog instead
+      // of an error banner; the target is kept so the modal's retry
+      // re-submits exactly the name the user typed.
+      if (isStepUpRequired(err) && !isRetry) {
+        setUsernameStepUpTarget(target);
+        setUsernameStepUpOpen(true);
+        return;
+      }
+      setUsernameError(describeUsernameChangeError(err));
+    } finally {
+      setUsernamePending(false);
+    }
+  }
+
   async function onChangeUsername(e: FormEvent) {
     e.preventDefault();
     if (newUsername.trim() === '') {
       setUsernameError('Enter the new username.');
       return;
     }
-    setUsernamePending(true);
-    setUsernameError(null);
-    try {
-      const target = newUsername.trim();
-      const updated = await changeUsername({ username: target });
-      // Backlog #256: the session stays alive — no credential moves —
-      // so only the stored user summary needs swapping.
-      setUser(updated);
-      setNewUsername('');
-      setUsernameDone(updated.username);
-    } catch (err) {
-      setUsernameError(describeUsernameChangeError(err));
-    } finally {
-      setUsernamePending(false);
-    }
+    await attemptChangeUsername(newUsername.trim(), false);
   }
 
   async function onCloseAccount(e: FormEvent) {
@@ -572,7 +596,8 @@ export default function SettingsPage() {
         <p className="mb-3 text-sm text-neutral-500">
           Currently {user.username}. A change takes effect immediately and
           keeps you signed in on every device; your old username becomes
-          available for anyone to take.
+          available for anyone to take. If your last sign-in proof is more
+          than 10 minutes old, you will confirm your identity first.
         </p>
         {usernameDone ? (
           <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
@@ -1030,6 +1055,18 @@ export default function SettingsPage() {
           </button>
         )}
       </div>
+      <StepUpModal
+        open={usernameStepUpOpen}
+        totpEnabled={user.totpEnabled ?? false}
+        actionLabel="change your username"
+        onProven={() => {
+          setUsernameStepUpOpen(false);
+          if (usernameStepUpTarget !== null) {
+            void attemptChangeUsername(usernameStepUpTarget, true);
+          }
+        }}
+        onCancel={() => setUsernameStepUpOpen(false)}
+      />
     </div>
   );
 }

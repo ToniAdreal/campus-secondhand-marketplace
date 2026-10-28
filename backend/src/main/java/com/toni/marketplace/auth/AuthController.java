@@ -528,8 +528,13 @@ public class AuthController {
    * carries the new name (an already-issued access token's username
    * claim goes stale until it expires or rotates, ≤15 min). A
    * USERNAME_CHANGED audit row is written in the same transaction.
+   * Freshness gate (backlog #261): the presented token must carry a
+   * credential proof within app.auth.step-up.max-age — a stale token
+   * answers the dedicated 403 step-up envelope, changes nothing and
+   * writes no audit row; the SPA re-proves via the step-up modal and
+   * retries exactly once.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "username changed; the updated user summary (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — blank or outside 3-60 characters (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username already taken, or equal to the current username (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "username changed; the updated user summary (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure — blank or outside 3-60 characters (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "anonymous caller (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "stale credential proof — dedicated step-up envelope, nothing changed (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "username already taken, or equal to the current username (envelope)")})
   @PostMapping("/username")
   public ResponseEntity<ApiResponse<AuthResponse.UserSummary>> changeUsername(
       @AuthenticationPrincipal Long userId,

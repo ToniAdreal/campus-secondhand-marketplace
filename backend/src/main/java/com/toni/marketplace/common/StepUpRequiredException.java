@@ -6,7 +6,7 @@ package com.toni.marketplace.common;
  * missing or older than {@code app.auth.step-up.max-age}, so a sensitive
  * action — sessions revoke-others, the data-export grant, TOTP setup
  * (backlog #250) and disable, account closure, passkey enrolment/
- * management — is refused. Answered with a dedicated 403 step-up
+ * management, username change (backlog #261) — is refused. Answered with a dedicated 403 step-up
  * envelope (never a 401, which would claim the credential itself is bad);
  * the SPA's re-auth modal re-proves the credential and retries the action
  * exactly once.

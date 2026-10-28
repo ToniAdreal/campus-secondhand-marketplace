@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, getAccessToken, setAccessToken } from '../api/client';
@@ -369,6 +369,73 @@ describe('SettingsPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe('username is already taken');
     expect(useAuthStore.getState().user?.username).toBe('toni');
+  });
+
+  it('opens the re-auth dialog on a change-username step-up 403 and retries exactly once after proving (backlog #261)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockResolvedValueOnce(
+        envelope({ id: 5, username: 'toni2', email: 'toni@example.com', roles: ['USER'] }),
+      );
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New username'), {
+      target: { value: 'toni2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change username' }));
+
+    // the step-up dialog opens instead of an error banner
+    const dialog = await screen.findByRole('dialog');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // the page's own password form shares the "Current password" label,
+    // so the modal's field is addressed inside the dialog
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // proof posted, token swapped, the same rename retried exactly once
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/auth/step-up', { currentPassword: 'pw' }),
+    );
+    expect(getAccessToken()).toBe('fresh-token');
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Username changed to toni2');
+    expect(postSpy).toHaveBeenCalledTimes(3); // attempt + proof + the single retry
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a second step-up 403 on the username retry surfaces as an error instead of reopening the dialog (backlog #261)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New username'), {
+      target: { value: 'toni2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change username' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // exactly one retry happened; its 403 surfaces verbatim, no dialog loop
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('re-authentication required');
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('closes the account from the danger zone after the typed confirmation (backlog #158)', async () => {

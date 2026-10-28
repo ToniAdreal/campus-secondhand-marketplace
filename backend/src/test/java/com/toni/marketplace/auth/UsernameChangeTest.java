@@ -11,10 +11,14 @@ import com.toni.marketplace.audit.AuditAction;
 import com.toni.marketplace.audit.AuditLogRepository;
 import com.toni.marketplace.audit.AuditTargetType;
 import jakarta.servlet.http.Cookie;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -24,15 +28,34 @@ import org.springframework.transaction.annotation.Transactional;
  * POST /api/auth/username end-to-end via MockMvc (backlog #256): the
  * rename is immediate, follows registration's format + canonical rules,
  * conflicts case-insensitively, audits, leaves sessions alive, and
- * frees the old name back to the pool.
+ * frees the old name back to the pool. Backlog #261 adds the step-up
+ * freshness gate: a stale token's rename is refused with the dedicated
+ * 403 step-up envelope and changes nothing, and a re-proofed token
+ * renames on the retry.
+ *
+ * <p>The application {@code Clock} bean is replaced with a
+ * {@link MutableClock} so proof aging is deterministic, the StepUpTest
+ * pattern.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional // each test rolls back the users it creates
 class UsernameChangeTest {
 
+  @TestConfiguration
+  static class ControllableClock {
+    @Bean
+    @Primary
+    MutableClock testClock() {
+      return new MutableClock();
+    }
+  }
+
   @Autowired
   private MockMvc mockMvc;
+
+  @Autowired
+  private MutableClock clock;
 
   @Autowired
   private AuditLogRepository auditLog;
@@ -176,6 +199,64 @@ class UsernameChangeTest {
     mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + aliceAccess))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.id").value(aliceId))
+        .andExpect(jsonPath("$.data.username").value("alice2"));
+  }
+
+  @Test
+  void staleTokenAnswersStepUp403AndChangesNothing() throws Exception {
+    MvcResult registered = register("alice", "alice@example.com");
+    String access = accessToken(registered);
+    long userId = userId(registered);
+    // Past the 10-minute proof freshness window (backlog #261).
+    clock.advance(Duration.ofMinutes(11));
+
+    MvcResult refused = mockMvc.perform(post("/api/auth/username")
+            .header("Authorization", "Bearer " + access)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\"alice2\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value(403))
+        .andReturn();
+    assertThat(JsonPath.<String>read(
+        refused.getResponse().getContentAsString(), "$.message"))
+        .contains("re-authentication required");
+
+    // Nothing changed: the caller is still alice, and no audit row
+    // was written for the refused rename.
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + access))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.username").value("alice"));
+    assertThat(auditLog.findByActorUserIdOrderByIdAsc(userId))
+        .extracting(row -> row.getAction())
+        .doesNotContain(AuditAction.USERNAME_CHANGED);
+  }
+
+  @Test
+  void stepUpReproofThenRenameSucceeds() throws Exception {
+    MvcResult registered = register("alice", "alice@example.com");
+    String access = accessToken(registered);
+    clock.advance(Duration.ofMinutes(11));
+    mockMvc.perform(post("/api/auth/username")
+            .header("Authorization", "Bearer " + access)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\"alice2\"}"))
+        .andExpect(status().isForbidden());
+
+    // Re-prove with the current password (the step-up modal's path),
+    // then retry the same rename with the fresh token.
+    MvcResult reproof = mockMvc.perform(post("/api/auth/step-up")
+            .header("Authorization", "Bearer " + access)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"currentPassword\":\"" + PASSWORD + "\"}"))
+        .andExpect(status().isOk())
+        .andReturn();
+    String freshAccess = JsonPath.read(
+        reproof.getResponse().getContentAsString(), "$.data.accessToken");
+    mockMvc.perform(post("/api/auth/username")
+            .header("Authorization", "Bearer " + freshAccess)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\"alice2\"}"))
+        .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.username").value("alice2"));
   }
 

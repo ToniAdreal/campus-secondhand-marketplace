@@ -300,9 +300,10 @@ class OpenApiContractTest {
     // it pins the same not-enabled 422 and lockout 423.
     assertThat(responseCodes(docs, "/api/auth/2fa/recovery-codes/regenerate", "post"))
         .contains("422", "423");
-    // Username change (#256) pins its validation 400 and taken-name 409.
+    // Username change (#256) pins its validation 400 and taken-name 409;
+    // #261 adds the freshness gate's dedicated step-up 403.
     assertThat(responseCodes(docs, "/api/auth/username", "post"))
-        .contains("200", "400", "401", "409");
+        .contains("200", "400", "401", "403", "409");
     // Email change (#150) pins its wrong-password 401 and taken-address 409.
     assertThat(responseCodes(docs, "/api/auth/email-change", "post"))
         .contains("400", "401", "409");

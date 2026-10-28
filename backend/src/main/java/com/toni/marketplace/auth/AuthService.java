@@ -1969,10 +1969,19 @@ public class AuthService {
    * expires (≤15 min) or rotates; the returned user summary already
    * carries the new name, and {@code GET /api/auth/me} agrees at once.
    *
+   * <p>Freshness gate (backlog #261): a rename is a public-identity
+   * change, so it joins the step-up sensitive set — the presented
+   * token must carry a credential proof within
+   * {@code app.auth.step-up.max-age} (see {@link StepUpPolicy}).
+   * A stale token throws before the user row is even loaded, so a
+   * refused rename changes nothing and writes no audit row; the SPA
+   * re-proves through the step-up modal and retries exactly once.
+   *
    * @return the updated user row, for the controller's user summary
    */
   @Transactional
   public User changeUsername(long userId, String newUsername) {
+    stepUp().requireFresh();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     String canonicalNew = canonical(newUsername);
     if (canonicalNew.equals(user.getUsername())) {

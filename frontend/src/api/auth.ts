@@ -505,7 +505,9 @@ export interface ChangeUsernamePayload {
  *
  * Throws the Axios error on failure; the backend wraps failures in the
  * {code,message,data} envelope (400 bad format, 409 taken name or the
- * caller's own current name).
+ * caller's own current name, and — backlog #261 — the dedicated 403
+ * step-up envelope when the token's credential proof is stale; callers
+ * re-prove through the step-up modal and retry exactly once).
  */
 export async function changeUsername(payload: ChangeUsernamePayload): Promise<AuthUser> {
   const res = await api.post<ApiResponse<AuthUser>>('/auth/username', payload);
