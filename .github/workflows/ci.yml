@@ -83,6 +83,47 @@ jobs:
         working-directory: frontend
         run: node scripts/check-coverage-gate.mjs
 
+  frontend-mutation:
+    # Frontend mutation pilot (backlog #252): Stryker over the cart
+    # store only (see frontend/stryker.config.mjs +
+    # docs/mutation-frontend.md). The job fails below the config's
+    # thresholds.break ratchet. The floor is the measured mutation
+    # score of the pilot run, rounded DOWN to a whole percent so an
+    # identical rerun cannot fail on rounding — never above the
+    # measured score (recorded in docs/mutation-frontend.md), never
+    # guessed. Stryker never runs in the default local `npm test` path.
+    # The report is uploaded on every run so the measured score and
+    # the surviving mutants are retrievable, not just pass/fail.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package.json
+      - run: npm ci --prefix frontend
+      # Gate-script tests first, including the job-definition check, so
+      # the wiring proof runs even before mutants do. (Vitest, like the
+      # other frontend/scripts tests — node:test files are not collected
+      # by vitest and fail as empty suites.)
+      - name: Run gate script tests (incl. job-definition check)
+        working-directory: frontend
+        run: npx vitest run scripts/check-mutation-gate.test.mjs
+      - run: npm run test:mutation --prefix frontend
+      - name: Upload Stryker mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stryker-reports
+          path: frontend/reports/mutation
+          if-no-files-found: ignore
+      # CI-config check: fails if this job ever stops running the
+      # mutation script or the config loses its break floor.
+      - name: Check mutation gate wiring
+        working-directory: frontend
+        run: node scripts/check-mutation-gate.mjs
+
   api-drift:
     # API drift gate (backlog #205): the frontend api modules are
     # hand-written against the backend with no codegen, so this job
