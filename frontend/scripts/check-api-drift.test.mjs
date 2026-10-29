@@ -180,10 +180,13 @@ describe('checkApiDrift', () => {
   });
 });
 
-// Shape pinning (backlog #258). The synthetic document mirrors the
-// real one where it matters: the pay operation carries NO 2xx — its
-// ApiResponse<OrderDto> envelope rides on the 403 — because the
-// controller's explicit @ApiResponses lists error codes only.
+// Shape pinning (backlog #258). The synthetic document deliberately
+// keeps the pre-#271 shape where it matters: the pay operation
+// carries NO 2xx — its ApiResponse<OrderDto> envelope rides on the
+// 403 — because the controller's explicit @ApiResponses used to list
+// error codes only. That fixture now pins the no-2xx fallback path;
+// the #271 block below covers the 2xx-preferred collection on a
+// document where the 200 carries its own envelope.
 
 const ORDER_SCHEMA = {
   type: 'object',
@@ -503,6 +506,223 @@ describe('checkShapeDrift', () => {
     expect(checkFieldMap({ n: 'number' }, { type: 'object', properties: { n: { type: 'integer' } } }, {})).toEqual([]);
     expect(checkFieldMap({ n: 'number' }, { type: 'object', properties: { n: { type: 'number' } } }, {})).toEqual([]);
     expect(checkFieldMap({ n: 'number' }, { type: 'object', properties: { n: { type: 'string' } } }, {})).toHaveLength(1);
+  });
+});
+
+// Shape pinning, third tranche (backlog #271): the gate prefers the
+// 2xx carriers, and register/login pin one variant per success status.
+
+const ORDER_FULL = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    status: { type: 'string', enum: ['PENDING', 'PAID', 'CANCELLED'] },
+    amountCents: { type: 'integer' },
+  },
+};
+
+function twoXxSpec(successSchema, errorSchema) {
+  return {
+    paths: {
+      '/api/orders/{id}/pay': {
+        post: {
+          responses: {
+            200: {
+              content: {
+                '*/*': { schema: { $ref: '#/components/schemas/ApiResponseOrderSuccess' } },
+              },
+            },
+            403: {
+              content: {
+                '*/*': { schema: { $ref: '#/components/schemas/ApiResponseOrderError' } },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        ApiResponseOrderSuccess: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { $ref: '#/components/schemas/OrderSuccess' },
+          },
+        },
+        OrderSuccess: successSchema,
+        ApiResponseOrderError: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { $ref: '#/components/schemas/OrderError' },
+          },
+        },
+        OrderError: errorSchema,
+      },
+    },
+  };
+}
+
+const REGISTER_USER_FIELDS = {
+  id: 'integer',
+  username: 'string',
+  email: 'string',
+  roles: { type: 'array', items: 'string' },
+};
+
+function registerDoc(pendingProperties) {
+  return {
+    paths: {
+      '/api/auth/register': {
+        post: {
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    username: { type: 'string' },
+                    email: { type: 'string' },
+                    password: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/ApiResponseAuth' } },
+              },
+            },
+            201: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      code: { type: 'integer' },
+                      message: { type: 'string' },
+                      data: { $ref: '#/components/schemas/RegisterPending' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        ApiResponseAuth: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { $ref: '#/components/schemas/Auth' },
+          },
+        },
+        Auth: {
+          type: 'object',
+          properties: {
+            accessToken: { type: 'string' },
+            tokenType: { type: 'string' },
+            expiresInSeconds: { type: 'integer' },
+            user: { $ref: '#/components/schemas/AuthUser' },
+          },
+        },
+        AuthUser: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            username: { type: 'string' },
+            email: { type: 'string' },
+            roles: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        RegisterPending: { type: 'object', properties: pendingProperties },
+      },
+    },
+  };
+}
+
+const REGISTER_PIN = {
+  method: 'POST',
+  path: '/api/auth/register',
+  request: { username: 'string', email: 'string', password: 'string' },
+  responseByStatus: {
+    200: {
+      accessToken: 'string',
+      tokenType: 'string',
+      expiresInSeconds: 'integer',
+      user: { type: 'object', fields: REGISTER_USER_FIELDS },
+    },
+    201: {
+      user: { type: 'object', fields: REGISTER_USER_FIELDS },
+      emailVerificationRequired: 'boolean',
+    },
+  },
+};
+
+describe('2xx-preferred response collection + responseByStatus (backlog #271)', () => {
+  it('fails when a success-only field disappears from the 200 schema even while an error response still carries the old DTO', () => {
+    const { properties, ...rest } = ORDER_FULL;
+    const { status, ...withoutStatus } = properties;
+    const doc = twoXxSpec({ ...rest, properties: withoutStatus }, ORDER_FULL);
+    const result = checkShapeDrift(
+      [{ method: 'POST', path: '/api/orders/{id}/pay', response: ORDER_PIN }],
+      doc,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.violations.join(' ')).toMatch(/status/);
+  });
+
+  it('passes when the 200 carries every pinned field even if the error response drops one', () => {
+    const { properties, ...rest } = ORDER_FULL;
+    const { status, ...withoutStatus } = properties;
+    const doc = twoXxSpec(ORDER_FULL, { ...rest, properties: withoutStatus });
+    expect(
+      checkShapeDrift(
+        [{ method: 'POST', path: '/api/orders/{id}/pay', response: ORDER_PIN }],
+        doc,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('pins each register success variant against its own status', () => {
+    const doc = registerDoc({
+      user: { $ref: '#/components/schemas/AuthUser' },
+      emailVerificationRequired: { type: 'boolean' },
+    });
+    const result = checkShapeDrift([REGISTER_PIN], doc);
+    expect(result.ok).toBe(true);
+    expect(result.responsePinned).toBe(1);
+    expect(result.unpinnedResponses).toEqual([]);
+  });
+
+  it('fails when a variant field disappears from its own status schema', () => {
+    const doc = registerDoc({ user: { $ref: '#/components/schemas/AuthUser' } });
+    const result = checkShapeDrift([REGISTER_PIN], doc);
+    expect(result.ok).toBe(false);
+    expect(result.violations.join(' ')).toMatch(/201.*emailVerificationRequired/);
+  });
+
+  it('fails when a pinned status is absent from the document', () => {
+    const doc = registerDoc({
+      user: { $ref: '#/components/schemas/AuthUser' },
+      emailVerificationRequired: { type: 'boolean' },
+    });
+    const pin = {
+      ...REGISTER_PIN,
+      responseByStatus: { 202: { challenge: 'string' } },
+    };
+    const result = checkShapeDrift([pin], doc);
+    expect(result.ok).toBe(false);
+    expect(result.violations.join(' ')).toMatch(/no 202 response/);
   });
 });
 

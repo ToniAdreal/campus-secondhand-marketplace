@@ -406,12 +406,16 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   `frontend/scripts/api-shape-pins.mjs` (auth session core + orders
   surface, extended by backlog #264 to items/messages/notifications/
   reviews) and fails when a field the SPA reads or sends disappears
-  from the document or changes type. Honest scope: unpinned surfaces
-  (2FA/passkey/session/device auth) stay path+method-only, the SSE
-  stream and the notification row delete carry no pinnable body (see
-  the pins file header), and register/
-  login success bodies are unpinned because springdoc cannot type
-  their `ResponseEntity<?>` returns (backlog #271).
+  from the document or changes type. Since backlog #271 the gate
+  prefers the 2xx carriers (a success-only field disappearing from
+  the 200 fails even while an error response still carries the old
+  DTO), and register/login pin one variant per success status (200
+  token pair vs 201 pending-verification; 200 token pair vs 202 TOTP
+  challenge) — their `ResponseEntity<?>` returns are typed in the
+  document by explicit annotation, not inferred. Honest scope:
+  unpinned surfaces (2FA/passkey/session/device auth) stay
+  path+method-only, and the SSE stream and the notification row
+  delete carry no pinnable body (see the pins file header).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat

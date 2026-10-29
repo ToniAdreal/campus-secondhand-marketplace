@@ -8,15 +8,16 @@
 // the contract: it extracts every method+path the frontend api modules
 // call and fails when one is absent from the OpenAPI document.
 //
-// Honest scope (backlog #258 extends #205, #264 extends #258): paths +
-// methods for every frontend api call, PLUS request/response shapes
-// for the pinned tranches in api-shape-pins.mjs (auth session core +
-// orders surface + items/messages/notifications/reviews surfaces).
-// A renamed request/response field on a pinned operation fails this
-// gate; unpinned surfaces (2FA/passkey/session/device auth) stay
-// path+method-only, and register/login success bodies are unpinned
-// because springdoc cannot type ResponseEntity<?> — see the pins file
-// header for the full mechanism and the #271 follow-up. Two
+// Honest scope (backlog #258 extends #205, #264 extends #258, #271
+// types the last blind spots): paths + methods for every frontend api
+// call, PLUS request/response shapes for the pinned tranches in
+// api-shape-pins.mjs (auth session core + orders surface +
+// items/messages/notifications/reviews surfaces). A renamed
+// request/response field on a pinned operation fails this gate;
+// unpinned surfaces (2FA/passkey/session/device auth) stay
+// path+method-only. Register/login success bodies are pinned per
+// status since #271 (the two success variants each carry a typed
+// envelope now); see the pins file header for the full mechanism. Two
 // operations in the #264 tranche carry no envelope object at all and
 // are pinned in their own forms instead of the field-map form: the
 // SSE stream (GET /api/notifications/stream, an event stream, not a
@@ -420,27 +421,51 @@ export function operationByMethodPath(spec, method, path) {
 }
 
 /**
+ * Unwraps one response object's envelope data schemas: one entry per
+ * oneOf/anyOf variant of the envelope's data, each with the envelope
+ * schema itself for the code/message check. Returns [] when the
+ * response carries no {code, message, data} envelope (a bare object
+ * or a bare DTO is not an envelope and never counts as a carrier).
+ */
+export function responseDataSchemasForResponse(response, spec) {
+  const content = response?.content ?? {};
+  const media = content['application/json'] ?? Object.values(content)[0];
+  if (!media?.schema) return [];
+  const envelope = resolveSchema(media.schema, spec);
+  if (!envelope || !envelope.properties?.data) return [];
+  return schemaVariants(envelope.properties.data, spec).map((dataSchema) => ({
+    envelope,
+    dataSchema,
+  }));
+}
+
+/**
  * Collects the envelope data schemas an operation carries, one entry
- * per response whose schema unwraps to {code, message, data}. Every
- * response is considered, not just the 2xx one: methods with an
- * explicit @ApiResponses annotation listing only error codes have no
- * 200 in the document at all, yet their error responses carry the
- * same ApiResponse<T> envelope — the DTO shape is pinned through
- * those. (Whether the 200 itself carries it is backlog #271.)
+ * per response whose schema unwraps to {code, message, data}. The raw
+ * collection is still every response — checkShapeDrift narrows it to
+ * the 2xx carriers when any exist (backlog #271), so a success-only
+ * field cannot hide behind an error response carrying the old DTO;
+ * operations with no 2xx envelope keep the pre-#271 fallback to any
+ * carrier (the error-carried pins from #258 still pass on it).
  */
 export function responseDataSchemas(operation, spec) {
   const found = [];
   for (const [statusCode, response] of Object.entries(operation?.responses ?? {})) {
-    const content = response?.content ?? {};
-    const media = content['application/json'] ?? Object.values(content)[0];
-    if (!media?.schema) continue;
-    const envelope = resolveSchema(media.schema, spec);
-    if (!envelope || !envelope.properties?.data) continue;
-    for (const dataSchema of schemaVariants(envelope.properties.data, spec)) {
-      found.push({ statusCode, envelope, dataSchema });
+    for (const entry of responseDataSchemasForResponse(response, spec)) {
+      found.push({ statusCode, ...entry });
     }
   }
   return found;
+}
+
+/**
+ * The 2xx subset of responseDataSchemas — the success carriers. A
+ * "2XX" wildcard counts as success too (its code starts with '2').
+ */
+export function successResponseDataSchemas(operation, spec) {
+  return responseDataSchemas(operation, spec).filter((candidate) =>
+    String(candidate.statusCode).startsWith('2'),
+  );
 }
 
 /**
@@ -514,6 +539,9 @@ export function checkResponseData(pinResponse, dataSchema, spec) {
  * fails when the document carries no typed response at all, or when
  * no carried data schema satisfies the pinned shape; the closest
  * candidate's failures are reported so the drift is actionable.
+ * Since backlog #271 a plain `response` pin must pass against a 2xx
+ * carrier when one exists (see the narrowing above), and a
+ * `responseByStatus` pin checks each status's own data schema.
  */
 export function checkShapeDrift(pins, spec) {
   const violations = [];
@@ -566,6 +594,52 @@ export function checkShapeDrift(pins, spec) {
         }
       }
     }
+    if (pin.responseByStatus !== undefined) {
+      // Backlog #271: one pin per success status — an endpoint whose
+      // success body branches by status (register 200 vs 201, login
+      // 200 vs 202) pins each variant against its own status's data
+      // schema, never against a sibling status's shape.
+      responsePinned += 1;
+      for (const [status, fields] of Object.entries(pin.responseByStatus)) {
+        const statusLabel = `${label} ${status}`;
+        const response = operation.responses?.[status];
+        if (!response) {
+          violations.push(`${statusLabel} — no ${status} response in the document`);
+          continue;
+        }
+        const entries = responseDataSchemasForResponse(response, spec);
+        if (entries.length === 0) {
+          violations.push(
+            `${statusLabel} — the ${status} response carries no typed envelope data`,
+          );
+          continue;
+        }
+        for (const entry of entries) {
+          const envelopeViolations = checkFieldMap(
+            { code: 'integer', message: 'string' },
+            entry.envelope,
+            spec,
+            '',
+          );
+          violations.push(...envelopeViolations.map((v) => `${statusLabel}: ${v}`));
+        }
+        let best = null;
+        for (const entry of entries) {
+          const fieldViolations = checkResponseData(fields, entry.dataSchema, spec);
+          if (fieldViolations.length === 0) {
+            best = [];
+            break;
+          }
+          if (best === null || fieldViolations.length < best.length) best = fieldViolations;
+        }
+        if (best !== null && best.length > 0) {
+          violations.push(
+            `${statusLabel} — no ${status} response in the document carries all pinned fields (closest: ${best.join('; ')})`,
+          );
+        }
+      }
+      continue;
+    }
     if (pin.response === undefined) {
       unpinnedResponses.push(
         pin.responseNote ? `${label} — ${pin.responseNote}` : `${label} — no response pin`,
@@ -573,13 +647,20 @@ export function checkShapeDrift(pins, spec) {
       continue;
     }
     responsePinned += 1;
-    const candidates = responseDataSchemas(operation, spec);
-    if (candidates.length === 0) {
+    const allCandidates = responseDataSchemas(operation, spec);
+    if (allCandidates.length === 0) {
       violations.push(
         `${label} — pinned response fields but the document carries no typed response for this operation`,
       );
       continue;
     }
+    // Backlog #271: prefer the success carriers. When a 2xx response
+    // carries an envelope, the pin must pass against it — an error
+    // response carrying the old DTO must not mask a success-only
+    // field that disappeared from the 2xx schema. Operations with no
+    // 2xx envelope keep the pre-#271 fallback to any carrier.
+    const successCandidates = successResponseDataSchemas(operation, spec);
+    const candidates = successCandidates.length > 0 ? successCandidates : allCandidates;
     for (const candidate of candidates) {
       const envelopeViolations = checkFieldMap(
         { code: 'integer', message: 'string' },
@@ -696,7 +777,7 @@ async function main() {
       pins.filter((pin) => pin.request).length
     }, response shapes on ${shape.responsePinned}, responses unpinned on ${
       shape.unpinnedResponses.length
-    } (see api-shape-pins.mjs header for why).`,
+    } (see api-shape-pins.mjs header).`,
   );
   for (const unpinned of shape.unpinnedResponses) {
     console.log(`Shape unpinned: ${unpinned}`);

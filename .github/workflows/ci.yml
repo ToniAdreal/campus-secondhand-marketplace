@@ -125,18 +125,18 @@ jobs:
         run: node scripts/check-mutation-gate.mjs
 
   api-drift:
-    # API drift gate (backlog #205, shapes pinned by #258 and #264):
-    # the frontend api modules are hand-written against the backend
-    # with no codegen, so this job exports the OpenAPI document from
-    # the backend contract-test path (the env-gated OpenApiExportTest
-    # fetches /v3/api-docs exactly as OpenApiContractTest pins it)
-    # and fails when any method+path the frontend calls is absent
-    # from the document, or when a pinned request/response field on
-    # the auth + orders + items + messages + notifications + reviews
-    # surfaces disappears or changes type (pins in
-    # frontend/scripts/api-shape-pins.mjs; register/login success
-    # bodies stay unpinned — ResponseEntity<?> is untyped — see the
-    # pins file header and backlog #271).
+    # API drift gate (backlog #205, shapes pinned by #258, #264 and
+    # #271): the frontend api modules are hand-written against the
+    # backend with no codegen, so this job exports the OpenAPI
+    # document from the backend contract-test path (the env-gated
+    # OpenApiExportTest fetches /v3/api-docs exactly as
+    # OpenApiContractTest pins it) and fails when any method+path the
+    # frontend calls is absent from the document, or when a pinned
+    # request/response field on the auth + orders + items + messages
+    # + notifications + reviews surfaces disappears or changes type
+    # (pins in frontend/scripts/api-shape-pins.mjs; since #271 the
+    # gate prefers the 2xx carriers and register/login pin one
+    # variant per success status — see the pins file header).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258 and #264).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264 and #271).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -22,25 +22,32 @@
 //
 // How response shapes resolve (read this before extending the file):
 // the gate unwraps the {code,message,data} envelope and pins the data
-// object. It collects the data schema from EVERY response of the
-// operation that carries the envelope — not just the 2xx one — because
-// springdoc drops the default 200 from any method carrying an explicit
-// @ApiResponses annotation that lists only error codes. That is the
-// current state of every annotated order action (create/pay/cancel/
-// ship/complete/confirm-receipt/regenerate/refund) and of the receipt
-// read: their success shape is pinned through the error responses
-// that carry the same ApiResponse<OrderDto>/ApiResponseReceiptDto
-// envelope. What that does NOT prove is that the 200 itself carries
-// the shape — typing those success responses is backlog #271.
-//   Two operations have NO response pin at all, on purpose:
-//   POST /api/auth/register and POST /api/auth/login return
-//   ResponseEntity<?> (the 200/201/202 bodies branch at runtime), so
-//   springdoc emits bare `{type: object}` success schemas and the
-//   RegisterResponse / TotpChallengeResponse components do not exist
-//   in the document. Their request shapes ARE pinned; their response
-//   shapes join #271. A pin entry without a `response` key is reported
-//   in the gate's summary as response-unpinned, never silently passed
-//   as checked.
+// object. For a plain `response` pin it prefers the 2xx carriers:
+// when any 2xx response carries an envelope, the pin must pass
+// against a 2xx data schema — an error response carrying the old DTO
+// must not mask a success-only field that disappeared from the 200
+// (backlog #271). Only operations with no 2xx envelope fall back to
+// any carrier, the pre-#271 behaviour the #258 error-carried pins
+// relied on. Since #271 every annotated order action
+// (create/pay/cancel/ship/complete/confirm-receipt/regenerate/refund)
+// and the receipt read carry a content-bearing 200 of their own:
+// springdoc fills a bare 200 entry from the method's
+// ApiResponse<OrderDto>/ApiResponse<ReceiptDto> return type, exactly
+// as it already filled the error entries.
+//   Endpoints whose success body branches by status pin each variant
+// against its own status with `responseByStatus` (never against a
+// sibling status's shape): POST /api/auth/register answers 200 with
+// the token pair when the verification gate is off and 201 with the
+// pending-verification body when it is on; POST /api/auth/login
+// answers 200 with the token pair and 202 with the TOTP challenge.
+// Both methods return ResponseEntity<?> (the bodies branch at
+// runtime), so the 200s reuse the ApiResponseAuthResponse component
+// the refresh endpoint's typed return generates, while the 201/202
+// carry inline envelopes whose data is the RegisterResponse /
+// TotpChallengeResponse — no envelope component for those exists
+// anywhere else to reference. A pin entry without a `response` (or
+// `responseByStatus`) key is reported in the gate's summary as
+// response-unpinned, never silently passed as checked.
 //   POST /api/auth/logout pins the envelope only (response: {}) — the
 //   ApiResponseVoid data payload is untyped by design.
 //   POST /api/orders/{id}/pay pins no request: the SPA posts an empty
@@ -81,6 +88,21 @@ const AUTH_RESPONSE_FIELDS = {
   tokenType: 'string',
   expiresInSeconds: 'integer',
   user: { type: 'object', fields: AUTH_USER_FIELDS },
+};
+
+// Register 201 (backlog #271): no session — just the user summary plus
+// the always-true verification flag (mirrors frontend RegisterPendingBody).
+const REGISTER_PENDING_FIELDS = {
+  user: { type: 'object', fields: AUTH_USER_FIELDS },
+  emailVerificationRequired: 'boolean',
+};
+
+// Login 202 (backlog #271): the signed second-factor challenge
+// (mirrors frontend TotpChallenge; factors lists totp and/or passkey).
+const TOTP_CHALLENGE_FIELDS = {
+  challenge: 'string',
+  expiresAt: 'string',
+  factors: { type: 'array', items: 'string' },
 };
 
 const ORDER_FIELDS = {
@@ -312,14 +334,20 @@ export const API_SHAPE_PINS = [
     method: 'POST',
     path: '/api/auth/register',
     request: { username: 'string', email: 'string', password: 'string' },
-    // No response pin: success bodies untyped in the document (see header). Backlog #271.
-    responseNote: 'register/login success bodies are ResponseEntity<?> — untyped in the document',
+    // Backlog #271: one variant per success status (see header).
+    responseByStatus: {
+      200: AUTH_RESPONSE_FIELDS,
+      201: REGISTER_PENDING_FIELDS,
+    },
   },
   {
     method: 'POST',
     path: '/api/auth/login',
     request: { usernameOrEmail: 'string', password: 'string' },
-    responseNote: 'register/login success bodies are ResponseEntity<?> — untyped in the document',
+    responseByStatus: {
+      200: AUTH_RESPONSE_FIELDS,
+      202: TOTP_CHALLENGE_FIELDS,
+    },
   },
   {
     method: 'POST',
