@@ -172,6 +172,35 @@ class NotificationStreamTest {
   }
 
   @Test
+  void consumeTicketPurgesExpiredTicketsIncludingUnpresentedOnes() {
+    MutableClock clock = new MutableClock();
+    NotificationStreamService service = new NotificationStreamService(clock);
+
+    // Two quiet accounts: neither ticket is ever presented again, so
+    // without a consume-path purge both would linger past their TTL.
+    service.issueTicket(100L);
+    service.issueTicket(101L);
+    assertThat(service.ticketCount()).isEqualTo(2);
+
+    clock.advance(Duration.ofSeconds(61));
+    // Presenting an unknown ticket still sweeps the expired ones.
+    assertThat(service.consumeTicket("unknown")).isNull();
+    assertThat(service.ticketCount()).isZero();
+
+    // A valid ticket still consumes exactly once, and a second use 401s.
+    String valid = service.issueTicket(102L);
+    assertThat(service.consumeTicket(valid)).isEqualTo(102L);
+    assertThat(service.consumeTicket(valid)).isNull();
+    assertThat(service.ticketCount()).isZero();
+
+    // An expired ticket 401s and is gone from the map.
+    String expiring = service.issueTicket(103L);
+    clock.advance(Duration.ofSeconds(61));
+    assertThat(service.consumeTicket(expiring)).isNull();
+    assertThat(service.ticketCount()).isZero();
+  }
+
+  @Test
   void completeStreamsForUserClosesOnlyThatUsersStreams() {
     NotificationStreamService service = new NotificationStreamService(new MutableClock());
     service.openStream(5L);

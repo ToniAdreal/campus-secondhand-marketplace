@@ -65,9 +65,20 @@ public class NotificationStreamService {
     this.clock = clock;
   }
 
+  /**
+   * Drops every expired ticket, whatever the entry point. Issue-time
+   * purging alone leaves a quiet account's expired tickets in the map
+   * until someone else issues one; the consume path purges too
+   * (backlog #268), so a stale ticket is gone the next time any
+   * ticket is presented — including an unknown one.
+   */
+  private void purgeExpiredTickets() {
+    tickets.values().removeIf(t -> !t.expiresAt().isAfter(Instant.now(clock)));
+  }
+
   /** Issues a single-use stream ticket for the caller (60 s to open the stream). */
   public String issueTicket(Long userId) {
-    tickets.values().removeIf(t -> !t.expiresAt().isAfter(Instant.now(clock)));
+    purgeExpiredTickets();
     byte[] bytes = new byte[32];
     random.nextBytes(bytes);
     String ticket = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
@@ -81,6 +92,7 @@ public class NotificationStreamService {
    * answers 401 — the three cases are indistinguishable by design).
    */
   public Long consumeTicket(String ticket) {
+    purgeExpiredTickets();
     if (ticket == null) {
       return null;
     }
@@ -159,6 +171,11 @@ public class NotificationStreamService {
     if (set.isEmpty()) {
       emitters.remove(recipientId, set);
     }
+  }
+
+  /** Live ticket count (test/observability seam, backlog #268). */
+  int ticketCount() {
+    return tickets.size();
   }
 
   /** Live emitter count for one user (test/observability seam). */
