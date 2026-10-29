@@ -280,8 +280,10 @@
   <profiles>
     <!-- Mutation testing pilot (backlog #192): PIT over the auth token
          service and the order state machine ONLY (JwtTokenService,
-         OrderService, OrderCreationService), driven by their pure unit
-         tests. This profile is CI-only: it is NOT active by default, so
+         OrderService, OrderCreationService), plus the shared password
+         policy (PasswordStrengthValidator, backlog #269), driven by
+         their pure unit tests. This profile is CI-only: it is NOT
+         active by default, so
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
          CI runs it in the dedicated backend-mutation job
          (`mvn verify -Pmutation`). The mutationThreshold below is the
@@ -292,8 +294,13 @@
          rounding; the floor is never set above the measured score.
          See docs/mutation.md for the measured scores, the date/run, and
          the surviving-mutant dispositions. A floor value is never
-         guessed. Deliberate floor bumps edit this constant together
-         with docs/mutation.md and say why in the commit message. -->
+         guessed. Backlog #269 widens the scope but does NOT raise the
+         floor: PIT cannot run in the local sandbox, so the 4-class
+         score is unmeasured until the next CI backend-mutation run,
+         and the floor stays 27 until that run is read and the floor
+         is re-ratcheted from it. Deliberate floor bumps edit this
+         constant together with docs/mutation.md and say why in the
+         commit message. -->
     <profile>
       <id>mutation</id>
       <build>
@@ -314,11 +321,14 @@
                 <param>com.toni.marketplace.auth.JwtTokenService</param>
                 <param>com.toni.marketplace.order.OrderService</param>
                 <param>com.toni.marketplace.order.OrderCreationService</param>
+                <param>com.toni.marketplace.auth.PasswordStrengthValidator</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
                 <param>com.toni.marketplace.auth.JwtKeyRotationTest</param>
                 <param>com.toni.marketplace.order.OrderServiceTest</param>
+                <param>com.toni.marketplace.auth.PasswordStrengthValidatorTest</param>
+                <param>com.toni.marketplace.auth.BreachedPasswordCheckerTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>

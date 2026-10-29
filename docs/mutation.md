@@ -2,7 +2,7 @@
 
 Line coverage (JaCoCo, gated at ≥ 80% on `mvn verify`) proves code is
 *executed* by tests; it does not prove the tests would *notice* if the
-behaviour changed. This pilot runs PIT (pitest) over the two highest-value
+behaviour changed. This pilot runs PIT (pitest) over the highest-value
 units in the codebase and measures exactly that:
 
 - `com.toni.marketplace.auth.JwtTokenService` — access/refresh token
@@ -11,9 +11,13 @@ units in the codebase and measures exactly that:
   `com.toni.marketplace.order.OrderCreationService` — the order state
   machine (create / pay / cancel / complete / refund transitions and
   their guards).
+- `com.toni.marketplace.auth.PasswordStrengthValidator` (backlog #269)
+  — the shared password policy: blocklist, length, composition, and
+  the breached-password screen.
 
 The driving tests are the pure unit suites for those classes
-(`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`) — no
+(`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
+`PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot.
 
@@ -56,6 +60,36 @@ GitHub Actions run **39735286602**, 2026-10-22T06:39:14Z, head
 
 Mutant statuses, project-wide: **KILLED 81, SURVIVED 48, NO_COVERAGE
 162**.
+
+### Widened scope, unmeasured (backlog #269, 2026-10-29)
+
+Backlog #269 adds exactly one class to the PIT scope —
+`auth.PasswordStrengthValidator` — driven by its two existing pure
+unit suites. The class was picked because it is the best-covered
+pure unit outside the old scope (27 tests across the two suites
+before this round), and the round closes the four branches those
+suites left unpinned, so the widened scope does not ship known
+unkilled mutants with it:
+
+- `minLength <= 0` falls back to the default 12
+  (`PasswordStrengthValidatorTest.nonPositiveMinimumLengthFallsBackToDefault`,
+  including the 2-arg `requireStrong` path);
+- null/blank candidates never reach the checker
+  (`BreachedPasswordCheckerTest.nullAndBlankPasswordsNeverReachTheChecker`);
+- a checker answering `null` suffixes passes the candidate instead of
+  throwing (`checkerReturningNullSuffixesPassesTheCandidate`);
+- the 3-arg `requireStrong` overload actually applies the breach
+  screen (`requireStrongThreeArgOverloadAppliesTheBreachScreen` — a
+  mutant delegating to the 2-arg overload would drop the screen while
+  every `check()` test stayed green).
+
+The floor is **held at 27, not raised**: PIT cannot run in the local
+sandbox, so no 4-class score exists yet, and a floor is never guessed
+(the #212 discipline). The next CI `backend-mutation` run measures the
+widened scope; the round that reads its `pit-reports` artifact
+re-ratchets the floor from that measured score, rounded down, and
+updates the table above. Until then the 27 floor is a conservative
+hold, not a claim about the new scope's score.
 
 ### First run, for contrast (backlog #192)
 
@@ -242,8 +276,8 @@ set against the current scope, as stated there.
 
 ## Honest scope
 
-The mutation score covers the three classes above — two packages'
-core units — **not** the codebase. Controllers, repositories, and the
-frontend have no mutation score, and none is claimed for them in the
-README. Widening the scope is future work, one package at a time, with
-the floor re-measured each time.
+The mutation score covers the four classes above — two packages'
+core units plus the shared password policy — **not** the codebase.
+Controllers, repositories, and the frontend have no mutation score,
+and none is claimed for them in the README. Widening the scope
+continues one class at a time, with the floor re-measured each time.

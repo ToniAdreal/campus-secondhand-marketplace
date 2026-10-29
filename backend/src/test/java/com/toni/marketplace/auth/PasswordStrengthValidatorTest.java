@@ -132,4 +132,20 @@ class PasswordStrengthValidatorTest {
     assertThat(PasswordStrengthValidator.check("a1"))
         .hasValue("password must be at least 12 characters");
   }
+
+  @Test
+  void nonPositiveMinimumLengthFallsBackToDefault() {
+    // Backlog #269: the misconfiguration fallback ("a non-positive
+    // minimum falls back to the default rather than silently disabling
+    // the rule") had no test — a mutant dropping the fallback would
+    // let an 8-char password through with minLength 0.
+    assertThat(PasswordStrengthValidator.check("abcd1234", 0))
+        .hasValue("password must be at least 12 characters");
+    assertThat(PasswordStrengthValidator.check("abcd1234efg", 0))
+        .hasValue("password must be at least 12 characters");
+    assertThat(PasswordStrengthValidator.check("abcd1234efgh", -5)).isEmpty();
+    assertThatThrownBy(() -> PasswordStrengthValidator.requireStrong("abcd1234efg", 0))
+        .isInstanceOf(WeakPasswordException.class)
+        .hasMessage("password must be at least 12 characters");
+  }
 }

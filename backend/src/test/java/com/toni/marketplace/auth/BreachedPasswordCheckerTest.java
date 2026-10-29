@@ -1,6 +1,8 @@
 package com.toni.marketplace.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -173,6 +175,63 @@ class BreachedPasswordCheckerTest {
     // Legacy/hand-built call sites without a checker keep the pre-#197
     // local-rules-only semantics exactly.
     assertThat(PasswordStrengthValidator.check(BREACHED, 12, null)).isEmpty();
+  }
+
+  @Test
+  void nullAndBlankPasswordsNeverReachTheChecker() {
+    // Backlog #269: the 3-arg check short-circuits on null/blank
+    // (the local rules already return empty for those, and @NotBlank
+    // owns them) — a mutant calling the checker anyway would hand a
+    // null password to sha1Hex and throw.
+    List<String> seen = new ArrayList<>();
+    BreachedPasswordChecker capturing = new BreachedPasswordChecker() {
+      @Override
+      public Set<String> suffixesForPrefix(String prefix) {
+        seen.add(prefix);
+        return Set.of();
+      }
+
+      @Override
+      public boolean failClosed() {
+        return true;
+      }
+    };
+    assertThat(PasswordStrengthValidator.check(null, 12, capturing)).isEmpty();
+    assertThat(PasswordStrengthValidator.check("   ", 12, capturing)).isEmpty();
+    assertThat(seen).isEmpty();
+  }
+
+  @Test
+  void checkerReturningNullSuffixesPassesTheCandidate() {
+    // Backlog #269: the `suffixes != null` guard had no test — a
+    // mutant dropping it would NPE on a checker that answers null
+    // instead of an empty set.
+    BreachedPasswordChecker nullAnswering = new BreachedPasswordChecker() {
+      @Override
+      public Set<String> suffixesForPrefix(String prefix) {
+        return null;
+      }
+
+      @Override
+      public boolean failClosed() {
+        return false;
+      }
+    };
+    assertThat(PasswordStrengthValidator.check(CLEAN, 12, nullAnswering)).isEmpty();
+  }
+
+  @Test
+  void requireStrongThreeArgOverloadAppliesTheBreachScreen() {
+    // Backlog #269: the 3-arg requireStrong overload had no test at
+    // all — a mutant delegating to the 2-arg overload would silently
+    // drop the breach screen while every check() test stayed green.
+    assertThatCode(() -> PasswordStrengthValidator.requireStrong(CLEAN, 12, LOCAL))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> PasswordStrengthValidator.requireStrong(BREACHED, 12, null))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> PasswordStrengthValidator.requireStrong(BREACHED, 12, LOCAL))
+        .isInstanceOf(com.toni.marketplace.common.WeakPasswordException.class)
+        .hasMessage(PasswordStrengthValidator.BREACHED_REASON);
   }
 
   @Test
