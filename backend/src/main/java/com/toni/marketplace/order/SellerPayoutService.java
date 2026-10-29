@@ -44,6 +44,13 @@ import org.springframework.transaction.annotation.Transactional;
  *       PAID is a ledger state — the mock PSP moves no real money, so
  *       no bank transfer, payout provider call, or fee settlement
  *       exists behind it.</li>
+ *   <li><b>Seller-account hold</b> — backlog #266: neither transition
+ *       advances a row while its seller's account is disabled (#88) or
+ *       closed (the closure tombstone sets {@code disabled}, so one
+ *       flag covers both). Held rows are counted separately from other
+ *       skips in {@link PayoutSweepCounts} and the run log, and resume
+ *       automatically when the account is re-enabled — no manual
+ *       release step, and no row is ever lost to the hold.</li>
  *   <li><b>Adjustments</b> — {@link #recordRefundAdjustment} appends a
  *       negative entry instead of mutating the settlement row. In this
  *       codebase the only refund that can target a completed order is
@@ -89,8 +96,8 @@ public class SellerPayoutService {
     this(payouts, adjustments, transitions, clock, JobLockGuard.disabled());
   }
 
-  /** How many rows one sweep run promoted, paid and skipped. */
-  public record PayoutSweepCounts(int promoted, int paid, int skipped) {}
+  /** How many rows one sweep run promoted, paid, skipped — and held for seller-account state. */
+  public record PayoutSweepCounts(int promoted, int paid, int skipped, int held) {}
 
   /**
    * Creates the settlement row for a freshly completed order. Joins the
@@ -167,7 +174,7 @@ public class SellerPayoutService {
    */
   public PayoutSweepCounts runSweep(Instant now) {
     if (!jobLock.tryAcquire(LOCK_NAME)) {
-      return new PayoutSweepCounts(0, 0, 0);
+      return new PayoutSweepCounts(0, 0, 0, 0);
     }
     try {
       return runSweepLocked(now);
@@ -188,9 +195,13 @@ public class SellerPayoutService {
 
     int promoted = 0;
     int skipped = 0;
+    int held = 0;
     for (Long payoutId : pendingIds) {
       try {
-        if (transitions.promoteToPayable(payoutId, now)) {
+        if (transitions.isSellerHeld(payoutId)) {
+          held++;
+          log.info("payout sweep held payout {}: seller account disabled or closed", payoutId);
+        } else if (transitions.promoteToPayable(payoutId, now)) {
           promoted++;
         } else {
           skipped++;
@@ -204,7 +215,10 @@ public class SellerPayoutService {
     int paid = 0;
     for (Long payoutId : payableIds) {
       try {
-        if (transitions.markPaid(payoutId, now)) {
+        if (transitions.isSellerHeld(payoutId)) {
+          held++;
+          log.info("payout sweep held payout {}: seller account disabled or closed", payoutId);
+        } else if (transitions.markPaid(payoutId, now)) {
           paid++;
         } else {
           skipped++;
@@ -214,6 +228,8 @@ public class SellerPayoutService {
         log.info("payout sweep skipped payout {}: a concurrent transition won", payoutId);
       }
     }
-    return new PayoutSweepCounts(promoted, paid, skipped);
+    log.info("payout sweep finished: promoted={} paid={} skipped={} held={}",
+        promoted, paid, skipped, held);
+    return new PayoutSweepCounts(promoted, paid, skipped, held);
   }
 }

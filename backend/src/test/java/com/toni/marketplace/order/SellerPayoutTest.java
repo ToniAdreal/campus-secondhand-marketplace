@@ -374,6 +374,114 @@ class SellerPayoutTest {
         .isEqualTo("PENDING");
   }
 
+  /** Backlog #266: a disabled seller's PENDING row is held, not promoted. */
+  @Test
+  void disabledSellerPayoutStaysPendingAndCountsHeld() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+
+    seller.setDisabled(true);
+    users.save(seller);
+
+    SellerPayoutService.PayoutSweepCounts sweep =
+        payoutService.runSweep(Instant.now().plusSeconds(8L * 24 * 3600));
+    assertThat(sweep.promoted()).isEqualTo(0);
+    assertThat(sweep.paid()).isEqualTo(0);
+    assertThat(sweep.skipped()).isEqualTo(0);
+    assertThat(sweep.held()).isEqualTo(1);
+    // Disabled tokens are rejected by the auth filter, so assert on the
+    // ledger row directly rather than through the seller's own API.
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PENDING);
+  }
+
+  /**
+   * Backlog #266: a closed account is a tombstone (disabled + anonymized
+   * identity, mirroring {@code AuthService.closeAccount}), so its
+   * PAYABLE row is held at pay time, never advanced to PAID.
+   */
+  @Test
+  void closedSellerPayableStaysPayableAndCountsHeld() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAYABLE);
+
+    seller.setDisabled(true);
+    seller.setUsername("deleted-" + seller.getId());
+    seller.setEmail("deleted-" + seller.getId() + "@deleted.invalid");
+    users.save(seller);
+
+    SellerPayoutService.PayoutSweepCounts sweep = payoutService.runSweep(later);
+    assertThat(sweep.paid()).isEqualTo(0);
+    assertThat(sweep.held()).isEqualTo(1);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAYABLE);
+  }
+
+  /** Backlog #266: re-enabling resumes the held row on the next sweep — no manual release. */
+  @Test
+  void reEnabledSellerPaysOnNextSweep() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+
+    seller.setDisabled(true);
+    users.save(seller);
+    SellerPayoutService.PayoutSweepCounts heldSweep = payoutService.runSweep(later);
+    assertThat(heldSweep.paid()).isEqualTo(0);
+    assertThat(heldSweep.held()).isEqualTo(1);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAYABLE);
+
+    seller.setDisabled(false);
+    users.save(seller);
+    SellerPayoutService.PayoutSweepCounts paidSweep = payoutService.runSweep(later);
+    assertThat(paidSweep.paid()).isEqualTo(1);
+    assertThat(paidSweep.held()).isEqualTo(0);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAID);
+  }
+
+  /**
+   * Backlog #266: the hold and the open-dispute gate coexist — a
+   * disabled seller's disputed row counts as held, not as a dispute
+   * skip, and the dispute gate itself is unchanged (see the
+   * release-unblocks tests above).
+   */
+  @Test
+  void disabledSellerWithOpenDisputeCountsHeldNotSkipped() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    openDispute(buyer, orderId);
+
+    seller.setDisabled(true);
+    users.save(seller);
+
+    SellerPayoutService.PayoutSweepCounts sweep =
+        payoutService.runSweep(Instant.now().plusSeconds(8L * 24 * 3600));
+    assertThat(sweep.promoted()).isEqualTo(0);
+    assertThat(sweep.held()).isEqualTo(1);
+    assertThat(sweep.skipped()).isEqualTo(0);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PENDING);
+  }
+
   @Test
   void sellerIsolationAndAnonymous401() throws Exception {
     User seller = newUser();
