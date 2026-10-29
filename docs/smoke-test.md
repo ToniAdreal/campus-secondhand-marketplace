@@ -4,7 +4,7 @@ Manual end-to-end verification of the full stack on real MySQL 8:
 
 - `mysql` — mysql:8.0, database `marketdb`
 - `backend` — Spring Boot jar built in-container, running with the **`mysql` Spring profile**
-  (`SPRING_PROFILES_ACTIVE=mysql` → `jdbc:mysql://mysql:3306/marketdb`, Flyway V1–V7
+  (`SPRING_PROFILES_ACTIVE=mysql` → `jdbc:mysql://mysql:3306/marketdb`, Flyway V1–V74
   migrations run against real MySQL)
 - `frontend` — React build served by nginx on port 80; **`/api/` is reverse-proxied to
   `backend:8080`** (`frontend/nginx.conf`), so the browser app and API share one origin
