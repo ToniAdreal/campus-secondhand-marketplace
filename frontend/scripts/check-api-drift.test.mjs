@@ -8,6 +8,7 @@ import {
   canonicalizePath,
   checkApiDrift,
   checkFieldMap,
+  checkResponseData,
   checkShapeDrift,
   extractApiCalls,
   operationByMethodPath,
@@ -505,6 +506,270 @@ describe('checkShapeDrift', () => {
   });
 });
 
+// Shape pinning, second tranche (backlog #264): the items / messages /
+// notifications / reviews surfaces add two response forms the #258
+// field-map form cannot express — bare-array data (suggestions,
+// similar, price-history, preferences) and bare-scalar data (the
+// unread-count and read-all counts). Both are pinned through
+// checkResponseData, which checkShapeDrift now uses for every pin.
+
+const ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    title: { type: 'string' },
+    priceCents: { type: 'integer' },
+  },
+};
+
+function tranche264Spec(itemSchema = ITEM_SCHEMA, countType = 'integer') {
+  return {
+    paths: {
+      '/api/items/{id}': {
+        get: {
+          responses: {
+            200: {
+              content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseItem' } } },
+            },
+          },
+        },
+      },
+      '/api/items/suggestions': {
+        get: {
+          responses: {
+            200: {
+              content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseSuggestions' } } },
+            },
+          },
+        },
+      },
+      '/api/messages/unread-count': {
+        get: {
+          responses: {
+            200: {
+              content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseCount' } } },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        ApiResponseItem: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { $ref: '#/components/schemas/Item' },
+          },
+        },
+        Item: itemSchema,
+        ApiResponseSuggestions: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { type: 'array', items: { $ref: '#/components/schemas/ItemSuggestion' } },
+          },
+        },
+        ItemSuggestion: {
+          type: 'object',
+          properties: { id: { type: 'integer' }, title: { type: 'string' } },
+        },
+        ApiResponseCount: {
+          type: 'object',
+          properties: {
+            code: { type: 'integer' },
+            message: { type: 'string' },
+            data: { type: countType },
+          },
+        },
+      },
+    },
+  };
+}
+
+const SUGGESTION_ARRAY_PIN = {
+  type: 'array',
+  items: { type: 'object', fields: { id: 'integer', title: 'string' } },
+};
+
+describe('checkResponseData (#264 array + scalar forms)', () => {
+  it('passes a bare-array pin when every item carries the pinned fields', () => {
+    const doc = tranche264Spec();
+    const operation = operationByMethodPath(doc, 'GET', '/api/items/suggestions');
+    const [candidate] = responseDataSchemas(operation, doc);
+    expect(checkResponseData(SUGGESTION_ARRAY_PIN, candidate.dataSchema, doc)).toEqual([]);
+  });
+
+  it('fails a bare-array pin when an item field disappears or changes type', () => {
+    const doc = tranche264Spec();
+    doc.components.schemas.ItemSuggestion = {
+      type: 'object',
+      properties: { id: { type: 'integer' } },
+    };
+    const operation = operationByMethodPath(doc, 'GET', '/api/items/suggestions');
+    const [candidate] = responseDataSchemas(operation, doc);
+    expect(checkResponseData(SUGGESTION_ARRAY_PIN, candidate.dataSchema, doc).join(' ')).toMatch(
+      /title/,
+    );
+    const mistyped = tranche264Spec();
+    mistyped.components.schemas.ItemSuggestion.properties.id = { type: 'string' };
+    const mistypedOp = operationByMethodPath(mistyped, 'GET', '/api/items/suggestions');
+    const [mistypedCandidate] = responseDataSchemas(mistypedOp, mistyped);
+    expect(
+      checkResponseData(SUGGESTION_ARRAY_PIN, mistypedCandidate.dataSchema, mistyped).join(' '),
+    ).toMatch(/id/);
+  });
+
+  it('fails a bare-array pin when the data is an object, not a list', () => {
+    const doc = tranche264Spec();
+    const operation = operationByMethodPath(doc, 'GET', '/api/items/{id}');
+    const [candidate] = responseDataSchemas(operation, doc);
+    expect(
+      checkResponseData(SUGGESTION_ARRAY_PIN, candidate.dataSchema, doc).join(' '),
+    ).toMatch(/pinned array/);
+  });
+
+  it('passes a scalar pin on a bare count, fails when the count changes type', () => {
+    const doc = tranche264Spec();
+    const operation = operationByMethodPath(doc, 'GET', '/api/messages/unread-count');
+    const [candidate] = responseDataSchemas(operation, doc);
+    expect(checkResponseData('integer', candidate.dataSchema, doc)).toEqual([]);
+    const stringCount = tranche264Spec(ITEM_SCHEMA, 'string');
+    const stringOp = operationByMethodPath(stringCount, 'GET', '/api/messages/unread-count');
+    const [stringCandidate] = responseDataSchemas(stringOp, stringCount);
+    expect(checkResponseData('integer', stringCandidate.dataSchema, stringCount).join(' ')).toMatch(
+      /type mismatch/,
+    );
+  });
+
+  it('still treats a field map pinning a field named "type" as an object map', () => {
+    const doc = {
+      paths: {
+        '/api/notifications': {
+          get: {
+            responses: {
+              200: {
+                content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseNotif' } } },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          ApiResponseNotif: {
+            type: 'object',
+            properties: {
+              code: { type: 'integer' },
+              message: { type: 'string' },
+              data: { $ref: '#/components/schemas/Notification' },
+            },
+          },
+          Notification: {
+            type: 'object',
+            properties: {
+              id: { type: 'integer' },
+              type: { type: 'string', enum: ['ORDER_PAID', 'ORDER_SHIPPED'] },
+            },
+          },
+        },
+      },
+    };
+    const pin = {
+      id: 'integer',
+      type: { type: 'string', enum: ['ORDER_PAID', 'ORDER_SHIPPED'] },
+    };
+    const operation = operationByMethodPath(doc, 'GET', '/api/notifications');
+    const [candidate] = responseDataSchemas(operation, doc);
+    expect(checkResponseData(pin, candidate.dataSchema, doc)).toEqual([]);
+    expect(
+      checkShapeDrift([{ method: 'GET', path: '/api/notifications', response: pin }], doc).ok,
+    ).toBe(true);
+  });
+
+  it('pins multipart request fields across the body schema + query parameters', () => {
+    const doc = {
+      paths: {
+        '/api/messages/photo': {
+          post: {
+            parameters: [
+              { name: 'itemId', in: 'query', schema: { type: 'integer' } },
+              { name: 'receiverId', in: 'query', schema: { type: 'integer' } },
+              { name: 'body', in: 'query', schema: { type: 'string' } },
+            ],
+            requestBody: {
+              content: {
+                'multipart/form-data': {
+                  schema: {
+                    type: 'object',
+                    properties: { file: { type: 'string', format: 'binary' } },
+                  },
+                },
+              },
+            },
+            responses: {
+              200: {
+                content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseMsg' } } },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          ApiResponseMsg: {
+            type: 'object',
+            properties: {
+              code: { type: 'integer' },
+              message: { type: 'string' },
+              data: { $ref: '#/components/schemas/Message' },
+            },
+          },
+          Message: {
+            type: 'object',
+            properties: { id: { type: 'integer' }, body: { type: 'string' } },
+          },
+        },
+      },
+    };
+    const pin = {
+      method: 'POST',
+      path: '/api/messages/photo',
+      request: { itemId: 'integer', receiverId: 'integer', body: 'string', file: 'string' },
+      response: { id: 'integer', body: 'string' },
+    };
+    expect(checkShapeDrift([pin], doc).ok).toBe(true);
+    const dropped = structuredClone(doc);
+    dropped.paths['/api/messages/photo'].post.parameters =
+      dropped.paths['/api/messages/photo'].post.parameters.filter((p) => p.name !== 'body');
+    expect(checkShapeDrift([pin], dropped).ok).toBe(false);
+    expect(checkShapeDrift([pin], dropped).violations.join(' ')).toMatch(/body/);
+  });
+
+  it('runs array + scalar pins end to end through checkShapeDrift', () => {
+    const doc = tranche264Spec();
+    expect(
+      checkShapeDrift(
+        [
+          { method: 'GET', path: '/api/items/suggestions', response: SUGGESTION_ARRAY_PIN },
+          { method: 'GET', path: '/api/messages/unread-count', response: 'integer' },
+        ],
+        doc,
+      ).ok,
+    ).toBe(true);
+    const drifted = tranche264Spec();
+    drifted.components.schemas.ItemSuggestion.properties.title = { type: 'integer' };
+    expect(
+      checkShapeDrift(
+        [{ method: 'GET', path: '/api/items/suggestions', response: SUGGESTION_ARRAY_PIN }],
+        drifted,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 // Job wiring (in the check-mutation-gate mould): the api-drift job
 // must keep running the export step and this script, or the gate
 // narrows silently.
@@ -576,6 +841,53 @@ describe('shape gate CLI fixture', () => {
     expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/API SHAPE DRIFT/);
     expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/status/);
     const passed = runGate(shapeSpec(), ORDER_PIN);
+    expect(passed.status).toBe(0);
+    expect(passed.stdout).toMatch(/No API shape drift/);
+  });
+});
+
+// End-to-end fixture for the #264 tranche: the same script, driven
+// against an items-surface document and an items pin, must fail the
+// job when a frontend-read item field disappears and pass clean.
+describe('shape gate CLI fixture (#264 tranche)', () => {
+  function runItemsGate(doc, pinFields) {
+    const dir = mkdtempSync(join(tmpdir(), 'api-drift-items-fixture-'));
+    try {
+      const apiDir = join(dir, 'api');
+      const specPath = join(dir, 'openapi.json');
+      const pinsPath = join(dir, 'pins.mjs');
+      mkdirSync(apiDir, { recursive: true });
+      writeFileSync(
+        join(apiDir, 'items.ts'),
+        "export const detail = (id) => api.get(`/items/${id}`);\n",
+      );
+      writeFileSync(specPath, JSON.stringify(doc));
+      writeFileSync(
+        pinsPath,
+        `export const API_SHAPE_PINS = [{ method: 'GET', path: '/api/items/{id}', response: ${JSON.stringify(pinFields)} }];\n`,
+      );
+      const script = join(findRepoRoot(), 'frontend', 'scripts', 'check-api-drift.mjs');
+      return spawnSync(
+        process.execPath,
+        [script, '--spec', specPath, '--api-dir', apiDir, '--pins', pinsPath],
+        { encoding: 'utf8' },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('fails the job when an item field disappears, passes on a clean document', () => {
+    const itemPin = { id: 'integer', title: 'string', priceCents: 'integer' };
+    const drifted = tranche264Spec({
+      type: 'object',
+      properties: { id: { type: 'integer' }, priceCents: { type: 'integer' } },
+    });
+    const failed = runItemsGate(drifted, itemPin);
+    expect(failed.status).toBe(1);
+    expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/API SHAPE DRIFT/);
+    expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/title/);
+    const passed = runItemsGate(tranche264Spec(), itemPin);
     expect(passed.status).toBe(0);
     expect(passed.stdout).toMatch(/No API shape drift/);
   });

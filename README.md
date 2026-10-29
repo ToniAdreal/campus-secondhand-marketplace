@@ -360,10 +360,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   in the `api-drift` job. Shape pinning (backlog #258): the same run
   also checks the pinned tranche in
   `frontend/scripts/api-shape-pins.mjs` (auth session core + orders
-  surface) and fails when a field the SPA reads or sends disappears
+  surface, extended by backlog #264 to items/messages/notifications/
+  reviews) and fails when a field the SPA reads or sends disappears
   from the document or changes type. Honest scope: unpinned surfaces
-  (2FA/passkey/session/device auth; items/messages/notifications/
-  reviews until backlog #264) stay path+method-only, and register/
+  (2FA/passkey/session/device auth) stay path+method-only, the SSE
+  stream and the notification row delete carry no pinnable body (see
+  the pins file header), and register/
   login success bodies are unpinned because springdoc cannot type
   their `ResponseEntity<?>` returns (backlog #271).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and

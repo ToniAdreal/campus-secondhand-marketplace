@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlog #258).
+// Pinned request/response shapes for the api-drift gate (backlogs #258 and #264).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -49,9 +49,24 @@
 //
 // Ratchet discipline (#165): pins are added deliberately, with the
 // measured document in hand, and never loosened to make a red run
-// green. The next tranche is backlog #264 (items + messages +
-// notifications + reviews); the auth 2FA/passkey/session/device
-// surfaces stay path+method-only until a later tranche pins them.
+// green.
+//
+// Second tranche (backlog #264): the items + messages +
+// notifications + reviews surfaces — every operation those four api
+// modules call, except the two that carry no pinnable body: the SSE
+// stream (GET /api/notifications/stream, an event stream, not JSON)
+// and DELETE /api/notifications/{id} (the SPA reads no body); both
+// stay path+method-only. Two new response forms appear here, handled
+// by checkResponseData in check-api-drift.mjs: bare-array data
+// ({ type: 'array', items: ... } — suggestions, similar,
+// price-history, preferences) and bare-scalar data (a bare type
+// string — the unread-count and read-all counts). Nullable fields
+// (description, sellerUsername, readAt, body on a star-only review
+// and the like) are pinned as their base type, required: the schema
+// lists the property whether or not a given row carries null, and a
+// renamed or retyped property is exactly the drift this gate catches.
+// The auth 2FA/passkey/session/device surfaces stay path+method-only
+// until a later tranche pins them.
 
 const AUTH_USER_FIELDS = {
   id: 'integer',
@@ -139,6 +154,156 @@ const SELLER_SUMMARY_FIELDS = {
       grossCents: 'integer',
     },
   },
+};
+
+const ITEM_PHOTO_FIELDS = {
+  id: 'integer',
+  url: 'string',
+  position: 'integer',
+};
+
+const ITEM_FIELDS = {
+  id: 'integer',
+  title: 'string',
+  description: 'string',
+  priceCents: 'integer',
+  status: {
+    type: 'string',
+    enum: ['DRAFT', 'AVAILABLE', 'RESERVED', 'SOLD', 'WITHDRAWN', 'EXPIRED'],
+  },
+  sellerId: 'integer',
+  sellerUsername: 'string',
+  categoryId: 'integer',
+  categoryName: 'string',
+  photoUrl: 'string',
+  // Optional in the SPA type (createdAt/updatedAt/expiresAt/viewCount
+  // are `?`-optional there): type-checked when the document carries
+  // them, absence alone does not fail. The detail read and the
+  // seller's own rows are the surfaces that carry viewCount; browse
+  // payloads omit the key at runtime, but the schema still lists it.
+  createdAt: { type: 'string', required: false },
+  updatedAt: { type: 'string', required: false },
+  photos: { type: 'array', items: { type: 'object', fields: ITEM_PHOTO_FIELDS } },
+  expiresAt: { type: 'string', required: false },
+  viewCount: { type: 'integer', required: false },
+};
+
+const PAGE_ITEM_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: ITEM_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const ITEM_SUGGESTION_FIELDS = {
+  id: 'integer',
+  title: 'string',
+};
+
+const PRICE_HISTORY_POINT_FIELDS = {
+  priceCents: 'integer',
+  changedAt: 'string',
+};
+
+const MESSAGE_FIELDS = {
+  id: 'integer',
+  itemId: 'integer',
+  senderId: 'integer',
+  receiverId: 'integer',
+  body: 'string',
+  createdAt: 'string',
+  readAt: 'string',
+  editedAt: 'string',
+  deletedAt: 'string',
+  photoUrl: 'string',
+};
+
+const PAGE_MESSAGE_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: MESSAGE_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const NOTIFICATION_TYPE_ENUM = [
+  'ORDER_PAID',
+  'ORDER_SHIPPED',
+  'ORDER_COMPLETED',
+  'ORDER_REFUNDED',
+  'ORDER_CANCELLED',
+  'ORDER_EXPIRED',
+  'OFFER_ACCEPTED',
+  'OFFER_DECLINED',
+  'OFFER_COUNTERED',
+  'OFFER_COUNTER_ACCEPTED',
+  'OFFER_COUNTER_DECLINED',
+  'OFFER_EXPIRED',
+  'ORDER_DISPUTED',
+  'DISPUTE_RESOLVED_REFUND',
+  'DISPUTE_RESOLVED_RELEASE',
+  'LOGIN_NEW_DEVICE',
+  'SAVED_SEARCH_MATCH',
+  'FAVORITE_PRICE_DROP',
+  'REPORT_APPEAL_UPHELD',
+  'REPORT_APPEAL_REJECTED',
+  'SESSION_EVICTED',
+  'EMAIL_CHANGE_REQUESTED',
+  'TOTP_RESET_BY_ADMIN',
+  'PASSKEY_REGISTERED',
+  'PASSKEY_REMOVED',
+  'SELLER_NEW_LISTING',
+];
+
+const NOTIFICATION_FIELDS = {
+  id: 'integer',
+  type: { type: 'string', enum: NOTIFICATION_TYPE_ENUM },
+  orderId: 'integer',
+  offerId: 'integer',
+  savedSearchId: 'integer',
+  matchedListingCount: 'integer',
+  itemId: 'integer',
+  oldPriceCents: 'integer',
+  newPriceCents: 'integer',
+  appealId: 'integer',
+  createdAt: 'string',
+  readAt: 'string',
+};
+
+const PAGE_NOTIFICATION_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: NOTIFICATION_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const NOTIFICATION_PREFERENCE_FIELDS = {
+  type: { type: 'string', enum: NOTIFICATION_TYPE_ENUM },
+  label: 'string',
+  security: 'boolean',
+  enabled: 'boolean',
+};
+
+const STREAM_TICKET_FIELDS = {
+  ticket: 'string',
+};
+
+const REVIEW_FIELDS = {
+  id: 'integer',
+  orderId: 'integer',
+  buyerId: 'integer',
+  reviewerUsername: 'string',
+  sellerId: 'integer',
+  rating: 'integer',
+  body: 'string',
+  sellerResponse: 'string',
+  createdAt: 'string',
+};
+
+const PAGE_REVIEW_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: REVIEW_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
 };
 
 export const API_SHAPE_PINS = [
@@ -246,5 +411,177 @@ export const API_SHAPE_PINS = [
     path: '/api/orders/{id}/refund',
     request: { reason: 'string', amountCents: { type: 'integer', required: false } },
     response: ORDER_FIELDS,
+  },
+  // Items surface (second tranche, backlog #264).
+  {
+    method: 'GET',
+    path: '/api/items',
+    response: PAGE_ITEM_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/items/suggestions',
+    response: { type: 'array', items: { type: 'object', fields: ITEM_SUGGESTION_FIELDS } },
+  },
+  {
+    method: 'GET',
+    path: '/api/items/{id}',
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/items/{id}/price-history',
+    response: { type: 'array', items: { type: 'object', fields: PRICE_HISTORY_POINT_FIELDS } },
+  },
+  {
+    method: 'GET',
+    path: '/api/items/{id}/similar',
+    response: { type: 'array', items: { type: 'object', fields: ITEM_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/items',
+    request: {
+      title: 'string',
+      description: { type: 'string', required: false },
+      priceCents: 'integer',
+      categoryId: { type: 'integer', required: false },
+      // The SPA only ever sends AVAILABLE or DRAFT; any other value is
+      // 422 server-side, so the pin names exactly the values it sends.
+      status: { type: 'string', enum: ['AVAILABLE', 'DRAFT'], required: false },
+    },
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/items/{id}/photo',
+    // Multipart form: the SPA posts FormData with a single `file`
+    // part; springdoc documents the part as a string (binary) field.
+    request: { file: 'string' },
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'PUT',
+    path: '/api/items/{id}/photos/order',
+    request: { photoIds: { type: 'array', items: 'integer' } },
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/items/{id}/renew',
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'PATCH',
+    path: '/api/items/{id}/status',
+    // The SPA only ever sends SOLD (useMarkSold hardcodes it).
+    request: { status: { type: 'string', enum: ['SOLD'] } },
+    response: ITEM_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/items/{id}/publish',
+    response: ITEM_FIELDS,
+  },
+  // Messages surface (second tranche, backlog #264).
+  {
+    method: 'GET',
+    path: '/api/messages',
+    response: PAGE_MESSAGE_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/messages/unread-count',
+    response: 'integer',
+  },
+  {
+    method: 'POST',
+    path: '/api/messages',
+    request: { itemId: 'integer', receiverId: 'integer', body: 'string' },
+    response: MESSAGE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/messages/photo',
+    // Multipart twin of the JSON send: the same three fields plus
+    // the `file` part (the sender is the JWT principal, never a field).
+    // springdoc models the @RequestParam scalars as query parameters
+    // and only `file` in the multipart schema — the gate checks the
+    // union of both (see checkShapeDrift), so all four are pinned.
+    request: { itemId: 'integer', receiverId: 'integer', body: 'string', file: 'string' },
+    response: MESSAGE_FIELDS,
+  },
+  {
+    method: 'PUT',
+    path: '/api/messages/{id}',
+    request: { body: 'string' },
+    response: MESSAGE_FIELDS,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/messages/{id}',
+    response: MESSAGE_FIELDS,
+  },
+  // Notifications surface (second tranche, backlog #264). The SSE
+  // stream and the row delete carry no pinnable body (see header).
+  {
+    method: 'GET',
+    path: '/api/notifications',
+    response: PAGE_NOTIFICATION_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/notifications/unread-count',
+    response: 'integer',
+  },
+  {
+    method: 'POST',
+    path: '/api/notifications/stream-ticket',
+    response: STREAM_TICKET_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/notifications/preferences',
+    response: { type: 'array', items: { type: 'object', fields: NOTIFICATION_PREFERENCE_FIELDS } },
+  },
+  {
+    method: 'PUT',
+    path: '/api/notifications/preferences/{type}',
+    request: { enabled: 'boolean' },
+    response: NOTIFICATION_PREFERENCE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/notifications/read-all',
+    response: 'integer',
+  },
+  {
+    method: 'POST',
+    path: '/api/notifications/{id}/read',
+    response: NOTIFICATION_FIELDS,
+  },
+  // Reviews surface (second tranche, backlog #264).
+  {
+    method: 'POST',
+    path: '/api/orders/{id}/review',
+    request: { rating: 'integer', body: { type: 'string', required: false } },
+    response: REVIEW_FIELDS,
+  },
+  {
+    method: 'PUT',
+    path: '/api/reviews/{id}/response',
+    request: { response: 'string' },
+    response: REVIEW_FIELDS,
+  },
+  {
+    method: 'PUT',
+    path: '/api/reviews/{id}',
+    request: { rating: 'integer', body: 'string' },
+    response: REVIEW_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/users/{id}/reviews',
+    response: PAGE_REVIEW_FIELDS,
   },
 ];
