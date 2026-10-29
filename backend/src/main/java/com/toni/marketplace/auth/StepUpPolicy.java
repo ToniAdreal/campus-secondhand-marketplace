@@ -11,7 +11,9 @@ import org.springframework.stereotype.Component;
  * presented access token carries a recent enough credential proof for
  * the sensitive set — sessions revoke-others, the data-export grant,
  * TOTP setup (backlog #250) and disable, account closure, passkey
- * enrolment/management, and username change (backlog #261).
+ * enrolment/management, username change (backlog #261), and the
+ * email-change request stage (backlog #272; the confirm step stays
+ * token-gated, the mailed token is its credential).
  *
  * <p>The proof instant is the token's {@code auth_time} claim (see
  * {@link JwtTokenService}), read from the request's

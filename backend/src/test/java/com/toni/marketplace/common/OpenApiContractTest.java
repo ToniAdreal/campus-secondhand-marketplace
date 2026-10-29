@@ -304,9 +304,10 @@ class OpenApiContractTest {
     // #261 adds the freshness gate's dedicated step-up 403.
     assertThat(responseCodes(docs, "/api/auth/username", "post"))
         .contains("200", "400", "401", "403", "409");
-    // Email change (#150) pins its wrong-password 401 and taken-address 409.
+    // Email change (#150) pins its wrong-password 401 and taken-address 409;
+    // #272 adds the freshness gate's dedicated step-up 403.
     assertThat(responseCodes(docs, "/api/auth/email-change", "post"))
-        .contains("400", "401", "409");
+        .contains("400", "401", "403", "409");
     // Pending email change (#208): the confirm pins its identical-token
     // 401, its taken-in-between 409 and its shared token-bucket 429.
     assertThat(responseCodes(docs, "/api/auth/email-change/confirm", "post"))

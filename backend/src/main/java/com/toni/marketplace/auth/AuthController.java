@@ -561,8 +561,12 @@ public class AuthController {
 
   /**
    * Requests an email change (backlog #150, reworked by #208,
-   * authenticated \u2014 SecurityConfig). The current password proves
-   * possession (wrong \u2192 the identical 401); a taken address \u2014 or
+   * authenticated \u2014 SecurityConfig). Backlog #272 gates the request
+   * on a fresh credential proof like the username change (#261): a
+   * stale token answers the dedicated 403 step-up envelope and stages
+   * nothing (re-prove at {@code POST /api/auth/step-up} and retry).
+   * The current password proves possession (wrong \u2192 the identical
+   * 401); a taken address \u2014 or
    * the caller's own current one \u2014 is a 409, checked again at
    * confirm time. On success NOTHING switches yet: the new address is
    * staged as pending, a single-use token is mailed to the NEW
@@ -571,7 +575,7 @@ public class AuthController {
    * plain 200 envelope and no cookie is cleared. The switch happens
    * only at {@code POST /api/auth/email-change/confirm}.
    */
-  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "change staged as pending; a single-use token was mailed to the new address \u2014 the switch happens at confirm (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure \u2014 malformed new address (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong current password \u2014 identical to a bad login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "new address already registered, or equal to the current address (envelope)")})
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "change staged as pending; a single-use token was mailed to the new address \u2014 the switch happens at confirm (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "validation failure \u2014 malformed new address (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "wrong current password \u2014 identical to a bad login (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "stale credential proof \u2014 dedicated step-up envelope, nothing staged (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "new address already registered, or equal to the current address (envelope)")})
   @PostMapping("/email-change")
   public ResponseEntity<ApiResponse<Void>> changeEmail(
       @AuthenticationPrincipal Long userId,

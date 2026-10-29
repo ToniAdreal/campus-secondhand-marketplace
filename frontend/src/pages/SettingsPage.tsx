@@ -93,6 +93,12 @@ function describeUsernameChangeError(err: unknown): string {
   return 'Username change failed';
 }
 
+/**
+ * Maps a failed change-email call to UI copy (backlog #150, step-up
+ * retry #272). A step-up 403 that survives the modal's single retry
+ * reaches here verbatim — the dialog itself only opens on the first
+ * 403; the 401/409 mappings above are unchanged.
+ */
 function describeEmailChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   if (axios.isAxiosError(err)) {
@@ -204,6 +210,16 @@ export default function SettingsPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailDone, setEmailDone] = useState<string | null>(null);
   const [emailPending, setEmailPending] = useState(false);
+  // Step-up re-auth (backlog #272, the username form's #261 pattern):
+  // a staged change whose token proof is stale answers the dedicated
+  // 403 step-up envelope — the dialog below re-proves and the saved
+  // target retries exactly once. The retry flag is structural, like
+  // the username form's: a second 403 surfaces as a real error
+  // instead of reopening the dialog. The password field is left in
+  // place on the 403 so the retry re-submits the same proof the user
+  // already typed; only a successful stage clears it.
+  const [emailStepUpOpen, setEmailStepUpOpen] = useState(false);
+  const [emailStepUpTarget, setEmailStepUpTarget] = useState<string | null>(null);
 
   // Two-factor enrollment (backlog #100). The recovery codes live ONLY in
   // this state, straight from the enable response — they are shown once
@@ -308,27 +324,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function attemptChangeEmail(target: string, isRetry: boolean) {
+    setEmailPending(true);
+    setEmailError(null);
+    try {
+      await changeEmail({ currentPassword: emailPassword, newEmail: target });
+      // Backlog #208: nothing has switched yet — the session stays
+      // alive until the mailed link is confirmed, so the credential
+      // stays in place and only the form gives way to the pending panel.
+      setEmailPassword('');
+      setEmailStepUpTarget(null);
+      setEmailDone(target);
+    } catch (err) {
+      // Backlog #272: a stale proof opens the re-auth dialog instead
+      // of an error banner; the target is kept so the modal's retry
+      // re-submits exactly the address the user typed.
+      if (isStepUpRequired(err) && !isRetry) {
+        setEmailStepUpTarget(target);
+        setEmailStepUpOpen(true);
+        return;
+      }
+      setEmailError(describeEmailChangeError(err));
+    } finally {
+      setEmailPending(false);
+    }
+  }
+
   async function onChangeEmail(e: FormEvent) {
     e.preventDefault();
     if (newEmail.trim() === '' || emailPassword === '') {
       setEmailError('Enter the new email address and your current password.');
       return;
     }
-    setEmailPending(true);
-    setEmailError(null);
-    try {
-      const target = newEmail.trim();
-      await changeEmail({ currentPassword: emailPassword, newEmail: target });
-      // Backlog #208: nothing has switched yet — the session stays
-      // alive until the mailed link is confirmed, so the credential
-      // stays in place and only the form gives way to the pending panel.
-      setEmailPassword('');
-      setEmailDone(target);
-    } catch (err) {
-      setEmailError(describeEmailChangeError(err));
-    } finally {
-      setEmailPending(false);
-    }
+    await attemptChangeEmail(newEmail.trim(), false);
   }
 
   async function attemptChangeUsername(target: string, isRetry: boolean) {
@@ -1066,6 +1094,18 @@ export default function SettingsPage() {
           }
         }}
         onCancel={() => setUsernameStepUpOpen(false)}
+      />
+      <StepUpModal
+        open={emailStepUpOpen}
+        totpEnabled={user.totpEnabled ?? false}
+        actionLabel="change your email address"
+        onProven={() => {
+          setEmailStepUpOpen(false);
+          if (emailStepUpTarget !== null) {
+            void attemptChangeEmail(emailStepUpTarget, true);
+          }
+        }}
+        onCancel={() => setEmailStepUpOpen(false)}
       />
     </div>
   );

@@ -338,6 +338,78 @@ describe('SettingsPage', () => {
     expect(alert.textContent).toBe('email is already registered');
   });
 
+  it('opens the re-auth dialog on a change-email step-up 403 and retries exactly once after proving (backlog #272)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockResolvedValueOnce(envelope(null));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New email address'), {
+      target: { value: 'toni.new@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm with current password'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change email' }));
+
+    // the step-up dialog opens instead of an error banner
+    const dialog = await screen.findByRole('dialog');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // the page's own password form shares the "Current password" label,
+    // so the modal's field is addressed inside the dialog
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // proof posted, token swapped, the same staged change retried exactly once
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/auth/step-up', { currentPassword: 'pw' }),
+    );
+    expect(getAccessToken()).toBe('fresh-token');
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Check your new inbox');
+    expect(status.textContent).toContain('toni.new@example.com');
+    expect(postSpy).toHaveBeenCalledTimes(3); // attempt + proof + the single retry
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a second step-up 403 on the email retry surfaces as an error instead of reopening the dialog (backlog #272)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage));
+    renderAt('/settings');
+    fireEvent.change(screen.getByLabelText('New email address'), {
+      target: { value: 'toni.new@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm with current password'), {
+      target: { value: 'old-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change email' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // exactly one retry happened; its 403 surfaces verbatim, no dialog loop
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('re-authentication required');
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('posts the change-username payload, swaps the stored user and keeps the session alive (backlog #256)', async () => {
     postSpy.mockResolvedValueOnce(
       envelope({ id: 5, username: 'toni2', email: 'toni@example.com', roles: ['USER'] }),

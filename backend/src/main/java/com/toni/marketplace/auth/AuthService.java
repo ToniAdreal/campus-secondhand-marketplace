@@ -2008,7 +2008,15 @@ public class AuthService {
    *
    * <p>Proof discipline mirrors {@link #changePassword}: the current
    * password is required and a wrong one produces the identical 401 as
-   * a bad login, so no oracle leaks. The new address is canonicalized
+   * a bad login, so no oracle leaks. Backlog #272 additionally gates
+   * the request on a fresh credential proof
+   * ({@link StepUpPolicy#requireFresh}, first line, before any staging)
+   * — a stale token answers the dedicated 403 step-up envelope and
+   * stages nothing, closing the asymmetry with the username change
+   * (#261): without the gate a password-only compromise could stage a
+   * change to an attacker-controlled inbox and confirm it from the
+   * mailed token. The confirm step stays token-gated exactly as-is.
+   * The new address is canonicalized
    * exactly like registration and uniqueness-checked (taken \u2192 409,
    * the register envelope); re-submitting the account's own current
    * address is likewise a 409 \u2014 it is not a change. Uniqueness is
@@ -2038,6 +2046,15 @@ public class AuthService {
    */
   @Transactional
   public void changeEmail(long userId, String currentPassword, String newEmail) {
+    // Backlog #272: the request stage is freshness-gated like the
+    // username change (#261) — the gate runs FIRST, before any row is
+    // staged, any token minted or any mail sent, so a refused request
+    // leaves pendingEmail and any prior token untouched. The current
+    // password in the body is not a step-up proof: a TOTP-enrolled
+    // account's stale token is refused even with the right password,
+    // and only a fresh proof (a recent login, a TOTP-completed login,
+    // or POST /api/auth/step-up) lets the request through.
+    stepUp().requireFresh();
     User user = users.findById(userId).orElseThrow(InvalidCredentialsException::new);
     if (!passwords.matches(currentPassword, user.getPasswordHash())) {
       throw new InvalidCredentialsException();
