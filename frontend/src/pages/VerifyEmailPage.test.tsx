@@ -138,6 +138,32 @@ describe('VerifyEmailPage', () => {
     expect(await screen.findByText(/could not resend the verification link/i)).toBeTruthy();
   });
 
+  it('resend 429 with Retry-After shows the wait copy, not the generic copy (backlog #265)', async () => {
+    await renderFailed();
+
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'alice@example.com' },
+    });
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        headers: { 'Retry-After': '45' },
+        data: { code: 429, message: 'rate limit exceeded', data: null },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /resend verification link/i }));
+
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/auth/email-verification/resend', {
+        email: 'alice@example.com',
+      }),
+    );
+    expect(
+      await screen.findByText(/too many attempts — try again in 45 seconds/i),
+    ).toBeTruthy();
+  });
+
   it('confirms an email-change token through the fallback (backlog #208)', async () => {
     postSpy.mockRejectedValueOnce(
       axiosFailure(400, 'invalid or expired verification token'),

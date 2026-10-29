@@ -5,6 +5,7 @@ import {
   confirmEmailVerification,
   resendEmailVerification,
 } from '../api/auth';
+import { throttleWaitCopy } from './authThrottle';
 
 type ConfirmState = 'confirming' | 'confirmed' | 'failed';
 
@@ -28,6 +29,9 @@ type ConfirmState = 'confirming' | 'confirmed' | 'failed';
  * copy is the same "check your inbox" confirmation RegisterPage renders,
  * whatever the address's state; a failure maps to one generic error copy
  * and never to an account-state hint.
+ * Backlog #265: the resend endpoint shares the per-IP verification
+ * bucket, so a 429 carrying Retry-After renders the wait copy instead of
+ * that generic copy; a 429 without a usable header keeps the generic copy.
  */
 export default function VerifyEmailPage() {
   const [searchParams] = useSearchParams();
@@ -48,8 +52,10 @@ export default function VerifyEmailPage() {
     try {
       await resendEmailVerification({ email: address });
       setResent(true);
-    } catch {
-      setResendError('Could not resend the verification link');
+    } catch (err) {
+      setResendError(
+        throttleWaitCopy(err) ?? 'Could not resend the verification link',
+      );
     } finally {
       setResending(false);
     }

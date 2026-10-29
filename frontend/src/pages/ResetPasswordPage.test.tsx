@@ -115,6 +115,35 @@ describe('ResetPasswordPage', () => {
     expect(screen.queryByText('login page stub')).toBeNull();
   });
 
+  it('a 429 with Retry-After shows the wait copy (backlog #265)', async () => {
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        headers: { 'Retry-After': '60' },
+        data: { code: 429, message: 'too many requests', data: null },
+      },
+    });
+    renderAt('/reset-password?token=<redacted>');
+    fill('new-strong-secret-1', 'new-strong-secret-1');
+    fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Too many attempts — try again in 60 seconds',
+    );
+    expect(screen.queryByText('login page stub')).toBeNull();
+  });
+
+  it('a 429 without Retry-After keeps the envelope message (backlog #265)', async () => {
+    postSpy.mockRejectedValueOnce(axiosFailure(429, 'too many requests'));
+    renderAt('/reset-password?token=<redacted>');
+    fill('new-strong-secret-1', 'new-strong-secret-1');
+    fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('too many requests');
+    expect(screen.queryByText('login page stub')).toBeNull();
+  });
+
   it('blocks mismatched passwords without calling the API', async () => {
     renderAt('/reset-password?token=raw-token-abc');
     fill('new-strong-secret-1', 'different-secret-1');

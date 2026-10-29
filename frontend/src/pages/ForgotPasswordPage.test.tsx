@@ -94,4 +94,26 @@ describe('ForgotPasswordPage', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('too many requests');
     expect(screen.queryByRole('status')).toBeNull();
   });
+
+  it('a 429 with Retry-After shows the wait copy, not the envelope message (backlog #265)', async () => {
+    postSpy.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: {
+        status: 429,
+        headers: { 'Retry-After': '30' },
+        data: { code: 429, message: 'too many requests', data: null },
+      },
+    });
+    renderAt();
+
+    fireEvent.change(screen.getByLabelText(/username or email/i), {
+      target: { value: 'toni' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /request reset link/i }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Too many attempts — try again in 30 seconds',
+    );
+    expect(screen.queryByRole('status')).toBeNull();
+  });
 });

@@ -6,6 +6,7 @@ import {
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { confirmPasswordReset } from '../api/auth';
+import { throttleWaitCopy } from './authThrottle';
 
 /**
  * Maps a failed confirm call to UI copy (backlog #99). A weak new
@@ -13,9 +14,16 @@ import { confirmPasswordReset } from '../api/auth';
  * verbatim (mirroring SettingsPage's password-change mapping). Unknown,
  * used and expired tokens all fail with the backend's identical 401, so
  * they map to ONE generic message — the page must not distinguish them.
+ * Backlog #265: POST /api/auth/password-reset/confirm shares the per-IP
+ * reset bucket with the forgot-password request, so a 429 carrying
+ * Retry-After renders the wait copy first; a 429 without a usable header
+ * keeps the previous envelope-message mapping, and non-429 errors are
+ * unchanged.
  */
 function describeResetError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
+  const waitCopy = throttleWaitCopy(err);
+  if (waitCopy) return waitCopy;
   if (axios.isAxiosError(err)) {
     if (err.response?.status === 401) {
       return 'This reset link is invalid or has expired. Request a new one.';

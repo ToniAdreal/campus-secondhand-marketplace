@@ -6,10 +6,21 @@ import {
 import { type FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { requestPasswordReset } from '../api/auth';
+import { throttleWaitCopy } from './authThrottle';
 
-/** Reads the human message out of the backend {code,message,data} envelope. */
+/**
+ * Reads the human message out of the backend {code,message,data} envelope.
+ * Backlog #265: a 429 carrying Retry-After renders the wait copy (the same
+ * throttleWaitCopy Login/Register use) instead of the envelope message —
+ * POST /api/auth/password-reset shares the per-IP reset bucket, so this
+ * form throttles exactly like login. A 429 without a usable header keeps
+ * the pre-existing envelope-message mapping (pinned by test), and every
+ * other status keeps its previous mapping untouched.
+ */
 function envelopeMessage(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
+  const waitCopy = throttleWaitCopy(err);
+  if (waitCopy) return waitCopy;
   if (axios.isAxiosError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
