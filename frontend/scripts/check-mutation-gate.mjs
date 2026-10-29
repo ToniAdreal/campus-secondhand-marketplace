@@ -38,6 +38,46 @@ export function floorFor(score) {
   return Math.floor(score);
 }
 
+/**
+ * Stryker's mutation score for a report, in percent: killed mutants over
+ * all mutants (the same definition docs/mutation-frontend.md uses:
+ * 128/141 = 90.78%, NOT killed-over-covered). The report shape is the
+ * Stryker JSON reporter's `mutation.json`: `{ files: { "<path>": {
+ * mutants: [{ status }] } } }`, where status is Stryker's capitalized
+ * value (`Killed`, `Survived`, `NoCoverage`, `Timeout`, ...). Status
+ * comparison is case-insensitive so test fixtures can use either case.
+ * Ignored mutants are not counted: Stryker excludes them from its own
+ * score, and a fixture that ignores everything must not read as 0%.
+ * Throws on a report with no countable mutants, so an empty fixture
+ * fails loudly instead of passing as a vacuous 100% or 0%.
+ */
+export function mutationScoreFromReport(report) {
+  const files = report && typeof report === 'object' ? report.files : undefined;
+  if (!files || typeof files !== 'object') {
+    throw new Error('mutationScoreFromReport needs a Stryker report with a files map');
+  }
+  let killed = 0;
+  let total = 0;
+  for (const file of Object.values(files)) {
+    const mutants = file && Array.isArray(file.mutants) ? file.mutants : [];
+    for (const mutant of mutants) {
+      const status = typeof mutant?.status === 'string' ? mutant.status.toLowerCase() : '';
+      if (status === 'ignored') continue;
+      total += 1;
+      if (status === 'killed') killed += 1;
+    }
+  }
+  if (total === 0) {
+    throw new Error('mutationScoreFromReport found no countable mutants');
+  }
+  return (killed / total) * 100;
+}
+
+/** A report passes the gate exactly when its score meets the break floor. */
+export function reportPassesGate(report, breakThreshold) {
+  return mutationPasses(mutationScoreFromReport(report), breakThreshold);
+}
+
 /** Stryker's gate decision: the run passes exactly when score >= break. */
 export function mutationPasses(score, breakThreshold) {
   if (typeof score !== 'number' || !Number.isFinite(score)) {

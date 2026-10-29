@@ -1,14 +1,17 @@
-# Frontend mutation testing pilot (backlog #252)
+# Frontend mutation testing pilot (backlog #252, widened by #263)
 
 Line coverage (Vitest, gated in the `frontend` CI job since #247) proves
 code is *executed* by tests; it does not prove the tests would *notice*
-if the behaviour changed. This pilot runs Stryker over the purest store
-module in the codebase and measures exactly that, mirroring the backend
+if the behaviour changed. This pilot runs Stryker over the store modules
+in the codebase and measures exactly that, mirroring the backend
 PIT pilot (backlog #192, docs/mutation.md):
 
 - `frontend/src/store/useCartStore.ts` — the zustand cart store plus its
   pure helpers (`deriveCartIdempotencyKey`, `cartTotalCents`,
   `revalidateCartItems`, `checkoutCart`).
+- `frontend/src/store/useAuthStore.ts` (added by #263) — the zustand
+  auth store: token-in-memory + refresh-queue semantics via the client
+  interceptor, login/logout/hydrate with the TanStack cache clear.
 
 The driving tests are the cart-store unit suite plus the page suites
 that exercise the store through the cart page (`useCartStore.test.ts`,
@@ -28,8 +31,8 @@ npm run test:mutation --prefix frontend
 
 CI runs it in the dedicated `frontend-mutation` job. The Vitest runner
 always uses perTest coverage analysis and only runs tests related to
-the mutated file, so one mutant costs the cart-store suite, not the
-whole ~980-test suite.
+the mutated file, so one mutant costs the mutated file's suite, not the
+whole ~1000-test suite.
 
 Reports land in `frontend/reports/mutation/` (JSON; gitignored) and the
 CI job uploads them as the `stryker-reports` artifact on every run.
@@ -38,9 +41,12 @@ runs the script, config mutates existing files, `thresholds.break` is
 numeric); its tests (`check-mutation-gate.test.mjs`, vitest like the
 other frontend/scripts tests, run alone in the same job before the
 mutation run) prove the gate decision fails below the
-floor on synthetic scores. What the wiring check does NOT prove is the
-score itself — that is Stryker's job: `stryker run` exits non-zero when
-the measured score falls below `thresholds.break`.
+floor on synthetic scores — since #263 also via `mutationScoreFromReport` /
+`reportPassesGate` over a fixture shaped like Stryker's `mutation.json`
+(clean set passes, a deliberately weakened set fails). What the wiring
+check does NOT prove is the score itself — that is Stryker's job:
+`stryker run` exits non-zero when the measured score falls below
+`thresholds.break`.
 
 ## Score and floor
 
@@ -70,9 +76,10 @@ mutants.
 90.78%, and the floor is that score rounded **down** to a whole
 percent, so an identical rerun cannot fail on rounding. The floor is
 never set above the measured score. It is set against the **current**
-Stryker scope (the cart store only) — widening `mutate` to more api
-helpers / stores is future work, not done here, and will require
-re-measuring.
+Stryker scope (the cart store only) at #252 time; #263 widened the
+scope to the auth store and kept the floor at 90 — see "Floor decision
+(widened scope)" below. Widening `mutate` further still requires
+re-measuring first.
 
 ### Floor run (backlog #252)
 
@@ -80,12 +87,53 @@ The config with break 90 was re-executed locally on the same tree; the
 run passed (score 90.78, at the floor by construction: 90 <= 90.78).
 The next CI `frontend-mutation` run enforces the floor independently.
 
+### Second measured run (backlog #263) — auth store
+
+The auth store was measured separately first, with a temporary
+auth-only config at break 0 (measure first, floor second — the same
+discipline as #252; the temporary config was deleted after the run,
+never committed). Local run, 2026-10-29, head **ddae22a** (backlog
+#262) plus the #263 config/gate changes, which touch no auth-store
+source:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| `useAuthStore.ts` (19 mutants) | 94.74% (18/19) | 94.74% (18/19) |
+
+Mutant statuses: **KILLED 18, SURVIVED 1, NO_COVERAGE 0, TIMEOUT 0,
+ERROR 0.** Every mutant is covered, so the score and the test
+strength coincide — the one survivor is a genuine test gap, not an
+unreached path (see below).
+
+### Floor decision (widened scope)
+
+`thresholds.break` stays **90**: the cart-store floor is unchanged, not
+lowered to fit the new scope. The widened config was then re-executed
+locally at break 90 and passed: combined score **91.25% (146/160)** —
+cart 90.78% (128/141) reproduced exactly, auth 94.74% (18/19) — in
+4 minutes 46 seconds, with the same 7 survivors (6 cart + 1 auth) and
+7 no-coverage mutants as the two separate runs. 90 <= 91.25, so the
+unchanged floor still binds: a future widening that drops the combined
+score below 90 fails the gate, and any floor move still requires a
+fresh measured run first.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
 None is claimed killed here; none is labelled "equivalent". Killing
 them is follow-up work for a later backlog item, which must re-measure
 the score before touching the floor.
+
+### `useAuthStore.hydrate` — 1 (#263)
+
+- L81 ObjectLiteral (`set({ user: null })` → `set({})`): covered by
+  exactly one test, survived. The no-session hydrate test starts from
+  the logged-out state (user already null), so emptying the reset is
+  indistinguishable from performing it — a stale user would survive
+  the mutant unnoticed. Needs: log in first, then fail `hydrate`, and
+  assert the user is null afterwards (the mutant would leave the stale
+  user in place). Not labelled equivalent: the reset is load-bearing
+  for the post-logout / failed-restore state.
 
 ### `useCartStore.removeItem` — 1
 

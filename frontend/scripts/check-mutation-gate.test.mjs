@@ -15,7 +15,9 @@ import {
   extractJob,
   floorFor,
   mutationPasses,
+  mutationScoreFromReport,
   parseStrykerConfig,
+  reportPassesGate,
 } from './check-mutation-gate.mjs';
 
 // Vitest rewrites import.meta.url to a /@fs virtual path, so URL-based
@@ -46,12 +48,55 @@ describe('check-mutation-gate', () => {
     expect(job).toMatch(/check-mutation-gate\.mjs/);
   });
 
-  it('real config: mutates the cart store and declares a numeric break floor', () => {
+  it('real config: mutates the cart and auth stores and declares a numeric break floor', () => {
     const config = readRepo('frontend/stryker.config.mjs');
     const { mutate, breakThreshold } = parseStrykerConfig(config);
-    expect(mutate).toEqual(['src/store/useCartStore.ts']);
+    expect(mutate).toEqual(['src/store/useCartStore.ts', 'src/store/useAuthStore.ts']);
     expect(typeof breakThreshold).toBe('number');
-    expect(existsSync(join(repoRoot, 'frontend', 'src', 'store', 'useCartStore.ts'))).toBe(true);
+    for (const file of mutate) {
+      expect(existsSync(join(repoRoot, 'frontend', file))).toBe(true);
+    }
+  });
+
+  it('score-from-report: a clean-tree mutant set passes, a weakened set fails the floor', () => {
+    // Fixture shaped exactly like Stryker's mutation.json (files map of
+    // mutants with capitalized statuses). The clean set mirrors a
+    // passing run (every mutant killed); the weakened set is the same
+    // set with three mutants flipped to Survived/NoCoverage — the
+    // deliberately weakened mutant set the #263 spec asks the gate to
+    // reject, without re-running mutants to prove it.
+    const mutant = (status) => ({ status });
+    const cleanReport = {
+      files: {
+        'src/store/useAuthStore.ts': {
+          mutants: Array.from({ length: 10 }, () => mutant('Killed')),
+        },
+      },
+    };
+    const weakenedReport = {
+      files: {
+        'src/store/useAuthStore.ts': {
+          mutants: [
+            ...Array.from({ length: 7 }, () => mutant('Killed')),
+            mutant('Survived'),
+            mutant('Survived'),
+            mutant('NoCoverage'),
+          ],
+        },
+      },
+    };
+    expect(mutationScoreFromReport(cleanReport)).toBe(100);
+    expect(reportPassesGate(cleanReport, 90)).toBe(true);
+    expect(mutationScoreFromReport(weakenedReport)).toBe(70);
+    expect(reportPassesGate(weakenedReport, 90)).toBe(false);
+    // Ignored mutants do not drag the score, and an empty report fails
+    // loudly instead of passing vacuously.
+    const ignoredReport = {
+      files: { 'src/store/useAuthStore.ts': { mutants: [mutant('Killed'), mutant('Ignored')] } },
+    };
+    expect(mutationScoreFromReport(ignoredReport)).toBe(100);
+    expect(() => mutationScoreFromReport({ files: {} })).toThrow(/no countable mutants/);
+    expect(() => mutationScoreFromReport({})).toThrow(/files map/);
   });
 
   it('gate decision: score at the floor passes, a tenth below it fails', () => {

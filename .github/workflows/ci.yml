@@ -84,8 +84,8 @@ jobs:
         run: node scripts/check-coverage-gate.mjs
 
   frontend-mutation:
-    # Frontend mutation pilot (backlog #252): Stryker over the cart
-    # store only (see frontend/stryker.config.mjs +
+    # Frontend mutation pilot (backlog #252, widened by #263): Stryker
+    # over the cart + auth stores (see frontend/stryker.config.mjs +
     # docs/mutation-frontend.md). The job fails below the config's
     # thresholds.break ratchet. The floor is the measured mutation
     # score of the pilot run, rounded DOWN to a whole percent so an
