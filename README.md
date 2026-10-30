@@ -207,6 +207,16 @@ auth/   ◀── message/                            (sender/receiver lookups)
 order/  ──╳── auth/ web classes                 (order never imports auth web
                                                 classes; shared needs go via
                                                 common/ types)
+dispute/, offer/, review/ ──╳── auth/ web classes
+                                                (same rule as order/, backlog #279:
+                                                these packages may still use auth/
+                                                domain types such as User and
+                                                UserRepository, never an auth
+                                                controller)
+common/ ──╳── dispute/ offer/ review/ notification/ moderation/ admin/
+                                                (kernel rule extended in #279:
+                                                common/ depends on no newer
+                                                package either)
 audit/  ──╳── auth/ item/ order/ message/ job/  (the trail is a leaf: it depends on
                                                 no domain package — its own repository,
                                                 a Clock, and common/ types only)

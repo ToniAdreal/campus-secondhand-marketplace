@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Package-layering guardrails (backlog #67; {@code audit/} rules added in
- * backlog #117). The build fails on violation.
+ * backlog #117; newer packages constrained in backlog #279). The build fails
+ * on violation.
  *
  * <p>Intended dependency direction (also documented in the README architecture
  * section):
@@ -23,11 +24,16 @@ import org.springframework.web.bind.annotation.RestController;
  * <ul>
  *   <li>{@code common/} is the shared kernel (envelope, exception types,
  *       global exception handler, filters, web config): it depends on no
- *       project package.
+ *       project package — including the newer {@code dispute/},
+ *       {@code offer/}, {@code review/}, {@code notification/},
+ *       {@code moderation/} and {@code admin/} packages (#279).
  *   <li>Each domain package ({@code auth/}, {@code item/}, {@code order/},
  *       {@code message/}) depends only on {@code common/} plus its own
  *       classes. {@code order/} in particular never reaches into
- *       {@code auth/} web classes.
+ *       {@code auth/} web classes; {@code dispute/}, {@code offer/} and
+ *       {@code review/} are held to the same rule (#279) — they may still
+ *       use {@code auth/} domain types (e.g. {@code User},
+ *       {@code UserRepository}), just never {@code auth/} web classes.
  *   <li>{@code audit/} (#98) is a leaf trail package: it depends only on
  *       {@code common/} plus its own repository and a {@link java.time.Clock}
  *       — never on a domain package. Domain services ({@code auth/},
@@ -63,7 +69,13 @@ class ArchitectureTest {
               "com.toni.marketplace.order..",
               "com.toni.marketplace.message..",
               "com.toni.marketplace.audit..",
-              "com.toni.marketplace.job..")
+              "com.toni.marketplace.job..",
+              "com.toni.marketplace.dispute..",
+              "com.toni.marketplace.offer..",
+              "com.toni.marketplace.review..",
+              "com.toni.marketplace.notification..",
+              "com.toni.marketplace.moderation..",
+              "com.toni.marketplace.admin..")
           .because("common/ is the shared kernel; domain knowledge flows inward to it, never out");
 
   @ArchTest
@@ -84,6 +96,21 @@ class ArchitectureTest {
           .should()
           .dependOnClassesThat(authRestControllers())
           .because("order/ must not reach into auth/ web classes; cross-domain needs go through common types");
+
+  @ArchTest
+  static final ArchRule dispute_offer_review_never_import_auth_web_classes =
+      noClasses()
+          .that()
+          .resideInAnyPackage(
+              "com.toni.marketplace.dispute..",
+              "com.toni.marketplace.offer..",
+              "com.toni.marketplace.review..")
+          .should()
+          .dependOnClassesThat(authRestControllers())
+          .because(
+              "dispute/, offer/ and review/ must not reach into auth/ web classes, mirroring"
+                  + " the order/ rule; cross-domain needs go through auth/ domain types or"
+                  + " common/ types, never through an auth controller");
 
   @ArchTest
   static final ArchRule audit_depends_on_no_domain_package =
