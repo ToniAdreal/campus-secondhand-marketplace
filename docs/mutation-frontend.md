@@ -1,4 +1,4 @@
-# Frontend mutation testing pilot (backlog #252, widened by #263)
+# Frontend mutation testing pilot (backlog #252, widened by #263 and #280)
 
 Line coverage (Vitest, gated in the `frontend` CI job since #247) proves
 code is *executed* by tests; it does not prove the tests would *notice*
@@ -12,6 +12,10 @@ PIT pilot (backlog #192, docs/mutation.md):
 - `frontend/src/store/useAuthStore.ts` (added by #263) — the zustand
   auth store: token-in-memory + refresh-queue semantics via the client
   interceptor, login/logout/hydrate with the TanStack cache clear.
+- `frontend/src/store/useThemeStore.ts` (added by #280) — the last
+  remaining zustand store: the preference initialised from storage
+  at creation, `setPreference` persisting + applying in one step.
+  With it, every zustand store in the codebase is now in scope.
 
 The driving tests are the cart-store unit suite plus the page suites
 that exercise the store through the cart page (`useCartStore.test.ts`,
@@ -116,6 +120,49 @@ cart 90.78% (128/141) reproduced exactly, auth 94.74% (18/19) — in
 unchanged floor still binds: a future widening that drops the combined
 score below 90 fails the gate, and any floor move still requires a
 fresh measured run first.
+
+### Third measured run (backlog #280) — theme store
+
+The theme store was measured separately first, with a temporary
+theme-only config at break 0 (measure first, floor second — the same
+discipline as #252 and #263; the temporary config was deleted after
+the run, never committed). Local run, 2026-10-30, head **6fe72e5**
+(backlog #279), break 0, duration 27 seconds.
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| `useThemeStore.ts` (5 mutants) | 100.00% (5/5) | 100.00% (5/5) |
+
+Mutant statuses: **KILLED 5, SURVIVED 0, NO_COVERAGE 0, TIMEOUT 0,
+ERROR 0.** The five mutants, with the test that killed each:
+
+- L27 ArrowFunction (the `create` callback → `() => undefined`):
+  killed by the first SettingsPage test, which renders the store
+  through the page — a static mutant, evaluated at module import.
+- L27 ObjectLiteral (initial state `{ preference }` → `{}`):
+  killed by the ThemeControl Dark test, which reads the store state
+  after picking a radio.
+- L29 BlockStatement (`setPreference` body emptied): killed by the
+  theme round-trip test (persist + repaint assertions).
+- L32 CallExpression (`setStoredTheme` call dropped): killed by the
+  ThemeControl Dark test (localStorage assertion).
+- L33 ObjectLiteral (`set({ preference })` → `set({})`): killed by
+  the ThemeControl Dark test (store-state assertion).
+
+No killing tests were needed: the theme store scores above the floor
+on its existing suite, so this item lands the measurement + the
+widened scope, not a lowered floor.
+
+### Floor decision (widened scope, second widening)
+
+`thresholds.break` stays **90**: the floor is unchanged, not lowered
+to fit the new scope. The widened config was then re-executed locally
+at break 90 and passed: combined score **91.52% (151/165)** — cart
+90.78% (128/141), auth 94.74% (18/19), theme 100.00% (5/5) — with the
+same 7 survivors (6 cart + 1 auth) and 7 no-coverage mutants as
+before, plus zero theme survivors. 90 <= 91.52, so the unchanged floor
+still binds. Every zustand store is now in scope; a future widening
+to api helpers still requires re-measuring first.
 
 ## Surviving mutants
 

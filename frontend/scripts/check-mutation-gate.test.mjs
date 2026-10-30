@@ -48,10 +48,14 @@ describe('check-mutation-gate', () => {
     expect(job).toMatch(/check-mutation-gate\.mjs/);
   });
 
-  it('real config: mutates the cart and auth stores and declares a numeric break floor', () => {
+  it('real config: mutates the cart, auth and theme stores and declares a numeric break floor', () => {
     const config = readRepo('frontend/stryker.config.mjs');
     const { mutate, breakThreshold } = parseStrykerConfig(config);
-    expect(mutate).toEqual(['src/store/useCartStore.ts', 'src/store/useAuthStore.ts']);
+    expect(mutate).toEqual([
+      'src/store/useCartStore.ts',
+      'src/store/useAuthStore.ts',
+      'src/store/useThemeStore.ts',
+    ]);
     expect(typeof breakThreshold).toBe('number');
     for (const file of mutate) {
       expect(existsSync(join(repoRoot, 'frontend', file))).toBe(true);
