@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271 and #274).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274 and #281).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -90,6 +90,22 @@
 // backend-only — the SPA's OrderDispute type does not carry it, so
 // it is not pinned. DisputeDto.previousStatus is pinned to the
 // frontend type's PAID/COMPLETED, not the backend enum's full range.
+//
+// Fourth tranche (backlog #281): the social graph — favorites,
+// follows, blocks, saved searches and recently-viewed, every
+// operation those five api modules call. The two listing reads
+// (favorites, recently-viewed) reuse ITEM_FIELDS: both answer the
+// same list-view ItemDto projection as GET /api/items. The seven
+// writes answer ApiResponseVoid and the SPA reads no body from any
+// of them, so each is pinned with a responseNote only, exactly like
+// the #274 evidence delete — listed explicitly as response-unpinned,
+// never silently checked. Note the blocks write paths: the SPA posts
+// and deletes /api/users/{id}/block, not /api/users/me/blocks/{id}
+// (the backlog's shorthand); the pins name the paths the modules
+// actually call. Nullable saved-search fields (keyword, categoryId,
+// min/max price) are pinned as their base types, required, per the
+// #264 nullable rule, and the create request pins all five filter
+// fields as required: false, mirroring SavedSearchInput's optionality.
 
 const AUTH_USER_FIELDS = {
   id: 'integer',
@@ -428,6 +444,31 @@ const DISPUTE_EVIDENCE_FIELDS = {
   disputeId: 'integer',
   uploaderId: 'integer',
   url: 'string',
+  createdAt: 'string',
+};
+
+const FOLLOWED_SELLER_FIELDS = {
+  sellerId: 'integer',
+  sellerUsername: 'string',
+  createdAt: 'string',
+};
+
+const BLOCKED_USER_FIELDS = {
+  blockedId: 'integer',
+  blockedUsername: 'string',
+  createdAt: 'string',
+};
+
+const SAVED_SEARCH_FIELDS = {
+  id: 'integer',
+  // Nullable in the SPA type (null = no filter on that dimension):
+  // pinned as the base type, required, per the #264 nullable rule.
+  keyword: 'string',
+  categoryId: 'integer',
+  minPriceCents: 'integer',
+  maxPriceCents: 'integer',
+  sort: 'string',
+  matchCount: 'integer',
   createdAt: 'string',
 };
 
@@ -829,5 +870,79 @@ export const API_SHAPE_PINS = [
     path: '/api/admin/disputes/{id}/resolve-release',
     request: { resolutionNote: 'string' },
     response: DISPUTE_FIELDS,
+  },
+  // Social graph (fourth tranche, backlog #281). The void writes
+  // carry a responseNote only (see header): the SPA reads no body.
+  {
+    method: 'GET',
+    path: '/api/users/me/favorites',
+    response: { type: 'array', items: { type: 'object', fields: ITEM_FIELDS } },
+  },
+  {
+    method: 'PUT',
+    path: '/api/users/me/favorites/{itemId}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'DELETE',
+    path: '/api/users/me/favorites/{itemId}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/users/me/follows',
+    response: { type: 'array', items: { type: 'object', fields: FOLLOWED_SELLER_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/users/me/follows/{sellerId}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'DELETE',
+    path: '/api/users/me/follows/{sellerId}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/users/me/blocks',
+    response: { type: 'array', items: { type: 'object', fields: BLOCKED_USER_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/users/{id}/block',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'DELETE',
+    path: '/api/users/{id}/block',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/users/me/saved-searches',
+    response: { type: 'array', items: { type: 'object', fields: SAVED_SEARCH_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/users/me/saved-searches',
+    request: {
+      keyword: { type: 'string', required: false },
+      categoryId: { type: 'integer', required: false },
+      minPriceCents: { type: 'integer', required: false },
+      maxPriceCents: { type: 'integer', required: false },
+      sort: { type: 'string', required: false },
+    },
+    response: SAVED_SEARCH_FIELDS,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/users/me/saved-searches/{id}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/users/me/recently-viewed',
+    response: { type: 'array', items: { type: 'object', fields: ITEM_FIELDS } },
   },
 ];

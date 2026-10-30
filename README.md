@@ -416,7 +416,9 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   also checks the pinned tranche in
   `frontend/scripts/api-shape-pins.mjs` (auth session core + orders
   surface, extended by backlog #264 to items/messages/notifications/
-  reviews, and by backlog #274 to offers/seller payouts/disputes)
+  reviews, by backlog #274 to offers/seller payouts/disputes, and by
+  backlog #281 to favorites/follows/blocks/saved-searches/
+  recently-viewed)
   and fails when a field the SPA reads or sends disappears
   from the document or changes type. Since backlog #271 the gate
   prefers the 2xx carriers (a success-only field disappearing from
@@ -427,12 +429,17 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   document by explicit annotation, not inferred. Backlog #274 extends
   that annotation fix to the offers/disputes controllers, whose
   actions previously carried error-only `@ApiResponses` and therefore
-  no typed success body for the gate to pin. Honest scope:
+  no typed success body for the gate to pin. Backlog #281 pins the
+  social graph the same way (the blocks writes pin the paths the SPA
+  actually calls, `/api/users/{id}/block`, not the backlog's
+  `/api/users/me/blocks/{id}` shorthand). Honest scope:
   unpinned surfaces (2FA/passkey/session/device auth) stay
   path+method-only, and the SSE stream, the notification row
   delete and the dispute evidence delete carry no pinnable body (the
   evidence delete is listed explicitly as response-unpinned in the
-  gate summary — see the pins file header).
+  gate summary — see the pins file header, as are the seven
+  social-graph void writes: favorite save/unsave, follow/unfollow,
+  block/unblock and saved-search delete, all ApiResponseVoid).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
