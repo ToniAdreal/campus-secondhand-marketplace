@@ -149,6 +149,25 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * {@code /report} POST keeps its #160 bucket; only the mutation shapes
  * land here.
  *
+ * <p>Social / money-adjacent creation writes ({@code POST
+ * /api/items/{id}/offers}, {@code POST /api/orders/{id}/review},
+ * {@code POST /api/orders/{id}/dispute}, {@code POST
+ * /api/disputes/{id}/evidence} and {@code POST
+ * /api/seller/reports/{id}/appeal}, backlog #282) share a
+ * per-<em>user</em> bucket (default 20/minute) on the same keying as
+ * the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: one account
+ * flooding the negotiation, review, dispute and appeal surfaces is
+ * one abuse shape, and these writes must neither consume nor be
+ * starved by the neighbouring write buckets. Deliberately NOT in
+ * this bucket: the offer lifecycle transitions ({@code
+ * /api/offers/{id}/accept}, {@code /decline}, {@code /counter} and
+ * friends), the ADMIN dispute/appeal resolutions and the seller
+ * review-response PUT — they are different abuse shapes and stay
+ * unthrottled, out of #282's scope, like #228's
+ * {@code /confirm-receipt} and {@code /handover-code/regenerate}
+ * siblings.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -251,6 +270,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter orderCreateLimiter;
   private final AuthRateLimiter orderTransitionLimiter;
   private final AuthRateLimiter itemMutationLimiter;
+  private final AuthRateLimiter socialWriteLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -280,6 +300,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter orderTransitionLimiter,
                              @Qualifier("itemMutationRateLimiter")
                                  AuthRateLimiter itemMutationLimiter,
+                             @Qualifier("socialWriteRateLimiter")
+                                 AuthRateLimiter socialWriteLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -298,6 +320,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.orderCreateLimiter = orderCreateLimiter;
     this.orderTransitionLimiter = orderTransitionLimiter;
     this.itemMutationLimiter = itemMutationLimiter;
+    this.socialWriteLimiter = socialWriteLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -373,6 +396,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // carries the listing id; the PATCH /status sibling is handled
       // above (it is not a POST).
       return !itemMutationLimiter.isEnabled();
+    }
+    if (isSocialWritePath(path)) {
+      // Social / money-adjacent creation writes (backlog #282):
+      // own per-user bucket on the message keying, never reset on
+      // success — a filed offer, review, dispute, evidence photo or
+      // appeal must not refill the allowance. Shape-matched because
+      // every path carries an id segment.
+      return !socialWriteLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -535,6 +566,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isSocialWritePath(path)) {
+      // Social / money-adjacent creation writes (backlog #282):
+      // own per-user bucket on the message keying (JWT principal id,
+      // per-IP fallback for a missing/invalid token — the security
+      // chain 401s anonymous writes, but anonymous hammering is still
+      // throttled), never reset on success — a filed offer, review,
+      // dispute, evidence photo or appeal must not refill the
+      // allowance, and this traffic must not touch the neighbouring
+      // write buckets.
+      String key = messageKey(request);
+      if (!socialWriteLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, socialWriteLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       // Password reset (backlog #90): both endpoints share one per-IP
       // bucket — the request endpoint is a mail-bombing surface, the
@@ -623,6 +671,28 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isReportPath(String path) {
     return path != null && path.matches("/api/items/\\d+/report");
+  }
+
+  /**
+   * True for the social / money-adjacent creation writes (backlog
+   * #282): {@code POST /api/items/{id}/offers}, {@code POST
+   * /api/orders/{id}/review}, {@code POST /api/orders/{id}/dispute},
+   * {@code POST /api/disputes/{id}/evidence} and {@code POST
+   * /api/seller/reports/{id}/appeal}. Every id segment is numeric,
+   * which keeps the sibling shapes out: the collection POSTs
+   * ({@code /api/items}, {@code /api/orders}), the {@code /report}
+   * POST, the item mutation POSTs and the order transition POSTs
+   * all have their own buckets (or, for the offer lifecycle and
+   * ADMIN resolution POSTs, no bucket by #282's scope), and the
+   * evidence GET/DELETE siblings are not POSTs at all.
+   */
+  private static boolean isSocialWritePath(String path) {
+    return path != null
+        && (path.matches("/api/items/\\d+/offers")
+            || path.matches("/api/orders/\\d+/review")
+            || path.matches("/api/orders/\\d+/dispute")
+            || path.matches("/api/disputes/\\d+/evidence")
+            || path.matches("/api/seller/reports/\\d+/appeal"));
   }
 
   /**

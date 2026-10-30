@@ -263,6 +263,28 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the social / money-adjacent creation
+   * writes (backlog #282): {@code POST /api/items/{id}/offers},
+   * {@code POST /api/orders/{id}/review}, {@code POST
+   * /api/orders/{id}/dispute}, {@code POST
+   * /api/disputes/{id}/evidence} and {@code POST
+   * /api/seller/reports/{id}/appeal} share it (default 20
+   * writes/minute per authenticated user). Keyed on the JWT
+   * principal id like the message/report buckets — the abuse
+   * surface is one account flooding the negotiation, review,
+   * dispute and appeal surfaces, not an IP — and it neither
+   * consumes nor starves the neighbouring write buckets. Never
+   * resets on success.
+   */
+  @Bean
+  public AuthRateLimiter socialWriteRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties socialProps = new AuthRateLimitProperties();
+    socialProps.setEnabled(props.isEnabled());
+    socialProps.setAttemptsPerMinute(props.getSocialWriteAttemptsPerMinute());
+    return new AuthRateLimiter(clock, socialProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

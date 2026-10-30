@@ -360,4 +360,34 @@ public class AuthRateLimitProperties {
   public void setItemMutationAttemptsPerMinute(int itemMutationAttemptsPerMinute) {
     this.itemMutationAttemptsPerMinute = itemMutationAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the social /
+   * money-adjacent creation writes (backlog #282): {@code POST
+   * /api/items/{id}/offers}, {@code POST /api/orders/{id}/review},
+   * {@code POST /api/orders/{id}/dispute}, {@code POST
+   * /api/disputes/{id}/evidence} and {@code POST
+   * /api/seller/reports/{id}/appeal} share this one bucket. Same
+   * keying as the other per-user buckets (per-IP fallback for
+   * anonymous requests). The five shapes share one bucket because
+   * they are one abuse shape — one account flooding the
+   * negotiation, review, dispute and appeal surfaces — and the
+   * bucket must neither consume nor be starved by the neighbouring
+   * write buckets (messages, reports, listing/order creation,
+   * order transitions, item mutations). Sized at 20/min: a
+   * legitimate user files a handful of these writes per minute
+   * (an evidence burst is a few photos), while a script flooding
+   * offers or disputes at volume is the throttle target. Never
+   * resets on success. Must be &ge; 1.
+   */
+  private int socialWriteAttemptsPerMinute = 20;
+
+  public int getSocialWriteAttemptsPerMinute() {
+    return socialWriteAttemptsPerMinute;
+  }
+
+  public void setSocialWriteAttemptsPerMinute(int socialWriteAttemptsPerMinute) {
+    this.socialWriteAttemptsPerMinute = socialWriteAttemptsPerMinute;
+  }
 }
