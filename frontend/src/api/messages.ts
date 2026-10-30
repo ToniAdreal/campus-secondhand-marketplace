@@ -41,6 +41,7 @@ export const messageKeys = {
   all: ['messages'] as const,
   thread: (itemId: number) => [...messageKeys.all, 'thread', itemId] as const,
   unreadCount: ['messages', 'unread-count'] as const,
+  search: (q: string) => [...messageKeys.all, 'search', q] as const,
 };
 
 /**
@@ -84,6 +85,34 @@ export function useUnreadMessageCount(enabled = true) {
         .get<ApiResponse<number>>('/messages/unread-count')
         .then((res) => res.data.data),
     enabled,
+  });
+}
+
+/**
+ * GET /api/messages/search — cross-thread search over the caller's own
+ * threads (backlog #260, surfaced by #273). Sent + received, body text
+ * only, soft-deleted rows excluded, blocked participants NOT filtered
+ * (the #260 thread-read rule). Page 0 is the newest page, chronological
+ * within the page, like the thread endpoint. A blank query never fires:
+ * the backend answers an empty page for it, and the page renders the
+ * empty state instead — no request, no error. The size is clamped into
+ * the backend's [1, 50] window so a caller can never ask for more than
+ * the cap (the default 20 is unchanged).
+ */
+export function useMessageSearch(q: string, size = 20, enabled = true) {
+  const clampedSize = Math.min(50, Math.max(1, size));
+  const committed = q.trim();
+  return useInfiniteQuery({
+    queryKey: messageKeys.search(committed),
+    queryFn: ({ pageParam = 0 }) =>
+      api
+        .get<ApiResponse<Page<Message>>>('/messages/search', {
+          params: { q: committed, page: pageParam, size: clampedSize },
+        })
+        .then((res) => res.data.data),
+    getNextPageParam: (lastPage) =>
+      lastPage.number + 1 < lastPage.totalPages ? lastPage.number + 1 : undefined,
+    enabled: enabled && committed !== '',
   });
 }
 

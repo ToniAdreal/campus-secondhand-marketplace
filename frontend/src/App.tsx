@@ -58,6 +58,9 @@ function AuthNav() {
       <Link to="/favorites" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Favorites
       </Link>
+      <Link to="/messages" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
+        Messages
+      </Link>
       <Link to="/notifications" className="text-sm text-neutral-600 transition hover:text-apple-ink dark:text-neutral-400 dark:hover:text-white">
         Notifications
         {unreadNotifications !== undefined && unreadNotifications > 0 && (

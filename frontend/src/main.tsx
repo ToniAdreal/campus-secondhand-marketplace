@@ -26,6 +26,7 @@ const MyOrdersPage = lazy(() => import('./pages/MyOrdersPage'));
 const OffersPage = lazy(() => import('./pages/OffersPage'));
 const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'));
+const MessageSearchPage = lazy(() => import('./pages/MessageSearchPage'));
 const MyListingsPage = lazy(() => import('./pages/MyListingsPage'));
 const OrderConfirmationPage = lazy(() => import('./pages/OrderConfirmationPage'));
 const SessionsPage = lazy(() => import('./pages/SessionsPage'));
@@ -57,6 +58,7 @@ const router = createBrowserRouter([
       { path: 'offers', element: <OffersPage /> },
       { path: 'favorites', element: <FavoritesPage /> },
       { path: 'notifications', element: <NotificationsPage /> },
+      { path: 'messages', element: <MessageSearchPage /> },
       { path: 'my-listings', element: <MyListingsPage /> },
       { path: 'orders/:id', element: <OrderConfirmationPage /> },
       { path: 'seller/orders', element: <SellerOrdersPage /> },
