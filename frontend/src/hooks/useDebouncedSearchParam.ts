@@ -21,6 +21,13 @@ import { useSearchParams } from 'react-router-dom';
  * changing a filter drops the pagination param and the list restarts at
  * page 0 instead of stranding the reader on a page the new result set
  * may not have. Callers that do not paginate simply omit the option.
+ *
+ * The input also re-syncs when the URL moves underneath it (browser
+ * back/forward, or another component writing the param): without this
+ * the box kept showing the old term while the list already followed
+ * the new URL. The sync is skipped while a debounce timer is pending
+ * so a sibling param commit cannot wipe text the user is still typing;
+ * the pending commit then wins, as before.
  */
 export function useDebouncedSearchParam(
   param = 'q',
@@ -39,6 +46,15 @@ export function useDebouncedSearchParam(
     },
     [],
   );
+
+  // Re-sync the input when the URL moves underneath the hook (see the
+  // javadoc). A commit of this hook's own value also passes through
+  // here; it only normalises the input to the trimmed URL value.
+  useEffect(() => {
+    if (timer.current === null) {
+      setInput(searchParams.get(param) ?? '');
+    }
+  }, [searchParams, param]);
 
   const update = (value: string) => {
     setInput(value);
