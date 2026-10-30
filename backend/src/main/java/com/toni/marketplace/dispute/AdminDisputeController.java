@@ -44,6 +44,8 @@ class AdminDisputeController {
    * as the tie-break; the #75 global cap clamps oversized sizes.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "dispute queue page (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",

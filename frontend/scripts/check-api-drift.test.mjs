@@ -1112,3 +1112,435 @@ describe('shape gate CLI fixture (#264 tranche)', () => {
     expect(passed.stdout).toMatch(/No API shape drift/);
   });
 });
+
+// Shape pinning, third tranche (backlog #274): offers + seller
+// payouts + disputes. The fixture document mirrors the post-#274
+// backend: every annotated action carries its own bare 200 envelope
+// (the pre-#274 error-only @ApiResponses are gone), the evidence
+// upload is multipart with only the `file` part in the body schema,
+// and the evidence list answers a bare array in the envelope.
+
+const OFFER_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    itemId: { type: 'integer' },
+    buyerId: { type: 'integer' },
+    sellerId: { type: 'integer' },
+    priceCents: { type: 'integer' },
+    counterPriceCents: { type: 'integer' },
+    status: {
+      type: 'string',
+      enum: ['PENDING', 'COUNTERED', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN'],
+    },
+    orderId: { type: 'integer' },
+    expiresAt: { type: 'string' },
+    createdAt: { type: 'string' },
+  },
+};
+
+const PAYOUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    orderId: { type: 'integer' },
+    sellerId: { type: 'integer' },
+    amountCents: { type: 'integer' },
+    adjustmentsCents: { type: 'integer' },
+    netCents: { type: 'integer' },
+    status: { type: 'string', enum: ['PENDING', 'PAYABLE', 'PAID'] },
+    createdAt: { type: 'string' },
+    payableAt: { type: 'string' },
+    paidAt: { type: 'string' },
+  },
+};
+
+const PAYOUT_TOTALS_SCHEMA = {
+  type: 'object',
+  properties: {
+    pendingCount: { type: 'integer' },
+    pendingCents: { type: 'integer' },
+    payableCount: { type: 'integer' },
+    payableCents: { type: 'integer' },
+    paidCount: { type: 'integer' },
+    paidCents: { type: 'integer' },
+    adjustmentsCents: { type: 'integer' },
+    netCents: { type: 'integer' },
+  },
+};
+
+const DISPUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    orderId: { type: 'integer' },
+    buyerId: { type: 'integer' },
+    sellerId: { type: 'integer' },
+    reason: { type: 'string' },
+    status: { type: 'string', enum: ['OPEN', 'RESOLVED_REFUND', 'RESOLVED_RELEASE'] },
+    previousStatus: { type: 'string', enum: ['PAID', 'COMPLETED'] },
+    listingRestored: { type: 'boolean' },
+    createdAt: { type: 'string' },
+    resolvedAt: { type: 'string' },
+    resolutionNote: { type: 'string' },
+  },
+};
+
+const EVIDENCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    disputeId: { type: 'integer' },
+    uploaderId: { type: 'integer' },
+    url: { type: 'string' },
+    createdAt: { type: 'string' },
+  },
+};
+
+function tranche274Spec(overrides = {}) {
+  const schemas = {
+    ApiResponseOffer: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { $ref: '#/components/schemas/Offer' },
+      },
+    },
+    Offer: overrides.offer ?? OFFER_SCHEMA,
+    ApiResponsePagePayout: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { $ref: '#/components/schemas/PagePayout' },
+      },
+    },
+    PagePayout: {
+      type: 'object',
+      properties: {
+        content: { type: 'array', items: { $ref: '#/components/schemas/Payout' } },
+        totalElements: { type: 'integer' },
+        totalPages: { type: 'integer' },
+        number: { type: 'integer' },
+      },
+    },
+    Payout: overrides.payout ?? PAYOUT_SCHEMA,
+    ApiResponseTotals: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { $ref: '#/components/schemas/PayoutTotals' },
+      },
+    },
+    PayoutTotals: overrides.totals ?? PAYOUT_TOTALS_SCHEMA,
+    ApiResponseDispute: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { $ref: '#/components/schemas/Dispute' },
+      },
+    },
+    Dispute: overrides.dispute ?? DISPUTE_SCHEMA,
+    ApiResponseListEvidence: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { type: 'array', items: { $ref: '#/components/schemas/Evidence' } },
+      },
+    },
+    ApiResponseEvidence: {
+      type: 'object',
+      properties: {
+        code: { type: 'integer' },
+        message: { type: 'string' },
+        data: { $ref: '#/components/schemas/Evidence' },
+      },
+    },
+    Evidence: overrides.evidence ?? EVIDENCE_SCHEMA,
+    OfferCreate: {
+      type: 'object',
+      properties: { priceCents: { type: 'integer' } },
+    },
+    DisputeCreate: {
+      type: 'object',
+      properties: { reason: { type: 'string' } },
+    },
+    DisputeResolve: {
+      type: 'object',
+      properties: { resolutionNote: { type: 'string' } },
+    },
+  };
+  const envelope = (name) => ({
+    content: { '*/*': { schema: { $ref: `#/components/schemas/${name}` } } },
+  });
+  return {
+    paths: {
+      '/api/items/{itemId}/offers': {
+        post: {
+          requestBody: {
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/OfferCreate' } } },
+          },
+          responses: { 200: envelope('ApiResponseOffer'), 422: envelope('ApiResponseOffer') },
+        },
+      },
+      '/api/offers/{id}/accept': {
+        post: { responses: { 200: envelope('ApiResponseOffer'), 422: envelope('ApiResponseOffer') } },
+      },
+      '/api/seller/payouts': {
+        get: { responses: { 200: envelope('ApiResponsePagePayout') } },
+      },
+      '/api/seller/payouts/totals': {
+        get: { responses: { 200: envelope('ApiResponseTotals') } },
+      },
+      '/api/orders/{id}/dispute': {
+        post: {
+          requestBody: {
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/DisputeCreate' } } },
+          },
+          responses: { 200: envelope('ApiResponseDispute'), 422: envelope('ApiResponseDispute') },
+        },
+      },
+      '/api/disputes/{disputeId}/evidence': {
+        get: { responses: { 200: envelope('ApiResponseListEvidence') } },
+        post: {
+          requestBody: {
+            content: {
+              'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  properties: { file: { type: 'string', format: 'binary' } },
+                },
+              },
+            },
+          },
+          responses: { 200: envelope('ApiResponseEvidence'), 422: envelope('ApiResponseEvidence') },
+        },
+      },
+      '/api/admin/disputes/{id}/resolve-refund': {
+        post: {
+          requestBody: {
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/DisputeResolve' } } },
+          },
+          responses: { 200: envelope('ApiResponseDispute'), 422: envelope('ApiResponseDispute') },
+        },
+      },
+    },
+    components: { schemas },
+  };
+}
+
+const TRANCHE_274_PINS = [
+  {
+    method: 'POST',
+    path: '/api/items/{itemId}/offers',
+    request: { priceCents: 'integer' },
+    response: {
+      id: 'integer',
+      itemId: 'integer',
+      buyerId: 'integer',
+      sellerId: 'integer',
+      priceCents: 'integer',
+      counterPriceCents: 'integer',
+      status: {
+        type: 'string',
+        enum: ['PENDING', 'COUNTERED', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN'],
+      },
+      orderId: 'integer',
+      expiresAt: 'string',
+      createdAt: 'string',
+    },
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/accept',
+    response: { id: 'integer', status: 'string', priceCents: 'integer' },
+  },
+  {
+    method: 'GET',
+    path: '/api/seller/payouts',
+    response: {
+      content: {
+        type: 'array',
+        items: {
+          type: 'object',
+          fields: { id: 'integer', netCents: 'integer', status: 'string' },
+        },
+      },
+      totalElements: 'integer',
+      totalPages: 'integer',
+      number: 'integer',
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/seller/payouts/totals',
+    response: { pendingCents: 'integer', payableCents: 'integer', paidCents: 'integer', netCents: 'integer' },
+  },
+  {
+    method: 'POST',
+    path: '/api/orders/{id}/dispute',
+    request: { reason: 'string' },
+    response: { id: 'integer', reason: 'string', status: 'string', resolutionNote: 'string' },
+  },
+  {
+    method: 'GET',
+    path: '/api/disputes/{disputeId}/evidence',
+    response: { type: 'array', items: { type: 'object', fields: { id: 'integer', url: 'string' } } },
+  },
+  {
+    method: 'POST',
+    path: '/api/disputes/{disputeId}/evidence',
+    request: { file: 'string' },
+    response: { id: 'integer', disputeId: 'integer', url: 'string' },
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/disputes/{id}/resolve-refund',
+    request: { resolutionNote: 'string' },
+    response: { id: 'integer', status: 'string', resolutionNote: 'string' },
+  },
+];
+
+describe('shape pins, third tranche (backlog #274)', () => {
+  it('pins offers, payouts and disputes end to end through checkShapeDrift', () => {
+    const result = checkShapeDrift(TRANCHE_274_PINS, tranche274Spec());
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it('fails when a payout field disappears from the totals or a row', () => {
+    const { netCents, ...totalsWithoutNet } = PAYOUT_TOTALS_SCHEMA.properties;
+    const droppedTotals = checkShapeDrift(TRANCHE_274_PINS, tranche274Spec({
+      totals: { ...PAYOUT_TOTALS_SCHEMA, properties: totalsWithoutNet },
+    }));
+    expect(droppedTotals.ok).toBe(false);
+    expect(droppedTotals.violations.join(' ')).toMatch(/netCents/);
+    const { amountCents, ...payoutWithoutAmount } = PAYOUT_SCHEMA.properties;
+    const droppedRow = checkShapeDrift(
+      [{ method: 'GET', path: '/api/seller/payouts', response: { content: { type: 'array', items: { type: 'object', fields: { id: 'integer', amountCents: 'integer' } } }, totalElements: 'integer', totalPages: 'integer', number: 'integer' } }],
+      tranche274Spec({ payout: { ...PAYOUT_SCHEMA, properties: payoutWithoutAmount } }),
+    );
+    expect(droppedRow.ok).toBe(false);
+    expect(droppedRow.violations.join(' ')).toMatch(/amountCents/);
+  });
+
+  it('fails when a dispute field disappears, even while the error response still carries it', () => {
+    // The 200 and the 422 carry the same envelope component here, so
+    // dropping the field from the shared Dispute schema drops it from
+    // both: the gate must still fail on the 200, not pass on any
+    // carrier that happens to keep it.
+    const { resolutionNote, ...disputeWithoutNote } = DISPUTE_SCHEMA.properties;
+    const result = checkShapeDrift(TRANCHE_274_PINS, tranche274Spec({
+      dispute: { ...DISPUTE_SCHEMA, properties: disputeWithoutNote },
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.violations.join(' ')).toMatch(/resolutionNote/);
+  });
+
+  it('applies the #271 2xx preference to the offer accept: a success-only field lost from the 200 fails even while the error response still carries it', () => {
+    const { counterPriceCents, ...offerWithoutCounter } = OFFER_SCHEMA.properties;
+    const acceptDoc = (successSchema, errorSchema) => ({
+      paths: {
+        '/api/offers/{id}/accept': {
+          post: {
+            responses: {
+              200: {
+                content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseOfferOk' } } },
+              },
+              422: {
+                content: { '*/*': { schema: { $ref: '#/components/schemas/ApiResponseOfferErr' } } },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          ApiResponseOfferOk: {
+            type: 'object',
+            properties: {
+              code: { type: 'integer' },
+              message: { type: 'string' },
+              data: { $ref: '#/components/schemas/OfferOk' },
+            },
+          },
+          OfferOk: successSchema,
+          ApiResponseOfferErr: {
+            type: 'object',
+            properties: {
+              code: { type: 'integer' },
+              message: { type: 'string' },
+              data: { $ref: '#/components/schemas/OfferErr' },
+            },
+          },
+          OfferErr: errorSchema,
+        },
+      },
+    });
+    const acceptPin = {
+      method: 'POST',
+      path: '/api/offers/{id}/accept',
+      response: { id: 'integer', counterPriceCents: 'integer', orderId: 'integer' },
+    };
+    const droppedFrom200 = acceptDoc(
+      { ...OFFER_SCHEMA, properties: offerWithoutCounter },
+      OFFER_SCHEMA,
+    );
+    const failed = checkShapeDrift([acceptPin], droppedFrom200);
+    expect(failed.ok).toBe(false);
+    expect(failed.violations.join(' ')).toMatch(/counterPriceCents/);
+    const droppedFromErrorOnly = acceptDoc(
+      OFFER_SCHEMA,
+      { ...OFFER_SCHEMA, properties: offerWithoutCounter },
+    );
+    expect(checkShapeDrift([acceptPin], droppedFromErrorOnly).ok).toBe(true);
+  });
+});
+
+describe('shape gate CLI fixture (#274 tranche)', () => {
+  function runPayoutsGate(doc, pinFields) {
+    const dir = mkdtempSync(join(tmpdir(), 'api-drift-payouts-fixture-'));
+    try {
+      const apiDir = join(dir, 'api');
+      const specPath = join(dir, 'openapi.json');
+      const pinsPath = join(dir, 'pins.mjs');
+      mkdirSync(apiDir, { recursive: true });
+      writeFileSync(
+        join(apiDir, 'payouts.ts'),
+        "export const totals = () => api.get('/seller/payouts/totals');\n",
+      );
+      writeFileSync(specPath, JSON.stringify(doc));
+      writeFileSync(
+        pinsPath,
+        `export const API_SHAPE_PINS = [{ method: 'GET', path: '/api/seller/payouts/totals', response: ${JSON.stringify(pinFields)} }];\n`,
+      );
+      const script = join(findRepoRoot(), 'frontend', 'scripts', 'check-api-drift.mjs');
+      return spawnSync(
+        process.execPath,
+        [script, '--spec', specPath, '--api-dir', apiDir, '--pins', pinsPath],
+        { encoding: 'utf8' },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('fails the job when a payout totals field disappears, passes on a clean document', () => {
+    const totalsPin = { pendingCents: 'integer', netCents: 'integer' };
+    const { netCents, ...totalsWithoutNet } = PAYOUT_TOTALS_SCHEMA.properties;
+    const drifted = tranche274Spec({
+      totals: { ...PAYOUT_TOTALS_SCHEMA, properties: totalsWithoutNet },
+    });
+    const failed = runPayoutsGate(drifted, totalsPin);
+    expect(failed.status).toBe(1);
+    expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/API SHAPE DRIFT/);
+    expect(`${failed.stdout}\n${failed.stderr}`).toMatch(/netCents/);
+    const passed = runPayoutsGate(tranche274Spec(), totalsPin);
+    expect(passed.status).toBe(0);
+    expect(passed.stdout).toMatch(/No API shape drift/);
+  });
+});

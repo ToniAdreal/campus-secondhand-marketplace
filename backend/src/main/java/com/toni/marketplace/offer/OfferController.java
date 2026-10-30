@@ -37,6 +37,8 @@ public class OfferController {
    * or wait for its answer/expiry — see OfferService).
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "offer created (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
           description = "validation failure — priceCents missing or not positive (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -76,6 +78,8 @@ public class OfferController {
    * buy-now (or a concurrent accept) is 409.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "offer accepted; order created at the agreed price (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -91,6 +95,8 @@ public class OfferController {
 
   /** Declines an offer on the caller's listing. Terminal; no order is created. */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "offer declined (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -112,6 +118,8 @@ public class OfferController {
    * someone else's offer id is 404; a non-PENDING offer is 422.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "offer countered (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
           description = "validation failure — priceCents missing or not positive (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -136,6 +144,8 @@ public class OfferController {
    * no live counter is 422; losing the race to a buy-now is 409.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "counter accepted; order created at the counter price (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -154,6 +164,8 @@ public class OfferController {
    * #193). Terminal; no order is created and the listing is untouched.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "counter declined (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -169,6 +181,8 @@ public class OfferController {
 
   /** Withdraws the caller's own offer. Terminal; frees the live pair for a fresh offer. */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "offer withdrawn (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",

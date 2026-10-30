@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258, #264 and #271).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271 and #274).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -33,7 +33,12 @@
 // and the receipt read carry a content-bearing 200 of their own:
 // springdoc fills a bare 200 entry from the method's
 // ApiResponse<OrderDto>/ApiResponse<ReceiptDto> return type, exactly
-// as it already filled the error entries.
+// as it already filled the error entries. Backlog #274 extends that
+// fix to the offers/disputes surfaces: the offer actions, the dispute
+// open/read, the ADMIN queue list and the evidence add/list all
+// carried error-only @ApiResponses, so their typed success bodies
+// were invisible to the gate; each now carries a bare 200 entry and
+// is pinned against it, never against an error carrier.
 //   Endpoints whose success body branches by status pin each variant
 // against its own status with `responseByStatus` (never against a
 // sibling status's shape): POST /api/auth/register answers 200 with
@@ -74,6 +79,17 @@
 // renamed or retyped property is exactly the drift this gate catches.
 // The auth 2FA/passkey/session/device surfaces stay path+method-only
 // until a later tranche pins them.
+//
+// Third tranche (backlog #274): the offers + seller payouts +
+// disputes surfaces — every operation those three api modules call,
+// except DELETE /api/disputes/{disputeId}/evidence/{evidenceId},
+// which answers ApiResponseVoid and whose data the SPA never reads:
+// it is pinned with a responseNote only, so it stays explicitly
+// listed as response-unpinned in the gate's summary instead of
+// silently passing as checked. DisputeDto.openedBy (backlog #255) is
+// backend-only — the SPA's OrderDispute type does not carry it, so
+// it is not pinned. DisputeDto.previousStatus is pinned to the
+// frontend type's PAID/COMPLETED, not the backend enum's full range.
 
 const AUTH_USER_FIELDS = {
   id: 'integer',
@@ -326,6 +342,93 @@ const PAGE_REVIEW_FIELDS = {
   totalElements: 'integer',
   totalPages: 'integer',
   number: 'integer',
+};
+
+const OFFER_FIELDS = {
+  id: 'integer',
+  itemId: 'integer',
+  buyerId: 'integer',
+  sellerId: 'integer',
+  priceCents: 'integer',
+  // Nullable in the SPA type (null until the seller counters / an
+  // accept creates the order): pinned as the base type, required, per
+  // the #264 nullable rule — the schema lists the property either way.
+  counterPriceCents: 'integer',
+  status: {
+    type: 'string',
+    enum: ['PENDING', 'COUNTERED', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN'],
+  },
+  orderId: 'integer',
+  expiresAt: 'string',
+  createdAt: 'string',
+};
+
+const PAGE_OFFER_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: OFFER_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const SELLER_PAYOUT_FIELDS = {
+  id: 'integer',
+  orderId: 'integer',
+  sellerId: 'integer',
+  amountCents: 'integer',
+  adjustmentsCents: 'integer',
+  netCents: 'integer',
+  status: { type: 'string', enum: ['PENDING', 'PAYABLE', 'PAID'] },
+  createdAt: 'string',
+  payableAt: 'string',
+  paidAt: 'string',
+};
+
+const PAGE_PAYOUT_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: SELLER_PAYOUT_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const SELLER_PAYOUT_TOTALS_FIELDS = {
+  pendingCount: 'integer',
+  pendingCents: 'integer',
+  payableCount: 'integer',
+  payableCents: 'integer',
+  paidCount: 'integer',
+  paidCents: 'integer',
+  adjustmentsCents: 'integer',
+  netCents: 'integer',
+};
+
+const DISPUTE_FIELDS = {
+  id: 'integer',
+  orderId: 'integer',
+  buyerId: 'integer',
+  sellerId: 'integer',
+  reason: 'string',
+  status: { type: 'string', enum: ['OPEN', 'RESOLVED_REFUND', 'RESOLVED_RELEASE'] },
+  // Frontend type only: PAID/COMPLETED (see header note).
+  previousStatus: { type: 'string', enum: ['PAID', 'COMPLETED'] },
+  listingRestored: 'boolean',
+  createdAt: 'string',
+  resolvedAt: 'string',
+  resolutionNote: 'string',
+};
+
+const PAGE_DISPUTE_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: DISPUTE_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const DISPUTE_EVIDENCE_FIELDS = {
+  id: 'integer',
+  disputeId: 'integer',
+  uploaderId: 'integer',
+  url: 'string',
+  createdAt: 'string',
 };
 
 export const API_SHAPE_PINS = [
@@ -611,5 +714,120 @@ export const API_SHAPE_PINS = [
     method: 'GET',
     path: '/api/users/{id}/reviews',
     response: PAGE_REVIEW_FIELDS,
+  },
+  // Offers surface (third tranche, backlog #274). The action POSTs
+  // carry no request pin: the SPA posts an empty body (accept /
+  // decline / counter-accept / counter-decline / withdraw), exactly
+  // like POST /api/orders/{id}/pay in the first tranche.
+  {
+    method: 'POST',
+    path: '/api/items/{itemId}/offers',
+    request: { priceCents: 'integer' },
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/offers/made',
+    response: PAGE_OFFER_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/offers/received',
+    response: PAGE_OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/accept',
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/decline',
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/counter',
+    request: { priceCents: 'integer' },
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/counter-accept',
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/counter-decline',
+    response: OFFER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/offers/{id}/withdraw',
+    response: OFFER_FIELDS,
+  },
+  // Seller payouts surface (third tranche, backlog #274).
+  {
+    method: 'GET',
+    path: '/api/seller/payouts',
+    response: PAGE_PAYOUT_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/seller/payouts/totals',
+    response: SELLER_PAYOUT_TOTALS_FIELDS,
+  },
+  // Disputes surface (third tranche, backlog #274).
+  {
+    method: 'POST',
+    path: '/api/orders/{id}/dispute',
+    request: { reason: 'string' },
+    response: DISPUTE_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/orders/{id}/dispute',
+    response: DISPUTE_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/disputes/{disputeId}/evidence',
+    response: { type: 'array', items: { type: 'object', fields: DISPUTE_EVIDENCE_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/disputes/{disputeId}/evidence',
+    // Multipart twin of the message-photo pin: springdoc puts only
+    // the `file` part in the multipart schema, and the gate checks
+    // the union with query parameters (none here), so the pin is
+    // just the file part.
+    request: { file: 'string' },
+    response: DISPUTE_EVIDENCE_FIELDS,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/disputes/{disputeId}/evidence/{evidenceId}',
+    // ApiResponseVoid: the SPA reads no body from this call, so
+    // there is nothing to pin — listed explicitly, never silently
+    // checked (see header). A pin without a response key is what
+    // makes the gate's summary print this line.
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/disputes',
+    response: PAGE_DISPUTE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/disputes/{id}/resolve-refund',
+    request: { resolutionNote: 'string' },
+    response: DISPUTE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/disputes/{id}/resolve-release',
+    request: { resolutionNote: 'string' },
+    response: DISPUTE_FIELDS,
   },
 ];

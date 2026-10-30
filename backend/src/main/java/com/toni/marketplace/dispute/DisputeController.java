@@ -40,6 +40,8 @@ public class DisputeController {
    * that dispute unchanged.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "dispute opened (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
           description = "validation failure — reason missing/blank or over 500 characters (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -67,6 +69,8 @@ public class DisputeController {
    * the identical 404.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "dispute of the order (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",

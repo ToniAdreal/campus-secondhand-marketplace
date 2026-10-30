@@ -405,17 +405,23 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   also checks the pinned tranche in
   `frontend/scripts/api-shape-pins.mjs` (auth session core + orders
   surface, extended by backlog #264 to items/messages/notifications/
-  reviews) and fails when a field the SPA reads or sends disappears
+  reviews, and by backlog #274 to offers/seller payouts/disputes)
+  and fails when a field the SPA reads or sends disappears
   from the document or changes type. Since backlog #271 the gate
   prefers the 2xx carriers (a success-only field disappearing from
   the 200 fails even while an error response still carries the old
   DTO), and register/login pin one variant per success status (200
   token pair vs 201 pending-verification; 200 token pair vs 202 TOTP
   challenge) — their `ResponseEntity<?>` returns are typed in the
-  document by explicit annotation, not inferred. Honest scope:
+  document by explicit annotation, not inferred. Backlog #274 extends
+  that annotation fix to the offers/disputes controllers, whose
+  actions previously carried error-only `@ApiResponses` and therefore
+  no typed success body for the gate to pin. Honest scope:
   unpinned surfaces (2FA/passkey/session/device auth) stay
-  path+method-only, and the SSE stream and the notification row
-  delete carry no pinnable body (see the pins file header).
+  path+method-only, and the SSE stream, the notification row
+  delete and the dispute evidence delete carry no pinnable body (the
+  evidence delete is listed explicitly as response-unpinned in the
+  gate summary — see the pins file header).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat

@@ -424,32 +424,36 @@ class OpenApiContractTest {
     // Price offers (#168): creation pins its not-available / duplicate
     // 409 pair and its own-listing 422; the decisions pin the
     // no-existence-leak 404 and the not-PENDING 422, and accept the
-    // buy-now race 409.
+    // buy-now race 409. Backlog #274 adds the bare success 200 to
+    // every offer action (third shape-pins tranche).
     assertThat(responseCodes(docs, "/api/items/{itemId}/offers", "post"))
-        .contains("400", "401", "404", "409", "422");
+        .contains("200", "400", "401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/accept", "post"))
-        .contains("401", "404", "409", "422");
+        .contains("200", "401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/decline", "post"))
-        .contains("401", "404", "409", "422");
+        .contains("200", "401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/withdraw", "post"))
-        .contains("401", "404", "409", "422");
+        .contains("200", "401", "404", "409", "422");
     // Counter-offers (#193): counter pins its validation 400 and its
     // bounds/not-PENDING 422 pair; the buyer's counter decisions pin
-    // the same no-existence-leak 404 and not-COUNTERED 422.
+    // the same no-existence-leak 404 and not-COUNTERED 422. Backlog
+    // #274 adds the bare success 200 to all three (third tranche).
     assertThat(responseCodes(docs, "/api/offers/{id}/counter", "post"))
-        .contains("400", "401", "404", "409", "422");
+        .contains("200", "400", "401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/counter-accept", "post"))
-        .contains("401", "404", "409", "422");
+        .contains("200", "401", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/offers/{id}/counter-decline", "post"))
-        .contains("401", "404", "409", "422");
+        .contains("200", "401", "404", "409", "422");
     // Order disputes (#169): opening pins its buyer-only 403, unknown
     // order 404 and the not-disputable / window-closed 422; the ADMIN
     // queue pins 403 for non-admins and the resolutions pin the
-    // unknown-dispute 404 and the cross-resolution 422.
+    // unknown-dispute 404 and the cross-resolution 422. Backlog #274
+    // adds the bare success 200 to the open, the queue list and the
+    // by-order read (third shape-pins tranche).
     assertThat(responseCodes(docs, "/api/orders/{id}/dispute", "post"))
-        .contains("400", "401", "403", "404", "409", "422");
+        .contains("200", "400", "401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/disputes", "get"))
-        .contains("401", "403");
+        .contains("200", "401", "403");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-refund", "post"))
         .contains("400", "401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/disputes/{id}/resolve-release", "post"))
@@ -458,12 +462,14 @@ class OpenApiContractTest {
     // no-existence-leak 404; the evidence endpoints pin the bad-file
     // 400 and resolved-dispute 422 on upload, the not-uploader 403 on
     // removal, and the party-or-404 visibility rule throughout.
+    // Backlog #274 adds the bare success 200 to the upload and the
+    // list (the removal answers ApiResponseVoid, third tranche).
     assertThat(responseCodes(docs, "/api/orders/{id}/dispute", "get"))
-        .contains("401", "404");
+        .contains("200", "401", "404");
     assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence", "post"))
-        .contains("400", "401", "404", "422");
+        .contains("200", "400", "401", "404", "422");
     assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence", "get"))
-        .contains("401", "404");
+        .contains("200", "401", "404");
     assertThat(responseCodes(docs, "/api/disputes/{disputeId}/evidence/{evidenceId}", "delete"))
         .contains("401", "403", "404");
     // CSP report intake (#204): pins its browser-report 204, its

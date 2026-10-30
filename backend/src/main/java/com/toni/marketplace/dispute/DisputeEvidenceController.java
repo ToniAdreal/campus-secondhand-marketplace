@@ -41,6 +41,8 @@ public class DisputeEvidenceController {
    * the 400 envelope. A resolved dispute answers 422.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "evidence photo attached (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
           description = "file missing, not an allowlisted image, over the size cap, "
               + "or its bytes do not match the declared type (envelope)"),
@@ -60,6 +62,8 @@ public class DisputeEvidenceController {
 
   /** Lists a dispute's evidence, oldest first, as public upload URLs. */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "evidence photos, oldest first (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
