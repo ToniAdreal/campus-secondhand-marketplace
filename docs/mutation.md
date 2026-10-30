@@ -14,12 +14,19 @@ units in the codebase and measures exactly that:
 - `com.toni.marketplace.auth.PasswordStrengthValidator` (backlog #269)
   — the shared password policy: blocklist, length, composition, and
   the breached-password screen.
+- `com.toni.marketplace.auth.TotpService` (backlog #285) — TOTP codes,
+  Base32, otpauth URIs, and recovery-code formatting/normalization.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
-`PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`) — no
+`PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
+`TotpServiceTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
-behaviour, not by a context failing to boot.
+behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
+suites (recovery-code flow, lockout, encryption at rest) exercise
+`TotpService` through `AuthService` but are deliberately NOT in PIT's
+`targetTests`: they would make every mutant pay a context boot, and
+the pure suite now pins the same branches directly (see #285 below).
 
 ## How it runs
 
@@ -91,6 +98,41 @@ re-ratchets the floor from that measured score, rounded down, and
 updates the table above. Until then the 27 floor is a conservative
 hold, not a claim about the new scope's score.
 
+### Widened scope, unmeasured (backlog #285, 2026-10-30)
+
+Backlog #285 adds exactly one more class to the PIT scope —
+`auth.TotpService` — driven by its pure unit suite `TotpServiceTest`
+(8 tests before this round, 14 after). The spec's measure-first step
+was attempted honestly: a TotpService-only PIT run at threshold 0
+reproduced the sandbox failure in 47 s (coverage minion died with
+`EOFException` reading its socket, `MINION_DIED`, `BUILD FAILURE`),
+even though the pitest jars are now present in the offline repository
+— so, as with #269, no local score exists and none is claimed.
+
+The round therefore closes the branches the pure suite left unpinned,
+so the widened scope does not ship known unkilled mutants with it:
+
+- Base32 leftover bits: short inputs (`0x00` → `AA`, `0xff` → `74`,
+  `f` → `MY`, `fo` → `MZXQ`, `foo` → `MZXW6`, `foobar` → `MZXW6YTBOI`,
+  cross-checked against the standard Base32 encoding) — the 20-byte
+  RFC secret never touches this branch, since 160 bits divide evenly
+  by 5;
+- lowercase Base32 decodes to the same bytes and verifies
+  (`RFC_SECRET.toLowerCase()`);
+- a non-ASCII secret character (past the 128-entry decode table) fails
+  closed, distinct from the in-range `!` case already pinned;
+- otpauth label encoding: space → `%20`, `+` → `%2B`, `@` → `%40`,
+  non-ASCII → UTF-8 percent sequences, unreserved `-_.~` untouched;
+- recovery codes: display form `XXXX-XXXX-XXXX-XXXX` over the
+  look-alike-free alphabet (hyphens at 4/8/12), and normalization
+  branches (lowercase, space/tab separators, invalid
+  `0`/`1`/`O`/`I`/`L`/`!`, wrong lengths 15/17, empty, null).
+
+The floor is **held at 27, not raised and not lowered**, on the same
+terms as #269: the next CI `backend-mutation` run measures the 5-class
+scope, and the round that reads its `pit-reports` artifact
+re-ratchets the floor from that measured score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -112,10 +154,15 @@ the enlarged class those suites reach at all.
 `mutationThreshold` is now **27**: the latest measured mutation
 coverage is 81/291 = 27.8%, and the floor is that score rounded
 **down** to a whole percent, so an identical rerun cannot fail on
-rounding. The floor is never set above the measured score. It is set
-against the **current** PIT scope (the three classes and three driving
-suites above) — widening `targetTests` to reach the NO_COVERAGE methods
-is future work, not done here, and will require re-measuring.
+rounding. The floor is never set above the measured score. Note the
+scope drift honestly: that 27.8% was measured on the 3-class scope;
+#269 widened it to 4 classes and #285 to 5 classes, both unmeasured
+locally (PIT cannot run in this sandbox), so 27 is now a conservative
+hold for the 5-class scope, not a measured score for it — the next CI
+`backend-mutation` run re-ratchets it from its measured score,
+rounded down. Widening `targetTests` to reach the remaining
+NO_COVERAGE methods is future work, not done here, and will require
+re-measuring.
 
 ## Surviving mutants
 

@@ -281,7 +281,8 @@
     <!-- Mutation testing pilot (backlog #192): PIT over the auth token
          service and the order state machine ONLY (JwtTokenService,
          OrderService, OrderCreationService), plus the shared password
-         policy (PasswordStrengthValidator, backlog #269), driven by
+         policy (PasswordStrengthValidator, backlog #269) and the TOTP
+         service (TotpService, backlog #285), driven by
          their pure unit tests. This profile is CI-only: it is NOT
          active by default, so
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
@@ -298,9 +299,15 @@
          floor: PIT cannot run in the local sandbox, so the 4-class
          score is unmeasured until the next CI backend-mutation run,
          and the floor stays 27 until that run is read and the floor
-         is re-ratcheted from it. Deliberate floor bumps edit this
-         constant together with docs/mutation.md and say why in the
-         commit message. -->
+         is re-ratcheted from it. Backlog #285 widens the scope again
+         (5 classes) on the same terms: a TotpService-only PIT run at
+         threshold 0 on 2026-10-30 reproduced the sandbox failure
+         (coverage minion died reading its socket, MINION_DIED), so no
+         local 5-class score exists either; the floor stays 27 as a
+         conservative hold until the next CI backend-mutation run
+         measures the widened scope and re-ratchets it. Deliberate
+         floor bumps edit this constant together with docs/mutation.md
+         and say why in the commit message. -->
     <profile>
       <id>mutation</id>
       <build>
@@ -322,6 +329,7 @@
                 <param>com.toni.marketplace.order.OrderService</param>
                 <param>com.toni.marketplace.order.OrderCreationService</param>
                 <param>com.toni.marketplace.auth.PasswordStrengthValidator</param>
+                <param>com.toni.marketplace.auth.TotpService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -329,6 +337,7 @@
                 <param>com.toni.marketplace.order.OrderServiceTest</param>
                 <param>com.toni.marketplace.auth.PasswordStrengthValidatorTest</param>
                 <param>com.toni.marketplace.auth.BreachedPasswordCheckerTest</param>
+                <param>com.toni.marketplace.auth.TotpServiceTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>
