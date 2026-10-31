@@ -395,3 +395,36 @@ describe('describeRenewError', () => {
     expect(describeRenewError(error)).toBe(expected);
   });
 });
+
+describe('describePublishError', () => {
+  // Backlog #287 follow-up: describePublishError (src/api/
+  // items.ts 482-500) carried 14 gap mutants in the 2026-10-31
+  // mapper-only report. The existing #198 test pins only the
+  // 422/403/404 branches with a 'raw' message, so the 401 branch,
+  // the optional-chain and ?? edges, and the envelope-shape
+  // edges were unreached. This matrix covers every branch plus
+  // those edges: a response without data, data without a
+  // message, a message without a code, and no envelope at all
+  // all fall through to the generic copy or the verbatim
+  // message, while a server message on an unknown code is kept
+  // verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['draft-only', envelopeError(422, 'raw'), 'Only a draft listing can be published.'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the seller (or an admin) can publish this listing.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to publish this listing.'],
+    ['gone', envelopeError(404, 'raw'), 'This listing no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describePublishError(error)).toBe(expected);
+  });
+});
