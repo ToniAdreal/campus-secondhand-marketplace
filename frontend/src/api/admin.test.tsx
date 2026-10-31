@@ -12,6 +12,7 @@ import {
   adminUserKeys,
   describeAdminUserError,
   describeAuditLogError,
+  describeDashboardError,
   describeSettlementError,
   describePaymentAttemptsError,
   describeWebhookEventsError,
@@ -406,6 +407,30 @@ describe('describeAuditLogError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAuditLogError(error)).toBe(expected);
+  });
+});
+
+describe('describeDashboardError', () => {
+  // Backlog #287 follow-up: describeDashboardError (src/api/admin.ts
+  // 563-578) was the one mapper range with zero coverage — all 26 of
+  // its Stryker mutants were NoCoverage in the 2026-10-31 mapper-only
+  // report. This matrix mirrors the describeAuditLogError cases above
+  // plus the envelope-shape edges that distinguish the optional-chain
+  // and ?? mutants: a response without data, and data without a
+  // message must both fall through to the generic copy, while a
+  // server message on an unknown code is kept verbatim.
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view the dashboard.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view the dashboard.'],
+    ['invalid window', envelopeError(400, 'unknown window'), 'That window is not valid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeDashboardError(error)).toBe(expected);
   });
 });
 
