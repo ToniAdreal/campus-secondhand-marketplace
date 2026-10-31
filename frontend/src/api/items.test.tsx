@@ -6,6 +6,7 @@ import { api } from './client';
 import {
   describePublishError,
   describeRenewError,
+  describeReorderPhotosError,
   isListingExpired,
   isListingExpiringSoon,
   itemKeys,
@@ -282,5 +283,43 @@ describe('useItemSuggestions request (backlog #235)', () => {
 
     expect(result.current.isFetching).toBe(false);
     expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeReorderPhotosError', () => {
+  // Backlog #287 follow-up: describeReorderPhotosError (src/api/
+  // items.ts 339-360) carried 34 gap mutants in the 2026-10-31
+  // mapper-only report — 25 NoCoverage (the 409/403/401/404
+  // branches and the fallback, none of which any existing test
+  // reaches) plus 9 Survived (the optional-chain and ?? edges and
+  // the 400-or-regex condition, which no existing test
+  // distinguishes). This matrix covers every branch plus the
+  // envelope-shape edges: the 400 branch fires on the code alone
+  // and on the message alone (case-insensitive, substring), the
+  // first branch wins over a later code, a response without data,
+  // data without a message, and no envelope at all all fall
+  // through to the generic copy, while a server message on an
+  // unknown code is kept verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['400 code alone', envelopeError(400, 'raw'), 'The gallery changed since this page loaded — reload and try again.'],
+    ['exactly-once message alone', envelopeError(500, 'each photo must appear exactly once'), 'The gallery changed since this page loaded — reload and try again.'],
+    ['exactly-once message, case-insensitive', envelopeError(500, 'EXACTLY ONCE in the list'), 'The gallery changed since this page loaded — reload and try again.'],
+    ['first branch wins over 409', envelopeError(409, 'each photo must appear exactly once'), 'The gallery changed since this page loaded — reload and try again.'],
+    ['conflict', envelopeError(409, 'raw'), 'This gallery was just changed elsewhere — reload to see the latest order.'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the seller (or an admin) can reorder these photos.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to reorder these photos.'],
+    ['gone', envelopeError(404, 'raw'), 'This listing no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeReorderPhotosError(error)).toBe(expected);
   });
 });
