@@ -198,3 +198,38 @@ describe('buyer review edits api hook (#254)', () => {
     );
   });
 });
+
+describe('describeReviewError', () => {
+  // Backlog #287 follow-up: describeReviewError (src/api/
+  // reviews.ts 151-175) carried 17 gap mutants in the 2026-10-31
+  // mapper-only report. The existing #175 test pins only the
+  // 409/422/403/404 branches with an empty message, so the 400
+  // and 401 branches, the optional-chain and ?? edges, and the
+  // envelope-shape edges were unreached. This matrix covers every
+  // branch plus those edges: a response without data, data
+  // without a message, a message without a code, and no envelope
+  // at all all fall through to the generic copy or the verbatim
+  // message, while a server message on an unknown code is kept
+  // verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['already reviewed', envelopeError(409, 'raw'), 'You have already reviewed this order.'],
+    ['not completed', envelopeError(422, 'raw'), 'Only a completed order can be reviewed.'],
+    ['bad rating', envelopeError(400, 'raw'), 'Please pick a rating from 1 to 5 (text up to 500 characters).'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the buyer of this order can review it.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to leave a review.'],
+    ['gone', envelopeError(404, 'raw'), 'This order no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeReviewError(error)).toBe(expected);
+  });
+});
