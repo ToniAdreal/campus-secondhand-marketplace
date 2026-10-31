@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
 import {
+  describeMarkSoldError,
   describePublishError,
   describeRenewError,
   describeReorderPhotosError,
@@ -321,5 +322,43 @@ describe('describeReorderPhotosError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeReorderPhotosError(error)).toBe(expected);
+  });
+});
+
+describe('describeMarkSoldError', () => {
+  // Backlog #287 follow-up: describeMarkSoldError (src/api/
+  // items.ts 438-456) carried 29 gap mutants in the 2026-10-31
+  // mapper-only report — 20 NoCoverage (the 403/401/404
+  // branches and the fallback, none of which any existing test
+  // reaches) plus 9 Survived (the optional-chain and ?? edges
+  // and the 422-or-regex condition, which no existing test
+  // distinguishes). This matrix covers every branch plus the
+  // envelope-shape edges: the 422 branch fires on the code alone
+  // and on the message alone (either regex alternative,
+  // case-insensitive, substring), the first branch wins over a
+  // later code, a response without data, data without a message,
+  // and no envelope at all all fall through to the generic copy,
+  // while a server message on an unknown code is kept verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['422 code alone', envelopeError(422, 'raw'), 'This listing is already sold — it can no longer be marked sold.'],
+    ['already-SOLD message alone', envelopeError(500, 'this listing is already SOLD'), 'This listing is already sold — it can no longer be marked sold.'],
+    ['only-the-SOLD-transition message alone', envelopeError(500, 'only the SOLD transition is allowed here'), 'This listing is already sold — it can no longer be marked sold.'],
+    ['already-SOLD message, case-insensitive', envelopeError(500, 'ALREADY SOLD'), 'This listing is already sold — it can no longer be marked sold.'],
+    ['first branch wins over 403', envelopeError(403, 'already SOLD'), 'This listing is already sold — it can no longer be marked sold.'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the seller (or an admin) can mark this listing sold.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to update this listing.'],
+    ['gone', envelopeError(404, 'raw'), 'This listing no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeMarkSoldError(error)).toBe(expected);
   });
 });
