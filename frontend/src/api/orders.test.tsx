@@ -75,6 +75,13 @@ describe('describePayError', () => {
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'psp timeout'), 'psp timeout'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders tranche: only a present-but-dataless
+    // response (or an empty-data response) distinguishes
+    // response?.data?.code/message from its optional-chain mutants —
+    // the no-envelope case above leaves response undefined, so the
+    // first ?. still guards both chains.
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describePayError(error)).toBe(expected);
   });
@@ -90,6 +97,11 @@ describe('describeCancelError', () => {
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', {}, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders tranche: present-but-dataless and
+    // empty-data shapes pin the response?.data?.code/message chains
+    // (see the describePayError note above).
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeCancelError(error)).toBe(expected);
   });
@@ -108,6 +120,12 @@ describe('describeCompleteError', () => {
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to complete this order.'],
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    // Stryker backlog #287, orders tranche: code 400 alone (no handover
+    // wording in the message) pins the code side of the 400-or-regex
+    // condition — the existing cases only reach it via the message.
+    ['handover code alone', envelopeError(400, 'bad request'), 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.'],
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeCompleteError(error)).toBe(expected);
   });
@@ -126,6 +144,15 @@ describe('describeRefundError', () => {
     ['no envelope at all', {}, 'Something went wrong. Please try again.'],
     ['over-remaining amount (backlog #210)', envelopeError(422, 'refund amount exceeds the remaining refundable amount'), 'That amount is more than what is left to refund on this order.'],
     ['non-positive amount (backlog #210)', envelopeError(422, 'refund amount must be positive'), 'Enter a refund amount greater than zero.'],
+    // Stryker backlog #287, orders tranche: the 400-and-reason branch
+    // had no test at all in the 2026-10-31 re-measurement. The
+    // positive case plus the two single-side negatives pin the
+    // conjunction (code alone and wording alone must not fire it).
+    ['missing reason code', envelopeError(400, 'a reason is required'), 'Enter a reason for the refund.'],
+    ['400 without reason wording', envelopeError(400, 'bad request'), 'bad request'],
+    ['reason wording without 400', envelopeError(500, 'a reason is required'), 'a reason is required'],
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeRefundError(error)).toBe(expected);
   });
@@ -140,6 +167,10 @@ describe('describeShipError', () => {
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to ship the order.'],
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    // Stryker backlog #287, orders tranche: present-but-dataless and
+    // empty-data shapes pin the response?.data?.code/message chains.
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeShipError(error)).toBe(expected);
   });
@@ -153,6 +184,10 @@ describe('describeConfirmReceiptError', () => {
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to confirm receipt.'],
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    // Stryker backlog #287, orders tranche: present-but-dataless and
+    // empty-data shapes pin the response?.data?.code/message chains.
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeConfirmReceiptError(error)).toBe(expected);
   });
@@ -164,6 +199,11 @@ describe('describeRegenerateHandoverError', () => {
     ['not-paid code', envelopeError(422, 'unprocessable'), 'A handover code can only be generated while the order is paid.'],
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to generate a handover code.'],
     ['unknown order', envelopeError(404, 'not found'), 'This order no longer exists.'],
+    // Stryker backlog #287, orders tranche: this mapper had no
+    // fallback case at all, so its fallback line was unmeasured;
+    // the dataless shapes reach it (and the 404 line above it).
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeRegenerateHandoverError(error)).toBe(expected);
   });
@@ -176,6 +216,10 @@ describe('describeOrderError', () => {
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to buy this item.'],
     ['unknown listing', envelopeError(404, 'not found'), 'This listing no longer exists.'],
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    // Stryker backlog #287, orders tranche: present-but-dataless and
+    // empty-data shapes pin the response?.data?.code/message chains.
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeOrderError(error)).toBe(expected);
   });
@@ -386,6 +430,15 @@ describe('order mutation invalidation', () => {
     );
     expect(describeReceiptError(envelopeError(500, 'boom'))).toBe('boom');
     expect(describeReceiptError(new Error('x'))).toBe(
+      'Something went wrong. Please try again.',
+    );
+    // Stryker backlog #287, orders tranche: present-but-dataless and
+    // empty-data shapes pin this mapper's response?.data?.code/message
+    // chains (its fallback reads response?.data?.message directly).
+    expect(describeReceiptError({ response: {} })).toBe(
+      'Something went wrong. Please try again.',
+    );
+    expect(describeReceiptError({ response: { data: {} } })).toBe(
       'Something went wrong. Please try again.',
     );
   });
