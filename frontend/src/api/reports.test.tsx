@@ -90,6 +90,12 @@ describe('describeReportError', () => {
     ['missing reason', envelopeError(400, 'validation'), 'Please choose a reason for the report.'],
     ['server message passthrough', envelopeError(500, 'upstream blew up'), 'upstream blew up'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    // The no-envelope case leaves `response` undefined, so the first `?.`
+    // still guards both chains; only a present-but-dataless response
+    // exercises the second `?.` in `response?.data?.code/message`
+    // (Stryker 287: the four OptionalChaining survivors in this file).
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeReportError(error)).toBe(expected);
   });
@@ -104,6 +110,11 @@ describe('describeAdminReportsError', () => {
     ['resolved the other way', envelopeError(422, 'already actioned'), 'That report has already been resolved the other way.'],
     ['server message passthrough', envelopeError(500, 'upstream blew up'), 'upstream blew up'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    // Same second-`?.` gap as describeReportError above: a present
+    // response with no data is the only shape that distinguishes
+    // `response?.data?.code/message` from its OptionalChaining mutants.
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAdminReportsError(error)).toBe(expected);
   });
