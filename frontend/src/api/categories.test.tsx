@@ -175,3 +175,35 @@ describe('ADMIN category writes (backlog #229)', () => {
     expect(describeAdminCategoryError(conflict, 'save')).toContain('already exists');
   });
 });
+
+describe('describeAdminCategoryError', () => {
+  // Backlog #287 follow-up: describeAdminCategoryError (src/api/
+  // categories.ts 143-170) carried 28 gap mutants in the 2026-10-31
+  // mapper-only report — 19 NoCoverage (the 403/401/404 branches and
+  // the 400 branch, none of which the #229 test reaches) plus 9
+  // Survived (the optional-chain and ?? edges, which the 409-only
+  // coverage could not distinguish). This matrix covers every branch
+  // plus the envelope-shape edges: a response without data, data
+  // without a message, and no envelope at all must all fall through
+  // to the generic copy, while a server message on an unknown code
+  // is kept verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { status: code, data: { code, message, data: null } } };
+  }
+
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to manage categories.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to manage categories.'],
+    ['gone', envelopeError(404, 'gone'), 'That category no longer exists.'],
+    ['invalid with a server message keeps it', envelopeError(400, 'name is blank'), 'name is blank'],
+    ['invalid without a message falls back to the valid copy', { response: { data: { code: 400 } } }, 'That category is not valid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeAdminCategoryError(error, 'save')).toBe(expected);
+  });
+});
