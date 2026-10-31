@@ -148,3 +148,40 @@ describe('appeal hooks', () => {
     expect(result.current.data).toEqual(resolved);
   });
 });
+
+describe('describeAdminAppealsError matrix (#287)', () => {
+  // Backlog #287 follow-up: describeAdminAppealsError (src/api/
+  // appeals.ts 195-219) carried 11 gap mutants in the 2026-10-31
+  // mapper-only report (6 survived: the optional-chain and ??
+  // edges plus the 409-branch Conditional true mutant; 5
+  // no-coverage: the fallback line). The existing test pins only
+  // the six branches with a non-empty message, so the
+  // optional-chain and ?? edges, the verbatim/fallback rules and
+  // the envelope-shape edges were unreached. This matrix covers
+  // every branch plus those edges: a response without data, data
+  // without a message, a message without a code, and no envelope
+  // at all all fall through to the generic copy or the verbatim
+  // message, while a server message on an unknown code is kept
+  // verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['forbidden', envelopeError(403, 'raw'), 'You are not authorized to view the appeal queue.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in again to view the appeal queue.'],
+    ['bad filter', envelopeError(400, 'raw'), 'That filter is not valid.'],
+    ['unknown', envelopeError(404, 'raw'), 'That appeal no longer exists.'],
+    ['cross resolution', envelopeError(422, 'raw'), 'That appeal has already been resolved the other way.'],
+    ['race', envelopeError(409, 'raw'), 'Someone just resolved this appeal — please refresh.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeAdminAppealsError(error)).toBe(expected);
+  });
+});
