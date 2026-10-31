@@ -362,3 +362,36 @@ describe('describeMarkSoldError', () => {
     expect(describeMarkSoldError(error)).toBe(expected);
   });
 });
+
+describe('describeRenewError', () => {
+  // Backlog #287 follow-up: describeRenewError (src/api/
+  // items.ts 391-410) carried 14 gap mutants in the 2026-10-31
+  // mapper-only report. The existing #177 test pins only the
+  // 422/403/404 branches with a 'raw' message, so the 401 branch,
+  // the optional-chain and ?? edges, and the envelope-shape
+  // edges were unreached. This matrix covers every branch plus
+  // those edges: a response without data, data without a
+  // message, a message without a code, and no envelope at all
+  // all fall through to the generic copy or the verbatim
+  // message, while a server message on an unknown code is kept
+  // verbatim.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['renewable-state', envelopeError(422, 'raw'), 'This listing cannot be renewed yet — only expired or expiring listings can.'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the seller (or an admin) can renew this listing.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to renew this listing.'],
+    ['gone', envelopeError(404, 'raw'), 'This listing no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeRenewError(error)).toBe(expected);
+  });
+});
