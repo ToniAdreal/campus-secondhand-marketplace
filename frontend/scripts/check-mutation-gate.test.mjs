@@ -14,6 +14,7 @@ import {
   checkMutationGateWiring,
   extractJob,
   floorFor,
+  stripMutationRange,
   mutationPasses,
   mutationScoreFromReport,
   parseStrykerConfig,
@@ -48,18 +49,67 @@ describe('check-mutation-gate', () => {
     expect(job).toMatch(/check-mutation-gate\.mjs/);
   });
 
-  it('real config: mutates the cart, auth and theme stores and declares a numeric break floor', () => {
+  it('real config: mutates the cart, auth and theme stores plus the #287 mapper ranges and declares a numeric break floor', () => {
     const config = readRepo('frontend/stryker.config.mjs');
     const { mutate, breakThreshold } = parseStrykerConfig(config);
     expect(mutate).toEqual([
       'src/store/useCartStore.ts',
       'src/store/useAuthStore.ts',
       'src/store/useThemeStore.ts',
+      'src/api/messages.ts:240-281',
+      'src/api/categories.ts:143-169',
+      'src/api/orders.ts:105-116',
+      'src/api/orders.ts:266-284',
+      'src/api/orders.ts:291-315',
+      'src/api/orders.ts:398-419',
+      'src/api/orders.ts:448-478',
+      'src/api/orders.ts:514-538',
+      'src/api/orders.ts:576-597',
+      'src/api/orders.ts:625-643',
+      'src/api/orders.ts:672-708',
+      'src/api/items.ts:339-360',
+      'src/api/items.ts:391-409',
+      'src/api/items.ts:438-456',
+      'src/api/items.ts:482-500',
+      'src/api/admin.ts:215-230',
+      'src/api/admin.ts:242-274',
+      'src/api/admin.ts:359-374',
+      'src/api/admin.ts:423-438',
+      'src/api/admin.ts:476-491',
+      'src/api/admin.ts:563-578',
+      'src/api/reports.ts:52-73',
+      'src/api/reports.ts:146-167',
+      'src/api/offers.ts:183-207',
+      'src/api/disputes.ts:158-179',
+      'src/api/disputes.ts:182-212',
+      'src/api/disputes.ts:297-321',
+      'src/api/appeals.ts:95-122',
+      'src/api/appeals.ts:195-219',
+      'src/api/reviews.ts:113-134',
+      'src/api/reviews.ts:151-175',
+      'src/api/reviews.ts:178-196',
+      'src/api/auth.ts:934-950',
+      'src/api/client.ts:71-80',
     ]);
     expect(typeof breakThreshold).toBe('number');
     for (const file of mutate) {
-      expect(existsSync(join(repoRoot, 'frontend', file))).toBe(true);
+      expect(existsSync(join(repoRoot, 'frontend', stripMutationRange(file)))).toBe(true);
     }
+  });
+
+  it('mutation ranges: the range suffix strips to the file path, plain entries pass through', () => {
+    expect(stripMutationRange('src/api/messages.ts:240-281')).toBe('src/api/messages.ts');
+    expect(stripMutationRange('src/api/orders.ts:105:1-116:1')).toBe('src/api/orders.ts');
+    expect(stripMutationRange('src/store/useCartStore.ts')).toBe('src/store/useCartStore.ts');
+    // A ranged entry whose base file is missing still fails wiring,
+    // exactly like a plain missing file.
+    const ci = readRepo('.github/workflows/ci.yml');
+    const missingRanged = checkMutationGateWiring({
+      ci,
+      config: 'export default { mutate: ["src/api/nope.ts:1-10"], thresholds: { break: 90 } };',
+      exists: () => false,
+    });
+    expect(missingRanged.some((f) => /missing file/.test(f))).toBe(true);
   });
 
   it('score-from-report: a clean-tree mutant set passes, a weakened set fails the floor', () => {

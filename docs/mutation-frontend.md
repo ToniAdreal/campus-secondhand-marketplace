@@ -1,4 +1,4 @@
-# Frontend mutation testing pilot (backlog #252, widened by #263 and #280)
+# Frontend mutation testing pilot (backlog #252, widened by #263, #280 and #287)
 
 Line coverage (Vitest, gated in the `frontend` CI job since #247) proves
 code is *executed* by tests; it does not prove the tests would *notice*
@@ -16,6 +16,17 @@ PIT pilot (backlog #192, docs/mutation.md):
   remaining zustand store: the preference initialised from storage
   at creation, `setPreference` persisting + applying in one step.
   With it, every zustand store in the codebase is now in scope.
+- The 34 `describe*Error` mapper functions in the api modules
+  (measured by #287, landed in the combined run — see "Fifth
+  measured run" below; the ranges are in the gate) — as Stryker
+  mutation ranges, one per function
+  (see `frontend/stryker.config.mjs` for the exact ranges): the
+  error-copy mappers only, never the hooks, queries or mutations
+  that share their files. The ranges were derived from the
+  TypeScript AST (function start/end lines); a mapper that moves
+  lines needs its range re-derived, and the gate test pins the
+  range list exactly, so a stale range fails the suite instead of
+  silently mutating the wrong code.
 
 The driving tests are the cart-store unit suite plus the page suites
 that exercise the store through the cart page (`useCartStore.test.ts`,
@@ -163,6 +174,81 @@ same 7 survivors (6 cart + 1 auth) and 7 no-coverage mutants as
 before, plus zero theme survivors. 90 <= 91.52, so the unchanged floor
 still binds. Every zustand store is now in scope; a future widening
 to api helpers still requires re-measuring first.
+
+### Fourth measured run (backlog #287) — api error mappers
+
+The mappers were measured separately first, with a temporary
+mapper-ranges-only config at break 0 (measure first, floor second —
+the same discipline as #252, #263 and #280; the temporary config
+was deleted after the run, never committed). Local run, 2026-10-31,
+head **e4c518e** (backlog #286) plus the #287 config/gate changes,
+which touch no api source:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 34 `describe*Error` ranges (1256 mutants) | 75.72% (951/1256) | 86.61% (951/1098) |
+
+Mutant statuses: **KILLED 951, SURVIVED 147, NO_COVERAGE 158,
+TIMEOUT 0, ERROR 0.** Per-file scores: messages 96.08% (49/51),
+reports 94.44% (68/72), disputes 87.30% (110/126), orders 86.67%
+(325/375), appeals 84.88% (73/86), client 84.62% (11/13), offers
+80.95% (34/42), admin 75.56% (136/180), auth 69.23% (18/26), reviews
+63.89% (69/108), categories 36.36% (16/44), items 31.58% (42/133).
+The gap is concentrated, not diffuse: items mappers 91 gap mutants
+(reorder 34, markSold 29, renew 14, publish 14), categories admin
+mapper 28, admin dashboard mapper 26 (all no-coverage — the
+dashboard error copy has no covering test at all). By mutator:
+OptionalChaining 100, ConditionalExpression 80, StringLiteral 57 —
+the tests assert envelope/status far more than the exact per-status
+copy, so the `error?.response?.status` chains and status branches
+survive. The spec's "dense existing test matrices" claim does not
+hold for the mappers: this is a real test gap, not equivalent
+mutants, and it is NOT labelled equivalent here.
+
+### Fifth measured run (backlog #287) — combined scope, landed
+
+Killing tests for the mapper gap (dashboard, categories-admin,
+reorder, markSold, renew, publish, orders first-chain and envelope
+edges, landed as commits c78e695 through 1483e47) closed the
++177-kill gap the fourth run identified. The combined scope was
+then re-measured at break 90 in an isolated clone (candidate tree
+= head 1483e47 + only the five widening-proposal files, verified
+identical to the persistent checkout's proposal versions; the
+uncommitted #289 backend draft did not leak into the tree).
+Local run, 2026-11-01, 27 minutes 35 seconds, 4 workers, dry run
+1127 tests in 1m49s:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| Stores + 34 `describe*Error` ranges (1421 mutants) | 93.53% (1329/1421) | 95.68% (1329/1389) |
+
+Mutant statuses: **KILLED 1329, SURVIVED 60, NO_COVERAGE 32,
+TIMEOUT 0, ERROR 0.** Per-file scores: categories 100.00%
+(44/44), items 100.00% (133/133), orders 100.00% (375/375),
+reports 100.00% (72/72), theme store 100.00% (5/5), messages
+96.08% (49/51), appeals 97.67% (84/86), auth store 94.74%
+(18/19), cart store 90.78% (128/141), admin 90.00% (162/180),
+disputes 87.30% (110/126), client 84.62% (11/13), offers 80.95%
+(34/42), reviews 79.63% (86/108), api auth 69.23% (18/26).
+Survivors by mutator: OptionalChaining 36, ConditionalExpression
+13, LogicalOperator 4, BlockStatement 3, ArrowFunction 2,
+EqualityOperator 1, ObjectLiteral 1. No-coverage by mutator:
+StringLiteral 13, ConditionalExpression 10, LogicalOperator 5,
+OptionalChaining 2, BlockStatement 1, ObjectLiteral 1. The
+weakest files (api auth, reviews, offers) stay honest follow-up
+material; they do not block the landing, because the gate is the
+combined score, not any single file.
+
+### Floor decision (widened scope, third widening — LANDED)
+
+`thresholds.break` stays **90**: the floor is unchanged, not lowered
+to fit the new scope. The widened config lands in this round:
+the combined score **93.53% (1329/1421)** clears the 90 floor
+(90 <= 93.53), so the mapper ranges are now a landed scope, not a
+proposal, and the proposal header is removed from
+`frontend/stryker.config.mjs` together with the blocked wording in
+the CI job comment. Backlog #287 is done; a future widening still
+requires re-measuring first, per the #263 method.
 
 ## Surviving mutants
 

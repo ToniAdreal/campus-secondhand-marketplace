@@ -89,6 +89,19 @@ export function mutationPasses(score, breakThreshold) {
   return score >= breakThreshold;
 }
 
+/**
+ * Strip a Stryker mutation range suffix (`:startLine-endLine`, with
+ * optional columns) from a `mutate` entry, leaving the file path the
+ * entry mutates — so a ranged entry like
+ * `src/api/messages.ts:240-281` checks existence against
+ * `src/api/messages.ts`. Entries without a range pass through
+ * unchanged. Backlog #287 introduced ranged entries; the wiring
+ * check must not report a ranged file as missing.
+ */
+export function stripMutationRange(entry) {
+  return entry.replace(/:\d+(?::\d+)?-\d+(?::\d+)?$/, '');
+}
+
 /** Slice one job out of a GitHub Actions workflow file's text. */
 export function extractJob(ci, jobName) {
   const lines = ci.split('\n');
@@ -140,7 +153,8 @@ export function checkMutationGateWiring({ ci, config, exists }) {
     failures.push('stryker.config.mjs mutates no files');
   }
   for (const file of mutate) {
-    if (!exists(file)) failures.push(`stryker.config.mjs mutates missing file ${file}`);
+    if (!exists(stripMutationRange(file)))
+      failures.push(`stryker.config.mjs mutates missing file ${file}`);
   }
   if (breakThreshold === null) {
     failures.push('stryker.config.mjs has no numeric thresholds.break');
