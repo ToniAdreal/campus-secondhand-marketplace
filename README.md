@@ -13,7 +13,7 @@ message sellers, and mark items sold. Monorepo with a Spring Boot backend and a 
 |----------|------------|
 | Backend  | Java 17, Spring Boot 3.2.5 (Maven), Spring Data JPA (Hibernate 6), Spring Security 6, Flyway, MapStruct 1.5.5, jjwt 0.12.6 |
 | Database | MySQL 8 (Flyway-managed schema); H2 for local dev + slice tests |
-| Frontend | React 18.3, TypeScript 5.6, Vite 5, React Router 6, TanStack Query 4, Zustand 4, Axios 1.7, Tailwind CSS 3 |
+| Frontend | React 18.3, TypeScript 5.6, Vite 5, React Router 6, TanStack Query 4, Zustand 4, Tailwind CSS 3 (fetch-based API client; axios removed in backlog #288) |
 | Testing  | JUnit 5 + Mockito (unit), Spring Boot `@DataJpaTest` slice tests, Testcontainers + MySQL 8 (integration, runs in CI), Vitest + React Testing Library, axe-core accessibility checks on the key pages, Playwright browser e2e smoke (eight flows, CI only) |
 | Delivery | GitHub Actions CI, Docker, docker-compose (jar + MySQL + Nginx) |
 
@@ -47,7 +47,7 @@ backend/                 Spring Boot 3.2 API (Java 17, Maven)
     db/migration/        Flyway migrations (schema is migration-managed, never hbm2ddl)
   src/test               @DataJpaTest slice tests (H2); *IT Testcontainers tests (CI only)
 frontend/                React 18 + Vite 5 + TypeScript
-  src/api/               client.ts (Axios: in-memory access token, httpOnly refresh
+  src/api/               client.ts (fetch-based: in-memory access token, httpOnly refresh
                          cookie, single-flight 401 refresh with request queueing)
                          + one domain module per area: auth, admin, items, orders,
                          categories, messages, offers, disputes, notifications,
@@ -304,7 +304,7 @@ cd backend && mvn spring-boot:run
 cd frontend && npm install && npm run dev
 ```
 
-Local-dev notes, all verified from a clean checkout (backlog #270):
+Local-dev notes, all verified from a clean checkout (backlog #270, re-verified in backlog #291):
 
 - No secrets are needed on the default H2 profile: the JWT/TOTP fail-fast
   checks apply to the `mysql` profile only.
@@ -340,16 +340,17 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   branches 89, statements 93) fail the run when missed. CI runs this in
   place of plain `npm test`.
 - Mutation testing pilot (backlog #192): PIT (pitest) over the auth token
-  service, the order state machine, and the password-policy validator
-  (`JwtTokenService`, `OrderService`, `OrderCreationService`,
-  `PasswordStrengthValidator` — the last added by backlog #269, driven by
-  `PasswordStrengthValidatorTest` + `BreachedPasswordCheckerTest`), in the
+  service, the order state machine, the password-policy validator, and
+  the TOTP service (`JwtTokenService`, `OrderService`, `OrderCreationService`,
+  `PasswordStrengthValidator` — added by backlog #269, driven by
+  `PasswordStrengthValidatorTest` + `BreachedPasswordCheckerTest` — and
+  `TotpService` — added by backlog #285, driven by `TotpServiceTest`), in the
   CI-only `mutation` Maven profile / `backend-mutation` job — never in
   the default local `mvn test` path. The floor is a ratchet set from the
   first real CI run's measured score, recorded in docs/mutation.md; the
-  score covers those four classes, not the codebase. The #269 widening is
-  unmeasured pending the next CI backend-mutation run — the floor stays
-  27 until then (docs/mutation.md).
+  score covers those five classes, not the codebase. The #269 and #285
+  widenings are unmeasured pending the next CI backend-mutation run — the
+  floor stays 27 until then (docs/mutation.md).
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   eight flows (register lands on browse signed in; browse → listing detail
   renders; login → create listing → it appears in My listings; buy-now →
@@ -385,9 +386,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   screen-reader pass has been done.
 - Automated accessibility checks (backlog #183): `AccessibilityAxe.test.tsx`
   runs axe-core (devDependency, test-only — never in the shipped bundle)
-  over the rendered markup of the eleven key routes (Login, Register,
-  Home/browse, ItemDetail, CreateListing, Settings, Notifications, plus
-  the #278 money path: Cart, My orders, Seller orders, Offers) inside
+  over the rendered markup of the twenty-two key routes in both themes
+  (Login, Register, Home/browse, ItemDetail, CreateListing, Settings,
+  Notifications, plus the #278 money path: Cart, My orders, Seller orders,
+  Offers, plus the #284 third batch: Admin dashboard, Admin users, Admin
+  reports, Seller profile, Favorites, Message search, Order confirmation,
+  Forgot password, Reset password, My listings, Seller payouts) inside
   the existing Vitest + RTL suite and asserts zero violations at the
   serious/critical levels over the WCAG 2.0/2.1 A+AA tags; no rule is
   disabled — the first run found no violations and needed no exceptions.
@@ -459,7 +463,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Optimistic locking (`@Version` on `Item`, covered by a slice test)
 - [x] Order entity + idempotent order creation via client request id
 - [x] MultipartFile image upload (UUID filename, type/size validation)
-- [x] Axios 401 single-flight refresh queue (unit-tested, no backend needed)
+- [x] Fetch 401 single-flight refresh queue (unit-tested, no backend needed; axios removed in backlog #288)
 - [x] TanStack Query invalidation, debounced URL-synced search
 - [x] Offline message table (v1, no WebSocket)
 - [x] Message read state + unread count (Flyway V24 `read_at`, thread view marks receiver rows, nav unread badge)

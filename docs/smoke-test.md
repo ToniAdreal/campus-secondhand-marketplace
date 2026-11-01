@@ -51,7 +51,7 @@ Wait for the API to answer **through the nginx `/api` proxy** (not directly on 8
 the proxy wiring is part of what this verifies):
 
 ```bash
-# register through the proxy (username 3-60 chars, valid email, password 8-72 chars)
+# register through the proxy (username 3-60 chars, valid email, password 12-72 chars — the strength rule's 12 minimum, on top of the DTO's 8-72 range)
 curl -s -X POST http://localhost/api/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"username":"smoke","email":"smoke@example.com","password":"Sm0kePass123"}'
