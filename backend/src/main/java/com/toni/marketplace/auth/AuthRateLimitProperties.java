@@ -439,4 +439,31 @@ public class AuthRateLimitProperties {
   public void setSocialWriteAttemptsPerMinute(int socialWriteAttemptsPerMinute) {
     this.socialWriteAttemptsPerMinute = socialWriteAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the offer
+   * lifecycle transitions (backlog #293): {@code POST
+   * /api/offers/{id}/accept}, {@code /decline}, {@code /counter},
+   * {@code /counter-accept}, {@code /counter-decline} and
+   * {@code /withdraw} share this one bucket. Same keying as the other
+   * per-user buckets (per-IP fallback for anonymous requests). The six
+   * shapes share one bucket because they are one abuse shape — one
+   * account hammering the negotiation toward (or away from) a paid
+   * order — and the bucket must neither consume nor be starved by
+   * the #282 creation bucket (offer filing stays there) or the #228
+   * order-transition bucket. Sized at 20/min like the #282 bucket:
+   * legitimate negotiation is a handful of transitions per offer,
+   * while a script flipping offers at volume is the throttle target.
+   * Never resets on success. Must be &ge; 1.
+   */
+  private int offerLifecycleAttemptsPerMinute = 20;
+
+  public int getOfferLifecycleAttemptsPerMinute() {
+    return offerLifecycleAttemptsPerMinute;
+  }
+
+  public void setOfferLifecycleAttemptsPerMinute(int offerLifecycleAttemptsPerMinute) {
+    this.offerLifecycleAttemptsPerMinute = offerLifecycleAttemptsPerMinute;
+  }
 }

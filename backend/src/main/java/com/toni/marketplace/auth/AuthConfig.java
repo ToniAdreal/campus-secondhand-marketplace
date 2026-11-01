@@ -326,6 +326,26 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the offer lifecycle transitions
+   * ({@code POST /api/offers/{id}/accept}, {@code /decline},
+   * {@code /counter}, {@code /counter-accept}, {@code /counter-decline}
+   * and {@code /withdraw}, backlog #293; default 20 transitions/minute
+   * per authenticated user). The six shapes share this one bucket —
+   * they are the negotiation toward or away from a paid order —
+   * keyed on the JWT principal id like the social-write bucket, so
+   * lifecycle traffic neither consumes nor starves the #282 creation
+   * bucket (filing an offer stays there) or the #228 order-transition
+   * bucket. Never resets on success.
+   */
+  @Bean
+  public AuthRateLimiter offerLifecycleRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties lifecycleProps = new AuthRateLimitProperties();
+    lifecycleProps.setEnabled(props.isEnabled());
+    lifecycleProps.setAttemptsPerMinute(props.getOfferLifecycleAttemptsPerMinute());
+    return new AuthRateLimiter(clock, lifecycleProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

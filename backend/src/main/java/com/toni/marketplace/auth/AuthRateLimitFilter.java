@@ -187,11 +187,25 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * starved by the neighbouring write buckets. Deliberately NOT in
  * this bucket: the offer lifecycle transitions ({@code
  * /api/offers/{id}/accept}, {@code /decline}, {@code /counter} and
- * friends), the ADMIN dispute/appeal resolutions and the seller
- * review-response PUT — they are different abuse shapes and stay
- * unthrottled, out of #282's scope. (The order-tail POSTs
- * {@code /confirm-receipt} and {@code /handover-code/regenerate} have
- * their own #289 bucket, above — they are not #282's to cover.)
+ * friends) have their own #293 bucket, below; the ADMIN
+ * dispute/appeal resolutions and the seller review-response PUT are
+ * different abuse shapes and stay unthrottled, out of #282's scope.
+ * (The order-tail POSTs {@code /confirm-receipt} and
+ * {@code /handover-code/regenerate} have their own #289 bucket, above
+ * — they are not #282's to cover.)
+ *
+ * <p>Offer lifecycle transitions ({@code POST /api/offers/{id}/accept},
+ * {@code /decline}, {@code /counter}, {@code /counter-accept},
+ * {@code /counter-decline} and {@code /withdraw}, backlog #293) share a
+ * per-<em>user</em> bucket (default 20/minute) on the same keying as
+ * the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: accept and
+ * counter-accept move a negotiation toward a paid order, so one
+ * account hammering any of the six shapes is one abuse shape, and
+ * lifecycle traffic must neither consume nor be starved by the #282
+ * creation bucket (filing an offer stays there) or the #228
+ * order-transition bucket. The path carries the offer id, so the
+ * transitions are matched by shape rather than by equality.
  *
  * <p>Behavior:
  * <ul>
@@ -299,6 +313,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter orderReceiptLimiter;
   private final AuthRateLimiter itemMutationLimiter;
   private final AuthRateLimiter socialWriteLimiter;
+  private final AuthRateLimiter offerLifecycleLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -334,6 +349,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter itemMutationLimiter,
                              @Qualifier("socialWriteRateLimiter")
                                  AuthRateLimiter socialWriteLimiter,
+                             @Qualifier("offerLifecycleRateLimiter")
+                                 AuthRateLimiter offerLifecycleLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -355,6 +372,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.orderReceiptLimiter = orderReceiptLimiter;
     this.itemMutationLimiter = itemMutationLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
+    this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -456,6 +474,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // appeal must not refill the allowance. Shape-matched because
       // every path carries an id segment.
       return !socialWriteLimiter.isEnabled();
+    }
+    if (isOfferLifecyclePath(path)) {
+      // Offer lifecycle transitions (backlog #293): own per-user
+      // bucket on the message keying, never reset on success — an
+      // accepted, declined, countered or withdrawn offer must not
+      // refill the allowance. Shape-matched because the path carries
+      // the offer id; filing an offer stays in the #282 bucket above.
+      return !offerLifecycleLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -669,6 +695,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isOfferLifecyclePath(path)) {
+      // Offer lifecycle transitions (backlog #293): own per-user
+      // bucket on the message keying (JWT principal id, per-IP
+      // fallback for a missing/invalid token — the security chain
+      // 401s anonymous transitions, but anonymous hammering is still
+      // throttled), never reset on success — an accepted, declined,
+      // countered or withdrawn offer must not refill the allowance,
+      // and lifecycle traffic must not touch the #282 creation bucket
+      // or the #228 order-transition bucket.
+      String key = messageKey(request);
+      if (!offerLifecycleLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, offerLifecycleLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       // Password reset (backlog #90): both endpoints share one per-IP
       // bucket — the request endpoint is a mail-bombing surface, the
@@ -779,6 +822,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             || path.matches("/api/orders/\\d+/dispute")
             || path.matches("/api/disputes/\\d+/evidence")
             || path.matches("/api/seller/reports/\\d+/appeal"));
+  }
+
+  /**
+   * True for the offer lifecycle POSTs ({@code POST
+   * /api/offers/{id}/accept}, {@code /decline}, {@code /counter},
+   * {@code /counter-accept}, {@code /counter-decline} and
+   * {@code /withdraw}, backlog #293): the id segment is numeric
+   * (offer ids are), which keeps the collection-adjacent shapes out —
+   * filing an offer ({@code POST /api/items/{id}/offers}) lives in
+   * the #282 bucket and the {@code /api/offers/made} and
+   * {@code /api/offers/received} reads are GETs the filter never
+   * throttles.
+   */
+  private static boolean isOfferLifecyclePath(String path) {
+    return path != null
+        && path.matches("/api/offers/\\d+/(accept|decline|counter|counter-accept|counter-decline|withdraw)");
   }
 
   /**
