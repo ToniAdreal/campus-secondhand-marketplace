@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
-import { api } from './client';
+import { api, isApiError } from './client';
 import type { ApiResponse } from './items';
 
 export interface Category {
@@ -128,7 +127,7 @@ export function useDeleteCategory() {
 
 /** True when the failure is the backend's 401 for an expired session. */
 export function isUnauthorized(error: unknown): boolean {
-  return axios.isAxiosError(error) && error.response?.status === 401;
+  return isApiError(error) && error.response?.status === 401;
 }
 
 /**

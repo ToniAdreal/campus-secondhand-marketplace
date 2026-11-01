@@ -29,9 +29,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -95,7 +95,7 @@ describe('AdminCategoriesPage (backlog #229)', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never a fake taxonomy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/categories');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
@@ -105,7 +105,7 @@ describe('AdminCategoriesPage (backlog #229)', () => {
 
   it('a 401 mid-session navigates to /login', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(401, 'unauthorized'));
+    getSpy.mockRejectedValue(apiFailure(401, 'unauthorized'));
 
     renderAt('/admin/categories');
     await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());
@@ -151,7 +151,7 @@ describe('AdminCategoriesPage (backlog #229)', () => {
   it('delete asks for confirmation, then a 409 renders the recategorize-first copy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(envelope(taxonomy));
-    deleteSpy.mockRejectedValue(axiosFailure(409, 'category in use'));
+    deleteSpy.mockRejectedValue(apiFailure(409, 'category in use'));
 
     renderAt('/admin/categories');
     await waitFor(() => expect(screen.getByRole('cell', { name: 'Textbooks' })).toBeTruthy());

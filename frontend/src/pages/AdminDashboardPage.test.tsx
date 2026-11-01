@@ -52,9 +52,9 @@ function dashboardEnvelope(data: AdminDashboard) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -154,7 +154,7 @@ describe('AdminDashboardPage', () => {
 
   it('renders the not-authorized state on a 403 from the API', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'forbidden'));
+    getSpy.mockRejectedValue(apiFailure(403, 'forbidden'));
 
     renderAt('/admin/dashboard');
 

@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
-import { api } from './client';
+import { api, isApiError } from './client';
 import type { ApiResponse, Page } from './items';
 
 /**
@@ -36,7 +35,7 @@ export const adminUserKeys = {
  * Paginated, newest first; `q` is an optional case-insensitive substring
  * over username and email and is omitted entirely when blank, mirroring
  * the items list. Non-admin callers get the JSON 403 envelope and
- * anonymous callers 401 — both surface as Axios errors here.
+ * anonymous callers 401 — both surface as ApiError failures here.
  */
 export function useAdminUsers(page = 0, q = '', enabled = true, size = 20) {
   return useQuery({
@@ -231,7 +230,7 @@ export function describeAuditLogError(error: unknown): string {
 
 /** True when the failure is the backend's 403 for a non-ADMIN caller. */
 export function isForbidden(error: unknown): boolean {
-  return axios.isAxiosError(error) && error.response?.status === 403;
+  return isApiError(error) && error.response?.status === 403;
 }
 
 /**
@@ -452,7 +451,7 @@ export interface SettlementWindow {
  * GET /api/admin/payments/settlement — ADMIN-only (the backend's
  * @PreAuthorize is the real gate; the SPA route/nav hiding is cosmetic).
  * Non-admin callers get the JSON 403 envelope and anonymous callers 401 —
- * both surface as Axios errors here.
+ * both surface as ApiError failures here.
  */
 export function useAdminPaymentSettlement(enabled = true, window: SettlementWindow = {}) {
   const hasWindow = window.from != null || window.to != null;

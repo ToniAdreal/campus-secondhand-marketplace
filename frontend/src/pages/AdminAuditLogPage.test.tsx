@@ -44,9 +44,9 @@ function pageEnvelope(content: AuditLogEntry[], number: number, totalPages: numb
   } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -114,7 +114,7 @@ describe('AdminAuditLogPage', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never a fake trail', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/audit-log');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());

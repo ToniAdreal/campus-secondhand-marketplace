@@ -55,9 +55,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -130,7 +130,7 @@ describe('AdminAppealsPage', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never a fake queue', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/appeals');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
@@ -164,7 +164,7 @@ describe('AdminAppealsPage', () => {
   it('a 422 on a resolution maps to friendly copy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([openAppeal], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(422, 'appeal already rejected'));
+    postSpy.mockRejectedValue(apiFailure(422, 'appeal already rejected'));
 
     renderAt('/admin/appeals');
     await waitFor(() =>

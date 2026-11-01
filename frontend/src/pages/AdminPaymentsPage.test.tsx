@@ -36,9 +36,9 @@ function summaryEnvelope(data: SettlementSummary) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -174,7 +174,7 @@ describe('AdminPaymentsPage', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never fake totals', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/payments');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
@@ -184,7 +184,7 @@ describe('AdminPaymentsPage', () => {
 
   it('an API error renders the envelope message', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(500, 'settlement unavailable'));
+    getSpy.mockRejectedValue(apiFailure(500, 'settlement unavailable'));
 
     renderAt('/admin/payments');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());

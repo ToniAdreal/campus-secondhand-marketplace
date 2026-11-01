@@ -51,9 +51,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -121,7 +121,7 @@ describe('AdminReportsPage', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never a fake queue', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/reports');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
@@ -206,7 +206,7 @@ describe('AdminReportsPage', () => {
   it('a 422 on a transition maps to friendly copy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([openReport], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(422, 'report already dismissed'));
+    postSpy.mockRejectedValue(apiFailure(422, 'report already dismissed'));
 
     renderAt('/admin/reports');
     await waitFor(() => expect(screen.getByRole('cell', { name: 'SCAM' })).toBeTruthy());

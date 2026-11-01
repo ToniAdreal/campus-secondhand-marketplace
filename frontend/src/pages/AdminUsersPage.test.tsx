@@ -65,9 +65,9 @@ function pageEnvelope(content: AdminUser[], number: number, totalPages: number) 
   } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -135,7 +135,7 @@ describe('AdminUsersPage', () => {
 
   it('a 403 from the API renders the honest not-authorized state, never a fake list', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(403, 'Access Denied'));
+    getSpy.mockRejectedValue(apiFailure(403, 'Access Denied'));
 
     renderAt('/admin/users');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
@@ -265,7 +265,7 @@ describe('AdminUsersPage', () => {
   it('a 403 from disable maps to the friendly admin-guard copy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([aliceRow], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(403, 'cannot disable an admin user'));
+    postSpy.mockRejectedValue(apiFailure(403, 'cannot disable an admin user'));
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderAt('/admin/users');
@@ -330,7 +330,7 @@ describe('AdminUsersPage', () => {
   it('a 422 from the reset maps to the friendly not-enabled copy', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([aliceRow], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(422, 'two-factor authentication is not enabled'));
+    postSpy.mockRejectedValue(apiFailure(422, 'two-factor authentication is not enabled'));
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderAt('/admin/users');

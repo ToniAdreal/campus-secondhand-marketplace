@@ -210,7 +210,7 @@ describe('useAdminUsers', () => {
 
   it('propagates the failure shape so the page can render its error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -482,7 +482,7 @@ describe('useAdminPaymentSettlement', () => {
 
   it('propagates the failure shape so the page can render its error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -683,10 +683,10 @@ describe('formatCents', () => {
 
 describe('isForbidden', () => {
   it.each([
-    ['axios 403', { isAxiosError: true, response: { status: 403 } }, true],
-    ['axios 401', { isAxiosError: true, response: { status: 401 } }, false],
-    ['axios 404', { isAxiosError: true, response: { status: 404 } }, false],
-    ['axios error without a response', { isAxiosError: true }, false],
+    ['api 403', { isApiError: true, response: { status: 403 } }, true],
+    ['api 401', { isApiError: true, response: { status: 401 } }, false],
+    ['api 404', { isApiError: true, response: { status: 404 } }, false],
+    ['api error without a response', { isApiError: true }, false],
     ['plain error', new Error('boom'), false],
     ['null', null, false],
     ['undefined', undefined, false],

@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { api } from './client';
 import {
   describeAdminCategoryError,
+  isUnauthorized,
   useAdminCategories,
   useCreateCategory,
   useDeleteCategory,
@@ -67,7 +68,7 @@ describe('useCategories', () => {
 
   it('propagates the failure shape so pages can render their error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -168,7 +169,7 @@ describe('ADMIN category writes (backlog #229)', () => {
 
   it('a delete 409 maps to the recategorize-first copy, a save 409 to the duplicate copy', () => {
     const conflict = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 409, data: { code: 409, message: 'category in use', data: null } },
     };
     expect(describeAdminCategoryError(conflict, 'delete')).toContain('Recategorize those listings first');
@@ -205,5 +206,22 @@ describe('describeAdminCategoryError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAdminCategoryError(error, 'save')).toBe(expected);
+  });
+});
+
+describe('isUnauthorized (backlog #288 slice 2)', () => {
+  // The categories guard migrated from axios.isAxiosError to the fetch
+  // client's isApiError in slice 2; this matrix pins the guard itself,
+  // mirroring the isForbidden matrix in admin.test.tsx.
+  it.each([
+    ['api 401', { isApiError: true, response: { status: 401 } }, true],
+    ['api 403', { isApiError: true, response: { status: 403 } }, false],
+    ['api 404', { isApiError: true, response: { status: 404 } }, false],
+    ['api error without a response', { isApiError: true }, false],
+    ['plain error', new Error('boom'), false],
+    ['null', null, false],
+    ['undefined', undefined, false],
+  ])('%s', (_label, error, expected) => {
+    expect(isUnauthorized(error)).toBe(expected);
   });
 });
