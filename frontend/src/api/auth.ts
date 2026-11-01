@@ -63,7 +63,7 @@ export type LoginOutcome =
  * token pair / refresh cookie; the two shapes are told apart by the status
  * and by the challenge field, so callers switch on `kind`.
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope (e.g. 401 "invalid credentials" — the same
  * message for unknown identifier and wrong password, no enumeration oracle).
  */
@@ -120,7 +120,7 @@ interface RegisterPendingBody {
  * carries no token at all — callers must render the "check your inbox"
  * state, never a logged-in one.
  *
- * Throws the Axios error on failure (400 weak password / validation, 409
+ * Throws the ApiError on failure (400 weak password / validation, 409
  * duplicate username or email — the {code,message,data} envelope).
  */
 export async function register(payload: RegisterPayload): Promise<RegisterOutcome> {
@@ -147,7 +147,7 @@ export interface ConfirmEmailVerificationPayload {
  * their password afterwards. Unknown, used and expired tokens all fail
  * with the identical 400, so callers map them to one generic message.
  *
- * Throws the Axios error on failure (the {code,message,data} envelope).
+ * Throws the ApiError on failure (the {code,message,data} envelope).
  */
 export async function confirmEmailVerification(
   payload: ConfirmEmailVerificationPayload,
@@ -169,7 +169,7 @@ export interface ResendEmailVerificationPayload {
  * link; it is delivered through the backend's mail seam only and never
  * appears in this response.
  *
- * Throws the Axios error on failure (e.g. 400 on a malformed address,
+ * Throws the ApiError on failure (e.g. 400 on a malformed address,
  * 429 when the shared verification bucket is exhausted).
  */
 export async function resendEmailVerification(
@@ -211,7 +211,7 @@ export interface AuthenticateTotpPayload {
  * with the identical 401 whatever the factor, so callers show one generic
  * message.
  *
- * Throws the Axios error on failure (the {code,message,data} envelope).
+ * Throws the ApiError on failure (the {code,message,data} envelope).
  */
 export async function authenticateTotp(
   payload: AuthenticateTotpPayload,
@@ -244,7 +244,7 @@ export interface TotpSetup {
  * nothing; the settings setup button surfaces that envelope message,
  * and a modal re-proof retry for setup itself is a follow-up.
  *
- * Throws the Axios error on failure.
+ * Throws the ApiError on failure.
  */
 export async function setupTotp(): Promise<TotpSetup> {
   const res = await api.post<ApiResponse<TotpSetup>>('/auth/2fa/setup');
@@ -267,7 +267,7 @@ export interface EnableTotpResult {
  * their hashes are stored server-side — so callers must present them for
  * saving and never expect to read them back. A wrong code → 400.
  *
- * Throws the Axios error on failure (the {code,message,data} envelope).
+ * Throws the ApiError on failure (the {code,message,data} envelope).
  */
 export async function enableTotp(payload: EnableTotpPayload): Promise<EnableTotpResult> {
   const res = await api.post<ApiResponse<EnableTotpResult>>('/auth/2fa/enable', payload);
@@ -293,7 +293,7 @@ export interface DisableTotpPayload {
  * oracle); disabling when 2FA is not enabled fails with 422; repeated
  * failed second-factor attempts feed the shared #101 lockout (423).
  *
- * Throws the Axios error on failure (the {code,message,data} envelope).
+ * Throws the ApiError on failure (the {code,message,data} envelope).
  */
 export async function disableTotp(payload: DisableTotpPayload): Promise<void> {
   await api.post('/auth/2fa/disable', payload);
@@ -304,7 +304,7 @@ export async function disableTotp(payload: DisableTotpPayload): Promise<void> {
  * Returns how many of the caller's recovery codes remain unused — a count
  * only; the codes themselves are never readable back after enable.
  *
- * Throws the Axios error on failure; callers degrade to no readout.
+ * Throws the ApiError on failure; callers degrade to no readout.
  */
 export async function recoveryCodeCount(): Promise<number> {
   const res = await api.get<ApiResponse<{ remaining: number }>>(
@@ -431,7 +431,7 @@ export async function startPasskeyAssertion(
  * Set-Cookie that wipes the httpOnly `refresh_token` cookie. The call takes
  * no payload and the response body carries no tokens.
  *
- * Throws the Axios error on failure (e.g. 401 when the access token already
+ * Throws the ApiError on failure (e.g. 401 when the access token already
  * expired — note the client's 401 interceptor may silently refresh once and
  * then retry the logout, which is harmless: the retry just revokes the
  * rotated family instead). Callers must clear local auth state in a
@@ -459,7 +459,7 @@ export interface ChangePasswordPayload {
  * login) plus the user profile — callers must store them (e.g. through
  * the store's login()) so subsequent requests keep working.
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope.
  */
 export async function changePassword(payload: ChangePasswordPayload): Promise<LoginResult> {
@@ -484,7 +484,7 @@ export interface ChangeEmailPayload {
  * Every session stays alive — the caller stays signed in and shows the
  * "check your new inbox" state.
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope.
  */
 export async function changeEmail(payload: ChangeEmailPayload): Promise<void> {
@@ -503,7 +503,7 @@ export interface ChangeUsernamePayload {
  * new name at once (an already-issued access token's username claim
  * goes stale until it expires or rotates, ≤15 min).
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope (400 bad format, 409 taken name or the
  * caller's own current name, and — backlog #261 — the dedicated 403
  * step-up envelope when the token's credential proof is stale; callers
@@ -554,7 +554,7 @@ export interface CloseAccountPayload {
  * local credential. The original username/email are freed for a fresh
  * registration.
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope.
  */
 export async function closeAccount(payload: CloseAccountPayload): Promise<void> {
@@ -574,7 +574,7 @@ export interface RequestPasswordResetPayload {
  * delivered through the backend's mail seam only; it never appears in
  * this response.
  *
- * Throws the Axios error on failure (e.g. 400 on a blank identifier,
+ * Throws the ApiError on failure (e.g. 400 on a blank identifier,
  * 429 when the shared reset bucket is exhausted).
  */
 export async function requestPasswordReset(
@@ -597,7 +597,7 @@ export interface ConfirmPasswordResetPayload {
  * expired tokens all fail with the identical 401 — callers must map
  * them to one generic message, never distinguishing them.
  *
- * Throws the Axios error on failure; the backend wraps failures in the
+ * Throws the ApiError on failure; the backend wraps failures in the
  * {code,message,data} envelope.
  */
 export async function confirmPasswordReset(
@@ -614,7 +614,7 @@ export async function confirmPasswordReset(
  * to come back logged in. The interceptor puts any fresh credential in
  * module scope (see client.ts); callers only need the user from here.
  *
- * Throws the Axios error when no session exists (no cookie, refresh
+ * Throws the ApiError when no session exists (no cookie, refresh
  * rejected) — the store's hydrate() converts that into a logged-out state.
  */
 export async function me(): Promise<AuthUser> {
@@ -647,7 +647,7 @@ export interface AuthSession {
  * client's 401 interceptor silently refreshes once, so a surviving
  * httpOnly cookie is enough.
  *
- * Throws the Axios error on failure (401 when no session exists).
+ * Throws the ApiError on failure (401 when no session exists).
  */
 export async function listSessions(): Promise<AuthSession[]> {
   const res = await api.get<ApiResponse<AuthSession[]>>('/auth/sessions');
@@ -662,7 +662,7 @@ export async function listSessions(): Promise<AuthSession[]> {
  * session kills this browser's refresh cookie: the next refresh 401s, so
  * callers must treat it as a sign-out of this tab.
  *
- * Throws the Axios error on failure.
+ * Throws the ApiError on failure.
  */
 export async function revokeSession(id: string): Promise<void> {
   await api.delete(`/auth/sessions/${encodeURIComponent(id)}`);
@@ -675,7 +675,7 @@ export async function revokeSession(id: string): Promise<void> {
  * session is identified by the cookie server-side, never by an id this
  * client supplies. Resolves with how many sessions were revoked.
  *
- * Throws the Axios error on failure.
+ * Throws the ApiError on failure.
  */
 export async function revokeOtherSessions(): Promise<number> {
   const res = await api.post<ApiResponse<{ revokedCount: number }>>(
@@ -706,7 +706,7 @@ export interface TrustedDevice {
  * GET /api/auth/trusted-devices. Lists the caller's trusted devices,
  * newest first (server-side order). Requires authentication.
  *
- * Throws the Axios error on failure (401 when no session exists).
+ * Throws the ApiError on failure (401 when no session exists).
  */
 export async function listTrustedDevices(): Promise<TrustedDevice[]> {
   const res = await api.get<ApiResponse<TrustedDevice[]>>('/auth/trusted-devices');
@@ -719,7 +719,7 @@ export async function listTrustedDevices(): Promise<TrustedDevice[]> {
  * challenge applies again. Unknown ids — or ids belonging to another
  * user — fail with 404 (no cross-user oracle).
  *
- * Throws the Axios error on failure.
+ * Throws the ApiError on failure.
  */
 export async function revokeTrustedDevice(id: number): Promise<void> {
   await api.delete(`/auth/trusted-devices/${id}`);
@@ -770,7 +770,7 @@ export interface LoginEvent {
  * no owner and are never exposed here. The page renders the first page
  * (20 rows) only; there is deliberately no "load more" in v1.
  *
- * Throws the Axios error on failure (401 when no session exists).
+ * Throws the ApiError on failure (401 when no session exists).
  */
 export async function getLoginHistory(page = 0, size = 20): Promise<Page<LoginEvent>> {
   const res = await api.get<ApiResponse<Page<LoginEvent>>>('/auth/login-history', {
@@ -880,7 +880,7 @@ export function useRevokeOtherSessions() {
  * exempt from the freshness gate (it IS the re-proof). Its own per-user
  * rate-limit bucket (5/min) answers 429 on abuse.
  *
- * Throws the Axios error on failure (401 wrong proof, 423 lockout, 429).
+ * Throws the ApiError on failure (401 wrong proof, 423 lockout, 429).
  */
 export interface StepUpPayload {
   currentPassword: string;
@@ -991,7 +991,7 @@ export interface AccountDataDownload {
   filename: string;
 }
 
-/** Reads one header from an Axios response (AxiosHeaders or plain object). */
+/** Reads one header from a response (fetch Headers or plain object). */
 function readResponseHeader(headers: unknown, name: string): string | undefined {
   if (!headers || typeof headers !== 'object') return undefined;
   const bag = headers as { get?: (n: string) => unknown } & Record<string, unknown>;
@@ -1023,7 +1023,7 @@ export interface DataExportGrant {
  * single-use grant that authorizes exactly one download. Only the
  * grant's SHA-256 hash is stored server-side.
  *
- * Throws the Axios error on failure; the backend wraps failures in
+ * Throws the ApiError on failure; the backend wraps failures in
  * the {code,message,data} envelope.
  */
 export async function confirmDataExport(
@@ -1049,7 +1049,7 @@ export async function confirmDataExport(
  * fires if a proxy stripped the header). The export is rate-limited
  * per user server-side (429 envelope) and audit-logged there.
  *
- * Throws the Axios error on failure; with responseType 'blob' the
+ * Throws the ApiError on failure; with responseType 'blob' the
  * error body is a Blob too, so callers map by status, not by body.
  */
 export async function downloadMyData(grant: string): Promise<AccountDataDownload> {

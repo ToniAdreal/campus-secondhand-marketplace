@@ -241,8 +241,8 @@ InvalidRefreshTokenException stays in auth/ (it extends the common
 InvalidTokenException). CategoryController previously injected
 CategoryRepository directly; it now goes through CategoryService.
 
-Frontend (`frontend/src`) is a React 18 SPA: `api/client.ts` holds the axios
-instance with the in-memory access token and the single-flight 401 refresh queue
+Frontend (`frontend/src`) is a React 18 SPA: `api/client.ts` holds the fetch-based
+client with the in-memory access token and the single-flight 401 refresh queue
 (parallel 401s → one refresh call, then retries), plus a shared 30 s request
 timeout (backlog #251) — a timed-out request surfaces a timeout copy through
 the same envelope path pages already render, and pages that fire a request on
@@ -404,7 +404,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - API drift gate (backlog #205): `npm run check:api` — a dependency-free
   node script (`frontend/scripts/check-api-drift.mjs`, in the #165 mould)
   extracts every method+path the frontend api modules call (the shared
-  axios instance's calls, the client.ts refresh call, and the SSE
+  client instance's calls, the client.ts refresh call, and the SSE
   stream as a GET; doc comments are stripped first, template params
   match spec params by position, not name) and fails when one is absent
   from the OpenAPI document. The document is exported fresh on every

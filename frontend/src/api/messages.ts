@@ -148,7 +148,7 @@ export interface SendMessageInput {
  * POST /api/messages, or POST /api/messages/photo (multipart) when a
  * photo is attached (backlog #245). The sender is the JWT principal,
  * never a request field. The photo branch builds FormData and lets
- * Axios set the multipart Content-Type + boundary itself, like the
+ * fetch set the multipart Content-Type + boundary itself, like the
  * listing-photo upload; the JSON branch is byte-identical to before,
  * so a photo-less message posts exactly what it always posted. On
  * success the thread query is invalidated and refetched — the new

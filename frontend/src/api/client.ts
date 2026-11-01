@@ -1,15 +1,13 @@
 /**
- * Single fetch-based HTTP client for the whole app (backlog #288, slice 1:
- * the axios -> fetch migration, client only — no api module or page is
- * migrated in this slice, so the public surface below is deliberately
- * axios-shaped: method helpers returning { data, status, statusText,
- * headers, config }, and errors carrying a `response` object with
- * { status, data, headers } that the unmigrated call sites already read).
+ * Single fetch-based HTTP client for the whole app (backlog #288: the
+ * axios -> fetch migration, slices 1-4 — the public surface below keeps
+ * the shape the api modules and pages already consumed: method helpers
+ * returning { data, status, statusText, headers, config }, and errors
+ * carrying a `response` object with { status, data, headers }).
  *
  * - The access token lives in memory (module scope, never localStorage).
  * - The refresh token lives in an httpOnly cookie, so the browser sends it
- *   automatically with `credentials: 'include'` (the fetch equivalent of
- *   axios `withCredentials`).
+ *   automatically with `credentials: 'include'`.
  * - On 401, exactly one refresh request is in flight; concurrent failed
  *   requests queue on the same promise instead of each triggering a refresh.
  * - Every outgoing request carries an `X-Request-ID` (backlog #126): the
@@ -21,7 +19,7 @@
  * - Every request shares one timeout (backlog #251): a hung backend used
  *   to leave every page spinning forever. REQUEST_TIMEOUT_MS bounds that
  *   wait; a timed-out request rejects with an ApiError carrying code
- *   `ECONNABORTED` (the axios code callers already key on), which
+ *   `ECONNABORTED` (the timeout code callers already key on), which
  *   describeRequestError maps to REQUEST_TIMEOUT_MESSAGE through the
  *   same envelope path pages already render (envelope message, then
  *   the no-response network copy, then the caller's fallback) — no
@@ -60,7 +58,7 @@ export const REQUEST_TIMEOUT_MESSAGE =
 
 export const REQUEST_ID_HEADER = 'X-Request-ID';
 
-/** Per-request options, mirroring the axios config keys the api modules
+/** Per-request options, mirroring the config keys the api modules
  *  actually use today: query params, headers, an abort signal, a delete
  *  body, a blob response (the account-data export), and a timeout.
  *  Headers stay a plain record (every call site passes one); the client
@@ -77,7 +75,7 @@ export interface ApiRequestConfig {
   timeout?: number;
 }
 
-/** Success shape: the axios response shape the api modules consume. */
+/** Success shape: the response shape the api modules consume. */
 export interface ApiResponse<T = unknown> {
   data: T;
   status: number;
@@ -86,9 +84,9 @@ export interface ApiResponse<T = unknown> {
   config: ApiRequestConfig & { method: string; url: string };
 }
 
-/** Error shape: the axios error shape the pages consume — `response`
+/** Error shape: the error shape the pages consume — `response`
  *  is present for HTTP failures and absent for network/timeout/cancel
- *  failures, exactly as axios behaved. */
+ *  failures. */
 export interface ApiErrorResponse {
   status: number;
   data: unknown;
@@ -119,9 +117,8 @@ export class ApiError extends Error {
   }
 }
 
-/** True for errors thrown by this client. Replaces axios.isAxiosError
- *  at the call sites slices 2–3 migrate; it also accepts plain doubles
- *  carrying the brand plus a response, so migrated tests can fake one
+/** True for errors thrown by this client. It also accepts plain doubles
+ *  carrying the brand plus a response, so tests can fake one
  *  without constructing the class. */
 export function isApiError(error: unknown): error is ApiError {
   if (error instanceof ApiError) return true;
@@ -149,9 +146,7 @@ export function isRequestTimeout(error: unknown): boolean {
  * envelope message verbatim, then the no-response network copy, then
  * the caller's fallback. Status-specific branches (401/409/429 …) stay
  * in the caller's own helper, which delegates the remainder here.
- * The response is read duck-typed (not only via isApiError) so the
- * still-unmigrated axios-shaped errors from slices 2–3 map identically
- * until those slices land.
+ * The response is read duck-typed (not only via isApiError).
  */
 export function describeRequestError(error: unknown, fallback: string): string {
   if (isRequestTimeout(error)) return REQUEST_TIMEOUT_MESSAGE;
@@ -163,8 +158,7 @@ export function describeRequestError(error: unknown, fallback: string): string {
   }
   if (
     error instanceof ApiError ||
-    (error as { isApiError?: unknown } | null)?.isApiError === true ||
-    (error as { isAxiosError?: unknown } | null)?.isAxiosError === true
+    (error as { isApiError?: unknown } | null)?.isApiError === true
   ) {
     if (!response) return 'Network error — is the backend running?';
   }
@@ -172,7 +166,7 @@ export function describeRequestError(error: unknown, fallback: string): string {
 }
 
 /** Builds the fetch URL: base + path, plus a serialized query string.
- *  Null/undefined params are dropped (axios behaviour); array values
+ *  Null/undefined params are dropped; array values
  *  repeat the key. */
 function buildUrl(
   url: string,
@@ -309,7 +303,7 @@ function refreshAccessToken(): Promise<string | null> {
           REQUEST_TIMEOUT_MS,
         );
         // Any refresh failure (HTTP or network) clears the token, as the
-        // axios version's catch did — a failed refresh means the session
+        // previous client's catch did — a failed refresh means the session
         // is gone, and keeping the stale token would retry it forever.
         if (!response.ok) {
           setAccessToken(null);
@@ -425,17 +419,17 @@ async function request<T>(
 }
 
 /**
- * The shared client. Method helpers mirror the axios instance the api
+ * The shared client. Method helpers mirror the instance the api
  * modules call today (get/post/put/patch/delete with the same config
  * keys and the same response shape); `defaults` is a plain config
- * record kept for the one remaining consumer that reads it
- * (auth.test.ts asserts withCredentials) and is revisited when slice 4
- * sweeps the test files. vi.spyOn(api, 'post') in the api-module tests
- * keeps working because these are plain writable object methods.
+ * record kept for the one consumer that reads it
+ * (auth.test.ts asserts withCredentials). vi.spyOn(api, 'post') in the
+ * api-module tests keeps working because these are plain writable
+ * object methods.
  *
- * The methods are declared on an interface with axios's exact generic
+ * The methods are declared on an interface with the exact generic
  * shape (<T, R = ApiResponse<T>, D>) rather than inferred from the
- * object literal: the test suites spy on these methods and axios's
+ * object literal: the test suites spy on these methods and this
  * interface shape is what keeps their deferred-resolve and
  * mockResolvedValueOnce(undefined) patterns type-checking (an inferred
  * object-literal signature makes those same tests fail under tsc).

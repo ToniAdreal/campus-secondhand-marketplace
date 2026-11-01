@@ -53,9 +53,9 @@ function pageEnvelope(messages: Message[], page = 0, totalPages = 1) {
   });
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -212,7 +212,7 @@ describe('MessageThread', () => {
 
   it('a 403 hides the thread behind a privacy note, never the raw message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
-    getSpy.mockRejectedValueOnce(axiosFailure(403, 'not a participant in this conversation'));
+    getSpy.mockRejectedValueOnce(apiFailure(403, 'not a participant in this conversation'));
     renderThread();
 
     await waitFor(() => expect(screen.getByText(/private/i)).toBeTruthy());
@@ -325,7 +325,7 @@ describe('MessageThread', () => {
   it('a failed send shows a friendly error and keeps the draft', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValueOnce(pageEnvelope([msg1, msg2]));
-    postSpy.mockRejectedValueOnce(axiosFailure(422, 'cannot send a message to yourself'));
+    postSpy.mockRejectedValueOnce(apiFailure(422, 'cannot send a message to yourself'));
     renderThread();
 
     await waitFor(() => expect(screen.getByText('Is this still available?')).toBeTruthy());

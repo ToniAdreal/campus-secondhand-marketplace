@@ -210,8 +210,8 @@ describe('describeAdminCategoryError', () => {
 });
 
 describe('isUnauthorized (backlog #288 slice 2)', () => {
-  // The categories guard migrated from axios.isAxiosError to the fetch
-  // client's isApiError in slice 2; this matrix pins the guard itself,
+  // The categories guard migrated to the fetch client's isApiError
+  // in slice 2; this matrix pins the guard itself,
   // mirroring the isForbidden matrix in admin.test.tsx.
   it.each([
     ['api 401', { isApiError: true, response: { status: 401 } }, true],

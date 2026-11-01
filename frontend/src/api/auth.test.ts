@@ -78,7 +78,7 @@ describe('login', () => {
 
   it('propagates API errors so the caller can read the envelope message', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 401,
         data: { code: 401, message: 'invalid credentials', data: null },
@@ -115,7 +115,7 @@ describe('me', () => {
 
   it('propagates the 401 when no session exists so the store can log out', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 401,
         data: { code: 401, message: 'unauthorized', data: null },
@@ -158,7 +158,7 @@ describe('changePassword', () => {
 
   it('propagates the envelope error (401 wrong current password, 400 weak new password)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 400,
         data: { code: 400, message: 'password must be 8-72 characters', data: null },
@@ -204,7 +204,7 @@ describe('changeEmail', () => {
 
   it('propagates the envelope error (401 wrong current password, 409 taken address)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 409,
         data: { code: 409, message: 'email is already registered', data: null },
@@ -235,7 +235,7 @@ describe('changeUsername', () => {
 
   it('propagates the envelope error (409 taken name)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 409,
         data: { code: 409, message: 'username is already taken', data: null },
@@ -266,7 +266,7 @@ describe('closeAccount', () => {
 
   it('propagates the identical 401 for a wrong password or code', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 401,
         data: { code: 401, message: 'invalid credentials', data: null },
@@ -317,7 +317,7 @@ describe('sessions', () => {
 
   it('propagates the 401 when no session exists', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -337,7 +337,7 @@ describe('sessions', () => {
 
   it('propagates the 404 for an unknown or foreign session id (no oracle)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 404, data: { code: 404, message: 'session not found', data: null } },
     };
     deleteSpy.mockRejectedValueOnce(failure);
@@ -359,7 +359,7 @@ describe('sessions', () => {
 
   it('propagates the 401 from revoke-others when no session exists', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
     };
     postSpy.mockRejectedValueOnce(failure);
@@ -407,7 +407,7 @@ describe('sessions', () => {
 
   it('propagates the 401 from login-history when no session exists', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -451,7 +451,7 @@ describe('trusted devices (backlog #199)', () => {
 
   it('propagates the 404 for an unknown or foreign trusted-device id (no oracle)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 404,
         data: { code: 404, message: 'trusted device not found', data: null },
@@ -519,7 +519,7 @@ describe('two-factor (backlog #100)', () => {
 
   it('authenticateTotp propagates the identical 401 for a wrong code', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 401,
         data: { code: 401, message: 'invalid credentials', data: null },
@@ -606,7 +606,7 @@ describe('password reset (backlog #99)', () => {
 
   it('propagates the identical 401 for unknown/used/expired tokens (no oracle to leak)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 401,
         data: { code: 401, message: 'invalid or expired reset token', data: null },
@@ -621,7 +621,7 @@ describe('password reset (backlog #99)', () => {
 
   it('propagates the 400 strength reason verbatim on confirm', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 400,
         data: { code: 400, message: 'password must be 8-72 characters', data: null },
@@ -706,7 +706,7 @@ describe('email verification (backlog #138)', () => {
 
   it('propagates the identical 400 for unknown/used/expired tokens (no oracle to leak)', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 400,
         data: { code: 400, message: 'invalid or expired verification token', data: null },
@@ -738,7 +738,7 @@ describe('confirmDataExport (backlog #188)', () => {
   });
 
   it('propagates the identical 401 so the page can map a failed proof', async () => {
-    const failure = { isAxiosError: true, response: { status: 401, data: { code: 401 } } };
+    const failure = { isApiError: true, response: { status: 401, data: { code: 401 } } };
     postSpy.mockRejectedValueOnce(failure);
 
     await expect(confirmDataExport({ currentPassword: 'wr0ng' })).rejects.toBe(failure);
@@ -780,7 +780,7 @@ describe('downloadMyData (backlog #172)', () => {
   });
 
   it('propagates failures (e.g. the 429 throttle) so the page can map them by status', async () => {
-    const failure = { isAxiosError: true, response: { status: 429, data: new Blob([]) } };
+    const failure = { isApiError: true, response: { status: 429, data: new Blob([]) } };
     getSpy.mockRejectedValueOnce(failure);
 
     await expect(downloadMyData('grant-abc')).rejects.toBe(failure);
@@ -799,7 +799,7 @@ describe('step-up re-authentication (backlog #218)', () => {
     expiresInSeconds: 900,
   };
 
-  function axiosFailure(status: number, code: number, message: string) {
+  function apiFailure(status: number, code: number, message: string) {
     return { response: { status, data: { code, message } } };
   }
 
@@ -818,14 +818,14 @@ describe('step-up re-authentication (backlog #218)', () => {
     it('detects the dedicated 403 step-up envelope', () => {
       expect(
         isStepUpRequired(
-          axiosFailure(403, 403, 'Sensitive action requires re-authentication: re-authentication required'),
+          apiFailure(403, 403, 'Sensitive action requires re-authentication: re-authentication required'),
         ),
       ).toBe(true);
     });
 
     it('rejects other 403s, 401s, and failures without a response', () => {
-      expect(isStepUpRequired(axiosFailure(403, 403, 'Only the buyer can do this'))).toBe(false);
-      expect(isStepUpRequired(axiosFailure(401, 401, 'Unauthorized'))).toBe(false);
+      expect(isStepUpRequired(apiFailure(403, 403, 'Only the buyer can do this'))).toBe(false);
+      expect(isStepUpRequired(apiFailure(401, 401, 'Unauthorized'))).toBe(false);
       expect(isStepUpRequired(new Error('network down'))).toBe(false);
       expect(isStepUpRequired(null)).toBe(false);
     });
@@ -833,19 +833,19 @@ describe('step-up re-authentication (backlog #218)', () => {
 
   describe('describeStepUpError', () => {
     it('maps 401 to a wrong-credentials message', () => {
-      expect(describeStepUpError(axiosFailure(401, 401, 'bad proof'))).toContain('incorrect');
+      expect(describeStepUpError(apiFailure(401, 401, 'bad proof'))).toContain('incorrect');
     });
 
     it('maps 423 to a lockout message', () => {
-      expect(describeStepUpError(axiosFailure(423, 423, 'locked'))).toContain('locked');
+      expect(describeStepUpError(apiFailure(423, 423, 'locked'))).toContain('locked');
     });
 
     it('maps 429 to a throttle message', () => {
-      expect(describeStepUpError(axiosFailure(429, 429, 'slow down'))).toContain('Too many');
+      expect(describeStepUpError(apiFailure(429, 429, 'slow down'))).toContain('Too many');
     });
 
     it('passes the envelope message through otherwise', () => {
-      expect(describeStepUpError(axiosFailure(400, 400, 'code must be 6 digits'))).toBe(
+      expect(describeStepUpError(apiFailure(400, 400, 'code must be 6 digits'))).toBe(
         'code must be 6 digits',
       );
     });
@@ -864,7 +864,7 @@ describe('step-up re-authentication (backlog #218)', () => {
     });
 
     it('re-proves with the given credentials, swaps the token, and retries exactly once', async () => {
-      const stepUpError = axiosFailure(
+      const stepUpError = apiFailure(
         403,
         403,
         'Sensitive action requires re-authentication: re-authentication required',
@@ -885,7 +885,7 @@ describe('step-up re-authentication (backlog #218)', () => {
     });
 
     it('lets non-step-up errors propagate without re-proving', async () => {
-      const forbidden = axiosFailure(403, 403, 'Only the buyer can do this');
+      const forbidden = apiFailure(403, 403, 'Only the buyer can do this');
       const action = vi.fn().mockRejectedValue(forbidden);
 
       await expect(withStepUpRetry(action, { currentPassword: 'pw' })).rejects.toBe(forbidden);
@@ -894,7 +894,7 @@ describe('step-up re-authentication (backlog #218)', () => {
     });
 
     it('propagates a second step-up 403 instead of looping', async () => {
-      const stepUpError = axiosFailure(
+      const stepUpError = apiFailure(
         403,
         403,
         'Sensitive action requires re-authentication: re-authentication required',
@@ -908,12 +908,12 @@ describe('step-up re-authentication (backlog #218)', () => {
     });
 
     it('propagates a failed re-proof (e.g. wrong password) without retrying the action', async () => {
-      const stepUpError = axiosFailure(
+      const stepUpError = apiFailure(
         403,
         403,
         'Sensitive action requires re-authentication: re-authentication required',
       );
-      const badProof = axiosFailure(401, 401, 'Invalid credentials');
+      const badProof = apiFailure(401, 401, 'Invalid credentials');
       const action = vi.fn().mockRejectedValueOnce(stepUpError);
       postSpy.mockRejectedValueOnce(badProof);
 

@@ -18,9 +18,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -121,7 +121,7 @@ describe('GalleryOrderEditor (backlog #162)', () => {
 
   it('a 400 (the gallery changed under the editor) maps to friendly copy, never the raw envelope', async () => {
     putSpy.mockRejectedValue(
-      axiosFailure(400, 'photoIds must list every photo in the gallery exactly once'),
+      apiFailure(400, 'photoIds must list every photo in the gallery exactly once'),
     );
     renderEditor();
 

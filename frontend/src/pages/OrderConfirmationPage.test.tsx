@@ -42,9 +42,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -180,7 +180,7 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
   it('a 409 on pay maps to a friendly retry message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValue(envelope(pendingOrder));
-    postSpy.mockRejectedValueOnce(axiosFailure(409, 'order was modified concurrently'));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'order was modified concurrently'));
 
     renderAt('/orders/9');
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
@@ -194,7 +194,7 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
   it('a 422 on pay maps to a terminal message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValue(envelope(pendingOrder));
-    postSpy.mockRejectedValueOnce(axiosFailure(422, 'order is not in PENDING status'));
+    postSpy.mockRejectedValueOnce(apiFailure(422, 'order is not in PENDING status'));
 
     renderAt('/orders/9');
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
@@ -208,7 +208,7 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
   it('a 403 on pay maps to a not-your-order message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValue(envelope(pendingOrder));
-    postSpy.mockRejectedValueOnce(axiosFailure(403, 'only the buyer may pay'));
+    postSpy.mockRejectedValueOnce(apiFailure(403, 'only the buyer may pay'));
 
     renderAt('/orders/9');
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
@@ -304,7 +304,7 @@ describe('OrderConfirmationPage cancel-order', () => {
   it('a 422 on cancel maps to a friendly "no longer cancellable" message', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValue(envelope(pendingOrder));
-    postSpy.mockRejectedValueOnce(axiosFailure(422, 'order is not in PENDING status'));
+    postSpy.mockRejectedValueOnce(apiFailure(422, 'order is not in PENDING status'));
 
     renderAt('/orders/9');
     await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());

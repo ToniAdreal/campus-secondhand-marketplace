@@ -48,9 +48,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -176,7 +176,7 @@ describe('ItemDetailPage buy-now', () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValueOnce(envelope(fakeItem));
     postSpy.mockRejectedValueOnce(
-      axiosFailure(409, 'item already has an active order'),
+      apiFailure(409, 'item already has an active order'),
     );
     renderAt('/items/7');
 
@@ -319,7 +319,7 @@ describe('ItemDetailPage mark-as-sold', () => {
 
   it('a 422 (already SOLD) maps to a friendly message and the raw envelope message never leaks', async () => {
     useAuthStore.getState().login(seller, 'tok');
-    patchSpy.mockRejectedValueOnce(axiosFailure(422, 'item is already SOLD'));
+    patchSpy.mockRejectedValueOnce(apiFailure(422, 'item is already SOLD'));
 
     renderAt('/items/7');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Mark as sold' })).toBeTruthy());
@@ -446,7 +446,7 @@ describe('ItemDetailPage report dialog (backlog #160)', () => {
   it('a 429 maps to friendly copy and the raw envelope message never leaks', async () => {
     useAuthStore.getState().login(buyer, 'tok');
     getSpy.mockResolvedValueOnce(envelope(fakeItem));
-    postSpy.mockRejectedValue(axiosFailure(429, 'too many requests'));
+    postSpy.mockRejectedValue(apiFailure(429, 'too many requests'));
     renderAt('/items/7');
 
     await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());

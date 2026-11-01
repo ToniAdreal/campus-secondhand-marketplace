@@ -141,7 +141,7 @@ describe('useSellerPayoutsInfinite', () => {
 
   it('propagates the failure shape so the page can render its error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
@@ -185,7 +185,7 @@ describe('useSellerPayoutTotals', () => {
 
   it('propagates the failure shape so the page can render its error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 401, data: { code: 401, message: 'unauthorized', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);

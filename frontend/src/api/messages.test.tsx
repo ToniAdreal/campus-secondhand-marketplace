@@ -120,7 +120,7 @@ describe('useMessageThread', () => {
 
   it('propagates the backend 403 (non-participant) instead of an empty thread', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 403, data: { code: 403, message: 'not a participant', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);

@@ -318,7 +318,7 @@ export function useCreateListing() {
 }
 
 /**
- * POST /api/items/{id}/photo (multipart). Axios sets the multipart
+ * POST /api/items/{id}/photo (multipart). fetch sets the multipart
  * Content-Type + boundary itself from the FormData — no manual header.
  */
 export function uploadItemPhoto(itemId: number, file: File): Promise<Item> {

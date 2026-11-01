@@ -212,7 +212,7 @@ describe('report hooks', () => {
 
   it('useAdminReports propagates the failure shape so the page can render its error state', async () => {
     const failure = {
-      isAxiosError: true,
+      isApiError: true,
       response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
     };
     getSpy.mockRejectedValueOnce(failure);
