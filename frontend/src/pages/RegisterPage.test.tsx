@@ -14,9 +14,9 @@ function envelope(data: unknown, status = 200) {
   return { status, data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -108,7 +108,7 @@ describe('RegisterPage', () => {
   });
 
   it('maps a 409 duplicate to the backend message verbatim', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(409, 'username is already taken'));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'username is already taken'));
     renderRegister();
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
@@ -120,7 +120,7 @@ describe('RegisterPage', () => {
 
   it('a 429 with Retry-After shows the wait copy, not the generic failure (backlog #242)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         headers: { 'retry-after': '60' },
@@ -137,7 +137,7 @@ describe('RegisterPage', () => {
   });
 
   it('a 429 without Retry-After falls back to the generic copy (backlog #242)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(429, 'too many requests'));
+    postSpy.mockRejectedValueOnce(apiFailure(429, 'too many requests'));
     renderRegister();
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));

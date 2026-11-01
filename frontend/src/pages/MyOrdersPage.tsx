@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { isApiError } from '../api/client';
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { describeDisputeError, useOpenDispute } from '../api/disputes';
@@ -39,7 +39,7 @@ import { useAuthStore } from '../store/useAuthStore';
  */
 
 function isUnauthorized(error: unknown): boolean {
-  return axios.isAxiosError(error) && error.response?.status === 401;
+  return isApiError(error) && error.response?.status === 401;
 }
 
 /**

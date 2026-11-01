@@ -12,9 +12,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, code: number, message: string) {
+function apiFailure(status: number, code: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code, message, data: null } },
   };
 }
@@ -135,7 +135,7 @@ describe('PasskeySection (backlog #220)', () => {
     // step-up re-proof → options retry → verify.
     postSpy
       .mockRejectedValueOnce(
-        axiosFailure(403, 403, 'Sensitive action requires re-authentication: re-authentication required'),
+        apiFailure(403, 403, 'Sensitive action requires re-authentication: re-authentication required'),
       )
       .mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', expiresInSeconds: 900 }),

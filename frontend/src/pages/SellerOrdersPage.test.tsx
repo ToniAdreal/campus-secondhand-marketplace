@@ -43,9 +43,9 @@ function pageEnvelope(content: Order[], number: number, totalPages: number) {
   } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -119,7 +119,7 @@ describe('SellerOrdersPage', () => {
   it('a 401 mid-session redirects to /login', async () => {
     // credential died after login (e.g. expired + no refresh cookie left)
     useAuthStore.getState().login(seller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(401, 'invalid or expired credential'));
+    getSpy.mockRejectedValue(apiFailure(401, 'invalid or expired credential'));
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());
@@ -358,7 +358,7 @@ describe('SellerOrdersPage', () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
     postSpy.mockRejectedValue(
-      axiosFailure(422, 'order is COMPLETED, completion is not allowed'),
+      apiFailure(422, 'order is COMPLETED, completion is not allowed'),
     );
 
     renderAt('/seller/orders');
@@ -372,7 +372,7 @@ describe('SellerOrdersPage', () => {
   it('a 400 from complete (wrong handover code) maps to the handover copy', async () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(400, 'invalid handover code'));
+    postSpy.mockRejectedValue(apiFailure(400, 'invalid handover code'));
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
@@ -388,7 +388,7 @@ describe('SellerOrdersPage', () => {
   it('a 422 from refund maps to the friendly "already completed" copy', async () => {
     useAuthStore.getState().login(seller, 'tok');
     getSpy.mockResolvedValue(pageEnvelope([order2], 0, 1));
-    postSpy.mockRejectedValue(axiosFailure(422, 'order is COMPLETED, refund is not allowed'));
+    postSpy.mockRejectedValue(apiFailure(422, 'order is COMPLETED, refund is not allowed'));
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByText('Order #10')).toBeTruthy());
@@ -463,7 +463,7 @@ describe('SellerOrdersPage', () => {
 
   it('a non-401 list failure shows the friendly error mapping', async () => {
     useAuthStore.getState().login(seller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(500, 'upstream exploded'));
+    getSpy.mockRejectedValue(apiFailure(500, 'upstream exploded'));
 
     renderAt('/seller/orders');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());

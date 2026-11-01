@@ -1,6 +1,6 @@
-import axios from 'axios';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
 } from '../api/client';
 import { type FormEvent, type ReactNode, useState } from 'react';
@@ -32,7 +32,7 @@ const FIELD_MAP: Record<string, string> = {
 
 function envelopeMessage(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
     if (!err.response) return 'Network error — is the backend running?';

@@ -78,7 +78,7 @@ describe('ForgotPasswordPage', () => {
 
   it('shows the envelope message when the request itself fails (e.g. 429)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         data: { code: 429, message: 'too many requests', data: null },
@@ -97,7 +97,7 @@ describe('ForgotPasswordPage', () => {
 
   it('a 429 with Retry-After shows the wait copy, not the envelope message (backlog #265)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         headers: { 'Retry-After': '30' },

@@ -84,9 +84,9 @@ function mockGets(history: LoginEvent[], trusted: TrustedDevice[] = []) {
   }) as never);
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -255,7 +255,7 @@ describe('SessionsPage', () => {
 
   it('revoke-all-others failure shows the envelope message and keeps the list', async () => {
     getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
-    postSpy.mockRejectedValue(axiosFailure(500, 'revoke failed'));
+    postSpy.mockRejectedValue(apiFailure(500, 'revoke failed'));
     renderAt('/settings/sessions');
 
     await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
@@ -276,7 +276,7 @@ describe('SessionsPage', () => {
   });
 
   it('a 401 mid-session redirects to /login', async () => {
-    getSpy.mockRejectedValue(axiosFailure(401, 'invalid or expired credential'));
+    getSpy.mockRejectedValue(apiFailure(401, 'invalid or expired credential'));
     renderAt('/settings/sessions');
 
     await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());
@@ -384,7 +384,7 @@ describe('SessionsPage', () => {
   it('a login-history failure shows the envelope message and keeps the sessions list', async () => {
     getSpy.mockImplementation(((path: string) => {
       if (path === '/auth/login-history') {
-        return Promise.reject(axiosFailure(500, 'history failed'));
+        return Promise.reject(apiFailure(500, 'history failed'));
       }
       return Promise.resolve(envelope([currentSession, otherSession]));
     }) as never);
@@ -404,7 +404,7 @@ describe('SessionsPage', () => {
       // the post-retry refetch (invalidation) sees only the current session
       getSpy.mockResolvedValue(envelope([currentSession]));
       postSpy
-        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
         .mockResolvedValueOnce(
           envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
         )
@@ -440,11 +440,11 @@ describe('SessionsPage', () => {
     it('a second step-up 403 on the retry surfaces as an error instead of reopening the dialog', async () => {
       getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
       postSpy
-        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
         .mockResolvedValueOnce(
           envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
         )
-        .mockRejectedValue(axiosFailure(403, stepUpMessage));
+        .mockRejectedValue(apiFailure(403, stepUpMessage));
       renderAt('/settings/sessions');
 
       await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
@@ -467,7 +467,7 @@ describe('SessionsPage', () => {
     it('shows the code field in the dialog when the account has 2FA enabled', async () => {
       useAuthStore.setState({ user: { ...user, totpEnabled: true } });
       getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
-      postSpy.mockRejectedValue(axiosFailure(403, stepUpMessage));
+      postSpy.mockRejectedValue(apiFailure(403, stepUpMessage));
       renderAt('/settings/sessions');
 
       await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());
@@ -479,7 +479,7 @@ describe('SessionsPage', () => {
 
     it('cancelling the dialog leaves the action unretried and shows no error', async () => {
       getSpy.mockResolvedValue(envelope([currentSession, otherSession]));
-      postSpy.mockRejectedValue(axiosFailure(403, stepUpMessage));
+      postSpy.mockRejectedValue(apiFailure(403, stepUpMessage));
       renderAt('/settings/sessions');
 
       await waitFor(() => expect(screen.getByText('Unknown device')).toBeTruthy());

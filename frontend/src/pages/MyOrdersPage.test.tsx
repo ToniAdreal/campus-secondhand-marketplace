@@ -51,9 +51,9 @@ function pageEnvelope(content: Order[], number: number, totalPages: number) {
   } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -140,7 +140,7 @@ describe('MyOrdersPage', () => {
   it('a 401 mid-session redirects to /login', async () => {
     // credential died after login (e.g. expired + no refresh cookie left)
     useAuthStore.getState().login(buyer, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(401, 'invalid or expired credential'));
+    getSpy.mockRejectedValue(apiFailure(401, 'invalid or expired credential'));
 
     renderAt('/orders');
     await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());
@@ -190,7 +190,7 @@ describe('MyOrdersPage', () => {
 
   it('a non-401 list failure shows the friendly error mapping', async () => {
     useAuthStore.getState().login(buyer, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(500, 'upstream exploded'));
+    getSpy.mockRejectedValue(apiFailure(500, 'upstream exploded'));
 
     renderAt('/orders');
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());

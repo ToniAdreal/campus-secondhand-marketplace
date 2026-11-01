@@ -21,9 +21,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -164,7 +164,7 @@ describe('CreateListingPage', () => {
     renderCreate();
     await screen.findByText('Electronics');
 
-    postSpy.mockRejectedValueOnce(axiosFailure(400, 'priceCents: must be greater than 0'));
+    postSpy.mockRejectedValueOnce(apiFailure(400, 'priceCents: must be greater than 0'));
     fillValidForm();
     fireEvent.click(screen.getByRole('button', { name: /publish listing/i }));
 
@@ -254,7 +254,7 @@ describe('CreateListingPage', () => {
 
     postSpy.mockImplementation((url: string) => {
       if (url === '/items') return Promise.resolve(createdItem());
-      return Promise.reject(axiosFailure(400, 'file is empty'));
+      return Promise.reject(apiFailure(400, 'file is empty'));
     });
 
     fillValidForm();

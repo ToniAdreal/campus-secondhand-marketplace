@@ -1,6 +1,6 @@
-import axios from 'axios';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
 } from '../api/client';
 import { type FormEvent, useState } from 'react';
@@ -24,7 +24,7 @@ function describeResetError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   const waitCopy = throttleWaitCopy(err);
   if (waitCopy) return waitCopy;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401) {
       return 'This reset link is invalid or has expired. Request a new one.';
     }

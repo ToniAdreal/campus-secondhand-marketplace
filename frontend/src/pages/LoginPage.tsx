@@ -1,6 +1,6 @@
-import axios from 'axios';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
 } from '../api/client';
 import { type FormEvent, useState } from 'react';
@@ -25,7 +25,7 @@ function envelopeMessage(err: unknown, fallback: string): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
   const waitCopy = throttleWaitCopy(err);
   if (waitCopy) return waitCopy;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 429) return fallback;
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;

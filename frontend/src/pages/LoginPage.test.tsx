@@ -25,7 +25,7 @@ function authSuccess() {
 
 function authFailure401() {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: {
       status: 401,
       data: { code: 401, message: 'invalid credentials', data: null },
@@ -123,7 +123,7 @@ describe('LoginPage', () => {
 
   it('a 429 with Retry-After shows the wait copy, not the generic failure (backlog #242)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         headers: { 'Retry-After': '45' },
@@ -144,7 +144,7 @@ describe('LoginPage', () => {
 
   it('a 429 without Retry-After falls back to the generic copy (backlog #242)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         data: { code: 429, message: 'too many requests', data: null },

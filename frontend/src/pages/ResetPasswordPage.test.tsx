@@ -10,9 +10,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -77,7 +77,7 @@ describe('ResetPasswordPage', () => {
 
   it('maps a 400 to the backend strength reason verbatim', async () => {
     postSpy.mockRejectedValueOnce(
-      axiosFailure(400, 'password must contain a letter and a digit'),
+      apiFailure(400, 'password must contain a letter and a digit'),
     );
     renderAt('/reset-password?token=raw-token-abc');
     fill('weak', 'weak');
@@ -91,7 +91,7 @@ describe('ResetPasswordPage', () => {
 
   it('maps a 400 with the minimum-length reason verbatim (backlog #131)', async () => {
     postSpy.mockRejectedValueOnce(
-      axiosFailure(400, 'password must be at least 12 characters'),
+      apiFailure(400, 'password must be at least 12 characters'),
     );
     renderAt('/reset-password?token=raw-token-abc');
     fill('short1', 'short1');
@@ -104,7 +104,7 @@ describe('ResetPasswordPage', () => {
   });
 
   it('maps a 401 to one generic invalid-or-expired message (unknown/used/expired are identical)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid or expired reset token'));
+    postSpy.mockRejectedValueOnce(apiFailure(401, 'invalid or expired reset token'));
     renderAt('/reset-password?token=stale-token');
     fill('new-strong-secret-1', 'new-strong-secret-1');
     fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
@@ -117,7 +117,7 @@ describe('ResetPasswordPage', () => {
 
   it('a 429 with Retry-After shows the wait copy (backlog #265)', async () => {
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         headers: { 'Retry-After': '60' },
@@ -135,7 +135,7 @@ describe('ResetPasswordPage', () => {
   });
 
   it('a 429 without Retry-After keeps the envelope message (backlog #265)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(429, 'too many requests'));
+    postSpy.mockRejectedValueOnce(apiFailure(429, 'too many requests'));
     renderAt('/reset-password?token=<redacted>');
     fill('new-strong-secret-1', 'new-strong-secret-1');
     fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));

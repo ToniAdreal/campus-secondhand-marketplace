@@ -3,7 +3,7 @@ import { throttleWaitCopy } from './authThrottle';
 
 function failure(status: number, headers?: unknown, message = 'too many requests') {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, headers, data: { code: status, message, data: null } },
   };
 }
@@ -21,7 +21,7 @@ describe('throttleWaitCopy (backlog #242)', () => {
     );
   });
 
-  it('reads AxiosHeaders-style get() case-insensitively', () => {
+  it('reads Headers-style get() case-insensitively', () => {
     const headers = { get: (name: string) => (name === 'retry-after' ? '30' : undefined) };
     expect(throttleWaitCopy(failure(429, headers))).toBe(
       'Too many attempts — try again in 30 seconds',
@@ -47,7 +47,7 @@ describe('throttleWaitCopy (backlog #242)', () => {
     expect(throttleWaitCopy(failure(429, { 'Retry-After': '-5' }))).toBeNull();
   });
 
-  it('returns null for non-Axios errors', () => {
+  it('returns null for non-API errors', () => {
     expect(throttleWaitCopy(new Error('boom'))).toBeNull();
     expect(throttleWaitCopy(null)).toBeNull();
   });

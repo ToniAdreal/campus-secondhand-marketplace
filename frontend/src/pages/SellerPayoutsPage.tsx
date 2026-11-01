@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { isApiError } from '../api/client';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useSellerPayoutsInfinite, useSellerPayoutTotals } from '../api/payouts';
 import { useAuthStore } from '../store/useAuthStore';
@@ -19,7 +19,7 @@ import { useAuthStore } from '../store/useAuthStore';
  * PAID row means the ledger advanced — it is not a bank transfer.
  */
 function isUnauthorized(error: unknown): boolean {
-  return axios.isAxiosError(error) && error.response?.status === 401;
+  return isApiError(error) && error.response?.status === 401;
 }
 
 function formatYuan(cents: number): string {

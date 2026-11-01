@@ -1,6 +1,6 @@
-import axios from 'axios';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
 } from '../api/client';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -21,7 +21,7 @@ import {
 /** Maps a failed passkey call to UI copy (backlog #220). */
 function describePasskeyError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401)
       return 'The passkey proof was not accepted — no change was made.';
     if (err.response?.status === 409) return 'This passkey is already enrolled.';

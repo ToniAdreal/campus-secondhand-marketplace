@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
@@ -15,6 +14,7 @@ import {
 } from '../api/auth';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
   setAccessToken,
 } from '../api/client';
@@ -56,13 +56,13 @@ import StepUpModal from '../components/StepUpModal';
  */
 
 function isUnauthorized(error: unknown): boolean {
-  return axios.isAxiosError(error) && error.response?.status === 401;
+  return isApiError(error) && error.response?.status === 401;
 }
 
 /** Maps a failed sessions call to UI copy; envelope messages pass through verbatim. */
 function describeSessionError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
     if (!err.response) return 'Network error — is the backend running?';

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { isApiError } from '../api/client';
 
 /**
  * Backlog #242: when AuthRateLimitFilter throttles an auth request it
@@ -13,7 +13,7 @@ import axios from 'axios';
  * in #236.
  */
 export function throttleWaitCopy(err: unknown): string | null {
-  if (!axios.isAxiosError(err)) return null;
+  if (!isApiError(err)) return null;
   if (err.response?.status !== 429) return null;
   const seconds = retryAfterSeconds(err.response.headers);
   if (seconds === null) return null;
@@ -25,7 +25,7 @@ function retryAfterSeconds(headers: unknown): number | null {
   let raw: unknown;
   const get = (headers as { get?: unknown }).get;
   if (typeof get === 'function') {
-    // AxiosHeaders is case-insensitive; plain test doubles are not, so
+    // Headers is case-insensitive; plain test doubles are not, so
     // fall back to both casings below when there is no get().
     raw = (get as (name: string) => unknown).call(headers, 'retry-after');
   } else {

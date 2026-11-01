@@ -57,9 +57,9 @@ function pageEnvelope(content: SellerPayout[], number: number, totalPages: numbe
   return envelope({ content, totalElements: content.length, totalPages, number });
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -126,7 +126,7 @@ describe('SellerPayoutsPage', () => {
 
   it('a 401 mid-session redirects to /login', async () => {
     useAuthStore.getState().login(seller, 'tok');
-    getSpy.mockRejectedValue(axiosFailure(401, 'invalid or expired credential'));
+    getSpy.mockRejectedValue(apiFailure(401, 'invalid or expired credential'));
 
     renderAt('/seller/payouts');
     await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());

@@ -10,9 +10,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -58,12 +58,12 @@ describe('VerifyEmailPage', () => {
 
   it('maps the identical 400 to one generic invalid-or-expired message', async () => {
     postSpy.mockRejectedValueOnce(
-      axiosFailure(400, 'invalid or expired verification token'),
+      apiFailure(400, 'invalid or expired verification token'),
     );
     // Backlog #208: the change confirm is tried as the fallback and
     // rejects the same token with its identical 401.
     postSpy.mockRejectedValueOnce(
-      axiosFailure(401, 'invalid or expired email change token'),
+      apiFailure(401, 'invalid or expired email change token'),
     );
     renderAt('/verify-email?token=stale-token');
 
@@ -79,10 +79,10 @@ describe('VerifyEmailPage', () => {
   // then exercise the resend control that lives in that state.
   async function renderFailed() {
     postSpy.mockRejectedValueOnce(
-      axiosFailure(400, 'invalid or expired verification token'),
+      apiFailure(400, 'invalid or expired verification token'),
     );
     postSpy.mockRejectedValueOnce(
-      axiosFailure(401, 'invalid or expired email change token'),
+      apiFailure(401, 'invalid or expired email change token'),
     );
     renderAt('/verify-email?token=stale-token');
     const alert = await screen.findByRole('alert');
@@ -125,7 +125,7 @@ describe('VerifyEmailPage', () => {
     fireEvent.change(screen.getByLabelText('Email'), {
       target: { value: 'alice@example.com' },
     });
-    postSpy.mockRejectedValueOnce(axiosFailure(429, 'rate limit exceeded'));
+    postSpy.mockRejectedValueOnce(apiFailure(429, 'rate limit exceeded'));
     fireEvent.click(screen.getByRole('button', { name: /resend verification link/i }));
 
     await waitFor(() =>
@@ -145,7 +145,7 @@ describe('VerifyEmailPage', () => {
       target: { value: 'alice@example.com' },
     });
     postSpy.mockRejectedValueOnce({
-      isAxiosError: true,
+      isApiError: true,
       response: {
         status: 429,
         headers: { 'Retry-After': '45' },
@@ -166,7 +166,7 @@ describe('VerifyEmailPage', () => {
 
   it('confirms an email-change token through the fallback (backlog #208)', async () => {
     postSpy.mockRejectedValueOnce(
-      axiosFailure(400, 'invalid or expired verification token'),
+      apiFailure(400, 'invalid or expired verification token'),
     );
     postSpy.mockResolvedValueOnce(envelope(null));
     renderAt('/verify-email?token=change-token');

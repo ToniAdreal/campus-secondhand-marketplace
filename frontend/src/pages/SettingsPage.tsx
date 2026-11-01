@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { type FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import {
@@ -18,6 +17,7 @@ import {
 } from '../api/auth';
 import {
   REQUEST_TIMEOUT_MESSAGE,
+  isApiError,
   isRequestTimeout,
   setAccessToken,
 } from '../api/client';
@@ -42,7 +42,7 @@ import { useAuthStore } from '../store/useAuthStore';
  */
 function describePasswordChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401) return 'Current password is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
@@ -59,7 +59,7 @@ function describePasswordChangeError(err: unknown): string {
  */
 function describeDisableTotpError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401) return 'Current password or code is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
@@ -85,7 +85,7 @@ function describeDisableTotpError(err: unknown): string {
  */
 function describeUsernameChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
     if (!err.response) return 'Network error — is the backend running?';
@@ -101,7 +101,7 @@ function describeUsernameChangeError(err: unknown): string {
  */
 function describeEmailChangeError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401) return 'Current password is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
@@ -118,7 +118,7 @@ function describeEmailChangeError(err: unknown): string {
  */
 function describeCloseAccountError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 401) return 'Current password or code is incorrect.';
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
@@ -135,7 +135,7 @@ function describeCloseAccountError(err: unknown): string {
  */
 function describeDataExportError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     if (err.response?.status === 429) {
       return 'Too many downloads in a row — wait a minute, then try again.';
     }
@@ -153,7 +153,7 @@ function describeDataExportError(err: unknown): string {
 /** Envelope message for the two-factor calls (setup/enable), verbatim. */
 function describeTotpError(err: unknown): string {
   if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
-  if (axios.isAxiosError(err)) {
+  if (isApiError(err)) {
     const message = (err.response?.data as { message?: string } | undefined)?.message;
     if (message) return message;
     if (!err.response) return 'Network error — is the backend running?';

@@ -18,9 +18,9 @@ function envelope(data: unknown) {
   return { data: { code: 0, message: 'ok', data } } as never;
 }
 
-function axiosFailure(status: number, message: string) {
+function apiFailure(status: number, message: string) {
   return {
-    isAxiosError: true,
+    isApiError: true,
     response: { status, data: { code: status, message, data: null } },
   };
 }
@@ -107,7 +107,7 @@ describe('SettingsPage', () => {
   it('maps a 401 to "Current password is incorrect." (no oracle)', async () => {
     // the backend deliberately answers a wrong current password with the
     // same 401 message as everywhere else
-    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    postSpy.mockRejectedValueOnce(apiFailure(401, 'invalid credentials'));
     renderAt('/settings');
     fill('wrong-secret', 'new-strong-secret-1', 'new-strong-secret-1');
     fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
@@ -119,7 +119,7 @@ describe('SettingsPage', () => {
   });
 
   it('maps a 400 to the strength reason verbatim', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(400, 'password must be 8-72 characters'));
+    postSpy.mockRejectedValueOnce(apiFailure(400, 'password must be 8-72 characters'));
     renderAt('/settings');
     fill('old-secret', 'short', 'short');
     fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
@@ -245,7 +245,7 @@ describe('SettingsPage', () => {
   it('disable 401 maps to the shared "password or code" copy and keeps the form (backlog #121)', async () => {
     getSpy.mockReset();
     getSpy.mockResolvedValue(envelope({ remaining: 4 }));
-    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    postSpy.mockRejectedValueOnce(apiFailure(401, 'invalid credentials'));
     renderAt('/settings');
 
     fireEvent.click(
@@ -307,7 +307,7 @@ describe('SettingsPage', () => {
   });
 
   it('maps a change-email 401 to "Current password is incorrect." (backlog #150)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    postSpy.mockRejectedValueOnce(apiFailure(401, 'invalid credentials'));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New email address'), {
       target: { value: 'toni.new@example.com' },
@@ -324,7 +324,7 @@ describe('SettingsPage', () => {
   });
 
   it('maps a change-email 409 to the backend message verbatim (backlog #150)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(409, 'email is already registered'));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'email is already registered'));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New email address'), {
       target: { value: 'taken@example.com' },
@@ -342,7 +342,7 @@ describe('SettingsPage', () => {
     const stepUpMessage =
       'Sensitive action requires re-authentication: re-authentication required';
     postSpy
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
       .mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
       )
@@ -383,11 +383,11 @@ describe('SettingsPage', () => {
     const stepUpMessage =
       'Sensitive action requires re-authentication: re-authentication required';
     postSpy
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
       .mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
       )
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage));
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New email address'), {
       target: { value: 'toni.new@example.com' },
@@ -431,7 +431,7 @@ describe('SettingsPage', () => {
   });
 
   it('maps a change-username 409 to the backend message verbatim (backlog #256)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(409, 'username is already taken'));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'username is already taken'));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New username'), {
       target: { value: 'taken' },
@@ -447,7 +447,7 @@ describe('SettingsPage', () => {
     const stepUpMessage =
       'Sensitive action requires re-authentication: re-authentication required';
     postSpy
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
       .mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
       )
@@ -486,11 +486,11 @@ describe('SettingsPage', () => {
     const stepUpMessage =
       'Sensitive action requires re-authentication: re-authentication required';
     postSpy
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
       .mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
       )
-      .mockRejectedValueOnce(axiosFailure(403, stepUpMessage));
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('New username'), {
       target: { value: 'toni2' },
@@ -546,7 +546,7 @@ describe('SettingsPage', () => {
   });
 
   it('maps an account-closure 401 to the shared no-oracle copy (backlog #158)', async () => {
-    deleteSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    deleteSpy.mockRejectedValueOnce(apiFailure(401, 'invalid credentials'));
     renderAt('/settings');
     fireEvent.click(screen.getByRole('button', { name: 'Close my account' }));
     fireEvent.change(screen.getByLabelText('Password to confirm closure'), {
@@ -622,7 +622,7 @@ describe('SettingsPage', () => {
   it('maps a data-export 429 to the wait-a-minute copy (backlog #172)', async () => {
     getSpy.mockImplementation((url: string) =>
       String(url).includes('/users/me/export')
-        ? Promise.reject(axiosFailure(429, 'too many requests'))
+        ? Promise.reject(apiFailure(429, 'too many requests'))
         : Promise.reject(new Error('count unavailable')),
     );
     postSpy.mockResolvedValueOnce(
@@ -641,7 +641,7 @@ describe('SettingsPage', () => {
   });
 
   it('stops at the step-up confirm when the password is wrong (backlog #188)', async () => {
-    postSpy.mockRejectedValueOnce(axiosFailure(401, 'invalid credentials'));
+    postSpy.mockRejectedValueOnce(apiFailure(401, 'invalid credentials'));
     renderAt('/settings');
     fireEvent.change(screen.getByLabelText('Confirm your password'), {
       target: { value: 'wr0ng-pass' },
@@ -783,7 +783,7 @@ describe('SettingsPage following list (#217)', () => {
 
     it('transparently re-proves and retries account closure once on the 403 step-up envelope', async () => {
       deleteSpy
-        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
         .mockResolvedValueOnce(envelope(null));
       postSpy.mockResolvedValueOnce(
         envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
@@ -820,7 +820,7 @@ describe('SettingsPage following list (#217)', () => {
           : Promise.reject(new Error('count unavailable')),
       );
       postSpy
-        .mockRejectedValueOnce(axiosFailure(403, stepUpMessage))
+        .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
         .mockResolvedValueOnce(
           envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
         )
