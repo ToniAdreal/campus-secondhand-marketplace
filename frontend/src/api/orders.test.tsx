@@ -126,6 +126,13 @@ describe('describeCompleteError', () => {
     ['handover code alone', envelopeError(400, 'bad request'), 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.'],
     ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
     ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders survivors (2026-10-31 re-measurement
+    // on HEAD 3de5d97): the dataless shapes above kill only the second
+    // chain (data?.code/message) — under the first-chain mutant
+    // (response.data) they still short-circuit safely. Only an error
+    // with response itself undefined throws under that mutant, so this
+    // case pins response?.data.
+    ['no envelope at all', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeCompleteError(error)).toBe(expected);
   });
@@ -171,6 +178,10 @@ describe('describeShipError', () => {
     // empty-data shapes pin the response?.data?.code/message chains.
     ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
     ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders survivors (2026-10-31 re-measurement
+    // on HEAD 3de5d97): only an error with response itself undefined
+    // throws under the first-chain mutant (response.data).
+    ['no envelope at all', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeShipError(error)).toBe(expected);
   });
@@ -188,6 +199,10 @@ describe('describeConfirmReceiptError', () => {
     // empty-data shapes pin the response?.data?.code/message chains.
     ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
     ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders survivors (2026-10-31 re-measurement
+    // on HEAD 3de5d97): only an error with response itself undefined
+    // throws under the first-chain mutant (response.data).
+    ['no envelope at all', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeConfirmReceiptError(error)).toBe(expected);
   });
@@ -204,6 +219,13 @@ describe('describeRegenerateHandoverError', () => {
     // the dataless shapes reach it (and the 404 line above it).
     ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
     ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders survivors (2026-10-31 re-measurement
+    // on HEAD 3de5d97): only an error with response itself undefined
+    // throws under the first-chain mutants (response.data), and only a
+    // verbatim-message fallback case distinguishes the ?? mutant
+    // (message ?? '' -> message && '') from the original.
+    ['no envelope at all', {}, 'Something went wrong. Please try again.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
   ])('%s', (_label, error, expected) => {
     expect(describeRegenerateHandoverError(error)).toBe(expected);
   });
@@ -220,6 +242,10 @@ describe('describeOrderError', () => {
     // empty-data shapes pin the response?.data?.code/message chains.
     ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
     ['response with empty data', { response: { data: {} } }, 'Something went wrong. Please try again.'],
+    // Stryker backlog #287, orders survivors (2026-10-31 re-measurement
+    // on HEAD 3de5d97): only an error with response itself undefined
+    // throws under the first-chain mutant (response.data).
+    ['no envelope at all', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeOrderError(error)).toBe(expected);
   });
