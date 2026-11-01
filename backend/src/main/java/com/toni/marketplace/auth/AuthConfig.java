@@ -192,6 +192,27 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the password-change endpoint
+   * ({@code POST /api/auth/password}, backlog #290; default 5
+   * attempts/minute per authenticated user). Keyed on the JWT
+   * principal id like the step-up bucket — the endpoint verifies the
+   * current password, so a stolen Bearer token must not get unlimited
+   * guesses at it, and keying by IP would let one NAT address starve
+   * every user behind it. Never reset on success: a completed change
+   * must not refill a guesser's budget. Deliberately separate from
+   * the step-up bucket (which covers only the re-proof) and the
+   * credential bucket, so guessing at one surface can never starve
+   * the others.
+   */
+  @Bean
+  public AuthRateLimiter passwordChangeRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties passwordChangeProps = new AuthRateLimitProperties();
+    passwordChangeProps.setEnabled(props.isEnabled());
+    passwordChangeProps.setAttemptsPerMinute(props.getPasswordChangeAttemptsPerMinute());
+    return new AuthRateLimiter(clock, passwordChangeProps);
+  }
+
+  /**
    * Separate token bucket for listing creation
    * ({@code POST /api/items}, backlog #219; default 10 listings/minute
    * per authenticated user). Keyed on the JWT principal id like the

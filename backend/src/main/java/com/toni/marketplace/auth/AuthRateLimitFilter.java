@@ -101,6 +101,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * on the JWT principal (per-IP fallback for a missing/invalid token,
  * like the message bucket) and never resets on success.
  *
+ * <p>The password-change endpoint ({@code POST /api/auth/password},
+ * backlog #290) has its own per-user bucket (default 5/minute): the
+ * endpoint verifies the current password, so it is the same guessing
+ * surface for a stolen Bearer token — the bucket keys on the JWT
+ * principal (per-IP fallback for a missing/invalid token, like the
+ * message bucket) and never resets on success, so a completed change
+ * must not refill a guesser's budget. It is deliberately separate
+ * from the step-up bucket (which covers only the re-proof) and the
+ * credential bucket, so guessing at one surface can never starve
+ * the others; a throttled change attempt changes nothing server-side,
+ * so the caller's refresh family stays intact.
+ *
  * <p>Listing creation ({@code POST /api/items}, backlog #219) has an
  * eleventh, per-<em>user</em> bucket (default 10/minute) on the same
  * keying as the message bucket (JWT principal id, per-IP fallback for
@@ -264,6 +276,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
+  private static final String PASSWORD_CHANGE_PATH = "/api/auth/password";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
@@ -279,6 +292,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter cspReportLimiter;
   private final AuthRateLimiter telemetryErrorLimiter;
   private final AuthRateLimiter stepUpLimiter;
+  private final AuthRateLimiter passwordChangeLimiter;
   private final AuthRateLimiter listingCreateLimiter;
   private final AuthRateLimiter orderCreateLimiter;
   private final AuthRateLimiter orderTransitionLimiter;
@@ -306,6 +320,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter telemetryErrorLimiter,
                              @Qualifier("stepUpRateLimiter")
                                  AuthRateLimiter stepUpLimiter,
+                             @Qualifier("passwordChangeRateLimiter")
+                                 AuthRateLimiter passwordChangeLimiter,
                              @Qualifier("listingCreateRateLimiter")
                                  AuthRateLimiter listingCreateLimiter,
                              @Qualifier("orderCreateRateLimiter")
@@ -332,6 +348,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.cspReportLimiter = cspReportLimiter;
     this.telemetryErrorLimiter = telemetryErrorLimiter;
     this.stepUpLimiter = stepUpLimiter;
+    this.passwordChangeLimiter = passwordChangeLimiter;
     this.listingCreateLimiter = listingCreateLimiter;
     this.orderCreateLimiter = orderCreateLimiter;
     this.orderTransitionLimiter = orderTransitionLimiter;
@@ -381,6 +398,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // on success — a completed proof must not refill a password
       // guesser's budget.
       return !stepUpLimiter.isEnabled();
+    }
+    if (PASSWORD_CHANGE_PATH.equals(path)) {
+      // Password change (backlog #290): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset
+      // on success — a completed change must not refill a password
+      // guesser's budget. Kept apart from the step-up bucket (which
+      // covers only the re-proof) and the credential bucket, so
+      // guessing at one surface can never starve the others.
+      return !passwordChangeLimiter.isEnabled();
     }
     if (ITEMS_PATH.equals(path)) {
       // Listing creation (backlog #219): own per-user bucket on the
@@ -527,6 +553,24 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!stepUpLimiter.tryConsume(key)) {
         writeTooManyRequests(response, stepUpLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (PASSWORD_CHANGE_PATH.equals(path)) {
+      // Password change (backlog #290): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // changes, but anonymous hammering is still throttled), never
+      // reset on success — a completed change must not refill the
+      // allowance, and change traffic must not touch the step-up or
+      // credential buckets. A throttled attempt never reaches the
+      // controller, so it revokes nothing and the caller's refresh
+      // family stays intact.
+      String key = messageKey(request);
+      if (!passwordChangeLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, passwordChangeLimiter, key);
         return;
       }
       chain.doFilter(request, response);

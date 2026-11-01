@@ -219,6 +219,29 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * authenticated user for the password-change endpoint ({@code POST
+   * /api/auth/password}, backlog #290). The endpoint verifies the
+   * current password, so it is a password-guessing surface for anyone
+   * holding a stolen Bearer token — it gets its own per-user bucket
+   * (JWT principal, per-IP fallback like the message/export buckets)
+   * that never resets on success, sized like the step-up bucket's
+   * 5/min: a completed change must not refill a guesser's budget.
+   * Deliberately separate from the step-up bucket (which covers only
+   * the re-proof) and the credential bucket, so guessing at one
+   * surface can never starve the others. Must be &ge; 1.
+   */
+  private int passwordChangeAttemptsPerMinute = 5;
+
+  public int getPasswordChangeAttemptsPerMinute() {
+    return passwordChangeAttemptsPerMinute;
+  }
+
+  public void setPasswordChangeAttemptsPerMinute(int passwordChangeAttemptsPerMinute) {
+    this.passwordChangeAttemptsPerMinute = passwordChangeAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the CSP violation report intake ({@code POST
    * /api/security/csp-report}, backlog #204). Keyed on the IP: the
