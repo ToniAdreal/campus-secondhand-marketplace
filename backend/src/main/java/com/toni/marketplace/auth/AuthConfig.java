@@ -244,6 +244,26 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the order-tail POSTs
+   * ({@code POST /api/orders/{id}/confirm-receipt} and
+   * {@code POST /api/orders/{id}/handover-code/regenerate}, backlog
+   * #289; default 20 transitions/minute per authenticated user). The
+   * two shapes share this one bucket — they are the tail of the same
+   * money path — keyed on the JWT principal id like the
+   * order-transition bucket, so receipt/regenerate traffic neither
+   * consumes nor starves the #228 transition bucket, and vice versa.
+   * Never reset on success: an idempotent re-confirm must not refill
+   * the allowance.
+   */
+  @Bean
+  public AuthRateLimiter orderReceiptRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties receiptProps = new AuthRateLimitProperties();
+    receiptProps.setEnabled(props.isEnabled());
+    receiptProps.setAttemptsPerMinute(props.getOrderReceiptAttemptsPerMinute());
+    return new AuthRateLimiter(clock, receiptProps);
+  }
+
+  /**
    * Separate token bucket for the item mutation POSTs/PATCH
    * ({@code POST /api/items/{id}/photo}, {@code /photos}, {@code /renew},
    * {@code /publish} and {@code PATCH /api/items/{id}/status}, backlog

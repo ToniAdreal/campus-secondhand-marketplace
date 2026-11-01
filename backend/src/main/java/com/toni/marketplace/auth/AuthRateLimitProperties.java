@@ -339,6 +339,32 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the order-tail
+   * POSTs ({@code POST /api/orders/{id}/confirm-receipt} and
+   * {@code POST /api/orders/{id}/handover-code/regenerate}, backlog
+   * #289). Same keying as the order-transition bucket (per-IP fallback
+   * for anonymous requests). The two shapes share this one bucket: they
+   * are the tail of the same money path — receipt confirmation moves an
+   * order toward COMPLETED and a regenerated handover code invalidates
+   * the previous one — so one account hammering either is one abuse
+   * shape, and the bucket must neither consume nor be starved by the
+   * #228 transition bucket. Sized at 20/min like the transition bucket:
+   * legitimate traffic is a handful per order (one confirm, at most a
+   * couple of regenerates), so the ceiling only bites automation.
+   * Never resets on success. Must be &ge; 1.
+   */
+  private int orderReceiptAttemptsPerMinute = 20;
+
+  public int getOrderReceiptAttemptsPerMinute() {
+    return orderReceiptAttemptsPerMinute;
+  }
+
+  public void setOrderReceiptAttemptsPerMinute(int orderReceiptAttemptsPerMinute) {
+    this.orderReceiptAttemptsPerMinute = orderReceiptAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for the item
    * mutation POSTs/PATCH ({@code POST /api/items/{id}/photo},
    * {@code /photos}, {@code /renew}, {@code /publish} and

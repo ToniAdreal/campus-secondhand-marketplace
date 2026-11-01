@@ -134,9 +134,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * abuse shape, and the bucket must not be refillable by an idempotent
  * re-pay. The path carries the order id, so the transitions are matched
  * by shape ({@code /api/orders/<digits>/(pay|cancel|complete|refund|ship)})
- * rather than by equality; the sibling transition POSTs
+ * rather than by equality. The sibling transition POSTs
  * ({@code /confirm-receipt}, {@code /handover-code/regenerate}) are not in
- * this bucket — they were out of #228's scope and stay unthrottled.
+ * this bucket — they were out of #228's scope and get their own #289
+ * bucket, below.
+ *
+ * <p>Order-tail transitions ({@code POST /api/orders/{id}/confirm-receipt}
+ * and {@code POST /api/orders/{id}/handover-code/regenerate}, backlog
+ * #289) share a per-<em>user</em> bucket (default 20/minute) on the same
+ * keying as the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: receipt confirmation
+ * moves an order toward COMPLETED and a regenerated handover code
+ * invalidates the previous one, so one account hammering either shape is
+ * one abuse shape — and the bucket is deliberately separate from the
+ * #228 transition bucket, so transition traffic can never starve
+ * receipt/regenerate traffic, nor vice versa. The paths carry the order
+ * id, so both shapes are matched by shape rather than by equality.
  *
  * <p>Item mutations ({@code POST /api/items/{id}/photo}, {@code /photos},
  * {@code /renew}, {@code /publish} and {@code PATCH /api/items/{id}/status},
@@ -164,9 +177,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * /api/offers/{id}/accept}, {@code /decline}, {@code /counter} and
  * friends), the ADMIN dispute/appeal resolutions and the seller
  * review-response PUT — they are different abuse shapes and stay
- * unthrottled, out of #282's scope, like #228's
- * {@code /confirm-receipt} and {@code /handover-code/regenerate}
- * siblings.
+ * unthrottled, out of #282's scope. (The order-tail POSTs
+ * {@code /confirm-receipt} and {@code /handover-code/regenerate} have
+ * their own #289 bucket, above — they are not #282's to cover.)
  *
  * <p>Behavior:
  * <ul>
@@ -269,6 +282,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter listingCreateLimiter;
   private final AuthRateLimiter orderCreateLimiter;
   private final AuthRateLimiter orderTransitionLimiter;
+  private final AuthRateLimiter orderReceiptLimiter;
   private final AuthRateLimiter itemMutationLimiter;
   private final AuthRateLimiter socialWriteLimiter;
   private final JwtTokenService jwt;
@@ -298,6 +312,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter orderCreateLimiter,
                              @Qualifier("orderTransitionRateLimiter")
                                  AuthRateLimiter orderTransitionLimiter,
+                             @Qualifier("orderReceiptRateLimiter")
+                                 AuthRateLimiter orderReceiptLimiter,
                              @Qualifier("itemMutationRateLimiter")
                                  AuthRateLimiter itemMutationLimiter,
                              @Qualifier("socialWriteRateLimiter")
@@ -319,6 +335,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.listingCreateLimiter = listingCreateLimiter;
     this.orderCreateLimiter = orderCreateLimiter;
     this.orderTransitionLimiter = orderTransitionLimiter;
+    this.orderReceiptLimiter = orderReceiptLimiter;
     this.itemMutationLimiter = itemMutationLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
     this.jwt = jwt;
@@ -388,6 +405,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // on success — an idempotent re-pay must not refill the
       // allowance. Shape-matched because the path carries the order id.
       return !orderTransitionLimiter.isEnabled();
+    }
+    if (isOrderReceiptPath(path)) {
+      // Order-tail transitions (backlog #289): own per-user bucket on
+      // the message keying (JWT principal, per-IP fallback), never
+      // reset on success — an idempotent re-confirm must not refill
+      // the allowance. Shape-matched because the path carries the
+      // order id; kept apart from the #228 bucket so neither traffic
+      // shape can starve the other.
+      return !orderReceiptLimiter.isEnabled();
     }
     if (isItemMutationPath(path)) {
       // Item mutations (backlog #228): own per-user bucket on the
@@ -551,6 +577,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isOrderReceiptPath(path)) {
+      // Order-tail transitions (backlog #289): own per-user bucket on
+      // the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // tails, but anonymous hammering is still throttled), never
+      // reset on success — an idempotent re-confirm must not refill
+      // the allowance, and receipt/regenerate traffic must not touch
+      // the #228 transition bucket.
+      String key = messageKey(request);
+      if (!orderReceiptLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, orderReceiptLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isItemMutationPath(path) || isItemStatusPath(path)) {
       // Item mutations (backlog #228): own per-user bucket on the
       // message keying, never reset on success — a successful upload
@@ -700,12 +742,27 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    * /api/orders/{id}/pay}, {@code /cancel}, {@code /complete},
    * {@code /refund}, {@code /ship}, backlog #228): the id segment is
    * numeric (order ids are), which keeps the collection POST
-   * ({@code /api/orders}) and the sibling transition POSTs
+   * ({@code /api/orders}) and the sibling order-tail POSTs
    * ({@code /confirm-receipt}, {@code /handover-code/regenerate}) out
-   * of this bucket — those two were out of #228's scope.
+   * of this bucket — those two have their own #289 bucket, below.
    */
   private static boolean isOrderTransitionPath(String path) {
     return path != null && path.matches("/api/orders/\\d+/(pay|cancel|complete|refund|ship)");
+  }
+
+  /**
+   * True for the order-tail POSTs ({@code POST
+   * /api/orders/{id}/confirm-receipt} and {@code POST
+   * /api/orders/{id}/handover-code/regenerate}, backlog #289): the id
+   * segment is numeric (order ids are), which keeps the collection
+   * POST ({@code /api/orders}) and the #228 transition POSTs out of
+   * this bucket — the two shapes share this one bucket because they
+   * are the tail of the same money path.
+   */
+  private static boolean isOrderReceiptPath(String path) {
+    return path != null
+        && (path.matches("/api/orders/\\d+/confirm-receipt")
+            || path.matches("/api/orders/\\d+/handover-code/regenerate"));
   }
 
   /**
