@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.message.MessageRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.offer.PriceOfferRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.OrderRepository;
@@ -52,6 +53,9 @@ class UserBlockTest {
   private MessageRepository messages;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private PriceOfferRepository offers;
 
   @Autowired
@@ -82,6 +86,16 @@ class UserBlockTest {
     offers.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
+    // The in-flight-order test pays an order, which records an
+    // ORDER_PAID notification for the seller: without this wipe the
+    // row survives in the shared in-memory DB (DB_CLOSE_DELAY=-1)
+    // into the next class in the same fork, and any later class
+    // asserting an empty notification table at start (SellerFollowTest
+    // draftCreate) fails when this class runs first — a pre-existing
+    // isolation leak, reproduced on clean HEAD (eee8b18) with this
+    // class forced first. Order mirrors SocialWriteRateLimitTest
+    // (orders, then notifications, then refresh tokens).
+    notifications.deleteAll();
     refreshTokens.deleteAll();
     items.deleteAll();
     users.deleteAll();

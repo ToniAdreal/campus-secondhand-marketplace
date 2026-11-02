@@ -370,6 +370,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the social-graph writes (backlog #308):
+   * {@code PUT/DELETE /api/users/me/favorites/{itemId}}, {@code
+   * POST/DELETE /api/users/me/follows/{sellerId}} and {@code POST/DELETE
+   * /api/users/{id}/block} share it (default 20 writes/minute per
+   * authenticated user, like the #282 bucket). Keyed on the JWT
+   * principal id like the social-write bucket — the abuse surface is
+   * one account hammering the save / follow / block surfaces, not an
+   * IP — and it neither consumes nor starves the #282 creation bucket
+   * (filing an offer, a review, a dispute, evidence or an appeal
+   * stays there) or any neighbouring write bucket. The favorites,
+   * follows and blocks list GETs are reads and stay unthrottled.
+   * Never resets on success: a completed save, follow or block must
+   * not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter socialGraphRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties graphProps = new AuthRateLimitProperties();
+    graphProps.setEnabled(props.isEnabled());
+    graphProps.setAttemptsPerMinute(props.getSocialGraphAttemptsPerMinute());
+    return new AuthRateLimiter(clock, graphProps);
+  }
+
+  /**
    * Separate token bucket for the offer lifecycle transitions
    * ({@code POST /api/offers/{id}/accept}, {@code /decline},
    * {@code /counter}, {@code /counter-accept}, {@code /counter-decline}

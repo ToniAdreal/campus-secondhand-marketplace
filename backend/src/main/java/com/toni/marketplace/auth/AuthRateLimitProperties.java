@@ -495,6 +495,40 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the social-graph
+   * writes (backlog #308): {@code PUT /api/users/me/favorites/{itemId}}
+   * and {@code DELETE /api/users/me/favorites/{itemId}} (save / unsave
+   * a listing), {@code POST /api/users/me/follows/{sellerId}} and
+   * {@code DELETE /api/users/me/follows/{sellerId}} (follow /
+   * unfollow a seller), and {@code POST /api/users/{id}/block} and
+   * {@code DELETE /api/users/{id}/block} (block / unblock a user)
+   * share this one bucket. Same keying as the other per-user buckets
+   * (per-IP fallback for anonymous requests). The six shapes share one
+   * bucket because they are one abuse shape — one account hammering
+   * the follow / favorite / block surfaces at volume (follow-spam,
+   * save-spam and block-flapping) — and the bucket must neither
+   * consume nor be starved by the #282 social-write bucket (filing an
+   * offer, a review, a dispute, evidence or an appeal stays there:
+   * same "social" word, different surface). The read siblings stay
+   * unthrottled: the favorites list, the follows list and the blocks
+   * list are GETs the filter never touches. Sized at 20/min like the
+   * #282 bucket: a legitimate user taps save / follow / block a
+   * handful of times per minute, while a script flipping them at
+   * volume is the throttle target. Never resets on success. Must be
+   * &ge; 1.
+   */
+  private int socialGraphAttemptsPerMinute = 20;
+
+  public int getSocialGraphAttemptsPerMinute() {
+    return socialGraphAttemptsPerMinute;
+  }
+
+  public void setSocialGraphAttemptsPerMinute(int socialGraphAttemptsPerMinute) {
+    this.socialGraphAttemptsPerMinute = socialGraphAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for the offer
    * lifecycle transitions (backlog #293): {@code POST
    * /api/offers/{id}/accept}, {@code /decline}, {@code /counter},

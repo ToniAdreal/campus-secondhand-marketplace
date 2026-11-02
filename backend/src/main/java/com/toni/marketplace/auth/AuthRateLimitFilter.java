@@ -425,6 +425,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * /api/items/{id}}) never matches (no {@code /photos} segment)
  * and stays unthrottled.
  *
+ * <p>Social-graph writes ({@code PUT/DELETE
+ * /api/users/me/favorites/{itemId}}, {@code POST/DELETE
+ * /api/users/me/follows/{sellerId}} and {@code POST/DELETE
+ * /api/users/{id}/block}, backlog #308) share a per-<em>user</em>
+ * bucket (default 20/minute, like the #282 bucket) on the same keying
+ * as the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: one account
+ * hammering the save / follow / block surfaces at volume is one abuse
+ * shape, and a throttled attempt never reaches the controller, so it
+ * saves, follows or blocks nothing. Deliberately separate from the
+ * #282 social-write bucket — same "social" word, different surface:
+ * filing an offer, a review, a dispute, evidence or an appeal stays
+ * there — so graph traffic can neither consume nor be starved by
+ * creation traffic, nor vice versa. The PUT/DELETE shapes are matched
+ * before the filter's POST-only gate (like the PATCH item-status,
+ * DELETE session-revocation, PUT review-edit, DELETE/PATCH
+ * passkey-management and listing-edit siblings); the favorites,
+ * follows and blocks list GETs carry no id segment, never match, and
+ * stay unthrottled reads.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -547,6 +567,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter itemMutationLimiter;
   private final AuthRateLimiter itemEditLimiter;
   private final AuthRateLimiter socialWriteLimiter;
+  private final AuthRateLimiter socialGraphLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
   private final AuthRateLimiter adminResolutionLimiter;
@@ -598,6 +619,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter itemEditLimiter,
                              @Qualifier("socialWriteRateLimiter")
                                  AuthRateLimiter socialWriteLimiter,
+                             @Qualifier("socialGraphRateLimiter")
+                                 AuthRateLimiter socialGraphLimiter,
                              @Qualifier("offerLifecycleRateLimiter")
                                  AuthRateLimiter offerLifecycleLimiter,
                              @Qualifier("sessionRevocationRateLimiter")
@@ -642,6 +665,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.itemMutationLimiter = itemMutationLimiter;
     this.itemEditLimiter = itemEditLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
+    this.socialGraphLimiter = socialGraphLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.adminResolutionLimiter = adminResolutionLimiter;
@@ -716,6 +740,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // listing DELETE never matches isItemPhotoDeletePath (no /photos
       // segment) and stays unthrottled.
       return !itemEditLimiter.isEnabled();
+    }
+    if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFollowPath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphBlockPath(path)))) {
+      // Social-graph writes (backlog #308): the PUT/DELETE shapes in
+      // the graph bucket — they must be checked before the POST-only
+      // gate below, or they would pass through unthrottled. The POST
+      // follow/block siblings are handled by the POST section below
+      // and share this same bucket; the favorites, follows and blocks
+      // list GETs never match the id-carrying matchers and stay
+      // unthrottled reads.
+      return !socialGraphLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -826,6 +863,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // appeal must not refill the allowance. Shape-matched because
       // every path carries an id segment.
       return !socialWriteLimiter.isEnabled();
+    }
+    if (isSocialGraphFollowPath(path) || isSocialGraphBlockPath(path)) {
+      // Social-graph writes (backlog #308): the POST follow and block
+      // shapes share the graph bucket with the PUT/DELETE shapes
+      // handled above — own per-user bucket on the message keying,
+      // never reset on success. The follow/block list GETs never
+      // reach this branch (they are not POSTs), and the #282
+      // creation shapes never match these matchers (different path
+      // prefixes — follows and blocks, not offers, reviews,
+      // disputes or appeals).
+      return !socialGraphLimiter.isEnabled();
     }
     if (isOfferLifecyclePath(path)) {
       // Offer lifecycle transitions (backlog #293): own per-user
@@ -1195,6 +1243,30 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!itemEditLimiter.tryConsume(key)) {
         writeTooManyRequests(response, itemEditLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
+            || ("POST".equalsIgnoreCase(request.getMethod()) && isSocialGraphFollowPath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFollowPath(path))
+            || ("POST".equalsIgnoreCase(request.getMethod()) && isSocialGraphBlockPath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphBlockPath(path)))) {
+      // Social-graph writes (backlog #308): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // writes, but anonymous hammering is still throttled), never
+      // reset on success — a completed save, follow or block must not
+      // refill the allowance, and graph traffic must not touch the
+      // #282 creation bucket. A throttled attempt never reaches the
+      // controller, so it saves, follows or blocks nothing. The
+      // PUT/DELETE shapes reach this branch via shouldNotFilter's
+      // pre-gate check above; the POST shapes via its POST section.
+      String key = messageKey(request);
+      if (!socialGraphLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, socialGraphLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -1714,6 +1786,44 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isItemPhotoDeletePath(String path) {
     return path != null && path.matches("/api/items/\\d+/photos/\\d+");
+  }
+
+  /**
+   * True for the social-graph favorite writes ({@code PUT/DELETE
+   * /api/users/me/favorites/{itemId}}, backlog #308): the id segment
+   * is numeric (listing ids are), which keeps the favorites-list GET
+   * ({@code /api/users/me/favorites}, no id segment) out. Callers
+   * check the HTTP method alongside this matcher, since the filter
+   * only throttles the PUT and DELETE shapes here.
+   */
+  private static boolean isSocialGraphFavoritePath(String path) {
+    return path != null && path.matches("/api/users/me/favorites/\\d+");
+  }
+
+  /**
+   * True for the social-graph follow writes ({@code POST/DELETE
+   * /api/users/me/follows/{sellerId}}, backlog #308): the id segment
+   * is numeric (user ids are), which keeps the follows-list GET
+   * ({@code /api/users/me/follows}, no id segment) out. Callers check
+   * the HTTP method alongside this matcher, since the filter only
+   * throttles the POST and DELETE shapes here.
+   */
+  private static boolean isSocialGraphFollowPath(String path) {
+    return path != null && path.matches("/api/users/me/follows/\\d+");
+  }
+
+  /**
+   * True for the social-graph block writes ({@code POST/DELETE
+   * /api/users/{id}/block}, backlog #308): the id segment is numeric
+   * (user ids are), which keeps the blocks-list GET ({@code
+   * /api/users/me/blocks}, a different suffix and no numeric id) out
+   * and the follow shapes out (different path — {@code /me/follows},
+   * not {@code /{id}/block}). Callers check the HTTP method
+   * alongside this matcher, since the filter only throttles the POST
+   * and DELETE shapes here.
+   */
+  private static boolean isSocialGraphBlockPath(String path) {
+    return path != null && path.matches("/api/users/\\d+/block");
   }
 
   /**
