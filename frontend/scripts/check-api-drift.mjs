@@ -48,10 +48,11 @@
 // `npm run check:api`. Locally: export once, then `npm run check:api`.
 //
 // Extraction rules (pinned by check-api-drift.test.mjs):
-//   - calls on the shared `api` axios instance (baseURL '/api'), in both
-//     forms used in this codebase: `api.get<...>(url)` and the chained
-//     `api` newline `.get<...>(url)`; plus the one raw
-//     `axios.post('/api/auth/refresh', ...)` in client.ts;
+//   - calls on the shared `api` fetch client (API_BASE_URL '/api'), in
+//     both forms used in this codebase: `api.get<...>(url)` and the
+//     chained `api` newline `.get<...>(url)`; plus the one raw refresh
+//     call in client.ts, `fetchWithTimeout(`${API_BASE_URL}/auth/refresh`,
+//     { method: 'POST', ... })`;
 //   - `new EventSource(url)` counts as a GET (the #203 SSE stream);
 //   - only *.ts modules under src/api are scanned, never *.test.* —
 //     tests mock the api instance with fixture paths on purpose;
@@ -63,8 +64,8 @@
 //     param-name-insensitive: a segment that is a param on either side
 //     matches a param segment on the other ({id} vs ${userId} is the
 //     same call — the backend and the SPA name params independently);
-//   - query strings are stripped (params travel via axios `params`,
-//     and the one URL-carried query — the SSE ticket — is not part of
+//   - query strings are stripped (params travel via the client's `params`
+//     option, and the one URL-carried query — the SSE ticket — is not part of
 //     the path contract).
 // A call whose URL is not a string literal fails the gate as
 // unextractable rather than being skipped silently: drift must not be
@@ -188,9 +189,10 @@ export function templateToPath(raw) {
 }
 
 /**
- * The shared axios instance has baseURL '/api', so module URLs are
- * relative ('/items'); client.ts's raw axios refresh call and the
- * EventSource URL carry the full '/api/...' path already. Both forms
+ * The shared fetch client prefixes API_BASE_URL '/api' to module URLs,
+ * so module URLs are relative ('/items'); client.ts's raw refresh call
+ * carries the full path via its `${API_BASE_URL}` interpolation and the
+ * EventSource URL carries the full '/api/...' path already. Both forms
  * normalise to the full path the OpenAPI document uses.
  */
 export function toFullApiPath(path) {
@@ -216,8 +218,8 @@ export function canonicalizePath(path) {
  * Extracts the api calls from one module's source text.
  * Returns { calls, unextractable } where calls are
  * { method, path } with full /api paths ({name} params), and
- * unextractable counts api/axios/EventSource call sites whose URL
- * argument is not a string literal.
+ * unextractable counts api/fetch-refresh/EventSource call sites whose
+ * URL argument is not a string literal.
  */
 export function extractApiCalls(source) {
   const clean = stripComments(source);
@@ -256,7 +258,7 @@ export function extractApiCalls(source) {
     unextractable += 1;
   };
 
-  const callPattern = /\b(?:api|axios)\s*\.\s*(get|post|put|patch|delete)\b/g;
+  const callPattern = /\bapi\s*\.\s*(get|post|put|patch|delete)\b/g;
   let match;
   while ((match = callPattern.exec(clean)) !== null) {
     record(match[1].toUpperCase(), match.index + match[0].length, false);
@@ -265,6 +267,36 @@ export function extractApiCalls(source) {
   const eventSourcePattern = /\bnew\s+EventSource\s*\(/g;
   while ((match = eventSourcePattern.exec(clean)) !== null) {
     record('GET', match.index + match[0].length, true);
+  }
+
+  // The one raw refresh call in client.ts: fetchWithTimeout takes the
+  // URL as a template literal rooted at ${API_BASE_URL} and the method
+  // from its options object (`{ method: 'POST', ... }`) — there is no
+  // method on the callee name to match. The generic request() path
+  // calls fetchWithTimeout with a variable URL (fullUrl); those sites
+  // are skipped here because their calls are already extracted at the
+  // api.* call sites that feed them. A refresh-shaped template with no
+  // method in its options is unextractable, never silently dropped.
+  const refreshPattern = /\bfetchWithTimeout\s*\(/g;
+  while ((match = refreshPattern.exec(clean)) !== null) {
+    let i = match.index + match[0].length;
+    while (i < clean.length && /\s/.test(clean[i])) i += 1;
+    if (clean[i] !== '`') continue;
+    const { content, end } = readStringLiteral(clean, i);
+    const basePrefix = '${API_BASE_URL}';
+    if (!content.startsWith(`${basePrefix}/`)) continue;
+    const rest = content.slice(basePrefix.length);
+    const methodMatch = clean
+      .slice(end, end + 400)
+      .match(/\bmethod\s*:\s*['"](get|post|put|patch|delete)['"]/i);
+    if (!methodMatch) {
+      unextractable += 1;
+      continue;
+    }
+    calls.push({
+      method: methodMatch[1].toUpperCase(),
+      path: toFullApiPath(templateToPath(rest)),
+    });
   }
 
   return { calls, unextractable };

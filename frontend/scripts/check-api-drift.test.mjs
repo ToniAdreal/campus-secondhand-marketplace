@@ -94,11 +94,18 @@ describe('extractApiCalls', () => {
     ]);
   });
 
-  it('extracts the raw axios refresh call in client.ts (full /api path)', () => {
-    const source = "axios.post('/api/auth/refresh', {}, { withCredentials: true })";
+  it('extracts the raw fetch refresh call in client.ts (${API_BASE_URL} root)', () => {
+    const source =
+      'fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, { method: \'POST\', credentials: \'include\' })';
     expect(extractApiCalls(source).calls).toEqual([
       { method: 'POST', path: '/api/auth/refresh' },
     ]);
+  });
+
+  it('flags a refresh-shaped fetch call with no method as unextractable', () => {
+    const source =
+      'fetchWithTimeout(`${API_BASE_URL}/auth/refresh`, { credentials: \'include\' })';
+    expect(extractApiCalls(source)).toEqual({ calls: [], unextractable: 1 });
   });
 
   it('counts the EventSource stream as a GET and drops its query', () => {
@@ -125,8 +132,9 @@ describe('extractApiCalls', () => {
     expect(extractApiCalls(source)).toEqual({ calls: [], unextractable: 1 });
   });
 
-  it('ignores non-call axios helpers', () => {
-    const source = 'axios.isAxiosError(error); axios.create({ baseURL: \'/api\' })';
+  it('ignores variable-URL fetch sites (the generic request path, already covered by api.*)', () => {
+    const source =
+      'fetchWithTimeout(fullUrl, { method, headers, body, credentials: \'include\' }); fetch(url, { ...init, signal: controller.signal })';
     expect(extractApiCalls(source)).toEqual({ calls: [], unextractable: 0 });
   });
 });
