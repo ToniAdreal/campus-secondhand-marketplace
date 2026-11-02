@@ -583,4 +583,24 @@ public class AuthRateLimitProperties {
   public void setAdminResolutionAttemptsPerMinute(int adminResolutionAttemptsPerMinute) {
     this.adminResolutionAttemptsPerMinute = adminResolutionAttemptsPerMinute;
   }
+
+  /**
+   * Review edits and seller responses (backlog #298): PUT
+   * /api/reviews/{id} and PUT /api/reviews/{id}/response share one
+   * per-user bucket, sized like the #282 creation bucket (20/min) —
+   * one account rewriting or answering reviews at volume is one
+   * abuse shape, and a single legitimate edit or response per click
+   * never comes close to the ceiling. Deliberately separate from the
+   * #282 bucket (filing a review stays there). Never resets on
+   * success. Must be &ge; 1.
+   */
+  private int reviewEditAttemptsPerMinute = 20;
+
+  public int getReviewEditAttemptsPerMinute() {
+    return reviewEditAttemptsPerMinute;
+  }
+
+  public void setReviewEditAttemptsPerMinute(int reviewEditAttemptsPerMinute) {
+    this.reviewEditAttemptsPerMinute = reviewEditAttemptsPerMinute;
+  }
 }

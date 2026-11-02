@@ -440,6 +440,27 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for review edits and seller responses
+   * ({@code PUT /api/reviews/{id}} and {@code PUT
+   * /api/reviews/{id}/response}, backlog #298; default 20
+   * edits/responses per minute per authenticated user, like the #282
+   * bucket). Keyed on the JWT principal id like the other per-user
+   * buckets — one account rewriting reviews is legitimate traffic at
+   * human pace, and keying by IP would let one NAT address starve
+   * every user behind it. Deliberately separate from the #282
+   * creation bucket (filing a review stays there), so edit/response
+   * traffic can never starve creation traffic, nor vice versa. Never
+   * reset on success: a completed edit must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter reviewEditRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties reviewEditProps = new AuthRateLimitProperties();
+    reviewEditProps.setEnabled(props.isEnabled());
+    reviewEditProps.setAttemptsPerMinute(props.getReviewEditAttemptsPerMinute());
+    return new AuthRateLimiter(clock, reviewEditProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

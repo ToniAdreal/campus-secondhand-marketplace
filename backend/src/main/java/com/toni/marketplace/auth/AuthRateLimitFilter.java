@@ -200,7 +200,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * friends) have their own #293 bucket, below; the ADMIN
  * dispute/appeal resolutions have their own #297 bucket, below;
  * the seller review-response PUT is a different abuse shape and
- * stays unthrottled, out of #282's scope.
+ * has its own #298 bucket, below — it never shared #282's bucket,
+ * and neither the review edit nor the response may consume or be
+ * starved by review creation.
  * (The order-tail POSTs {@code /confirm-receipt} and
  * {@code /handover-code/regenerate} have their own #289 bucket, above
  * — they are not #282's to cover.)
@@ -278,6 +280,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * resolution attempt still reaches the security chain and answers
  * 403 (its own principal key keeps it from ever starving an ADMIN's
  * bucket).
+ *
+ * <p>Review edits and seller review responses ({@code PUT
+ * /api/reviews/{id}} and {@code PUT /api/reviews/{id}/response},
+ * backlog #298) share a per-<em>user</em> bucket (default 20/minute)
+ * on the same keying as the message bucket (JWT principal id,
+ * per-IP fallback for a missing/invalid token), never reset on
+ * success: one account rewriting its own review or answering reviews
+ * at volume is one abuse shape, and a throttled attempt never reaches
+ * the controller, so it edits nothing and answers nothing. Deliberately
+ * separate from the #282 creation bucket (filing a review stays
+ * there), so edit/response traffic can neither consume nor be starved
+ * by creation traffic, nor vice versa. The two PUT shapes are matched
+ * before the filter's POST-only gate (like the PATCH item-status and
+ * DELETE session-revocation siblings), because the path carries the
+ * review id and the shapes are matched by shape rather than by
+ * equality.
  *
  * <p>Behavior:
  * <ul>
@@ -398,6 +416,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
   private final AuthRateLimiter adminResolutionLimiter;
+  private final AuthRateLimiter reviewEditLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -443,6 +462,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter sessionRevocationLimiter,
                              @Qualifier("adminResolutionRateLimiter")
                                  AuthRateLimiter adminResolutionLimiter,
+                             @Qualifier("reviewEditRateLimiter")
+                                 AuthRateLimiter reviewEditLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -469,6 +490,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.adminResolutionLimiter = adminResolutionLimiter;
+    this.reviewEditLimiter = reviewEditLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -501,6 +523,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // unthrottled. The session-list and trusted-device-list GETs are
       // reads and stay unthrottled.
       return !sessionRevocationLimiter.isEnabled();
+    }
+    if ("PUT".equalsIgnoreCase(request.getMethod()) && isReviewEditPath(path)) {
+      // Review edits / seller responses (backlog #298): the two PUT
+      // shapes in the review-edit bucket — they must be checked
+      // before the POST-only gate below, or they would pass through
+      // unthrottled. Review creation (POST /api/orders/{id}/review)
+      // stays in the #282 bucket and never reaches this branch.
+      return !reviewEditLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -907,6 +937,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isReviewEditPath(path)) {
+      // Review edits / seller responses (backlog #298): own per-user
+      // bucket on the message keying (JWT principal id, per-IP
+      // fallback for a missing/invalid token — the security chain
+      // 401s anonymous edits, but anonymous hammering is still
+      // throttled), never reset on success — a completed edit or
+      // response must not refill the allowance, and edit/response
+      // traffic must not touch the #282 creation bucket. A throttled
+      // attempt never reaches the controller, so it edits nothing
+      // and answers nothing. The PUT shapes reach this branch via
+      // shouldNotFilter's PUT check above.
+      String key = messageKey(request);
+      if (!reviewEditLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, reviewEditLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       // Password reset (backlog #90): both endpoints share one per-IP
       // bucket — the request endpoint is a mail-bombing surface, the
@@ -1099,6 +1148,21 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return path != null
         && (path.matches("/api/admin/disputes/\\d+/(resolve-refund|resolve-release)")
             || path.matches("/api/admin/appeals/\\d+/(uphold|reject)"));
+  }
+
+  /**
+   * True for the review edit and seller-response PUTs ({@code PUT
+   * /api/reviews/{id}} and {@code PUT /api/reviews/{id}/response},
+   * backlog #298): the id segment is numeric (review ids are), which
+   * keeps the sibling shapes out — review creation ({@code POST
+   * /api/orders/{id}/review}) lives in the #282 bucket, the seller
+   * review list reads are GETs the filter never throttles, and no
+   * other PUT touches /api/reviews.
+   */
+  private static boolean isReviewEditPath(String path) {
+    return path != null
+        && (path.matches("/api/reviews/\\d+")
+            || path.matches("/api/reviews/\\d+/response"));
   }
 
   /**
