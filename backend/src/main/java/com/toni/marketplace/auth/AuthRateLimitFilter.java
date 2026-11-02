@@ -346,6 +346,23 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * still reaches the security chain and answers 403 (its own principal
  * key keeps it from ever starving an ADMIN's bucket).
  *
+ * <p>ADMIN report dismiss/action writes ({@code POST
+ * /api/admin/reports/{id}/dismiss} and {@code POST
+ * /api/admin/reports/{id}/action}, backlog #304) share a per-<em>user</em>
+ * bucket (default 20/minute) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one ADMIN clearing the listing-report
+ * moderation queue at volume is one abuse shape, and a throttled
+ * attempt never reaches the controller, so it dismisses nothing and
+ * withdraws nothing. Deliberately separate from the ADMIN
+ * dispute/appeal resolution bucket (backlog #297) — the report queue
+ * is a different queue — and from the ADMIN user-action bucket
+ * (backlog #303), so report-action traffic can neither consume nor
+ * be starved by either, nor vice versa. The ADMIN report-list GET
+ * stays an unthrottled read, and a non-ADMIN caller's single attempt
+ * still reaches the security chain and answers 403 (its own principal
+ * key keeps it from ever starving an ADMIN's bucket).
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -473,6 +490,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter totpSetupLimiter;
   private final AuthRateLimiter passkeyManagementLimiter;
   private final AuthRateLimiter adminUserActionLimiter;
+  private final AuthRateLimiter adminReportActionLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -526,6 +544,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter passkeyManagementLimiter,
                              @Qualifier("adminUserActionRateLimiter")
                                  AuthRateLimiter adminUserActionLimiter,
+                             @Qualifier("adminReportActionRateLimiter")
+                                 AuthRateLimiter adminReportActionLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -556,6 +576,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.totpSetupLimiter = totpSetupLimiter;
     this.passkeyManagementLimiter = passkeyManagementLimiter;
     this.adminUserActionLimiter = adminUserActionLimiter;
+    this.adminReportActionLimiter = adminReportActionLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -737,6 +758,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // (it is not a POST), and the #297 resolution shapes never
       // match this matcher (different path prefix).
       return !adminUserActionLimiter.isEnabled();
+    }
+    if (isAdminReportActionPath(path)) {
+      // ADMIN report dismiss/action (backlog #304): own per-user
+      // bucket on the message keying, never reset on success — a
+      // completed dismiss or action must not refill the
+      // allowance. Shape-matched because the path carries a
+      // numeric id; the ADMIN report-list GET never reaches this
+      // branch (it is not a POST), and the #297 resolution and
+      // #303 user-action shapes never match this matcher
+      // (different path prefix).
+      return !adminReportActionLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -1090,6 +1122,26 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isAdminReportActionPath(path)) {
+      // ADMIN report dismiss/action (backlog #304): own per-user
+      // bucket on the message keying (JWT principal id, per-IP
+      // fallback for a missing/invalid token — the security chain
+      // 403s non-ADMIN callers, but anonymous hammering is still
+      // throttled), never reset on success — a completed dismiss
+      // or action must not refill the allowance, and report-action
+      // traffic must not touch the #297 resolution bucket, the
+      // #303 user-action bucket or any other bucket. A throttled
+      // attempt never reaches the controller, so it dismisses
+      // nothing and withdraws nothing and the queued report stays
+      // exactly as it was.
+      String key = messageKey(request);
+      if (!adminReportActionLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminReportActionLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isReviewEditPath(path)) {
       // Review edits / seller responses (backlog #298): own per-user
       // bucket on the message keying (JWT principal id, per-IP
@@ -1328,7 +1380,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    * list GETs out (they are not POSTs at all) and the seller-side
    * dispute/appeal filing POSTs out — filing stays in the #282
    * bucket, and the admin report dismiss/action POSTs are a
-   * different queue with their own pending bucket (#304).
+   * different queue with their own bucket (#304).
    */
   private static boolean isAdminResolutionPath(String path) {
     return path != null
@@ -1350,6 +1402,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isAdminUserActionPath(String path) {
     return path != null && path.matches("/api/admin/users/\\d+/(disable|enable|totp-reset)");
+  }
+
+  /**
+   * True for the ADMIN report dismiss/action POSTs ({@code POST
+   * /api/admin/reports/{id}/dismiss} and {@code POST
+   * /api/admin/reports/{id}/action}, backlog #304): the id segment
+   * is numeric (report ids are), which keeps the ADMIN report-list
+   * GET out (it is not a POST and carries no id segment) and the
+   * #297 resolution POSTs out (different path prefix — disputes
+   * and appeals, not reports) and the user-side report POST out
+   * (different path — {@code /api/items/{id}/report} — which stays
+   * in the #160 bucket). Callers check the HTTP method alongside
+   * this matcher, since the filter only throttles the POST shapes
+   * here.
+   */
+  private static boolean isAdminReportActionPath(String path) {
+    return path != null && path.matches("/api/admin/reports/\\d+/(dismiss|action)");
   }
 
   /**

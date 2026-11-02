@@ -532,6 +532,30 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN report dismiss/action writes
+   * (backlog #304): {@code POST /api/admin/reports/{id}/dismiss} and
+   * {@code POST /api/admin/reports/{id}/action} share it (default 20
+   * actions/minute per authenticated ADMIN, like the #297/#303
+   * buckets). Keyed on the JWT principal id like the other per-user
+   * buckets — one ADMIN clearing the listing-report queue is
+   * legitimate traffic, and keying by IP would let one NAT address
+   * starve every ADMIN behind it; non-ADMIN callers land on their
+   * own principal key, so their traffic can never starve an ADMIN's
+   * bucket. Deliberately separate from the #297 dispute/appeal
+   * resolution bucket (a different moderation queue) and the #303
+   * ADMIN user-action bucket, so report-action traffic can never
+   * starve them, nor vice versa. Never reset on success: a
+   * completed dismiss or action must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminReportActionRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties actionProps = new AuthRateLimitProperties();
+    actionProps.setEnabled(props.isEnabled());
+    actionProps.setAttemptsPerMinute(props.getAdminReportActionAttemptsPerMinute());
+    return new AuthRateLimiter(clock, actionProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

@@ -671,6 +671,37 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated ADMIN</em> (JWT principal id) for the ADMIN
+   * report dismiss/action writes (backlog #304): {@code POST
+   * /api/admin/reports/{id}/dismiss} and {@code POST
+   * /api/admin/reports/{id}/action} share this one bucket. Same
+   * keying as the other per-user buckets (per-IP fallback for
+   * anonymous requests, which the security chain 401s anyway — a
+   * non-ADMIN caller's single attempt still answers 403 from the
+   * security chain, on that caller's own principal key, so it can
+   * never starve an ADMIN's bucket). The two shapes share one
+   * bucket because they are one abuse shape — one ADMIN clearing
+   * (or hammering) the listing-report moderation queue — and the
+   * bucket must neither consume nor be starved by the #297
+   * dispute/appeal resolution bucket (a different queue) or the
+   * #303 ADMIN user-action bucket. Sized generously at 20/min
+   * like the #297/#303 buckets: a single ADMIN clearing a queue
+   * is legitimate traffic (one resolution per click), so the
+   * ceiling only bites automation. Never resets on success.
+   * Must be &ge; 1.
+   */
+  private int adminReportActionAttemptsPerMinute = 20;
+
+  public int getAdminReportActionAttemptsPerMinute() {
+    return adminReportActionAttemptsPerMinute;
+  }
+
+  public void setAdminReportActionAttemptsPerMinute(int adminReportActionAttemptsPerMinute) {
+    this.adminReportActionAttemptsPerMinute = adminReportActionAttemptsPerMinute;
+  }
+
+  /**
    * Review edits and seller responses (backlog #298): PUT
    * /api/reviews/{id} and PUT /api/reviews/{id}/response share one
    * per-user bucket, sized like the #282 creation bucket (20/min) —
