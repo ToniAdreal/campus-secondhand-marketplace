@@ -330,6 +330,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * shape rather than by equality; the passkey-list GET stays an
  * unthrottled read.
  *
+ * <p>ADMIN user actions ({@code POST /api/admin/users/{id}/disable},
+ * {@code POST /api/admin/users/{id}/enable} and {@code POST
+ * /api/admin/users/{id}/totp-reset}, backlog #303) share a per-<em>user</em>
+ * bucket (default 20/minute) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one ADMIN acting on accounts at volume is
+ * one abuse shape, and a throttled attempt never reaches the
+ * controller, so it disables, enables or resets nothing. Deliberately
+ * separate from the ADMIN dispute/appeal resolution bucket (backlog
+ * #297) — account action and case resolution are different abuse
+ * shapes — so action traffic can neither consume nor be starved by
+ * resolution traffic, nor vice versa. The ADMIN list GET stays an
+ * unthrottled read, and a non-ADMIN caller's single action attempt
+ * still reaches the security chain and answers 403 (its own principal
+ * key keeps it from ever starving an ADMIN's bucket).
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -456,6 +472,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter reviewEditLimiter;
   private final AuthRateLimiter totpSetupLimiter;
   private final AuthRateLimiter passkeyManagementLimiter;
+  private final AuthRateLimiter adminUserActionLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -507,6 +524,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter totpSetupLimiter,
                              @Qualifier("passkeyManagementRateLimiter")
                                  AuthRateLimiter passkeyManagementLimiter,
+                             @Qualifier("adminUserActionRateLimiter")
+                                 AuthRateLimiter adminUserActionLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -536,6 +555,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.reviewEditLimiter = reviewEditLimiter;
     this.totpSetupLimiter = totpSetupLimiter;
     this.passkeyManagementLimiter = passkeyManagementLimiter;
+    this.adminUserActionLimiter = adminUserActionLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -707,6 +727,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // (they are not POSTs), and filing a dispute or an appeal
       // stays in the #282 bucket above.
       return !adminResolutionLimiter.isEnabled();
+    }
+    if (isAdminUserActionPath(path)) {
+      // ADMIN user actions (backlog #303): own per-user bucket on
+      // the message keying, never reset on success — a completed
+      // disable, enable or TOTP reset must not refill the
+      // allowance. Shape-matched because the path carries a
+      // numeric id; the ADMIN list GET never reaches this branch
+      // (it is not a POST), and the #297 resolution shapes never
+      // match this matcher (different path prefix).
+      return !adminUserActionLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -1041,6 +1071,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isAdminUserActionPath(path)) {
+      // ADMIN user actions (backlog #303): own per-user bucket on
+      // the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 403s non-ADMIN
+      // callers, but anonymous hammering is still throttled), never
+      // reset on success — a completed disable, enable or TOTP reset
+      // must not refill the allowance, and action traffic must not
+      // touch the #297 resolution bucket or any other bucket. A
+      // throttled attempt never reaches the controller, so it
+      // disables, enables or resets nothing and the target account
+      // stays exactly as it was.
+      String key = messageKey(request);
+      if (!adminUserActionLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminUserActionLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isReviewEditPath(path)) {
       // Review edits / seller responses (backlog #298): own per-user
       // bucket on the message keying (JWT principal id, per-IP
@@ -1285,6 +1334,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return path != null
         && (path.matches("/api/admin/disputes/\\d+/(resolve-refund|resolve-release)")
             || path.matches("/api/admin/appeals/\\d+/(uphold|reject)"));
+  }
+
+  /**
+   * True for the ADMIN user action POSTs ({@code POST
+   * /api/admin/users/{id}/disable}, {@code POST
+   * /api/admin/users/{id}/enable} and {@code POST
+   * /api/admin/users/{id}/totp-reset}, backlog #303): the id segment
+   * is numeric (user ids are), which keeps the ADMIN list GET out
+   * (it is not a POST and carries no id segment) and the #297
+   * resolution POSTs out (different path prefix — disputes and
+   * appeals, not users). Callers check the HTTP method alongside
+   * this matcher, since the filter only throttles the POST shapes
+   * here.
+   */
+  private static boolean isAdminUserActionPath(String path) {
+    return path != null && path.matches("/api/admin/users/\\d+/(disable|enable|totp-reset)");
   }
 
   /**

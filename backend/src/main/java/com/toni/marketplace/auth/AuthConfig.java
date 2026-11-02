@@ -507,6 +507,31 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN user actions (backlog #303):
+   * {@code POST /api/admin/users/{id}/disable}, {@code POST
+   * /api/admin/users/{id}/enable} and {@code POST
+   * /api/admin/users/{id}/totp-reset} share it (default 20
+   * actions/minute per authenticated ADMIN, like the #297 bucket).
+   * Keyed on the JWT principal id like the other per-user buckets —
+   * one ADMIN acting on accounts at volume is a per-account abuse
+   * surface, and keying by IP would let one NAT address starve every
+   * ADMIN behind it; non-ADMIN callers land on their own principal
+   * key, so their traffic can never starve an ADMIN's bucket.
+   * Deliberately separate from the #297 dispute/appeal resolution
+   * bucket (case resolution is a different abuse shape) and every
+   * other bucket, so account-action traffic can never starve them,
+   * nor vice versa. Never reset on success: a completed disable,
+   * enable or TOTP reset must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminUserActionRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties actionProps = new AuthRateLimitProperties();
+    actionProps.setEnabled(props.isEnabled());
+    actionProps.setAttemptsPerMinute(props.getAdminUserActionAttemptsPerMinute());
+    return new AuthRateLimiter(clock, actionProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity
