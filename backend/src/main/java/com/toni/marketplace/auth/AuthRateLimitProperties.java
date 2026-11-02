@@ -491,4 +491,35 @@ public class AuthRateLimitProperties {
   public void setOfferLifecycleAttemptsPerMinute(int offerLifecycleAttemptsPerMinute) {
     this.offerLifecycleAttemptsPerMinute = offerLifecycleAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the passkey
+   * challenge-issuance and enrolment-verification shapes (backlog
+   * #295): {@code POST /api/auth/2fa/passkeys/registration/options},
+   * {@code POST /api/auth/2fa/passkeys/registration/verify} and
+   * {@code POST /api/auth/2fa/passkeys/assertion/options} share this
+   * one bucket. Same keying as the other per-user buckets (per-IP
+   * fallback for anonymous requests) — which matters here because
+   * the assertion-options shape is public by design (the caller is
+   * not authenticated yet, so it lands on the per-IP fallback key
+   * while the two registration shapes land on the JWT-principal key).
+   * Sized like the step-up bucket (5/min): a legitimate enrolment is
+   * one options call plus one verify, and a login-time assertion
+   * ceremony is one options call, so the ceiling only bites
+   * automation minting challenges. Deliberately separate from the
+   * TOTP authenticate bucket (backlog #101): the exchange itself
+   * ({@code POST /api/auth/2fa/authenticate}) stays in that bucket,
+   * as do the 2FA setup/enable/disable endpoints, which are out of
+   * #295's scope. Never resets on success. Must be &ge; 1.
+   */
+  private int passkeyAttemptsPerMinute = 5;
+
+  public int getPasskeyAttemptsPerMinute() {
+    return passkeyAttemptsPerMinute;
+  }
+
+  public void setPasskeyAttemptsPerMinute(int passkeyAttemptsPerMinute) {
+    this.passkeyAttemptsPerMinute = passkeyAttemptsPerMinute;
+  }
 }

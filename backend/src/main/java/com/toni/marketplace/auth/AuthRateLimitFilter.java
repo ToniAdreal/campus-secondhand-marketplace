@@ -217,6 +217,27 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * order-transition bucket. The path carries the offer id, so the
  * transitions are matched by shape rather than by equality.
  *
+ * <p>Passkey challenge issuance and enrolment verification
+ * ({@code POST /api/auth/2fa/passkeys/registration/options},
+ * {@code POST /api/auth/2fa/passkeys/registration/verify} and
+ * {@code POST /api/auth/2fa/passkeys/assertion/options}, backlog
+ * #295) share a per-<em>user</em> bucket (default 5/minute) on the
+ * same keying as the message bucket (JWT principal id, per-IP
+ * fallback for a missing/invalid token), never reset on success:
+ * minting challenges is a per-account abuse surface — an account
+ * hammering ceremony options can mint challenges at volume — and
+ * the bucket must not be refillable by a completed enrolment. The
+ * keying split is inherent to the shapes: the two registration
+ * shapes are authenticated, so they land on the JWT-principal key,
+ * while the assertion-options shape is public by design (its caller
+ * is not authenticated yet), so it lands on the per-IP fallback key
+ * — assertion traffic can therefore never starve an authenticated
+ * user's registration bucket, nor vice versa. Deliberately
+ * separate from the TOTP authenticate bucket (backlog #101), which
+ * keeps the {@code /2fa/authenticate} exchange itself; the 2FA
+ * setup/enable/disable endpoints stay out of this bucket, out of
+ * #295's scope.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -302,6 +323,12 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
   private static final String PASSWORD_CHANGE_PATH = "/api/auth/password";
+  private static final String PASSKEY_REGISTRATION_OPTIONS_PATH =
+      "/api/auth/2fa/passkeys/registration/options";
+  private static final String PASSKEY_REGISTRATION_VERIFY_PATH =
+      "/api/auth/2fa/passkeys/registration/verify";
+  private static final String PASSKEY_ASSERTION_OPTIONS_PATH =
+      "/api/auth/2fa/passkeys/assertion/options";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
@@ -319,6 +346,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter telemetryErrorLimiter;
   private final AuthRateLimiter stepUpLimiter;
   private final AuthRateLimiter passwordChangeLimiter;
+  private final AuthRateLimiter passkeyLimiter;
   private final AuthRateLimiter listingCreateLimiter;
   private final AuthRateLimiter orderCreateLimiter;
   private final AuthRateLimiter orderTransitionLimiter;
@@ -351,6 +379,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter stepUpLimiter,
                              @Qualifier("passwordChangeRateLimiter")
                                  AuthRateLimiter passwordChangeLimiter,
+                             @Qualifier("passkeyRateLimiter")
+                                 AuthRateLimiter passkeyLimiter,
                              @Qualifier("listingCreateRateLimiter")
                                  AuthRateLimiter listingCreateLimiter,
                              @Qualifier("orderCreateRateLimiter")
@@ -381,6 +411,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.telemetryErrorLimiter = telemetryErrorLimiter;
     this.stepUpLimiter = stepUpLimiter;
     this.passwordChangeLimiter = passwordChangeLimiter;
+    this.passkeyLimiter = passkeyLimiter;
     this.listingCreateLimiter = listingCreateLimiter;
     this.orderCreateLimiter = orderCreateLimiter;
     this.orderTransitionLimiter = orderTransitionLimiter;
@@ -440,6 +471,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // covers only the re-proof) and the credential bucket, so
       // guessing at one surface can never starve the others.
       return !passwordChangeLimiter.isEnabled();
+    }
+    if (isPasskeyChallengePath(path)) {
+      // Passkey challenge issuance / enrolment verification (backlog
+      // #295): own per-user bucket on the message keying (JWT
+      // principal, per-IP fallback — the assertion-options shape is
+      // public, so it takes the fallback key), never reset on
+      // success. All three shapes are exact paths, so no sibling
+      // passkey shape (list, delete, rename) lands here.
+      return !passkeyLimiter.isEnabled();
     }
     if (ITEMS_PATH.equals(path)) {
       // Listing creation (backlog #219): own per-user bucket on the
@@ -620,6 +660,24 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!passwordChangeLimiter.tryConsume(key)) {
         writeTooManyRequests(response, passwordChangeLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (isPasskeyChallengePath(path)) {
+      // Passkey challenge issuance / enrolment verification (backlog
+      // #295): own per-user bucket on the message keying (JWT
+      // principal id, per-IP fallback — the public assertion-options
+      // shape takes the fallback key, since its caller holds no
+      // Bearer token yet), never reset on success — a completed
+      // enrolment must not refill the allowance, and challenge
+      // traffic must not touch the TOTP authenticate bucket. A
+      // throttled attempt never reaches the controller, so it mints
+      // no challenge and consumes none.
+      String key = messageKey(request);
+      if (!passkeyLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, passkeyLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -837,6 +895,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isReportPath(String path) {
     return path != null && path.matches("/api/items/\\d+/report");
+  }
+
+  /**
+   * True for the passkey challenge-issuance / enrolment-verification
+   * POSTs (backlog #295): {@code POST
+   * /api/auth/2fa/passkeys/registration/options}, {@code POST
+   * /api/auth/2fa/passkeys/registration/verify} and {@code POST
+   * /api/auth/2fa/passkeys/assertion/options}. All three are exact
+   * paths, which keeps the sibling passkey shapes out: the list GET,
+   * the delete and the rename are not POSTs to these paths at all,
+   * and the {@code /2fa/authenticate} exchange stays in the TOTP
+   * bucket (backlog #101), out of #295's scope.
+   */
+  private static boolean isPasskeyChallengePath(String path) {
+    return PASSKEY_REGISTRATION_OPTIONS_PATH.equals(path)
+        || PASSKEY_REGISTRATION_VERIFY_PATH.equals(path)
+        || PASSKEY_ASSERTION_OPTIONS_PATH.equals(path);
   }
 
   /**

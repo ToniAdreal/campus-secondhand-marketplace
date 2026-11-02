@@ -366,6 +366,31 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the passkey challenge-issuance and
+   * enrolment-verification shapes (backlog #295):
+   * {@code POST /api/auth/2fa/passkeys/registration/options},
+   * {@code POST /api/auth/2fa/passkeys/registration/verify} and
+   * {@code POST /api/auth/2fa/passkeys/assertion/options} share it
+   * (default 5 attempts/minute per authenticated user, like the
+   * step-up bucket). Keyed on the JWT principal id like the
+   * step-up/password-change buckets — challenge minting is a
+   * per-account abuse surface, and keying by IP would let one NAT
+   * address starve every enrolling user behind it; the public
+   * assertion-options shape falls back to the per-IP key, since its
+   * caller holds no Bearer token yet. Deliberately separate from
+   * the TOTP authenticate bucket (backlog #101), which keeps the
+   * {@code /2fa/authenticate} exchange itself. Never reset on
+   * success: a completed enrolment must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter passkeyRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties passkeyProps = new AuthRateLimitProperties();
+    passkeyProps.setEnabled(props.isEnabled());
+    passkeyProps.setAttemptsPerMinute(props.getPasskeyAttemptsPerMinute());
+    return new AuthRateLimiter(clock, passkeyProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity
