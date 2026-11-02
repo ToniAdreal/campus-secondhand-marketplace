@@ -400,6 +400,31 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * inbound PSP delivery), so delivery traffic can neither consume
  * nor be starved by replay traffic, nor vice versa.
  *
+ * <p>Listing-edit writes ({@code PATCH /api/items/{id}}, {@code PUT
+ * /api/items/{id}/photos/order} and {@code DELETE
+ * /api/items/{id}/photos/{photoId}}, backlog #307) share a per-<em>user</em>
+ * bucket (default 30/minute, like the #228 mutation bucket) on the
+ * same keying as the message bucket (JWT principal id, per-IP
+ * fallback for a missing/invalid token), never reset on success:
+ * one account rewriting its own listings and galleries at volume is
+ * one abuse shape, and a throttled attempt never reaches the
+ * controller, so it edits nothing, reorders nothing and deletes no
+ * photo. Deliberately separate from the #228 mutation bucket — the
+ * sibling edit-adjacent shapes ({@code POST /api/items/{id}/photo},
+ * {@code /photos}, {@code /renew}, {@code /publish} and {@code PATCH
+ * /api/items/{id}/status}) stay there, as the #228 docs already
+ * promised for the edit PATCH and the reorder PUT — and from the
+ * #219 listing-create bucket (creating a listing stays there), so
+ * edit traffic can neither consume nor be starved by either, nor
+ * vice versa. The three shapes are matched before the filter's
+ * POST-only gate (like the PATCH item-status, DELETE
+ * session-revocation, PUT review-edit and DELETE/PATCH
+ * passkey-management siblings), because the path carries the
+ * listing id and the shapes are matched by shape rather than by
+ * equality; the ADMIN-only listing DELETE ({@code DELETE
+ * /api/items/{id}}) never matches (no {@code /photos} segment)
+ * and stays unthrottled.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -520,6 +545,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter orderTransitionLimiter;
   private final AuthRateLimiter orderReceiptLimiter;
   private final AuthRateLimiter itemMutationLimiter;
+  private final AuthRateLimiter itemEditLimiter;
   private final AuthRateLimiter socialWriteLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
@@ -568,6 +594,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter orderReceiptLimiter,
                              @Qualifier("itemMutationRateLimiter")
                                  AuthRateLimiter itemMutationLimiter,
+                             @Qualifier("itemEditRateLimiter")
+                                 AuthRateLimiter itemEditLimiter,
                              @Qualifier("socialWriteRateLimiter")
                                  AuthRateLimiter socialWriteLimiter,
                              @Qualifier("offerLifecycleRateLimiter")
@@ -612,6 +640,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.orderTransitionLimiter = orderTransitionLimiter;
     this.orderReceiptLimiter = orderReceiptLimiter;
     this.itemMutationLimiter = itemMutationLimiter;
+    this.itemEditLimiter = itemEditLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
@@ -674,6 +703,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // unthrottled; the challenge/enrolment POSTs stay in the #295
       // bucket and never reach this branch.
       return !passkeyManagementLimiter.isEnabled();
+    }
+    if ((("PATCH".equalsIgnoreCase(request.getMethod()) && isItemEditPath(path))
+            || ("PUT".equalsIgnoreCase(request.getMethod()) && isItemPhotoOrderPath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isItemPhotoDeletePath(path)))) {
+      // Listing-edit writes (backlog #307): the PATCH edit, the PUT
+      // gallery reorder and the DELETE gallery-photo removal share one
+      // per-user bucket — they must be checked before the POST-only
+      // gate below, or they would pass through unthrottled. The PATCH
+      // /status sibling is handled by its own branch above and never
+      // matches isItemEditPath (no /status suffix); the ADMIN-only
+      // listing DELETE never matches isItemPhotoDeletePath (no /photos
+      // segment) and stays unthrottled.
+      return !itemEditLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -1131,6 +1173,28 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!itemMutationLimiter.tryConsume(key)) {
         writeTooManyRequests(response, itemMutationLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if ((("PATCH".equalsIgnoreCase(request.getMethod()) && isItemEditPath(path))
+            || ("PUT".equalsIgnoreCase(request.getMethod()) && isItemPhotoOrderPath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isItemPhotoDeletePath(path)))) {
+      // Listing-edit writes (backlog #307): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // edits, but anonymous hammering is still throttled), never
+      // reset on success — a completed edit, reorder or photo removal
+      // must not refill the allowance, and edit traffic must not touch
+      // the #228 mutation bucket or the #219 listing-create bucket.
+      // A throttled attempt never reaches the controller, so it edits
+      // nothing, reorders nothing and deletes no photo. The three
+      // shapes reach this branch via shouldNotFilter's pre-gate check
+      // above.
+      String key = messageKey(request);
+      if (!itemEditLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, itemEditLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -1609,6 +1673,47 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isItemStatusPath(String path) {
     return path != null && path.matches("/api/items/\\d+/status");
+  }
+
+  /**
+   * True for the listing edit PATCH ({@code PATCH /api/items/{id}},
+   * backlog #307): the id segment is numeric, which keeps the status
+   * sibling ({@code /api/items/{id}/status}, the #228 mutation bucket)
+   * out — it carries a suffix — and the collection POST
+   * ({@code /api/items}, the #219 listing-create bucket) out — it
+   * carries no id segment. Callers check the HTTP method alongside
+   * this matcher, since the filter only throttles the PATCH shape
+   * here (the GET detail read on the same path stays unthrottled).
+   */
+  private static boolean isItemEditPath(String path) {
+    return path != null && path.matches("/api/items/\\d+");
+  }
+
+  /**
+   * True for the gallery reorder PUT ({@code PUT
+   * /api/items/{id}/photos/order}, backlog #307): the id segment is
+   * numeric, which keeps the gallery-upload POSTs ({@code
+   * /api/items/{id}/photo}, {@code /photos}, the #228 mutation bucket)
+   * out — they carry no {@code /order} suffix — and the report POST
+   * ({@code /api/items/{id}/report}, the #160 bucket) out — a
+   * different suffix. Callers check the HTTP method alongside this
+   * matcher, since the filter only throttles the PUT shape here.
+   */
+  private static boolean isItemPhotoOrderPath(String path) {
+    return path != null && path.matches("/api/items/\\d+/photos/order");
+  }
+
+  /**
+   * True for the gallery photo DELETE ({@code DELETE
+   * /api/items/{id}/photos/{photoId}}, backlog #307): both id segments
+   * are numeric, which keeps the ADMIN-only listing DELETE
+   * ({@code /api/items/{id}}) out — it carries no {@code /photos}
+   * segment — and the reorder PUT out — a different suffix and
+   * method. Callers check the HTTP method alongside this matcher,
+   * since the filter only throttles the DELETE shape here.
+   */
+  private static boolean isItemPhotoDeletePath(String path) {
+    return path != null && path.matches("/api/items/\\d+/photos/\\d+");
   }
 
   /**

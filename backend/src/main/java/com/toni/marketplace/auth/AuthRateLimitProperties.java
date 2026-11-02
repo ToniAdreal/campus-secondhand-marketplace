@@ -437,6 +437,34 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the listing-edit
+   * writes (backlog #307): {@code PATCH /api/items/{id}} (field edits),
+   * {@code PUT /api/items/{id}/photos/order} (gallery reorder) and
+   * {@code DELETE /api/items/{id}/photos/{photoId}} (gallery photo
+   * removal) share this one bucket. Same keying as the other per-user
+   * buckets (per-IP fallback for anonymous requests). The three shapes
+   * share one bucket because they are one abuse shape — one account
+   * rewriting its own listings and galleries at volume — and the bucket
+   * must neither consume nor be starved by the #228 mutation bucket
+   * (photo uploads, renew, publish and the status flip stay there)
+   * or the #219 listing-create bucket (creating a listing stays there).
+   * Sized at 30/min like the #228 bucket: a seller editing a listing
+   * and tidying its gallery is legitimate traffic at human pace, while
+   * a script rewriting listings at volume is the throttle target.
+   * Never resets on success. Must be &ge; 1.
+   */
+  private int itemEditAttemptsPerMinute = 30;
+
+  public int getItemEditAttemptsPerMinute() {
+    return itemEditAttemptsPerMinute;
+  }
+
+  public void setItemEditAttemptsPerMinute(int itemEditAttemptsPerMinute) {
+    this.itemEditAttemptsPerMinute = itemEditAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for the social /
    * money-adjacent creation writes (backlog #282): {@code POST
    * /api/items/{id}/offers}, {@code POST /api/orders/{id}/review},

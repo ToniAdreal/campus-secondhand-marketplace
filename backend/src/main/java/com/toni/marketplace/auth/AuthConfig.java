@@ -324,6 +324,30 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the listing-edit writes (backlog #307):
+   * {@code PATCH /api/items/{id}}, {@code PUT
+   * /api/items/{id}/photos/order} and {@code DELETE
+   * /api/items/{id}/photos/{photoId}} share it (default 30 writes/minute
+   * per authenticated user, like the #228 mutation bucket). Keyed on the
+   * JWT principal id like the mutation bucket — one account rewriting its
+   * own listings and galleries at volume is a per-account abuse surface,
+   * and keying by IP would let one NAT address starve every seller behind
+   * it. Deliberately separate from the #228 mutation bucket (photo
+   * uploads, renew, publish and the status flip stay there) and from the
+   * #219 listing-create bucket (creating a listing stays there), so edit
+   * traffic can never starve them, nor vice versa. Never resets on
+   * success: a completed edit, reorder or photo removal must not refill
+   * the allowance.
+   */
+  @Bean
+  public AuthRateLimiter itemEditRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties editProps = new AuthRateLimitProperties();
+    editProps.setEnabled(props.isEnabled());
+    editProps.setAttemptsPerMinute(props.getItemEditAttemptsPerMinute());
+    return new AuthRateLimiter(clock, editProps);
+  }
+
+  /**
    * Separate token bucket for the social / money-adjacent creation
    * writes (backlog #282): {@code POST /api/items/{id}/offers},
    * {@code POST /api/orders/{id}/review}, {@code POST
