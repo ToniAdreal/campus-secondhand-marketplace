@@ -238,8 +238,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * user's registration bucket, nor vice versa. Deliberately
  * separate from the TOTP authenticate bucket (backlog #101), which
  * keeps the {@code /2fa/authenticate} exchange itself; the 2FA
- * setup/enable/disable endpoints stay out of this bucket, out of
- * #295's scope.
+ * setup/enable/disable endpoints and recovery-code regeneration have
+ * their own bucket (backlog #301, below) — they never shared this one.
  *
  * <p>Session and trusted-device revocation ({@code DELETE
  * /api/auth/sessions/{id}}, {@code POST
@@ -296,6 +296,21 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * DELETE session-revocation siblings), because the path carries the
  * review id and the shapes are matched by shape rather than by
  * equality.
+ *
+ * <p>TOTP lifecycle writes ({@code POST /api/auth/2fa/setup}, {@code POST
+ * /api/auth/2fa/enable}, {@code POST /api/auth/2fa/disable} and {@code POST
+ * /api/auth/2fa/recovery-codes/regenerate}, backlog #301) share a
+ * per-<em>user</em> bucket (default 5/minute) on the same keying as the
+ * message bucket (JWT principal id, per-IP fallback for a missing/invalid
+ * token), never reset on success: one account enrolling, rotating or
+ * stripping its second factor at volume is one abuse shape, and a
+ * throttled attempt never reaches the controller, so it mints no secret,
+ * enables nothing, disables nothing and regenerates nothing. Deliberately
+ * separate from the TOTP authenticate bucket (backlog #101), which keeps
+ * the {@code /2fa/authenticate} exchange itself, and from the passkey
+ * bucket (backlog #295), so lifecycle traffic can neither consume nor be
+ * starved by either. All four shapes are exact paths, so no sibling 2FA
+ * shape (the recovery-code count GET, the passkey shapes) lands here.
  *
  * <p>Behavior:
  * <ul>
@@ -388,6 +403,10 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       "/api/auth/2fa/passkeys/registration/verify";
   private static final String PASSKEY_ASSERTION_OPTIONS_PATH =
       "/api/auth/2fa/passkeys/assertion/options";
+  private static final String TOTP_SETUP_PATH = "/api/auth/2fa/setup";
+  private static final String TOTP_ENABLE_PATH = "/api/auth/2fa/enable";
+  private static final String TOTP_DISABLE_PATH = "/api/auth/2fa/disable";
+  private static final String TOTP_RECOVERY_REGENERATE_PATH = "/api/auth/2fa/recovery-codes/regenerate";
   private static final String SESSIONS_REVOKE_OTHERS_PATH = "/api/auth/sessions/revoke-others";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
@@ -417,6 +436,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter sessionRevocationLimiter;
   private final AuthRateLimiter adminResolutionLimiter;
   private final AuthRateLimiter reviewEditLimiter;
+  private final AuthRateLimiter totpSetupLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -464,6 +484,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminResolutionLimiter,
                              @Qualifier("reviewEditRateLimiter")
                                  AuthRateLimiter reviewEditLimiter,
+                             @Qualifier("totpSetupRateLimiter")
+                                 AuthRateLimiter totpSetupLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -491,6 +513,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.adminResolutionLimiter = adminResolutionLimiter;
     this.reviewEditLimiter = reviewEditLimiter;
+    this.totpSetupLimiter = totpSetupLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -568,6 +591,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // success. All three shapes are exact paths, so no sibling
       // passkey shape (list, delete, rename) lands here.
       return !passkeyLimiter.isEnabled();
+    }
+    if (isTotpSetupPath(path)) {
+      // TOTP lifecycle writes (backlog #301): own per-user bucket on
+      // the message keying (JWT principal, per-IP fallback), never
+      // reset on success — a completed enrolment must not refill the
+      // allowance. All four shapes are exact paths, so no sibling 2FA
+      // shape (the recovery-code count GET, the passkey shapes, the
+      // /2fa/authenticate exchange) lands here.
+      return !totpSetupLimiter.isEnabled();
     }
     if (SESSIONS_REVOKE_OTHERS_PATH.equals(path)) {
       // Revoke-all-other-sessions (backlog #296): the POST member of
@@ -783,6 +815,24 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!passkeyLimiter.tryConsume(key)) {
         writeTooManyRequests(response, passkeyLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (isTotpSetupPath(path)) {
+      // TOTP lifecycle writes (backlog #301): own per-user bucket on
+      // the message keying (JWT principal id, per-IP fallback — the
+      // security chain 401s anonymous lifecycle writes, but anonymous
+      // hammering is still throttled), never reset on success — a
+      // completed enrolment or regeneration must not refill the
+      // allowance, and lifecycle traffic must not touch the TOTP
+      // authenticate bucket or the passkey bucket. A throttled
+      // attempt never reaches the controller, so it mints no secret,
+      // enables nothing, disables nothing and regenerates nothing.
+      String key = messageKey(request);
+      if (!totpSetupLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, totpSetupLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -1075,6 +1125,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return PASSKEY_REGISTRATION_OPTIONS_PATH.equals(path)
         || PASSKEY_REGISTRATION_VERIFY_PATH.equals(path)
         || PASSKEY_ASSERTION_OPTIONS_PATH.equals(path);
+  }
+
+  /**
+   * True for the TOTP lifecycle writes (backlog #301): {@code POST
+   * /api/auth/2fa/setup}, {@code POST /api/auth/2fa/enable}, {@code POST
+   * /api/auth/2fa/disable} and {@code POST
+   * /api/auth/2fa/recovery-codes/regenerate}. All four are exact paths,
+   * which keeps the sibling 2FA shapes out: the recovery-code count
+   * GET, the passkey shapes, and the {@code /2fa/authenticate}
+   * exchange (backlog #101's bucket).
+   */
+  private static boolean isTotpSetupPath(String path) {
+    return TOTP_SETUP_PATH.equals(path)
+        || TOTP_ENABLE_PATH.equals(path)
+        || TOTP_DISABLE_PATH.equals(path)
+        || TOTP_RECOVERY_REGENERATE_PATH.equals(path);
   }
 
   /**

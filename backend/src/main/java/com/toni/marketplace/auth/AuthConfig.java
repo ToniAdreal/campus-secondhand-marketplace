@@ -461,6 +461,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the TOTP lifecycle writes (backlog #301):
+   * {@code POST /api/auth/2fa/setup}, {@code POST /api/auth/2fa/enable},
+   * {@code POST /api/auth/2fa/disable} and {@code POST
+   * /api/auth/2fa/recovery-codes/regenerate} share it (default 5
+   * writes/minute per authenticated user, like the step-up bucket).
+   * Keyed on the JWT principal id like the step-up/password-change
+   * buckets — enrolling or stripping a second factor is a per-account
+   * abuse surface, and keying by IP would let one NAT address starve
+   * every user behind it. Deliberately separate from the TOTP
+   * authenticate bucket (backlog #101), which keeps the exchange
+   * itself, and from the passkey bucket (backlog #295), so lifecycle
+   * traffic can never starve either, nor vice versa. Never reset on
+   * success: a completed enrolment must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter totpSetupRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties setupProps = new AuthRateLimitProperties();
+    setupProps.setEnabled(props.isEnabled());
+    setupProps.setAttemptsPerMinute(props.getTotpSetupAttemptsPerMinute());
+    return new AuthRateLimiter(clock, setupProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

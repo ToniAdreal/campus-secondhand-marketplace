@@ -509,9 +509,10 @@ public class AuthRateLimitProperties {
    * ceremony is one options call, so the ceiling only bites
    * automation minting challenges. Deliberately separate from the
    * TOTP authenticate bucket (backlog #101): the exchange itself
-   * ({@code POST /api/auth/2fa/authenticate}) stays in that bucket,
-   * as do the 2FA setup/enable/disable endpoints, which are out of
-   * #295's scope. Never resets on success. Must be &ge; 1.
+   * ({@code POST /api/auth/2fa/authenticate}) stays in that bucket;
+   * the 2FA setup/enable/disable endpoints and recovery-code
+   * regeneration have their own #301 bucket and never shared this
+   * one. Never resets on success. Must be &ge; 1.
    */
   private int passkeyAttemptsPerMinute = 5;
 
@@ -582,6 +583,33 @@ public class AuthRateLimitProperties {
 
   public void setAdminResolutionAttemptsPerMinute(int adminResolutionAttemptsPerMinute) {
     this.adminResolutionAttemptsPerMinute = adminResolutionAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the TOTP
+   * lifecycle writes (backlog #301): {@code POST /api/auth/2fa/setup},
+   * {@code POST /api/auth/2fa/enable}, {@code POST /api/auth/2fa/disable}
+   * and {@code POST /api/auth/2fa/recovery-codes/regenerate} share this
+   * one bucket. Same keying as the other per-user buckets (per-IP
+   * fallback for anonymous requests, which the security chain 401s
+   * anyway). The four shapes share one bucket because they are one
+   * abuse shape — one account enrolling, rotating or stripping its
+   * second factor at volume — and the bucket must neither consume nor
+   * be starved by the #101 authenticate bucket (the exchange itself
+   * stays there) or the #295 passkey bucket. Sized like the step-up
+   * bucket (5/min): a legitimate user enrolls or rotates recovery
+   * codes once, not in a burst, so the ceiling only bites automation.
+   * Never resets on success. Must be &ge; 1.
+   */
+  private int totpSetupAttemptsPerMinute = 5;
+
+  public int getTotpSetupAttemptsPerMinute() {
+    return totpSetupAttemptsPerMinute;
+  }
+
+  public void setTotpSetupAttemptsPerMinute(int totpSetupAttemptsPerMinute) {
+    this.totpSetupAttemptsPerMinute = totpSetupAttemptsPerMinute;
   }
 
   /**
