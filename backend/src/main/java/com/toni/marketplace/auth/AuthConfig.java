@@ -414,6 +414,32 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN dispute/appeal resolutions
+   * (backlog #297): {@code POST /api/admin/disputes/{id}/resolve-refund},
+   * {@code POST /api/admin/disputes/{id}/resolve-release}, {@code POST
+   * /api/admin/appeals/{id}/uphold} and {@code POST
+   * /api/admin/appeals/{id}/reject} share it (default 20
+   * resolutions/minute per authenticated ADMIN, like the #282
+   * bucket). Keyed on the JWT principal id like the other per-user
+   * buckets — one ADMIN clearing a queue is legitimate traffic, and
+   * keying by IP would let one NAT address starve every ADMIN behind
+   * it; non-ADMIN callers land on their own principal key, so their
+   * traffic can never starve an ADMIN's bucket, nor vice versa.
+   * Deliberately separate from the #282 creation bucket (filing a
+   * dispute or an appeal stays there) and every other bucket, so
+   * resolution traffic can never starve them, nor vice versa. Never
+   * reset on success: a completed resolution must not refill the
+   * allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminResolutionRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties resolutionProps = new AuthRateLimitProperties();
+    resolutionProps.setEnabled(props.isEnabled());
+    resolutionProps.setAttemptsPerMinute(props.getAdminResolutionAttemptsPerMinute());
+    return new AuthRateLimiter(clock, resolutionProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

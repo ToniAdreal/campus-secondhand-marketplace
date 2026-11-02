@@ -552,4 +552,35 @@ public class AuthRateLimitProperties {
   public void setSessionRevocationAttemptsPerMinute(int sessionRevocationAttemptsPerMinute) {
     this.sessionRevocationAttemptsPerMinute = sessionRevocationAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the ADMIN
+   * dispute/appeal resolutions (backlog #297): {@code POST
+   * /api/admin/disputes/{id}/resolve-refund}, {@code POST
+   * /api/admin/disputes/{id}/resolve-release}, {@code POST
+   * /api/admin/appeals/{id}/uphold} and {@code POST
+   * /api/admin/appeals/{id}/reject} share this one bucket. Same
+   * keying as the other per-user buckets (per-IP fallback for
+   * anonymous requests, which the security chain 403s anyway —
+   * ADMIN-only endpoints answer 403 to non-ADMIN callers). The
+   * four shapes share one bucket because they are one abuse
+   * shape — one ADMIN clearing (or hammering) the dispute and
+   * appeal queues — and the bucket must neither consume nor be
+   * starved by the #282 creation bucket (filing a dispute or an
+   * appeal stays there) or any other bucket. Sized generously
+   * at 20/min like the #282 bucket: a single ADMIN clearing a
+   * queue is legitimate traffic (one resolution per click), so
+   * the ceiling only bites automation. Never resets on success.
+   * Must be &ge; 1.
+   */
+  private int adminResolutionAttemptsPerMinute = 20;
+
+  public int getAdminResolutionAttemptsPerMinute() {
+    return adminResolutionAttemptsPerMinute;
+  }
+
+  public void setAdminResolutionAttemptsPerMinute(int adminResolutionAttemptsPerMinute) {
+    this.adminResolutionAttemptsPerMinute = adminResolutionAttemptsPerMinute;
+  }
 }

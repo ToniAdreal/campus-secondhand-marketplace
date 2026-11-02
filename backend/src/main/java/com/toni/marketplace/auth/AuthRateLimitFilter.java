@@ -198,8 +198,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * this bucket: the offer lifecycle transitions ({@code
  * /api/offers/{id}/accept}, {@code /decline}, {@code /counter} and
  * friends) have their own #293 bucket, below; the ADMIN
- * dispute/appeal resolutions and the seller review-response PUT are
- * different abuse shapes and stay unthrottled, out of #282's scope.
+ * dispute/appeal resolutions have their own #297 bucket, below;
+ * the seller review-response PUT is a different abuse shape and
+ * stays unthrottled, out of #282's scope.
  * (The order-tail POSTs {@code /confirm-receipt} and
  * {@code /handover-code/regenerate} have their own #289 bucket, above
  * — they are not #282's to cover.)
@@ -255,6 +256,28 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * filter's POST-only gate (like the PATCH item-status sibling), and
  * the revoke-others POST is matched exactly, so the session-list and
  * trusted-device-list GETs stay unthrottled reads.
+ *
+ * <p>ADMIN dispute/appeal resolutions ({@code POST
+ * /api/admin/disputes/{id}/resolve-refund}, {@code POST
+ * /api/admin/disputes/{id}/resolve-release}, {@code POST
+ * /api/admin/appeals/{id}/uphold} and {@code POST
+ * /api/admin/appeals/{id}/reject}, backlog #297) share a per-<em>user</em>
+ * bucket (default 20/minute) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one ADMIN clearing the dispute and appeal
+ * queues is one abuse shape, and a throttled attempt never reaches
+ * the controller, so it resolves nothing and the queued dispute or
+ * appeal stays exactly as it was. Deliberately separate from the
+ * #282 creation bucket (filing a dispute or an appeal stays there)
+ * and from every other bucket, so resolution traffic can neither
+ * consume nor be starved by them. The ceiling is generous on
+ * purpose — a single ADMIN clearing a queue is legitimate traffic,
+ * one resolution per click. The four shapes are matched by shape
+ * because each path carries a numeric id; the ADMIN list GETs are
+ * reads the filter never throttles, and a non-ADMIN caller's single
+ * resolution attempt still reaches the security chain and answers
+ * 403 (its own principal key keeps it from ever starving an ADMIN's
+ * bucket).
  *
  * <p>Behavior:
  * <ul>
@@ -374,6 +397,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter socialWriteLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
+  private final AuthRateLimiter adminResolutionLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -417,6 +441,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter offerLifecycleLimiter,
                              @Qualifier("sessionRevocationRateLimiter")
                                  AuthRateLimiter sessionRevocationLimiter,
+                             @Qualifier("adminResolutionRateLimiter")
+                                 AuthRateLimiter adminResolutionLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -442,6 +468,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.socialWriteLimiter = socialWriteLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
+    this.adminResolutionLimiter = adminResolutionLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -575,6 +602,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // refill the allowance. Shape-matched because the path carries
       // the offer id; filing an offer stays in the #282 bucket above.
       return !offerLifecycleLimiter.isEnabled();
+    }
+    if (isAdminResolutionPath(path)) {
+      // ADMIN dispute/appeal resolutions (backlog #297): own
+      // per-user bucket on the message keying, never reset on
+      // success — a completed resolution must not refill the
+      // allowance. Shape-matched because each path carries a
+      // numeric id; the ADMIN list GETs never reach this branch
+      // (they are not POSTs), and filing a dispute or an appeal
+      // stays in the #282 bucket above.
+      return !adminResolutionLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -851,6 +888,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isAdminResolutionPath(path)) {
+      // ADMIN dispute/appeal resolutions (backlog #297): own
+      // per-user bucket on the message keying (JWT principal id,
+      // per-IP fallback for a missing/invalid token — the security
+      // chain 403s non-ADMIN callers, but anonymous hammering is
+      // still throttled), never reset on success — a completed
+      // resolution must not refill the allowance, and resolution
+      // traffic must not touch the #282 creation bucket or any
+      // other bucket. A throttled attempt never reaches the
+      // controller, so it resolves nothing and the queued dispute
+      // or appeal stays exactly as it was.
+      String key = messageKey(request);
+      if (!adminResolutionLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminResolutionLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (RESET_PATH.equals(path) || RESET_CONFIRM_PATH.equals(path)) {
       // Password reset (backlog #90): both endpoints share one per-IP
       // bucket — the request endpoint is a mail-bombing surface, the
@@ -1025,6 +1081,24 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static boolean isOfferLifecyclePath(String path) {
     return path != null
         && path.matches("/api/offers/\\d+/(accept|decline|counter|counter-accept|counter-decline|withdraw)");
+  }
+
+  /**
+   * True for the ADMIN dispute/appeal resolution POSTs
+   * ({@code POST /api/admin/disputes/{id}/resolve-refund},
+   * {@code POST /api/admin/disputes/{id}/resolve-release},
+   * {@code POST /api/admin/appeals/{id}/uphold} and {@code POST
+   * /api/admin/appeals/{id}/reject}, backlog #297): the id segment
+   * is numeric (dispute and appeal ids are), which keeps the ADMIN
+   * list GETs out (they are not POSTs at all) and the seller-side
+   * dispute/appeal filing POSTs out — filing stays in the #282
+   * bucket, and the admin report dismiss/action POSTs are a
+   * different queue with their own pending bucket (#304).
+   */
+  private static boolean isAdminResolutionPath(String path) {
+    return path != null
+        && (path.matches("/api/admin/disputes/\\d+/(resolve-refund|resolve-release)")
+            || path.matches("/api/admin/appeals/\\d+/(uphold|reject)"));
   }
 
   /**
