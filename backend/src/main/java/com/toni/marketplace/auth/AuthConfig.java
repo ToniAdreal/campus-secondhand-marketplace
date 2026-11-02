@@ -580,6 +580,27 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the public mock-PSP webhook receiver
+   * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
+   * (default 60 deliveries/minute per client IP, like the #204 CSP
+   * and #223 telemetry buckets). The endpoint is public by necessity
+   * (a PSP callback holds no user session), so this bucket is the
+   * flood gate in front of the HMAC signature check: it must not
+   * share any credential bucket, and delivery traffic must not
+   * starve logins. Deliberately separate from the #305 ADMIN replay
+   * bucket (an authenticated ADMIN action on a stored event, not an
+   * inbound PSP delivery). Never reset on success: an accepted
+   * delivery must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter mockPspWebhookRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties webhookProps = new AuthRateLimitProperties();
+    webhookProps.setEnabled(props.isEnabled());
+    webhookProps.setAttemptsPerMinute(props.getMockPspWebhookAttemptsPerMinute());
+    return new AuthRateLimiter(clock, webhookProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

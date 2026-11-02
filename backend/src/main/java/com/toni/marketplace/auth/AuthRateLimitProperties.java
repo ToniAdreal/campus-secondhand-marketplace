@@ -729,6 +729,34 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the public mock-PSP webhook receiver (backlog #306): {@code POST
+   * /api/payments/webhooks/mock-psp}. Keyed on the IP, never on a
+   * principal: the endpoint is public by necessity (a PSP callback
+   * holds no user session) and is authenticated only by the HMAC
+   * signature header, so the trusted-proxy-aware client IP is the
+   * only identity available — the same keying as the CSP (#204) and
+   * telemetry (#223) buckets. Sized generously at 60/min like those
+   * buckets: a real PSP retries a stuck delivery, so legitimate
+   * redelivery bursts must pass, while an unsigned flood is stopped
+   * before it reaches the signature check at volume. The filter runs
+   * before signature verification, so the bucket keys on IP only and
+   * a throttled delivery writes no ledger row. Deliberately separate
+   * from the #305 ADMIN replay bucket (a replay is an authenticated
+   * ADMIN action on a stored event, not an inbound PSP delivery).
+   * Never resets on success. Must be &ge; 1.
+   */
+  private int mockPspWebhookAttemptsPerMinute = 60;
+
+  public int getMockPspWebhookAttemptsPerMinute() {
+    return mockPspWebhookAttemptsPerMinute;
+  }
+
+  public void setMockPspWebhookAttemptsPerMinute(int mockPspWebhookAttemptsPerMinute) {
+    this.mockPspWebhookAttemptsPerMinute = mockPspWebhookAttemptsPerMinute;
+  }
+
+  /**
    * Review edits and seller responses (backlog #298): PUT
    * /api/reviews/{id} and PUT /api/reviews/{id}/response share one
    * per-user bucket, sized like the #282 creation bucket (20/min) —

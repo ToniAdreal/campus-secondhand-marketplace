@@ -20,7 +20,11 @@ import org.springframework.web.bind.annotation.RestController;
  * A missing, malformed, stale or invalid signature answers the JSON 401 envelope; every
  * accepted delivery answers 200 in the envelope — matched, mismatched
  * (a webhook never moves money state by itself) and replayed alike, so
- * the PSP stops retrying.
+ * the PSP stops retrying. Deliveries are additionally throttled per
+ * client IP by {@code AuthRateLimitFilter} (backlog #306, default
+ * 60/minute, own bucket): the filter runs before signature
+ * verification, so a throttled delivery answers the 429 envelope and
+ * writes no ledger row.
  */
 @RestController
 @RequestMapping("/api/payments/webhooks")

@@ -380,8 +380,25 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * still reaches the security chain and answers 403 (its own principal
  * key keeps it from ever starving an ADMIN's bucket). The public
  * mock-PSP receiver ({@code POST /api/payments/webhooks/mock-psp})
- * is a different surface with its own pending bucket (#306) — it
- * never matches this matcher (different path prefix).
+ * is a different surface with its own bucket (#306) — it never
+ * matches this matcher (different path prefix).
+ *
+ * <p>The public mock-PSP webhook receiver ({@code POST
+ * /api/payments/webhooks/mock-psp}, backlog #306) has its own
+ * per-IP bucket (default 60/minute, like the CSP and telemetry
+ * buckets), never reset on success: the endpoint is public by
+ * necessity (a PSP callback holds no user session) and is
+ * authenticated only by the HMAC signature header, so the
+ * trusted-proxy-aware client IP is the only identity available.
+ * The filter runs before signature verification, so the bucket
+ * keys on IP only — an unsigned flood is stopped before it
+ * reaches the signature check at volume, while a real PSP's
+ * redelivery bursts under the ceiling still pass. A throttled
+ * delivery never reaches the controller, so it writes no ledger
+ * row. Deliberately separate from the #305 ADMIN replay bucket
+ * (an authenticated ADMIN action on a stored event, not an
+ * inbound PSP delivery), so delivery traffic can neither consume
+ * nor be starved by replay traffic, nor vice versa.
  *
  * <p>Behavior:
  * <ul>
@@ -466,6 +483,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
+  private static final String MOCK_PSP_WEBHOOK_PATH = "/api/payments/webhooks/mock-psp";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
   private static final String PASSWORD_CHANGE_PATH = "/api/auth/password";
   private static final String PASSKEY_REGISTRATION_OPTIONS_PATH =
@@ -512,6 +530,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminUserActionLimiter;
   private final AuthRateLimiter adminReportActionLimiter;
   private final AuthRateLimiter adminWebhookReplayLimiter;
+  private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -569,6 +588,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminReportActionLimiter,
                              @Qualifier("adminWebhookReplayRateLimiter")
                                  AuthRateLimiter adminWebhookReplayLimiter,
+                             @Qualifier("mockPspWebhookRateLimiter")
+                                 AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -601,6 +622,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminUserActionLimiter = adminUserActionLimiter;
     this.adminReportActionLimiter = adminReportActionLimiter;
     this.adminWebhookReplayLimiter = adminWebhookReplayLimiter;
+    this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -664,6 +686,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (TELEMETRY_ERROR_PATH.equals(path)) {
       return !telemetryErrorLimiter.isEnabled();
+    }
+    if (MOCK_PSP_WEBHOOK_PATH.equals(path)) {
+      // Public mock-PSP webhook receiver (backlog #306): own per-IP
+      // bucket on the CSP/telemetry pattern, never reset on success
+      // — a redelivered event must not refill the allowance. The
+      // exact match keeps the ADMIN webhook-viewer GETs and the
+      // ADMIN replay POST out (different path prefix).
+      return !mockPspWebhookLimiter.isEnabled();
     }
     if (STEP_UP_PATH.equals(path)) {
       // Step-up re-proof (backlog #218): own per-user bucket on the
@@ -896,6 +926,27 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!telemetryErrorLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, telemetryErrorLimiter, ip);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (MOCK_PSP_WEBHOOK_PATH.equals(path)) {
+      // Public mock-PSP webhook receiver (backlog #306): own per-IP
+      // bucket, never reset on success — an accepted delivery must
+      // not refill the allowance. Per-IP (not per-user) because the
+      // endpoint is public by necessity: a PSP callback holds no user
+      // session, so the trusted-proxy-aware client IP is the only
+      // identity available. This branch runs before the controller,
+      // so a throttled delivery never reaches signature verification
+      // and writes no ledger row — the flood is stopped here, while
+      // legitimate redelivery bursts under the ceiling still pass.
+      // Sized like the CSP/telemetry buckets (60/min) and kept apart
+      // from the #305 ADMIN replay bucket, so delivery traffic can
+      // neither consume nor be starved by replay traffic.
+      String ip = clientIp(request);
+      if (!mockPspWebhookLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, mockPspWebhookLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
