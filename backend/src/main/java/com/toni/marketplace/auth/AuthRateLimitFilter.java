@@ -363,6 +363,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * still reaches the security chain and answers 403 (its own principal
  * key keeps it from ever starving an ADMIN's bucket).
  *
+ * <p>ADMIN payment webhook replay ({@code POST
+ * /api/admin/payments/webhooks/{id}/replay}, backlog #305) has its
+ * own per-<em>user</em> bucket (default 20/minute) on the same keying
+ * as the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: one ADMIN
+ * replaying stuck webhook events is one abuse shape, and a throttled
+ * attempt never reaches the controller, so it replays nothing and
+ * the ledger row stays exactly as it was. Deliberately separate from
+ * the ADMIN dispute/appeal resolution bucket (backlog #297) — a
+ * replay is not a case resolution — and from the ADMIN user-action
+ * bucket (backlog #303) and the ADMIN report-action bucket (backlog
+ * #304), so replay traffic can neither consume nor be starved by
+ * any of them, nor vice versa. The ADMIN webhook-viewer GETs stay
+ * unthrottled reads, and a non-ADMIN caller's single replay attempt
+ * still reaches the security chain and answers 403 (its own principal
+ * key keeps it from ever starving an ADMIN's bucket). The public
+ * mock-PSP receiver ({@code POST /api/payments/webhooks/mock-psp})
+ * is a different surface with its own pending bucket (#306) — it
+ * never matches this matcher (different path prefix).
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -491,6 +511,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter passkeyManagementLimiter;
   private final AuthRateLimiter adminUserActionLimiter;
   private final AuthRateLimiter adminReportActionLimiter;
+  private final AuthRateLimiter adminWebhookReplayLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -546,6 +567,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminUserActionLimiter,
                              @Qualifier("adminReportActionRateLimiter")
                                  AuthRateLimiter adminReportActionLimiter,
+                             @Qualifier("adminWebhookReplayRateLimiter")
+                                 AuthRateLimiter adminWebhookReplayLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -577,6 +600,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.passkeyManagementLimiter = passkeyManagementLimiter;
     this.adminUserActionLimiter = adminUserActionLimiter;
     this.adminReportActionLimiter = adminReportActionLimiter;
+    this.adminWebhookReplayLimiter = adminWebhookReplayLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -769,6 +793,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // #303 user-action shapes never match this matcher
       // (different path prefix).
       return !adminReportActionLimiter.isEnabled();
+    }
+    if (isAdminWebhookReplayPath(path)) {
+      // ADMIN payment webhook replay (backlog #305): own per-user
+      // bucket on the message keying, never reset on success — a
+      // completed replay must not refill the allowance.
+      // Shape-matched because the path carries a numeric id; the
+      // ADMIN webhook-viewer GETs never reach this branch (they
+      // are not POSTs), and the #297 resolution, #303 user-action
+      // and #304 report-action shapes never match this matcher
+      // (different path prefix).
+      return !adminWebhookReplayLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -1142,6 +1177,26 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (isAdminWebhookReplayPath(path)) {
+      // ADMIN payment webhook replay (backlog #305): own per-user
+      // bucket on the message keying (JWT principal id, per-IP
+      // fallback for a missing/invalid token — the security chain
+      // 403s non-ADMIN callers, but anonymous hammering is still
+      // throttled), never reset on success — a completed replay
+      // must not refill the allowance, and replay traffic must not
+      // touch the #297 resolution bucket, the #303 user-action
+      // bucket, the #304 report-action bucket or any other bucket.
+      // A throttled attempt never reaches the controller, so it
+      // replays nothing, bumps no replayCount and writes no audit
+      // row, and the ledger row stays exactly as it was.
+      String key = messageKey(request);
+      if (!adminWebhookReplayLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminWebhookReplayLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isReviewEditPath(path)) {
       // Review edits / seller responses (backlog #298): own per-user
       // bucket on the message keying (JWT principal id, per-IP
@@ -1419,6 +1474,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isAdminReportActionPath(String path) {
     return path != null && path.matches("/api/admin/reports/\\d+/(dismiss|action)");
+  }
+
+  /**
+   * True for the ADMIN payment webhook replay POST ({@code POST
+   * /api/admin/payments/webhooks/{id}/replay}, backlog #305): the id
+   * segment is numeric (webhook-event ids are), which keeps the ADMIN
+   * webhook-viewer GETs out (they are not POSTs and carry no replay
+   * suffix) and the #297 resolution, #303 user-action and #304
+   * report-action POSTs out (different path prefixes — disputes and
+   * appeals, users, reports — not payments/webhooks) and the public
+   * mock-PSP receiver out (different path — {@code
+   * /api/payments/webhooks/mock-psp} — which gets its own #306
+   * bucket). Callers check the HTTP method alongside this matcher,
+   * since the filter only throttles the POST shape here.
+   */
+  private static boolean isAdminWebhookReplayPath(String path) {
+    return path != null && path.matches("/api/admin/payments/webhooks/\\d+/replay");
   }
 
   /**

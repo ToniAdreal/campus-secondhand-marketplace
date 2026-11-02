@@ -556,6 +556,30 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN payment webhook replay
+   * (backlog #305): {@code POST /api/admin/payments/webhooks/{id}/replay}
+   * (default 20 replays/minute per authenticated ADMIN, like the
+   * #297/#303/#304 buckets). Keyed on the JWT principal id like the
+   * other per-user buckets — one ADMIN replaying stuck events is
+   * legitimate traffic, and keying by IP would let one NAT address
+   * starve every ADMIN behind it; non-ADMIN callers land on their
+   * own principal key, so their traffic can never starve an ADMIN's
+   * bucket. Deliberately separate from the #297 dispute/appeal
+   * resolution bucket (a replay is not a case resolution), the #303
+   * ADMIN user-action bucket and the #304 ADMIN report-action bucket,
+   * so replay traffic can never starve them, nor vice versa. Never
+   * reset on success: a completed replay must not refill the
+   * allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminWebhookReplayRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties replayProps = new AuthRateLimitProperties();
+    replayProps.setEnabled(props.isEnabled());
+    replayProps.setAttemptsPerMinute(props.getAdminWebhookReplayAttemptsPerMinute());
+    return new AuthRateLimiter(clock, replayProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

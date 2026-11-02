@@ -702,6 +702,33 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated ADMIN</em> (JWT principal id) for the ADMIN
+   * payment webhook replay (backlog #305): {@code POST
+   * /api/admin/payments/webhooks/{id}/replay}. Same keying as the
+   * other per-user buckets (per-IP fallback for anonymous requests,
+   * which the security chain 401s anyway — a non-ADMIN caller's
+   * single attempt still answers 403 from the security chain, on
+   * that caller's own principal key, so it can never starve an
+   * ADMIN's bucket). Deliberately separate from the #297
+   * dispute/appeal resolution bucket (a replay is not a case
+   * resolution), the #303 ADMIN user-action bucket and the #304
+   * ADMIN report-action bucket. Sized generously at 20/min like
+   * the #297/#303/#304 buckets: replaying one stuck event is
+   * legitimate, replaying at volume is not. Never resets on
+   * success. Must be &ge; 1.
+   */
+  private int adminWebhookReplayAttemptsPerMinute = 20;
+
+  public int getAdminWebhookReplayAttemptsPerMinute() {
+    return adminWebhookReplayAttemptsPerMinute;
+  }
+
+  public void setAdminWebhookReplayAttemptsPerMinute(int adminWebhookReplayAttemptsPerMinute) {
+    this.adminWebhookReplayAttemptsPerMinute = adminWebhookReplayAttemptsPerMinute;
+  }
+
+  /**
    * Review edits and seller responses (backlog #298): PUT
    * /api/reviews/{id} and PUT /api/reviews/{id}/response share one
    * per-user bucket, sized like the #282 creation bucket (20/min) —
