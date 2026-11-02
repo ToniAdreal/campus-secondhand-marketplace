@@ -522,4 +522,34 @@ public class AuthRateLimitProperties {
   public void setPasskeyAttemptsPerMinute(int passkeyAttemptsPerMinute) {
     this.passkeyAttemptsPerMinute = passkeyAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the session and
+   * trusted-device revocation writes (backlog #296): {@code DELETE
+   * /api/auth/sessions/{id}}, {@code POST
+   * /api/auth/sessions/revoke-others} and {@code DELETE
+   * /api/auth/trusted-devices/{id}} share this one bucket. Same keying
+   * as the other per-user buckets (per-IP fallback for anonymous
+   * requests, which the security chain 401s anyway). The three shapes
+   * share one bucket because they are one abuse shape — one account
+   * killing sessions or device trust at volume — and the bucket must
+   * neither consume nor be starved by the step-up bucket (revoke-others
+   * is step-up gated, but the gate proves freshness, not rate) or the
+   * credential bucket. Sized like the step-up bucket (5/min): a
+   * legitimate user revokes one session or device at a time, so the
+   * ceiling only bites automation. Never resets on success — a
+   * completed revoke must not refill the allowance, and a throttled
+   * attempt never reaches the controller, so it revokes nothing.
+   * Must be &ge; 1.
+   */
+  private int sessionRevocationAttemptsPerMinute = 5;
+
+  public int getSessionRevocationAttemptsPerMinute() {
+    return sessionRevocationAttemptsPerMinute;
+  }
+
+  public void setSessionRevocationAttemptsPerMinute(int sessionRevocationAttemptsPerMinute) {
+    this.sessionRevocationAttemptsPerMinute = sessionRevocationAttemptsPerMinute;
+  }
 }

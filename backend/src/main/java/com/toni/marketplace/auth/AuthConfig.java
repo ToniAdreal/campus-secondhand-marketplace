@@ -391,6 +391,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the session and trusted-device revocation
+   * writes (backlog #296): {@code DELETE /api/auth/sessions/{id}},
+   * {@code POST /api/auth/sessions/revoke-others} and {@code DELETE
+   * /api/auth/trusted-devices/{id}} share it (default 5 writes/minute
+   * per authenticated user, like the step-up bucket). Keyed on the JWT
+   * principal id like the step-up/password-change buckets — session
+   * killing is a per-account abuse surface, and keying by IP would let
+   * one NAT address starve every user behind it. Deliberately separate
+   * from the step-up bucket (revoke-others is step-up gated, but the
+   * gate proves the proof is fresh, not that the rate is sane) and the
+   * credential bucket, so revocation traffic can never starve logins
+   * or re-proofs, nor vice versa. Never reset on success: a completed
+   * revoke must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter sessionRevocationRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties revocationProps = new AuthRateLimitProperties();
+    revocationProps.setEnabled(props.isEnabled());
+    revocationProps.setAttemptsPerMinute(props.getSessionRevocationAttemptsPerMinute());
+    return new AuthRateLimiter(clock, revocationProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

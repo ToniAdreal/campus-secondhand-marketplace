@@ -238,6 +238,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * setup/enable/disable endpoints stay out of this bucket, out of
  * #295's scope.
  *
+ * <p>Session and trusted-device revocation ({@code DELETE
+ * /api/auth/sessions/{id}}, {@code POST
+ * /api/auth/sessions/revoke-others} and {@code DELETE
+ * /api/auth/trusted-devices/{id}}, backlog #296) share a per-<em>user</em>
+ * bucket (default 5/minute) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one account killing sessions or device trust
+ * at volume is one abuse shape, and a throttled attempt never reaches
+ * the controller, so it revokes nothing and the caller's own sessions
+ * stay intact. Deliberately separate from the step-up bucket:
+ * revoke-others is step-up gated, but the gate proves the presented
+ * proof is fresh, not that the rate is sane — revocation traffic must
+ * neither consume nor be starved by re-proof traffic, nor by the
+ * credential bucket. The two DELETE shapes are matched before the
+ * filter's POST-only gate (like the PATCH item-status sibling), and
+ * the revoke-others POST is matched exactly, so the session-list and
+ * trusted-device-list GETs stay unthrottled reads.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -329,6 +347,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       "/api/auth/2fa/passkeys/registration/verify";
   private static final String PASSKEY_ASSERTION_OPTIONS_PATH =
       "/api/auth/2fa/passkeys/assertion/options";
+  private static final String SESSIONS_REVOKE_OTHERS_PATH = "/api/auth/sessions/revoke-others";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
@@ -354,6 +373,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter itemMutationLimiter;
   private final AuthRateLimiter socialWriteLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
+  private final AuthRateLimiter sessionRevocationLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -395,6 +415,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter socialWriteLimiter,
                              @Qualifier("offerLifecycleRateLimiter")
                                  AuthRateLimiter offerLifecycleLimiter,
+                             @Qualifier("sessionRevocationRateLimiter")
+                                 AuthRateLimiter sessionRevocationLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -419,6 +441,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.itemMutationLimiter = itemMutationLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
+    this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -443,6 +466,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // mutation bucket — it must be checked before the POST-only gate
       // below, or it would pass through unthrottled.
       return !itemMutationLimiter.isEnabled();
+    }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isSessionRevocationDeletePath(path)) {
+      // Session / trusted-device revocation (backlog #296): the two
+      // DELETE shapes in the revocation bucket — they must be checked
+      // before the POST-only gate below, or they would pass through
+      // unthrottled. The session-list and trusted-device-list GETs are
+      // reads and stay unthrottled.
+      return !sessionRevocationLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -480,6 +511,13 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // success. All three shapes are exact paths, so no sibling
       // passkey shape (list, delete, rename) lands here.
       return !passkeyLimiter.isEnabled();
+    }
+    if (SESSIONS_REVOKE_OTHERS_PATH.equals(path)) {
+      // Revoke-all-other-sessions (backlog #296): the POST member of
+      // the session-revocation bucket — the exact match keeps the
+      // session-list GET and the one-at-a-time DELETE (handled above)
+      // out of this branch, while sharing the bucket with them.
+      return !sessionRevocationLimiter.isEnabled();
     }
     if (ITEMS_PATH.equals(path)) {
       // Listing creation (backlog #219): own per-user bucket on the
@@ -678,6 +716,26 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!passkeyLimiter.tryConsume(key)) {
         writeTooManyRequests(response, passkeyLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (isSessionRevocationDeletePath(path) || SESSIONS_REVOKE_OTHERS_PATH.equals(path)) {
+      // Session / trusted-device revocation (backlog #296): own
+      // per-user bucket on the message keying (JWT principal id,
+      // per-IP fallback for a missing/invalid token — the security
+      // chain 401s anonymous revokes, but anonymous hammering is
+      // still throttled), never reset on success — a completed
+      // revoke must not refill the allowance, and revocation traffic
+      // must not touch the step-up or credential buckets. A throttled
+      // attempt never reaches the controller, so it revokes nothing
+      // and the caller's own sessions and trusted devices stay intact.
+      // The DELETE shapes reach this branch via shouldNotFilter's
+      // DELETE check; the revoke-others POST via its POST check.
+      String key = messageKey(request);
+      if (!sessionRevocationLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, sessionRevocationLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -912,6 +970,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return PASSKEY_REGISTRATION_OPTIONS_PATH.equals(path)
         || PASSKEY_REGISTRATION_VERIFY_PATH.equals(path)
         || PASSKEY_ASSERTION_OPTIONS_PATH.equals(path);
+  }
+
+  /**
+   * True for the session / trusted-device revocation DELETEs (backlog
+   * #296): {@code DELETE /api/auth/sessions/{id}} and {@code DELETE
+   * /api/auth/trusted-devices/{id}}. The session id is the family root
+   * jti (a UUID-shaped string, not numeric), so the session shape is
+   * matched as one non-empty segment; the device id is numeric. The
+   * revoke-others POST is not here — it is an exact path matched
+   * separately ({@link #SESSIONS_REVOKE_OTHERS_PATH}) — and the
+   * session-list / trusted-device-list GETs never reach this matcher
+   * (the filter only inspects DELETEs here).
+   */
+  private static boolean isSessionRevocationDeletePath(String path) {
+    return path != null
+        && (path.matches("/api/auth/sessions/[^/]+")
+            || path.matches("/api/auth/trusted-devices/\\d+"));
   }
 
   /**
