@@ -143,6 +143,26 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the email-change request endpoint
+   * ({@code POST /api/auth/email-change}, backlog #294; default 5
+   * requests/minute per client IP). The request endpoint is a
+   * mail-bombing surface — each accepted request mails a token to the
+   * NEW address — and it previously rode unthrottled while its confirm
+   * sibling shared the email-verification bucket. The request gets its
+   * own bucket on the backlog #101 pattern: request traffic must
+   * neither consume nor be starved by verification/confirm traffic,
+   * and a staged change never resets it.
+   */
+  @Bean
+  public AuthRateLimiter emailChangeRequestRateLimiter(Clock clock,
+                                                       AuthRateLimitProperties props) {
+    AuthRateLimitProperties requestProps = new AuthRateLimitProperties();
+    requestProps.setEnabled(props.isEnabled());
+    requestProps.setAttemptsPerMinute(props.getEmailChangeRequestAttemptsPerMinute());
+    return new AuthRateLimiter(clock, requestProps);
+  }
+
+  /**
    * Separate token bucket for listing reports
    * ({@code POST /api/items/{id}/report}, backlog #160; default 10
    * reports/minute per authenticated user). Keyed on the JWT principal

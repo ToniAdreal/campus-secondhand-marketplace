@@ -152,6 +152,31 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per client IP
+   * for the email-change REQUEST endpoint (backlog #294):
+   * {@code POST /api/auth/email-change} (a mail-bombing surface — each
+   * accepted request mails a token to the NEW address). It gets its OWN
+   * bucket, deliberately separate from the email-verification bucket
+   * above: the confirm endpoint ({@code POST
+   * /api/auth/email-change/confirm}) stays in that bucket, so request
+   * traffic must neither consume nor be starved by confirm traffic,
+   * nor vice versa. Sized like the verification bucket (5/min) — a
+   * legitimate user stages one change at a time, so the ceiling only
+   * bites automation. Like the other non-credential buckets it never
+   * resets on success — a staged change must not refill the
+   * mail-bombing allowance. Must be &ge; 1.
+   */
+  private int emailChangeRequestAttemptsPerMinute = 5;
+
+  public int getEmailChangeRequestAttemptsPerMinute() {
+    return emailChangeRequestAttemptsPerMinute;
+  }
+
+  public void setEmailChangeRequestAttemptsPerMinute(int emailChangeRequestAttemptsPerMinute) {
+    this.emailChangeRequestAttemptsPerMinute = emailChangeRequestAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for listing reports
    * ({@code POST /api/items/{id}/report}, backlog #160). Keyed on the

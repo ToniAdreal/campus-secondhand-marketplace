@@ -41,6 +41,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * per-IP bucket (default 5/minute): the resend endpoint is a
  * mail-bombing surface and the confirm endpoint a token-guessing surface.
  *
+ * <p>The email-change request ({@code POST /api/auth/email-change},
+ * backlog #294) has its own per-IP bucket (default 5/minute): the
+ * request endpoint is a mail-bombing surface — each accepted request
+ * mails a token to the NEW address — and it previously rode
+ * unthrottled while only its confirm sibling shared the verification
+ * bucket above. The confirm endpoint stays where it is; the request
+ * bucket is deliberately separate, so request traffic can neither
+ * consume nor be starved by verification/confirm traffic, and a
+ * staged change never resets it.
+ *
  * <p>The second-factor exchange ({@code POST /api/auth/2fa/authenticate},
  * backlog #101) has a fifth, per-IP bucket (default 5/minute): the
  * 5-minute challenge is a Bearer <redacted> for a 6-digit code, so the
@@ -272,6 +282,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String TOTP_AUTH_PATH = "/api/auth/2fa/authenticate";
   private static final String VERIFY_RESEND_PATH = "/api/auth/email-verification/resend";
   private static final String VERIFY_CONFIRM_PATH = "/api/auth/email-verification/confirm";
+  private static final String EMAIL_CHANGE_REQUEST_PATH = "/api/auth/email-change";
   private static final String EMAIL_CHANGE_CONFIRM_PATH = "/api/auth/email-change/confirm";
   private static final String MESSAGE_PATH = "/api/messages";
   private static final String MESSAGE_PHOTO_PATH = "/api/messages/photo";
@@ -301,6 +312,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter passwordResetLimiter;
   private final AuthRateLimiter totpLimiter;
   private final AuthRateLimiter emailVerificationLimiter;
+  private final AuthRateLimiter emailChangeRequestLimiter;
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
   private final AuthRateLimiter cspReportLimiter;
@@ -326,6 +338,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("totpRateLimiter") AuthRateLimiter totpLimiter,
                              @Qualifier("emailVerificationRateLimiter")
                                  AuthRateLimiter emailVerificationLimiter,
+                             @Qualifier("emailChangeRequestRateLimiter")
+                                 AuthRateLimiter emailChangeRequestLimiter,
                              @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
                              @Qualifier("dataExportRateLimiter")
                                  AuthRateLimiter dataExportLimiter,
@@ -360,6 +374,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.passwordResetLimiter = passwordResetLimiter;
     this.totpLimiter = totpLimiter;
     this.emailVerificationLimiter = emailVerificationLimiter;
+    this.emailChangeRequestLimiter = emailChangeRequestLimiter;
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
     this.cspReportLimiter = cspReportLimiter;
@@ -491,6 +506,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     }
     if (TOTP_AUTH_PATH.equals(path)) {
       return !totpLimiter.isEnabled();
+    }
+    if (EMAIL_CHANGE_REQUEST_PATH.equals(path)) {
+      // Email-change request (backlog #294): own per-IP bucket on the
+      // verification-bucket pattern (5/min, never reset on success) —
+      // a staged change must not refill the mail-bombing allowance.
+      // The exact match keeps the confirm sibling out of this bucket:
+      // it stays in the verification bucket below.
+      return !emailChangeRequestLimiter.isEnabled();
     }
     if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)
         || EMAIL_CHANGE_CONFIRM_PATH.equals(path)) {
@@ -731,6 +754,20 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!totpLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, totpLimiter, ip);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (EMAIL_CHANGE_REQUEST_PATH.equals(path)) {
+      // Email-change request (backlog #294): own per-IP bucket, never
+      // reset on success — a staged change must not refill the
+      // mail-bombing allowance, and request traffic must not touch the
+      // verification/confirm bucket below. A throttled attempt never
+      // reaches the controller, so it stages nothing and mails nothing.
+      String ip = clientIp(request);
+      if (!emailChangeRequestLimiter.tryConsume(ip)) {
+        writeTooManyRequests(response, emailChangeRequestLimiter, ip);
         return;
       }
       chain.doFilter(request, response);
