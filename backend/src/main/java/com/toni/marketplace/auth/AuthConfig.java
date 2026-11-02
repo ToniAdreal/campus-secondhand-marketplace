@@ -484,6 +484,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for passkey management writes (backlog #302):
+   * {@code DELETE /api/auth/2fa/passkeys/{id}} and {@code PATCH
+   * /api/auth/2fa/passkeys/{id}} share it (default 20 writes/minute
+   * per authenticated user, like the #282 bucket). Keyed on the JWT
+   * principal id like the step-up/password-change buckets — deleting
+   * or relabelling a second-factor credential is a per-account abuse
+   * surface, and keying by IP would let one NAT address starve every
+   * user behind it. Deliberately separate from the passkey bucket
+   * (backlog #295), which keeps challenge issuance and enrolment
+   * verification, and from the TOTP lifecycle bucket (backlog #301),
+   * so management traffic can never starve either, nor vice versa.
+   * Never reset on success: a completed delete or rename must not
+   * refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter passkeyManagementRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties managementProps = new AuthRateLimitProperties();
+    managementProps.setEnabled(props.isEnabled());
+    managementProps.setAttemptsPerMinute(props.getPasskeyManagementAttemptsPerMinute());
+    return new AuthRateLimiter(clock, managementProps);
+  }
+
+  /**
    * Separate token bucket for the CSP violation report intake
    * ({@code POST /api/security/csp-report}, backlog #204; default 60
    * reports/minute per client IP). The endpoint is public by necessity

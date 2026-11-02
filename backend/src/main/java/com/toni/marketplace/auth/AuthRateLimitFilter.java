@@ -312,6 +312,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * starved by either. All four shapes are exact paths, so no sibling 2FA
  * shape (the recovery-code count GET, the passkey shapes) lands here.
  *
+ * <p>Passkey management writes ({@code DELETE
+ * /api/auth/2fa/passkeys/{id}} and {@code PATCH
+ * /api/auth/2fa/passkeys/{id}}, backlog #302) share a per-<em>user</em>
+ * bucket (default 20/minute) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one account deleting or relabelling its
+ * second-factor credentials at volume is one abuse shape, and a
+ * throttled attempt never reaches the controller, so it deletes
+ * nothing and renames nothing. Deliberately separate from the passkey
+ * bucket (backlog #295), which keeps challenge issuance and enrolment
+ * verification, and from the TOTP lifecycle bucket (backlog #301), so
+ * management traffic can neither consume nor be starved by either.
+ * The two shapes are matched before the filter's POST-only gate (like
+ * the DELETE session-revocation and PUT review-edit siblings), because
+ * the path carries the credential id and the shapes are matched by
+ * shape rather than by equality; the passkey-list GET stays an
+ * unthrottled read.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -437,6 +455,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminResolutionLimiter;
   private final AuthRateLimiter reviewEditLimiter;
   private final AuthRateLimiter totpSetupLimiter;
+  private final AuthRateLimiter passkeyManagementLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
   private final Set<String> trustedProxies;
@@ -486,6 +505,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter reviewEditLimiter,
                              @Qualifier("totpSetupRateLimiter")
                                  AuthRateLimiter totpSetupLimiter,
+                             @Qualifier("passkeyManagementRateLimiter")
+                                 AuthRateLimiter passkeyManagementLimiter,
                              JwtTokenService jwt,
                              ObjectMapper mapper,
                              TrustedProxiesProperties trustedProxies) {
@@ -514,6 +535,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminResolutionLimiter = adminResolutionLimiter;
     this.reviewEditLimiter = reviewEditLimiter;
     this.totpSetupLimiter = totpSetupLimiter;
+    this.passkeyManagementLimiter = passkeyManagementLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
     this.trustedProxies = trustedProxies == null ? Set.of() : trustedProxies.trustedProxySet();
@@ -554,6 +576,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // unthrottled. Review creation (POST /api/orders/{id}/review)
       // stays in the #282 bucket and never reaches this branch.
       return !reviewEditLimiter.isEnabled();
+    }
+    if (("DELETE".equalsIgnoreCase(request.getMethod())
+            || "PATCH".equalsIgnoreCase(request.getMethod()))
+        && isPasskeyManagementPath(path)) {
+      // Passkey management writes (backlog #302): the DELETE and
+      // PATCH shapes in the management bucket — they must be checked
+      // before the POST-only gate below, or they would pass through
+      // unthrottled. The passkey-list GET is a read and stays
+      // unthrottled; the challenge/enrolment POSTs stay in the #295
+      // bucket and never reach this branch.
+      return !passkeyManagementLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -858,6 +891,27 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (("DELETE".equalsIgnoreCase(request.getMethod())
+            || "PATCH".equalsIgnoreCase(request.getMethod()))
+        && isPasskeyManagementPath(path)) {
+      // Passkey management writes (backlog #302): own per-user bucket
+      // on the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // management writes, but anonymous hammering is still throttled),
+      // never reset on success — a completed delete or rename must not
+      // refill the allowance, and management traffic must not touch the
+      // #295 challenge bucket or the #301 TOTP lifecycle bucket. A
+      // throttled attempt never reaches the controller, so it deletes
+      // nothing and renames nothing. The DELETE/PATCH shapes reach this
+      // branch via shouldNotFilter's pre-gate check above.
+      String key = messageKey(request);
+      if (!passkeyManagementLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, passkeyManagementLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (ITEMS_PATH.equals(path)) {
       // Listing creation (backlog #219): own per-user bucket on the
       // message keying (JWT principal id, per-IP fallback for a
@@ -1116,9 +1170,10 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    * /api/auth/2fa/passkeys/registration/options}, {@code POST
    * /api/auth/2fa/passkeys/registration/verify} and {@code POST
    * /api/auth/2fa/passkeys/assertion/options}. All three are exact
-   * paths, which keeps the sibling passkey shapes out: the list GET,
-   * the delete and the rename are not POSTs to these paths at all,
-   * and the {@code /2fa/authenticate} exchange stays in the TOTP
+   * paths, which keeps the sibling passkey shapes out: the list GET
+   * is a read, and the delete and the rename are not POSTs to these
+   * paths at all — they have their own bucket (backlog #302) — and
+   * the {@code /2fa/authenticate} exchange stays in the TOTP
    * bucket (backlog #101), out of #295's scope.
    */
   private static boolean isPasskeyChallengePath(String path) {
@@ -1141,6 +1196,22 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         || TOTP_ENABLE_PATH.equals(path)
         || TOTP_DISABLE_PATH.equals(path)
         || TOTP_RECOVERY_REGENERATE_PATH.equals(path);
+  }
+
+  /**
+   * True for the passkey management writes (backlog #302): {@code DELETE
+   * /api/auth/2fa/passkeys/{id}} and {@code PATCH
+   * /api/auth/2fa/passkeys/{id}}. The credential id is numeric (the
+   * passkey row id), which keeps the sibling passkey shapes out: the
+   * list GET ({@code /api/auth/2fa/passkeys}, no id segment) and the
+   * challenge/enrolment POSTs (longer exact paths) never match, and
+   * the {@code /2fa/authenticate} exchange stays in the TOTP bucket
+   * (backlog #101). Callers check the HTTP method alongside this
+   * matcher, since the filter only throttles the DELETE and PATCH
+   * shapes here.
+   */
+  private static boolean isPasskeyManagementPath(String path) {
+    return path != null && path.matches("/api/auth/2fa/passkeys/\\d+");
   }
 
   /**

@@ -613,6 +613,34 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for passkey
+   * management writes (backlog #302): {@code DELETE
+   * /api/auth/2fa/passkeys/{id}} and {@code PATCH
+   * /api/auth/2fa/passkeys/{id}} share this one bucket. Same keying
+   * as the other per-user buckets (per-IP fallback for anonymous
+   * requests, which the security chain 401s anyway). The two shapes
+   * share one bucket because they are one abuse shape — one account
+   * deleting or relabelling its second-factor credentials at volume —
+   * and the bucket must neither consume nor be starved by the #295
+   * passkey bucket (challenge issuance and enrolment verification
+   * stay there) or the #301 TOTP lifecycle bucket. Sized generously
+   * at 20/min like the #282 bucket: renaming is a harmless single
+   * action and bulk deletion is not legitimate traffic, so the
+   * ceiling only bites automation. Never resets on success. Must be
+   * &ge; 1.
+   */
+  private int passkeyManagementAttemptsPerMinute = 20;
+
+  public int getPasskeyManagementAttemptsPerMinute() {
+    return passkeyManagementAttemptsPerMinute;
+  }
+
+  public void setPasskeyManagementAttemptsPerMinute(int passkeyManagementAttemptsPerMinute) {
+    this.passkeyManagementAttemptsPerMinute = passkeyManagementAttemptsPerMinute;
+  }
+
+  /**
    * Review edits and seller responses (backlog #298): PUT
    * /api/reviews/{id} and PUT /api/reviews/{id}/response share one
    * per-user bucket, sized like the #282 creation bucket (20/min) —
