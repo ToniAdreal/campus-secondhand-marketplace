@@ -393,6 +393,31 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the notification writes (backlog #309):
+   * {@code POST /api/notifications/stream-ticket}, {@code PUT
+   * /api/notifications/preferences/{type}}, {@code POST
+   * /api/notifications/{id}/read}, {@code POST
+   * /api/notifications/read-all} and {@code DELETE
+   * /api/notifications/{id}} share it (default 20 writes/minute per
+   * authenticated user, like the #282/#308 buckets). Keyed on the JWT
+   * principal id like the social-graph bucket — the abuse surface is
+   * one account churning its own notification surface, not an IP —
+   * and it neither consumes nor starves the #308 graph bucket or any
+   * neighbouring write bucket. The SSE stream GET and the
+   * notification list / preferences-catalogue / unread-count GETs are
+   * reads and stay unthrottled. Never resets on success: a minted
+   * ticket, a toggled preference or a cleared notification must not
+   * refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter notificationRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties notificationProps = new AuthRateLimitProperties();
+    notificationProps.setEnabled(props.isEnabled());
+    notificationProps.setAttemptsPerMinute(props.getNotificationAttemptsPerMinute());
+    return new AuthRateLimiter(clock, notificationProps);
+  }
+
+  /**
    * Separate token bucket for the offer lifecycle transitions
    * ({@code POST /api/offers/{id}/accept}, {@code /decline},
    * {@code /counter}, {@code /counter-accept}, {@code /counter-decline}

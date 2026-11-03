@@ -445,6 +445,28 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * follows and blocks list GETs carry no id segment, never match, and
  * stay unthrottled reads.
  *
+ * <p>Notification writes ({@code POST /api/notifications/stream-ticket},
+ * {@code PUT /api/notifications/preferences/{type}}, {@code POST
+ * /api/notifications/{id}/read}, {@code POST /api/notifications/read-all}
+ * and {@code DELETE /api/notifications/{id}}, backlog #309) share a
+ * per-<em>user</em> bucket (default 20/minute, like the #282/#308
+ * buckets) on the same keying as the message bucket (JWT principal id,
+ * per-IP fallback for a missing/invalid token), never reset on success:
+ * one account hammering its own notification surface — minting SSE
+ * tickets, flapping preferences, churning reads and deletes — is one
+ * abuse shape, and a throttled attempt never reaches the controller, so
+ * it mints no ticket, toggles nothing, marks nothing and deletes
+ * nothing. Deliberately separate from the #308 social-graph bucket —
+ * saving, following and blocking stay there — so notification traffic
+ * can neither consume nor be starved by graph traffic, nor vice versa.
+ * The PUT/DELETE shapes are matched before the filter's POST-only gate
+ * (like the PATCH item-status, DELETE session-revocation, PUT
+ * review-edit, DELETE/PATCH passkey-management and listing-edit
+ * siblings); the SSE stream itself ({@code GET
+ * /api/notifications/stream}) is gated by its one-time ticket, not by
+ * this filter, and the list, preferences-catalogue and unread-count
+ * GETs stay unthrottled reads.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -542,6 +564,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String TOTP_DISABLE_PATH = "/api/auth/2fa/disable";
   private static final String TOTP_RECOVERY_REGENERATE_PATH = "/api/auth/2fa/recovery-codes/regenerate";
   private static final String SESSIONS_REVOKE_OTHERS_PATH = "/api/auth/sessions/revoke-others";
+  private static final String NOTIFICATION_STREAM_TICKET_PATH = "/api/notifications/stream-ticket";
+  private static final String NOTIFICATION_READ_ALL_PATH = "/api/notifications/read-all";
   private static final String ITEMS_PATH = "/api/items";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
@@ -568,6 +592,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter itemEditLimiter;
   private final AuthRateLimiter socialWriteLimiter;
   private final AuthRateLimiter socialGraphLimiter;
+  private final AuthRateLimiter notificationLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
   private final AuthRateLimiter adminResolutionLimiter;
@@ -621,6 +646,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter socialWriteLimiter,
                              @Qualifier("socialGraphRateLimiter")
                                  AuthRateLimiter socialGraphLimiter,
+                             @Qualifier("notificationRateLimiter")
+                                 AuthRateLimiter notificationLimiter,
                              @Qualifier("offerLifecycleRateLimiter")
                                  AuthRateLimiter offerLifecycleLimiter,
                              @Qualifier("sessionRevocationRateLimiter")
@@ -666,6 +693,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.itemEditLimiter = itemEditLimiter;
     this.socialWriteLimiter = socialWriteLimiter;
     this.socialGraphLimiter = socialGraphLimiter;
+    this.notificationLimiter = notificationLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.adminResolutionLimiter = adminResolutionLimiter;
@@ -753,6 +781,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // list GETs never match the id-carrying matchers and stay
       // unthrottled reads.
       return !socialGraphLimiter.isEnabled();
+    }
+    if ((("PUT".equalsIgnoreCase(request.getMethod()) && isNotificationPreferencePath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod()) && isNotificationDeletePath(path)))) {
+      // Notification writes (backlog #309): the PUT preference toggle
+      // and the DELETE single-notification shapes in the notification
+      // bucket — they must be checked before the POST-only gate below,
+      // or they would pass through unthrottled. The POST stream-ticket,
+      // read and read-all siblings are handled by the POST section
+      // below and share this same bucket; the notification list,
+      // preferences-catalogue and unread-count GETs never match the
+      // id-carrying matchers and stay unthrottled reads, and the SSE
+      // stream GET is ticket-gated, not filter-gated.
+      return !notificationLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -874,6 +915,18 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // prefixes — follows and blocks, not offers, reviews,
       // disputes or appeals).
       return !socialGraphLimiter.isEnabled();
+    }
+    if (NOTIFICATION_STREAM_TICKET_PATH.equals(path)
+        || NOTIFICATION_READ_ALL_PATH.equals(path)
+        || isNotificationReadPath(path)) {
+      // Notification writes (backlog #309): the POST stream-ticket,
+      // read-one and read-all shapes share the notification bucket
+      // with the PUT/DELETE shapes handled above — own per-user
+      // bucket on the message keying, never reset on success. The
+      // read-all exact match is checked before any id-shaped matcher
+      // could claim it (it carries no numeric id, so it never matches
+      // isNotificationReadPath — the order is belt and braces).
+      return !notificationLimiter.isEnabled();
     }
     if (isOfferLifecyclePath(path)) {
       // Offer lifecycle transitions (backlog #293): own per-user
@@ -1267,6 +1320,34 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!socialGraphLimiter.tryConsume(key)) {
         writeTooManyRequests(response, socialGraphLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if ((("POST".equalsIgnoreCase(request.getMethod())
+                && (NOTIFICATION_STREAM_TICKET_PATH.equals(path)
+                    || NOTIFICATION_READ_ALL_PATH.equals(path)
+                    || isNotificationReadPath(path)))
+            || ("PUT".equalsIgnoreCase(request.getMethod())
+                && isNotificationPreferencePath(path))
+            || ("DELETE".equalsIgnoreCase(request.getMethod())
+                && isNotificationDeletePath(path)))) {
+      // Notification writes (backlog #309): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // writes, but anonymous hammering is still throttled), never
+      // reset on success — a minted ticket, a toggled preference, a
+      // marked read or a deleted notification must not refill the
+      // allowance, and notification traffic must not touch the #308
+      // graph bucket. A throttled attempt never reaches the
+      // controller, so it mints no ticket, toggles nothing, marks
+      // nothing and deletes nothing. The PUT/DELETE shapes reach this
+      // branch via shouldNotFilter's pre-gate check above; the POST
+      // shapes via its POST section.
+      String key = messageKey(request);
+      if (!notificationLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, notificationLimiter, key);
         return;
       }
       chain.doFilter(request, response);
@@ -1824,6 +1905,45 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isSocialGraphBlockPath(String path) {
     return path != null && path.matches("/api/users/\\d+/block");
+  }
+
+  /**
+   * True for the notification preference toggle ({@code PUT
+   * /api/notifications/preferences/{type}}, backlog #309): the type
+   * segment is an enum name, not numeric, which keeps the
+   * preferences-catalogue GET ({@code /api/notifications/preferences},
+   * no type segment) out. Callers check the HTTP method alongside
+   * this matcher, since the filter only throttles the PUT shape here.
+   */
+  private static boolean isNotificationPreferencePath(String path) {
+    return path != null && path.matches("/api/notifications/preferences/[^/]+");
+  }
+
+  /**
+   * True for the mark-one-read POST ({@code POST
+   * /api/notifications/{id}/read}, backlog #309): the id segment is
+   * numeric (notification ids are), which keeps the read-all POST
+   * ({@code /api/notifications/read-all}, a literal segment, no
+   * numeric id) out and the notification list GET out (not a POST,
+   * no {@code /read} suffix). Callers check the HTTP method
+   * alongside this matcher, since the filter only throttles the POST
+   * shape here.
+   */
+  private static boolean isNotificationReadPath(String path) {
+    return path != null && path.matches("/api/notifications/\\d+/read");
+  }
+
+  /**
+   * True for the single-notification DELETE ({@code DELETE
+   * /api/notifications/{id}}, backlog #309): the id segment is
+   * numeric, which keeps the read-all POST out (literal segment, not
+   * numeric) and the stream-ticket POST out (different suffix).
+   * Callers check the HTTP method alongside this matcher, since the
+   * filter only throttles the DELETE shape here (the GET list on the
+   * same prefix carries no id segment and stays an unthrottled read).
+   */
+  private static boolean isNotificationDeletePath(String path) {
+    return path != null && path.matches("/api/notifications/\\d+");
   }
 
   /**

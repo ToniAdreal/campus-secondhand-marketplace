@@ -529,6 +529,40 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the notification
+   * writes (backlog #309): {@code POST /api/notifications/stream-ticket}
+   * (the one-time SSE ticket), {@code PUT
+   * /api/notifications/preferences/{type}} (one settings toggle),
+   * {@code POST /api/notifications/{id}/read} (mark one read),
+   * {@code POST /api/notifications/read-all} (mark all read) and
+   * {@code DELETE /api/notifications/{id}} (delete one) share this one
+   * bucket. Same keying as the other per-user buckets (per-IP fallback
+   * for anonymous requests, which the security chain 401s anyway). The
+   * five shapes share one bucket because they are one abuse shape —
+   * one account hammering its own notification surface (ticket minting,
+   * preference flapping, read/delete churn) — and the bucket must
+   * neither consume nor be starved by the #308 social-graph bucket or
+   * any other write bucket. The SSE stream itself ({@code GET
+   * /api/notifications/stream}) is a GET gated by its one-time ticket,
+   * not by this filter, and stays out; the list, preferences-catalogue
+   * and unread-count GETs stay unthrottled reads. Sized at 20/min like
+   * the #282/#308 buckets: a legitimate user mints one ticket per
+   * page load and toggles or clears notifications a handful of times
+   * per minute, while a script churning the surface at volume is the
+   * throttle target. Never resets on success. Must be &ge; 1.
+   */
+  private int notificationAttemptsPerMinute = 20;
+
+  public int getNotificationAttemptsPerMinute() {
+    return notificationAttemptsPerMinute;
+  }
+
+  public void setNotificationAttemptsPerMinute(int notificationAttemptsPerMinute) {
+    this.notificationAttemptsPerMinute = notificationAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for the offer
    * lifecycle transitions (backlog #293): {@code POST
    * /api/offers/{id}/accept}, {@code /decline}, {@code /counter},
