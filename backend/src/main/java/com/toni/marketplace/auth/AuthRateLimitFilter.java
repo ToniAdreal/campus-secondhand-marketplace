@@ -500,6 +500,29 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * path, handled by its own branch) and every other
  * {@code /api/users/me/*} shape out.
  *
+ * <p>ADMIN category writes ({@code POST /api/categories}, {@code PATCH
+ * /api/categories/{id}} and {@code DELETE /api/categories/{id}},
+ * backlog #312) share a per-<em>user</em> bucket (default 20/minute,
+ * like the #297/#303/#304/#305 buckets) on the same keying as the
+ * message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: one ADMIN
+ * reshaping the taxonomy at volume is one abuse shape, and a
+ * throttled attempt never reaches the controller, so it creates,
+ * renames or deletes nothing. Deliberately separate from the #297
+ * dispute/appeal resolution bucket, the #303 ADMIN user-action
+ * bucket, the #304 ADMIN report-action bucket and the #305 ADMIN
+ * webhook-replay bucket, so category traffic can neither consume
+ * nor be starved by any of them, nor vice versa. The PATCH/DELETE
+ * shapes are matched before the filter's POST-only gate (like the
+ * PATCH item-status, DELETE session-revocation, PUT review-edit,
+ * DELETE/PATCH passkey-management and listing-edit siblings),
+ * because the path carries the category id and the shapes are
+ * matched by shape rather than by equality; the category-list GET
+ * stays an unthrottled read, and a non-ADMIN caller's single
+ * attempt still reaches the security chain and answers 403 (its
+ * own principal key keeps it from ever starving an ADMIN's
+ * bucket).
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -603,6 +626,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String NOTIFICATION_STREAM_TICKET_PATH = "/api/notifications/stream-ticket";
   private static final String NOTIFICATION_READ_ALL_PATH = "/api/notifications/read-all";
   private static final String ITEMS_PATH = "/api/items";
+  private static final String CATEGORIES_PATH = "/api/categories";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
 
@@ -640,6 +664,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminUserActionLimiter;
   private final AuthRateLimiter adminReportActionLimiter;
   private final AuthRateLimiter adminWebhookReplayLimiter;
+  private final AuthRateLimiter adminCategoryLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -708,6 +733,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminReportActionLimiter,
                              @Qualifier("adminWebhookReplayRateLimiter")
                                  AuthRateLimiter adminWebhookReplayLimiter,
+                             @Qualifier("adminCategoryRateLimiter")
+                                 AuthRateLimiter adminCategoryLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -747,6 +774,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminUserActionLimiter = adminUserActionLimiter;
     this.adminReportActionLimiter = adminReportActionLimiter;
     this.adminWebhookReplayLimiter = adminWebhookReplayLimiter;
+    this.adminCategoryLimiter = adminCategoryLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -848,6 +876,18 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // sibling (GET /api/auth/me) never matches this branch and
       // stays an unthrottled read.
       return !accountIdentityLimiter.isEnabled();
+    }
+    if (("PATCH".equalsIgnoreCase(request.getMethod())
+            || "DELETE".equalsIgnoreCase(request.getMethod()))
+        && isCategoryAdminPath(path)) {
+      // ADMIN category writes (backlog #312): the PATCH rename and
+      // DELETE shapes in the category bucket — they must be checked
+      // before the POST-only gate below, or they would pass through
+      // unthrottled. The POST create sibling is handled by the POST
+      // section below and shares this same bucket; the category-list
+      // GET never matches the id-carrying matcher and stays an
+      // unthrottled read.
+      return !adminCategoryLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -1049,6 +1089,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // and #304 report-action shapes never match this matcher
       // (different path prefix).
       return !adminWebhookReplayLimiter.isEnabled();
+    }
+    if (CATEGORIES_PATH.equals(path)) {
+      // ADMIN category creation (backlog #312): the POST member of
+      // the category bucket — own per-user bucket on the message
+      // keying, never reset on success. The exact match keeps the
+      // PATCH/DELETE siblings in the same bucket (handled by the
+      // pre-gate branch above) and the category-list GET out (it
+      // is not a POST).
+      return !adminCategoryLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -1578,6 +1627,33 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (("POST".equalsIgnoreCase(request.getMethod()) && CATEGORIES_PATH.equals(path))
+        || (("PATCH".equalsIgnoreCase(request.getMethod())
+                || "DELETE".equalsIgnoreCase(request.getMethod()))
+            && isCategoryAdminPath(path))) {
+      // ADMIN category writes (backlog #312): own per-user bucket
+      // on the message keying (JWT principal id, per-IP fallback
+      // for a missing/invalid token — the security chain 403s
+      // non-ADMIN callers, but anonymous hammering is still
+      // throttled), never reset on success — a completed create,
+      // rename or delete must not refill the allowance, and
+      // category traffic must not touch the #297 resolution
+      // bucket, the #303 user-action bucket, the #304 report-action
+      // bucket, the #305 webhook-replay bucket or any other bucket.
+      // A throttled attempt never reaches the controller, so it
+      // creates, renames or deletes nothing and the taxonomy stays
+      // exactly as it was. The PATCH/DELETE shapes reach this
+      // branch via shouldNotFilter's pre-gate check above; the POST
+      // shape via its POST section; the category-list GET never
+      // reaches either and stays an unthrottled read.
+      String key = messageKey(request);
+      if (!adminCategoryLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminCategoryLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isReviewEditPath(path)) {
       // Review edits / seller responses (backlog #298): own per-user
       // bucket on the message keying (JWT principal id, per-IP
@@ -1872,6 +1948,20 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isAdminWebhookReplayPath(String path) {
     return path != null && path.matches("/api/admin/payments/webhooks/\\d+/replay");
+  }
+
+  /**
+   * True for the ADMIN category rename/delete shapes ({@code PATCH
+   * /api/categories/{id}} and {@code DELETE /api/categories/{id}},
+   * backlog #312): the id segment is numeric (category ids are),
+   * which keeps the collection POST ({@code /api/categories}, no
+   * id segment — matched exactly elsewhere) and the category-list
+   * GET out. Callers check the HTTP method alongside this matcher,
+   * since the filter only throttles the PATCH and DELETE shapes
+   * here (no GET by id exists on this controller).
+   */
+  private static boolean isCategoryAdminPath(String path) {
+    return path != null && path.matches("/api/categories/\\d+");
   }
 
   /**

@@ -880,6 +880,36 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated ADMIN</em> (JWT principal id) for the ADMIN
+   * category writes (backlog #312): {@code POST /api/categories},
+   * {@code PATCH /api/categories/{id}} and {@code DELETE
+   * /api/categories/{id}} share this one bucket. Same keying as the
+   * other per-user buckets (per-IP fallback for anonymous requests,
+   * which the security chain 401s anyway — a non-ADMIN caller's
+   * single attempt still answers 403 from the security chain, on
+   * that caller's own principal key, so it can never starve an
+   * ADMIN's bucket). The three shapes share one bucket because they
+   * are one abuse shape — one ADMIN reshaping the taxonomy at
+   * volume — and the bucket must neither consume nor be starved by
+   * the #297 dispute/appeal resolution bucket, the #303 ADMIN
+   * user-action bucket, the #304 ADMIN report-action bucket or the
+   * #305 ADMIN webhook-replay bucket. Sized generously at 20/min
+   * like those buckets: a taxonomy cleanup touches several rows
+   * legitimately (one write per click), so the ceiling only bites
+   * automation. Never resets on success. Must be &ge; 1.
+   */
+  private int adminCategoryAttemptsPerMinute = 20;
+
+  public int getAdminCategoryAttemptsPerMinute() {
+    return adminCategoryAttemptsPerMinute;
+  }
+
+  public void setAdminCategoryAttemptsPerMinute(int adminCategoryAttemptsPerMinute) {
+    this.adminCategoryAttemptsPerMinute = adminCategoryAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the public mock-PSP webhook receiver (backlog #306): {@code POST
    * /api/payments/webhooks/mock-psp}. Keyed on the IP, never on a

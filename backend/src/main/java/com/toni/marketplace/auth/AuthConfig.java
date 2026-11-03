@@ -700,6 +700,32 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN category writes (backlog
+   * #312): {@code POST /api/categories}, {@code PATCH
+   * /api/categories/{id}} and {@code DELETE /api/categories/{id}}
+   * share it (default 20 writes/minute per authenticated ADMIN,
+   * like the #297/#303/#304/#305 buckets). Keyed on the JWT
+   * principal id like the other per-user buckets — one ADMIN
+   * reshaping the taxonomy at volume is a per-account abuse
+   * surface, and keying by IP would let one NAT address starve
+   * every ADMIN behind it; non-ADMIN callers land on their own
+   * principal key, so their traffic can never starve an ADMIN's
+   * bucket. Deliberately separate from the #297 dispute/appeal
+   * resolution bucket, the #303 ADMIN user-action bucket, the #304
+   * ADMIN report-action bucket and the #305 ADMIN webhook-replay
+   * bucket, so category traffic can never starve them, nor vice
+   * versa. Never reset on success: a completed create, rename or
+   * delete must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminCategoryRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties categoryProps = new AuthRateLimitProperties();
+    categoryProps.setEnabled(props.isEnabled());
+    categoryProps.setAttemptsPerMinute(props.getAdminCategoryAttemptsPerMinute());
+    return new AuthRateLimiter(clock, categoryProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP
