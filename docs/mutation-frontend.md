@@ -1,4 +1,4 @@
-# Frontend mutation testing pilot (backlog #252, widened by #263, #280 and #287)
+# Frontend mutation testing pilot (backlog #252, widened by #263, #280, #287 and #322)
 
 Line coverage (Vitest, gated in the `frontend` CI job since #247) proves
 code is *executed* by tests; it does not prove the tests would *notice*
@@ -27,6 +27,17 @@ PIT pilot (backlog #192, docs/mutation.md):
   lines needs its range re-derived, and the gate test pins the
   range list exactly, so a stale range fails the suite instead of
   silently mutating the wrong code.
+- The 11 social-graph + saved-search hook functions (measured by
+  #322, landed in the combined run — see "Sixth measured run"
+  below; the ranges are in the gate): one range per exported hook
+  (`useFavorites`, `useToggleFavorite`, `useMyFollows`,
+  `useFollowSeller`, `useUnfollowSeller`, `useMyBlocks`,
+  `useBlockUser`, `useUnblockUser`, `useSavedSearches`,
+  `useCreateSavedSearch`, `useDeleteSavedSearch`), covering the
+  queryFn malformed-payload fallback, the mutationFn and the
+  onSuccess invalidation. Key constants, interfaces and the
+  saved-searches pure helpers are out of scope — they are not hook
+  paths.
 
 The driving tests are the cart-store unit suite plus the page suites
 that exercise the store through the cart page (`useCartStore.test.ts`,
@@ -250,6 +261,45 @@ proposal, and the proposal header is removed from
 the CI job comment. Backlog #287 is done; a future widening still
 requires re-measuring first, per the #263 method.
 
+### Sixth measured run (backlog #322) — social-graph + saved-search hooks
+
+The hook ranges were measured separately first, with a temporary
+hook-ranges-only config at break 0 (measure first, floor second —
+the same discipline as #252, #263, #280 and #287; the temporary
+config was deleted after the run, never committed; full report
+copy: `goals/github-engineering-profile-building/hidden_files/stryker-322-measure-report.json`).
+Local run, 2026-11-03, head **21cebab** (backlog #321) plus the
+#322 config/gate/CI/doc changes, which touch no api source, 3
+minutes 25 seconds, 4 workers:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 11 hook ranges (84 mutants) | 85.71% (72/84) | 86.75% (72/83) |
+
+Mutant statuses: **KILLED 72, SURVIVED 11, NO_COVERAGE 1,
+TIMEOUT 0, ERROR 0.** Per-file scores: savedSearches 96.15%
+(25/26), follows 94.74% (18/19), favorites 92.86% (13/14), blocks
+64.00% (16/25). The gap is concentrated, not diffuse: blocks
+carries 9 of the 11 survivors (see below), the other three files
+lose only the malformed-payload fallback each. None is labelled
+equivalent here.
+
+### Floor decision (widened scope, fourth widening — LANDED)
+
+`thresholds.break` stays **90**: the floor is unchanged, not lowered
+to fit the new scope. The new scope is disjoint from the landed
+scope and no source file in either scope changed in this round,
+so the combined score is the arithmetic sum of the two measured
+runs: (1329 + 72) / (1421 + 84) = 1401/1505 = **93.09%**, which
+clears the 90 floor (90 <= 93.09) — the hook ranges are now a
+landed scope, and the CI `frontend-mutation` job measures the
+combined score on every run. The 11 survivors + 1 no-coverage
+mutant stay honest follow-up material (see the #322 subsection
+under "Surviving mutants"); they do not block the landing,
+because the gate is the combined score, not any single file.
+Backlog #322 is done; a future widening still requires
+re-measuring first, per the #263 method.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -306,6 +356,27 @@ the score before touching the floor.
   related set and survived. No test calls `clear` and asserts the cart
   is empty afterwards. Needs: add two items, `clear`, assert empty
   items and null seller/batch.
+
+### Social-graph / saved-search hooks — 11 survived + 1 no-coverage (#322)
+
+None is labelled equivalent. Two test gaps explain all twelve:
+
+- Malformed-payload fallback (4): the `Array.isArray(data) ? data
+  : []` fallback survives in `useFavorites` (favorites L25),
+  `useMyFollows` (follows L36) and `useMyBlocks` (blocks L34), and
+  is no-coverage in `useSavedSearches` (savedSearches L53). No
+  test feeds a non-array envelope to any of the four list hooks,
+  so the fallback is never taken. Needs: one malformed-payload
+  test per hook, asserting the hook resolves to `[]`.
+- Block invalidation (8, all blocks): `useBlockUser` asserts only
+  the `['blocks']` invalidation, so the second `['items']`
+  invalidation's three mutants (blocks L47 ObjectLiteral,
+  ArrayDeclaration, StringLiteral) survive; `useUnblockUser`
+  asserts no invalidation at all, so its whole onSuccess body
+  (L57–60 BlockStatement) plus both invalidations' mutants
+  (L58 ObjectLiteral; L59 ObjectLiteral, ArrayDeclaration,
+  StringLiteral) survive. Needs: assert the `['items']`
+  invalidation on block, and both invalidations on unblock.
 
 ## No-coverage mutants
 

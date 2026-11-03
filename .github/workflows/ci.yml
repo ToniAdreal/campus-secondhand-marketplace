@@ -84,12 +84,12 @@ jobs:
         run: node scripts/check-coverage-gate.mjs
 
   frontend-mutation:
-    # Frontend mutation pilot (backlog #252, widened by #263, #280
-    # and #287; the #287 combined scope measured 93.53% at the
+    # Frontend mutation pilot (backlog #252, widened by #263, #280,
+    # #287 and #322; the #287 combined scope measured 93.53% at the
     # break-90 floor on 2026-11-01 — see
     # frontend/stryker.config.mjs + docs/mutation-frontend.md):
     # Stryker over the cart + auth + theme stores + the api error
-    # mappers. The job
+    # mappers + the social-graph / saved-search api hook ranges. The job
     # fails below the config's
     # thresholds.break ratchet. The floor is the measured mutation
     # score of the pilot run, rounded DOWN to a whole percent so an

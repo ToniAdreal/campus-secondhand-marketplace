@@ -1,6 +1,6 @@
 /**
- * Frontend mutation testing (backlog #252, widened by #263, #280
- * and #287), mirroring the backend PIT pilot (backlog #192,
+ * Frontend mutation testing (backlog #252, widened by #263, #280,
+ * #287 and #322), mirroring the backend PIT pilot (backlog #192,
  * docs/mutation.md) and the #165 ratchet discipline.
  *
  * Scope is deliberately narrow on purpose: the three store modules
@@ -53,6 +53,20 @@
  * 93.53% (1329/1421, 60 survived, 32 no-coverage), so the mapper
  * ranges below are a LANDED scope and the break-90 floor binds
  * (see docs/mutation-frontend.md, "Fifth measured run").
+ * #322 extends the same range discipline to the social-graph +
+ * saved-search api modules: each range below is exactly one exported
+ * hook function (start = the `export function` line, end = its
+ * closing brace), covering the queryFn malformed-payload fallback,
+ * the mutationFn and the onSuccess invalidation — not the key
+ * constants, interfaces, or the saved-searches pure helpers
+ * (`savedSearchBrowsePath`, `describeSavedSearch`,
+ * `centsToYuanParam`), which are not hook paths. The ranges were
+ * taken from the current files at implementation time, not
+ * hand-counted from memory, so a hook that moves lines must have
+ * its range re-derived. The #322 scope is measured separately
+ * first (break 0) and lands only if the combined score still
+ * clears the break-90 floor (see docs/mutation-frontend.md,
+ * "#322 measured runs").
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -102,6 +116,17 @@ export default {
     'src/api/reviews.ts:178-196',
     'src/api/auth.ts:934-950',
     'src/api/client.ts:71-80',
+    'src/api/favorites.ts:19-29',
+    'src/api/favorites.ts:38-49',
+    'src/api/follows.ts:30-40',
+    'src/api/follows.ts:43-51',
+    'src/api/follows.ts:54-62',
+    'src/api/blocks.ts:28-38',
+    'src/api/blocks.ts:41-50',
+    'src/api/blocks.ts:53-62',
+    'src/api/savedSearches.ts:47-57',
+    'src/api/savedSearches.ts:66-83',
+    'src/api/savedSearches.ts:90-98',
   ],
   reporters: ['clear-text', 'json'],
   thresholds: {
