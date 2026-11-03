@@ -484,6 +484,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * ({@code GET /api/auth/me}) never matches and stays an unthrottled
  * read.
  *
+ * <p>The export-confirm step ({@code POST /api/users/me/export/confirm},
+ * backlog #311) has its own per-<em>user</em> bucket (default 5/minute,
+ * like the step-up bucket) on the same keying as the message bucket
+ * (JWT principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: the confirm verifies the current password
+ * plus a second-factor code when 2FA is enabled, so it is the guessing
+ * surface for a stolen Bearer token, and a throttled confirm mints no
+ * grant. Deliberately separate from the download bucket — which covers
+ * only the {@code GET /api/users/me/export} download itself — and from
+ * the step-up bucket — which covers only the re-proof: the step-up
+ * gate proves freshness, not rate, so confirm traffic must neither
+ * consume nor be starved by re-proof traffic, nor by downloads. The
+ * exact match keeps the download sibling out (a different, shorter
+ * path, handled by its own branch) and every other
+ * {@code /api/users/me/*} shape out.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -565,6 +581,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return MESSAGE_PATH.equals(path) || MESSAGE_PHOTO_PATH.equals(path);
   }
   private static final String EXPORT_PATH = "/api/users/me/export";
+  private static final String EXPORT_CONFIRM_PATH = "/api/users/me/export/confirm";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
   private static final String MOCK_PSP_WEBHOOK_PATH = "/api/payments/webhooks/mock-psp";
@@ -598,6 +615,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter emailChangeRequestLimiter;
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
+  private final AuthRateLimiter exportConfirmLimiter;
   private final AuthRateLimiter cspReportLimiter;
   private final AuthRateLimiter telemetryErrorLimiter;
   private final AuthRateLimiter stepUpLimiter;
@@ -640,6 +658,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                              @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
                              @Qualifier("dataExportRateLimiter")
                                  AuthRateLimiter dataExportLimiter,
+                             @Qualifier("exportConfirmRateLimiter")
+                                 AuthRateLimiter exportConfirmLimiter,
                              @Qualifier("cspReportRateLimiter")
                                  AuthRateLimiter cspReportLimiter,
                              @Qualifier("telemetryErrorRateLimiter")
@@ -702,6 +722,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.emailChangeRequestLimiter = emailChangeRequestLimiter;
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
+    this.exportConfirmLimiter = exportConfirmLimiter;
     this.cspReportLimiter = cspReportLimiter;
     this.telemetryErrorLimiter = telemetryErrorLimiter;
     this.stepUpLimiter = stepUpLimiter;
@@ -854,6 +875,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // on success — a completed proof must not refill a password
       // guesser's budget.
       return !stepUpLimiter.isEnabled();
+    }
+    if (EXPORT_CONFIRM_PATH.equals(path)) {
+      // Export-confirm step (backlog #311): own per-user bucket on the
+      // message keying (JWT principal, per-IP fallback), never reset
+      // on success — a minted grant must not refill a guesser's
+      // budget. The exact match keeps the download sibling out (a
+      // different, shorter path, handled by its own GET branch above)
+      // and every other /api/users/me/* shape out.
+      return !exportConfirmLimiter.isEnabled();
     }
     if (PASSWORD_CHANGE_PATH.equals(path)) {
       // Password change (backlog #290): own per-user bucket on the
@@ -1059,6 +1089,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!dataExportLimiter.tryConsume(key)) {
         writeTooManyRequests(response, dataExportLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (EXPORT_CONFIRM_PATH.equals(path)) {
+      // Export-confirm step (backlog #311): own per-user bucket on the
+      // message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // confirms, but anonymous hammering is still throttled), never
+      // reset on success — a minted grant must not refill the
+      // allowance, and confirm traffic must not touch the download
+      // bucket or the step-up bucket. A throttled attempt never
+      // reaches the controller, so it mints no grant. The exact match
+      // keeps the download sibling out (a different, shorter path,
+      // handled by the branch above).
+      String key = messageKey(request);
+      if (!exportConfirmLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, exportConfirmLimiter, key);
         return;
       }
       chain.doFilter(request, response);

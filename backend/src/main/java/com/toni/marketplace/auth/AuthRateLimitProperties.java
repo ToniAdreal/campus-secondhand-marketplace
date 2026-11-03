@@ -226,6 +226,32 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * authenticated user for the export-confirm step ({@code POST
+   * /api/users/me/export/confirm}, backlog #311). The confirm verifies
+   * the current password plus a second-factor code when 2FA is enabled,
+   * so it is a password-plus-code guessing surface for anyone holding
+   * a stolen Bearer token — it gets its own per-user bucket (JWT
+   * principal, per-IP fallback like the message/export buckets) that
+   * never resets on success, sized like the step-up bucket's 5/min.
+   * Deliberately separate from the download bucket (which covers only
+   * the {@code GET /api/users/me/export} download itself) and from
+   * the step-up bucket (which covers only the re-proof): the step-up
+   * gate proves freshness, not rate, so confirm traffic must neither
+   * consume nor be starved by re-proof traffic, nor by downloads.
+   * Must be &ge; 1.
+   */
+  private int exportConfirmAttemptsPerMinute = 5;
+
+  public int getExportConfirmAttemptsPerMinute() {
+    return exportConfirmAttemptsPerMinute;
+  }
+
+  public void setExportConfirmAttemptsPerMinute(int exportConfirmAttemptsPerMinute) {
+    this.exportConfirmAttemptsPerMinute = exportConfirmAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * authenticated user for the step-up re-proof endpoint ({@code POST
    * /api/auth/step-up}, backlog #218). The endpoint verifies the
    * current password, so it is a password-guessing surface for anyone

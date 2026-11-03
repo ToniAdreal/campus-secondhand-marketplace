@@ -195,6 +195,31 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the export-confirm step
+   * ({@code POST /api/users/me/export/confirm}, backlog #311; default 5
+   * attempts/minute per authenticated user, like the step-up bucket).
+   * Keyed on the JWT principal id like the message/export buckets —
+   * the confirm verifies the current password plus a second-factor
+   * code when 2FA is enabled, so it is a password-plus-code guessing
+   * surface for a stolen Bearer token, and keying by IP would let one
+   * NAT address starve every confirmer behind it. Deliberately
+   * separate from the download bucket (which covers only the
+   * {@code GET /api/users/me/export} download itself) and from the
+   * step-up bucket (which covers only the re-proof): the step-up gate
+   * proves freshness, not rate, so confirm traffic must neither
+   * consume nor be starved by re-proof traffic, nor by downloads.
+   * Never resets on success: a minted grant must not refill a
+   * guesser's budget, and a throttled confirm mints nothing.
+   */
+  @Bean
+  public AuthRateLimiter exportConfirmRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties confirmProps = new AuthRateLimitProperties();
+    confirmProps.setEnabled(props.isEnabled());
+    confirmProps.setAttemptsPerMinute(props.getExportConfirmAttemptsPerMinute());
+    return new AuthRateLimiter(clock, confirmProps);
+  }
+
+  /**
    * Separate token bucket for the step-up re-proof endpoint
    * ({@code POST /api/auth/step-up}, backlog #218; default 5
    * attempts/minute per authenticated user). Keyed on the JWT

@@ -40,9 +40,12 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code anyRequest().authenticated()} rule — both routes are scoped
  * to the JWT principal, there is no user-id parameter anywhere, so one
  * user's export can never be pointed at another user. Throttling is
- * the filter's own per-user data-export bucket (see
- * {@link AuthRateLimitFilter}); the audit rows are written by the
- * services, inside their transactions.
+ * the filter's own per-user buckets (see {@link AuthRateLimitFilter}):
+ * the download sits in the data-export bucket, while the confirm step
+ * has its own bucket (backlog #311) — the confirm is the guessing
+ * surface, so it must neither consume nor be starved by downloads.
+ * The audit rows are written by the services, inside their
+ * transactions.
  */
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(
