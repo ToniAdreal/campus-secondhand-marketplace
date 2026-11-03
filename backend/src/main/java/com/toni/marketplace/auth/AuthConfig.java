@@ -748,6 +748,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN listing DELETE (backlog
+   * #314): {@code DELETE /api/items/{id}} (default 20
+   * deletes/minute per authenticated ADMIN, like the #312 ADMIN
+   * category bucket). Keyed on the JWT principal id like the other
+   * per-user buckets — one ADMIN deleting listings at volume is a
+   * per-account abuse surface, and keying by IP would let one NAT
+   * address starve every ADMIN behind it; non-ADMIN callers land on
+   * their own principal key, so their traffic can never starve an
+   * ADMIN's bucket. Deliberately separate from the #307
+   * listing-edit bucket, so listing-delete traffic can neither
+   * consume nor be starved by edit traffic, nor vice versa. Never
+   * resets on success: a completed delete must not refill the
+   * allowance.
+   */
+  @Bean
+  public AuthRateLimiter adminListingDeleteRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties listingDeleteProps = new AuthRateLimitProperties();
+    listingDeleteProps.setEnabled(props.isEnabled());
+    listingDeleteProps.setAttemptsPerMinute(props.getAdminListingDeleteAttemptsPerMinute());
+    return new AuthRateLimiter(clock, listingDeleteProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP

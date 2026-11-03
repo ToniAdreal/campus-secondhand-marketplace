@@ -422,8 +422,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * passkey-management siblings), because the path carries the
  * listing id and the shapes are matched by shape rather than by
  * equality; the ADMIN-only listing DELETE ({@code DELETE
- * /api/items/{id}}) never matches (no {@code /photos} segment)
- * and stays unthrottled.
+ * /api/items/{id}}) never matches them (no {@code /photos}
+ * segment) — since backlog #314 it has its own per-ADMIN bucket
+ * (see below), not the edit bucket.
  *
  * <p>Social-graph writes ({@code PUT/DELETE
  * /api/users/me/favorites/{itemId}}, {@code POST/DELETE
@@ -539,6 +540,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * session-revocation, DELETE/PATCH passkey-management and
  * listing-edit siblings); the saved-search list GET carries no id
  * segment, never matches, and stays an unthrottled read.
+ *
+ * <p>ADMIN listing DELETE ({@code DELETE /api/items/{id}},
+ * backlog #314) has its own per-<em>user</em> bucket (default
+ * 20/minute, like the #312 ADMIN category bucket) on the same
+ * keying as the message bucket (JWT principal id, per-IP fallback
+ * for a missing/invalid token), never reset on success: one ADMIN
+ * deleting listings at volume is one abuse shape, and a throttled
+ * attempt never reaches the controller, so it deletes nothing.
+ * Deliberately separate from the #307 listing-edit bucket — the
+ * DELETE shares the {@code /api/items/{id}} path shape with the
+ * PATCH edit, but deleting a listing (ADMIN-only) and rewriting
+ * one (seller or ADMIN) are different surfaces — so delete traffic
+ * can neither consume nor be starved by edit traffic, nor vice
+ * versa. The DELETE shape is matched before the filter's
+ * POST-only gate (like the DELETE gallery-photo sibling); the
+ * listing-detail GET on the same path never matches (wrong
+ * method) and stays an unthrottled read, and a non-ADMIN caller's
+ * single attempt still reaches the security chain and answers 403
+ * (its own principal key keeps it from ever starving an ADMIN's
+ * bucket).
  *
  * <p>Behavior:
  * <ul>
@@ -684,6 +705,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminWebhookReplayLimiter;
   private final AuthRateLimiter adminCategoryLimiter;
   private final AuthRateLimiter savedSearchLimiter;
+  private final AuthRateLimiter adminListingDeleteLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -756,6 +778,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminCategoryLimiter,
                              @Qualifier("savedSearchRateLimiter")
                                  AuthRateLimiter savedSearchLimiter,
+                             @Qualifier("adminListingDeleteRateLimiter")
+                                 AuthRateLimiter adminListingDeleteLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -797,6 +821,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminWebhookReplayLimiter = adminWebhookReplayLimiter;
     this.adminCategoryLimiter = adminCategoryLimiter;
     this.savedSearchLimiter = savedSearchLimiter;
+    this.adminListingDeleteLimiter = adminListingDeleteLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -860,8 +885,18 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // /status sibling is handled by its own branch above and never
       // matches isItemEditPath (no /status suffix); the ADMIN-only
       // listing DELETE never matches isItemPhotoDeletePath (no /photos
-      // segment) and stays unthrottled.
+      // segment) — since backlog #314 it has its own branch below.
       return !itemEditLimiter.isEnabled();
+    }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isAdminListingDeletePath(path)) {
+      // ADMIN listing DELETE (backlog #314): the one DELETE shape in
+      // its own per-ADMIN bucket — it must be checked before the
+      // POST-only gate below, or it would pass through unthrottled.
+      // The PATCH edit sibling on the same path shape stays in the
+      // #307 bucket (handled by the branch above) and the
+      // listing-detail GET never matches this branch (wrong method)
+      // and stays an unthrottled read.
+      return !adminListingDeleteLimiter.isEnabled();
     }
     if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
@@ -1503,6 +1538,26 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isAdminListingDeletePath(path)) {
+      // ADMIN listing DELETE (backlog #314): own per-ADMIN bucket on
+      // the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 403s non-ADMIN
+      // callers, but anonymous hammering is still throttled), never
+      // reset on success — a completed delete must not refill the
+      // allowance, and delete traffic must not touch the #307 edit
+      // bucket or any other bucket. A throttled attempt never reaches
+      // the controller, so it deletes nothing and the listing stays
+      // exactly as it was. The shape reaches this branch via
+      // shouldNotFilter's pre-gate check above; the PATCH edit
+      // sibling on the same path shape stays in the #307 bucket.
+      String key = messageKey(request);
+      if (!adminListingDeleteLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, adminListingDeleteLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("POST".equalsIgnoreCase(request.getMethod()) && isSocialGraphFollowPath(path))
@@ -2132,6 +2187,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isItemPhotoDeletePath(String path) {
     return path != null && path.matches("/api/items/\\d+/photos/\\d+");
+  }
+
+  /**
+   * True for the ADMIN listing DELETE ({@code DELETE
+   * /api/items/{id}}, backlog #314): the id segment is numeric,
+   * which keeps the collection POST ({@code /api/items}, the #219
+   * listing-create bucket) out — it carries no id segment — and
+   * every suffixed sibling out ({@code /status}, {@code /photos},
+   * {@code /renew} and friends). Callers check the HTTP method
+   * alongside this matcher, since the filter only throttles the
+   * DELETE shape here (the GET detail read on the same path stays
+   * unthrottled, and the PATCH edit sibling stays in the #307
+   * bucket). Deliberately a separate matcher from
+   * {@code isItemEditPath} despite the identical regex: the two
+   * shapes are different throttled surfaces and must stay
+   * independently greppable.
+   */
+  private static boolean isAdminListingDeletePath(String path) {
+    return path != null && path.matches("/api/items/\\d+");
   }
 
   /**

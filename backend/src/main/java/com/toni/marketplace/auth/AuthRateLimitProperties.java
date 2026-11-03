@@ -938,6 +938,36 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated ADMIN</em> (JWT principal id) for the ADMIN
+   * listing DELETE (backlog #314): {@code DELETE /api/items/{id}}.
+   * Same keying as the other per-user buckets (per-IP fallback for
+   * anonymous requests, which the security chain 401s anyway — a
+   * non-ADMIN caller's single attempt still answers 403 from the
+   * security chain, on that caller's own principal key, so it can
+   * never starve an ADMIN's bucket). Deliberately separate from
+   * the #307 listing-edit bucket (the PATCH edit, the PUT gallery
+   * reorder and the DELETE gallery-photo removal stay there) even
+   * though the DELETE shares the {@code /api/items/{id}} path shape
+   * with the PATCH edit: deleting a listing is a different,
+   * ADMIN-only abuse shape from a seller rewriting a listing, and
+   * the two must neither consume nor starve each other. Sized
+   * generously at 20/min like the #312 ADMIN category bucket: a
+   * listing cleanup touches several rows legitimately (one delete
+   * per click), so the ceiling only bites automation. Never resets
+   * on success. Must be &ge; 1.
+   */
+  private int adminListingDeleteAttemptsPerMinute = 20;
+
+  public int getAdminListingDeleteAttemptsPerMinute() {
+    return adminListingDeleteAttemptsPerMinute;
+  }
+
+  public void setAdminListingDeleteAttemptsPerMinute(int adminListingDeleteAttemptsPerMinute) {
+    this.adminListingDeleteAttemptsPerMinute = adminListingDeleteAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the public mock-PSP webhook receiver (backlog #306): {@code POST
    * /api/payments/webhooks/mock-psp}. Keyed on the IP, never on a
