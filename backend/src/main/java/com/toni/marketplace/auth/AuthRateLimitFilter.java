@@ -82,8 +82,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *
  * <p>The account data export ({@code GET /api/users/me/export}, backlog
  * #172) has an eighth, per-<em>user</em> bucket (default 5/minute) on
- * the same keying as messages. It is the one throttled GET in this
- * filter: the export is the heaviest read in the app (every section of
+ * the same keying as messages. It is one of the throttled GETs in
+ * this filter (the other is the seller sales export, backlog #317,
+ * below): the export is the heaviest read in the app (every section of
  * the caller's data in one document), so repeated downloads are a
  * usage throttle, never a mistake budget — a completed export does not
  * reset it.
@@ -597,6 +598,20 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * (a previous logout bumped the version) still consumes the
  * bucket, which is exactly the spam shape being throttled.
  *
+ * <p>The seller sales CSV export ({@code GET
+ * /api/seller/sales/export.csv}, backlog #317) has its own
+ * per-<em>user</em> bucket (default 5/minute, like the #172 download
+ * bucket) on the same keying as the message bucket (JWT principal
+ * id, per-IP fallback for a missing/invalid token), never reset on
+ * success: a CSV export scans the seller's order rows, so repeated
+ * downloads are a usage throttle like #172's, not a mistake budget —
+ * a completed export must not refill the allowance. Deliberately
+ * separate from the #172 bucket — the caller's own data document
+ * stays there — so seller-export traffic can neither consume nor be
+ * starved by account-export traffic, nor vice versa. The exact match
+ * keeps the seller-orders list GET ({@code GET /api/seller/orders})
+ * and the seller summary GET out; both stay unthrottled reads.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -678,6 +693,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     return MESSAGE_PATH.equals(path) || MESSAGE_PHOTO_PATH.equals(path);
   }
   private static final String EXPORT_PATH = "/api/users/me/export";
+  private static final String SELLER_SALES_EXPORT_PATH = "/api/seller/sales/export.csv";
   private static final String EXPORT_CONFIRM_PATH = "/api/users/me/export/confirm";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
@@ -745,6 +761,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminListingDeleteLimiter;
   private final AuthRateLimiter disputeEvidenceDeleteLimiter;
   private final AuthRateLimiter logoutLimiter;
+  private final AuthRateLimiter sellerSalesExportLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -823,6 +840,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter disputeEvidenceDeleteLimiter,
                              @Qualifier("logoutRateLimiter")
                                  AuthRateLimiter logoutLimiter,
+                             @Qualifier("sellerSalesExportRateLimiter")
+                                 AuthRateLimiter sellerSalesExportLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -867,6 +886,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminListingDeleteLimiter = adminListingDeleteLimiter;
     this.disputeEvidenceDeleteLimiter = disputeEvidenceDeleteLimiter;
     this.logoutLimiter = logoutLimiter;
+    this.sellerSalesExportLimiter = sellerSalesExportLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -877,8 +897,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   protected boolean shouldNotFilter(HttpServletRequest request) {
     String path = pathOf(request);
     if ("GET".equalsIgnoreCase(request.getMethod()) && EXPORT_PATH.equals(path)) {
-      // The one throttled GET (backlog #172): see the class javadoc.
+      // A throttled GET (backlog #172): see the class javadoc.
       return !dataExportLimiter.isEnabled();
+    }
+    if ("GET".equalsIgnoreCase(request.getMethod()) && SELLER_SALES_EXPORT_PATH.equals(path)) {
+      // Seller sales CSV export (backlog #317): the second throttled
+      // GET — it must be checked before the POST-only gate below, or
+      // it would pass through unthrottled. The seller-orders list and
+      // summary GETs never match this exact path and stay unthrottled
+      // reads.
+      return !sellerSalesExportLimiter.isEnabled();
     }
     if (("PUT".equalsIgnoreCase(request.getMethod())
             || "DELETE".equalsIgnoreCase(request.getMethod()))
@@ -1277,6 +1305,25 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!dataExportLimiter.tryConsume(key)) {
         writeTooManyRequests(response, dataExportLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (SELLER_SALES_EXPORT_PATH.equals(path)) {
+      // Seller sales CSV export (backlog #317): own per-user bucket on
+      // the message keying (JWT principal, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // exports, but anonymous hammering is still throttled), never
+      // reset on success — a completed export must not refill the
+      // allowance, and export traffic must not touch the #172
+      // download bucket or the seller-orders list GET. A throttled
+      // attempt never reaches the controller, so it streams nothing.
+      // The branch is reached only for the GET shape (shouldNotFilter
+      // gates it above); no other method exists on this path.
+      String key = messageKey(request);
+      if (!sellerSalesExportLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, sellerSalesExportLimiter, key);
         return;
       }
       chain.doFilter(request, response);

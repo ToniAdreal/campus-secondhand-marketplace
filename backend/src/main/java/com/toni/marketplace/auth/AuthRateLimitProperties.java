@@ -1067,4 +1067,30 @@ public class AuthRateLimitProperties {
   public void setLogoutAttemptsPerMinute(int logoutAttemptsPerMinute) {
     this.logoutAttemptsPerMinute = logoutAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the seller
+   * sales CSV export (backlog #317): {@code GET
+   * /api/seller/sales/export.csv}. Same keying as the other
+   * per-user buckets (per-IP fallback for anonymous requests, which
+   * the security chain 401s anyway). Deliberately separate from the
+   * #172 account-data-export bucket (the caller's own data document
+   * stays there) and from every other bucket: a CSV export scans the
+   * seller's order rows, so repeated downloads are a usage throttle
+   * like #172's, never a mistake budget — a completed export must
+   * not refill the allowance. Sized at 5/min like the #172 download
+   * bucket: a legitimate seller exports occasionally, while a script
+   * pulling the table in a loop is the throttle target. Never resets
+   * on success. Must be &ge; 1.
+   */
+  private int sellerSalesExportAttemptsPerMinute = 5;
+
+  public int getSellerSalesExportAttemptsPerMinute() {
+    return sellerSalesExportAttemptsPerMinute;
+  }
+
+  public void setSellerSalesExportAttemptsPerMinute(int sellerSalesExportAttemptsPerMinute) {
+    this.sellerSalesExportAttemptsPerMinute = sellerSalesExportAttemptsPerMinute;
+  }
 }
