@@ -841,6 +841,30 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the ADMIN audit-log CSV export (backlog
+   * #318): {@code GET /api/admin/audit-log/export} (default 10
+   * exports/minute per authenticated ADMIN, per the backlog #318
+   * example). Keyed on the JWT principal id like the other per-user
+   * buckets — a CSV export scans the audit table, so one operator
+   * pulling it in a loop is a per-account abuse surface, and keying
+   * by IP would let one NAT address starve every operator behind it.
+   * Deliberately separate from the #172 account-data-export bucket
+   * (the caller's own data document stays there) and from the #317
+   * seller-sales-export bucket, so export traffic can neither
+   * consume nor be starved by either, nor vice versa. Never resets
+   * on success: a completed export must not refill the allowance,
+   * and a throttled export never reaches the controller, so it
+   * streams nothing. The audit-list GET stays an unthrottled read.
+   */
+  @Bean
+  public AuthRateLimiter auditLogExportRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties exportProps = new AuthRateLimitProperties();
+    exportProps.setEnabled(props.isEnabled());
+    exportProps.setAttemptsPerMinute(props.getAuditLogExportAttemptsPerMinute());
+    return new AuthRateLimiter(clock, exportProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP

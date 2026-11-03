@@ -1093,4 +1093,34 @@ public class AuthRateLimitProperties {
   public void setSellerSalesExportAttemptsPerMinute(int sellerSalesExportAttemptsPerMinute) {
     this.sellerSalesExportAttemptsPerMinute = sellerSalesExportAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated ADMIN</em> (JWT principal id) for the audit-log
+   * CSV export (backlog #318): {@code GET
+   * /api/admin/audit-log/export}. Same keying as the other per-user
+   * buckets (per-IP fallback for anonymous requests, which the
+   * security chain 401s anyway — a non-ADMIN caller's single attempt
+   * still answers 403 from the security chain, on that caller's own
+   * principal key, so it can never starve an ADMIN's bucket).
+   * Deliberately separate from the #172 account-data-export bucket
+   * (the caller's own data document stays there) and from the #317
+   * seller-sales-export bucket: an operator pulling the audit trail
+   * in a loop is a different abuse shape from either. Sized at
+   * 10/min per the backlog #318 example (looser than #172's 5/min:
+   * an operator re-exports with narrowed filters a few times in a
+   * row, while a script pulling the table in a loop is the throttle
+   * target). Never resets on success. The audit-list GET
+   * ({@code GET /api/admin/audit-log}) stays an unthrottled read.
+   * Must be &ge; 1.
+   */
+  private int auditLogExportAttemptsPerMinute = 10;
+
+  public int getAuditLogExportAttemptsPerMinute() {
+    return auditLogExportAttemptsPerMinute;
+  }
+
+  public void setAuditLogExportAttemptsPerMinute(int auditLogExportAttemptsPerMinute) {
+    this.auditLogExportAttemptsPerMinute = auditLogExportAttemptsPerMinute;
+  }
 }

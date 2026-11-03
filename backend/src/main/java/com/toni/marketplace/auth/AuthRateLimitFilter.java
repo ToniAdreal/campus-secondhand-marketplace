@@ -612,6 +612,21 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * keeps the seller-orders list GET ({@code GET /api/seller/orders})
  * and the seller summary GET out; both stay unthrottled reads.
  *
+ * <p>The ADMIN audit-log CSV export ({@code GET
+ * /api/admin/audit-log/export}, backlog #318) has its own
+ * per-<em>ADMIN</em> bucket (default 10/minute, per the backlog
+ * #318 example) on the same keying as the message bucket (JWT
+ * principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: a CSV export scans the audit table, so
+ * repeated downloads are a usage throttle like #172's and #317's,
+ * not a mistake budget — a completed export must not refill the
+ * allowance. Deliberately separate from the #172 bucket — the
+ * caller's own data document stays there — and from the #317
+ * bucket — a seller's order rows stay there — so audit-export
+ * traffic can neither consume nor be starved by either, nor vice
+ * versa. The exact match keeps the audit-list GET ({@code GET
+ * /api/admin/audit-log}) out; it stays an unthrottled read.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -694,6 +709,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   }
   private static final String EXPORT_PATH = "/api/users/me/export";
   private static final String SELLER_SALES_EXPORT_PATH = "/api/seller/sales/export.csv";
+  private static final String AUDIT_LOG_EXPORT_PATH = "/api/admin/audit-log/export";
   private static final String EXPORT_CONFIRM_PATH = "/api/users/me/export/confirm";
   private static final String CSP_REPORT_PATH = "/api/security/csp-report";
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
@@ -762,6 +778,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter disputeEvidenceDeleteLimiter;
   private final AuthRateLimiter logoutLimiter;
   private final AuthRateLimiter sellerSalesExportLimiter;
+  private final AuthRateLimiter auditLogExportLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -842,6 +859,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter logoutLimiter,
                              @Qualifier("sellerSalesExportRateLimiter")
                                  AuthRateLimiter sellerSalesExportLimiter,
+                             @Qualifier("auditLogExportRateLimiter")
+                                 AuthRateLimiter auditLogExportLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -887,6 +906,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.disputeEvidenceDeleteLimiter = disputeEvidenceDeleteLimiter;
     this.logoutLimiter = logoutLimiter;
     this.sellerSalesExportLimiter = sellerSalesExportLimiter;
+    this.auditLogExportLimiter = auditLogExportLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -907,6 +927,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // summary GETs never match this exact path and stay unthrottled
       // reads.
       return !sellerSalesExportLimiter.isEnabled();
+    }
+    if ("GET".equalsIgnoreCase(request.getMethod()) && AUDIT_LOG_EXPORT_PATH.equals(path)) {
+      // ADMIN audit-log CSV export (backlog #318): the third
+      // throttled GET — it must be checked before the POST-only gate
+      // below, or it would pass through unthrottled. The audit-list
+      // GET never matches this exact path and stays an unthrottled
+      // read.
+      return !auditLogExportLimiter.isEnabled();
     }
     if (("PUT".equalsIgnoreCase(request.getMethod())
             || "DELETE".equalsIgnoreCase(request.getMethod()))
@@ -1324,6 +1352,26 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!sellerSalesExportLimiter.tryConsume(key)) {
         writeTooManyRequests(response, sellerSalesExportLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (AUDIT_LOG_EXPORT_PATH.equals(path)) {
+      // ADMIN audit-log CSV export (backlog #318): own per-ADMIN
+      // bucket on the message keying (JWT principal, per-IP fallback
+      // for a missing/invalid token — the security chain 401s
+      // anonymous exports, but anonymous hammering is still
+      // throttled), never reset on success — a completed export must
+      // not refill the allowance, and export traffic must not touch
+      // the #172 download bucket, the #317 seller-export bucket, or
+      // the audit-list GET. A throttled attempt never reaches the
+      // controller, so it streams nothing. The branch is reached
+      // only for the GET shape (shouldNotFilter gates it above); no
+      // other method exists on this path.
+      String key = messageKey(request);
+      if (!auditLogExportLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, auditLogExportLimiter, key);
         return;
       }
       chain.doFilter(request, response);
