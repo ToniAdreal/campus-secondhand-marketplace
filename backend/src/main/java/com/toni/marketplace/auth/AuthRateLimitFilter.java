@@ -579,6 +579,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * list GET on the shorter path never matches (no evidence id
  * segment) and stays an unthrottled read.
  *
+ * <p>Logout ({@code POST /api/auth/logout}, backlog #316) has its
+ * own per-<em>user</em> bucket (default 20/minute, like the #282
+ * bucket) on the same keying as the message bucket (JWT principal
+ * id, per-IP fallback for a missing/invalid token), never reset on
+ * success: a burst of logouts is session-kill spam — a holder of a
+ * stolen access token can repeatedly kill the victim's refresh
+ * family — and a throttled attempt never reaches the controller, so
+ * it revokes nothing and bumps no token version, leaving the
+ * caller's refresh family still rotating. Deliberately separate
+ * from the credential bucket — login and refresh stay there — and
+ * from the #296 session-revocation bucket — revoke-others stays
+ * there — so logout traffic can neither consume nor be starved by
+ * either, nor vice versa. The exact match keeps every other
+ * {@code /api/auth/*} shape out; the filter runs before the
+ * security chain, so even a logout whose token is already dead
+ * (a previous logout bumped the version) still consumes the
+ * bucket, which is exactly the spam shape being throttled.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -665,6 +683,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String TELEMETRY_ERROR_PATH = "/api/telemetry/errors";
   private static final String MOCK_PSP_WEBHOOK_PATH = "/api/payments/webhooks/mock-psp";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
+  private static final String LOGOUT_PATH = "/api/auth/logout";
   private static final String PASSWORD_CHANGE_PATH = "/api/auth/password";
   private static final String USERNAME_CHANGE_PATH = "/api/auth/username";
   private static final String AUTH_ME_PATH = "/api/auth/me";
@@ -725,6 +744,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter savedSearchLimiter;
   private final AuthRateLimiter adminListingDeleteLimiter;
   private final AuthRateLimiter disputeEvidenceDeleteLimiter;
+  private final AuthRateLimiter logoutLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -801,6 +821,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminListingDeleteLimiter,
                              @Qualifier("disputeEvidenceDeleteRateLimiter")
                                  AuthRateLimiter disputeEvidenceDeleteLimiter,
+                             @Qualifier("logoutRateLimiter")
+                                 AuthRateLimiter logoutLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -844,6 +866,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.savedSearchLimiter = savedSearchLimiter;
     this.adminListingDeleteLimiter = adminListingDeleteLimiter;
     this.disputeEvidenceDeleteLimiter = disputeEvidenceDeleteLimiter;
+    this.logoutLimiter = logoutLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -1226,6 +1249,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)
         || EMAIL_CHANGE_CONFIRM_PATH.equals(path)) {
       return !emailVerificationLimiter.isEnabled();
+    }
+    if (LOGOUT_PATH.equals(path)) {
+      // Logout (backlog #316): own per-user bucket on the message
+      // keying (JWT principal, per-IP fallback), never reset on
+      // success — a completed logout must not refill the
+      // session-kill allowance. The exact match keeps every other
+      // /api/auth/* shape out, and keeps logout out of the
+      // credential bucket below (login and refresh stay there).
+      return !logoutLimiter.isEnabled();
     }
     if (LOGIN_PATH.equals(path) || REGISTER_PATH.equals(path) || REFRESH_PATH.equals(path)) {
       return !credentialLimiter.isEnabled();
@@ -1893,6 +1925,27 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String ip = clientIp(request);
       if (!emailVerificationLimiter.tryConsume(ip)) {
         writeTooManyRequests(response, emailVerificationLimiter, ip);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (LOGOUT_PATH.equals(path)) {
+      // Logout (backlog #316): own per-user bucket on the message
+      // keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // logouts, but anonymous hammering is still throttled), never
+      // reset on success — a completed logout must not refill the
+      // allowance, and logout traffic must not touch the credential
+      // bucket or the #296 session-revocation bucket. A throttled
+      // attempt never reaches the controller, so it revokes no
+      // refresh family and bumps no token version, and the family
+      // behind a throttled attempt keeps rotating. The branch runs
+      // before the credential fall-through below, so a logout never
+      // lands in the login/register/refresh bucket.
+      String key = messageKey(request);
+      if (!logoutLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, logoutLimiter, key);
         return;
       }
       chain.doFilter(request, response);

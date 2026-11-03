@@ -795,6 +795,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for logout (backlog #316):
+   * {@code POST /api/auth/logout} (default 20 logouts/minute per
+   * authenticated user, like the #282 bucket). Keyed on the JWT
+   * principal id like the other per-user buckets — a burst of
+   * logouts is session-kill spam by one account, and keying by IP
+   * would let one NAT address starve every user behind it.
+   * Deliberately separate from the credential bucket (login and
+   * refresh stay there) and from the #296 session-revocation bucket
+   * (revoke-others stays there), so logout traffic can neither
+   * consume nor be starved by either, nor vice versa. Never resets
+   * on success: a completed logout must not refill the allowance,
+   * and a throttled logout never reaches the controller, so it
+   * revokes nothing and bumps no token version.
+   */
+  @Bean
+  public AuthRateLimiter logoutRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties logoutProps = new AuthRateLimitProperties();
+    logoutProps.setEnabled(props.isEnabled());
+    logoutProps.setAttemptsPerMinute(props.getLogoutAttemptsPerMinute());
+    return new AuthRateLimiter(clock, logoutProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP

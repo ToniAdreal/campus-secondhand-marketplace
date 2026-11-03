@@ -1041,4 +1041,30 @@ public class AuthRateLimitProperties {
   public void setReviewEditAttemptsPerMinute(int reviewEditAttemptsPerMinute) {
     this.reviewEditAttemptsPerMinute = reviewEditAttemptsPerMinute;
   }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for logout (backlog
+   * #316): {@code POST /api/auth/logout}. Same keying as the other
+   * per-user buckets (per-IP fallback for anonymous requests, which
+   * the security chain 401s anyway). Deliberately separate from the
+   * credential bucket (login/register/refresh stay there) and from
+   * the #296 session-revocation bucket (revoke-others and the
+   * one-at-a-time session delete stay there): a burst of logouts is
+   * session-kill spam — a holder of a stolen access token can
+   * repeatedly kill the victim's family — and it must neither
+   * consume nor be starved by login or revocation traffic. Sized at
+   * 20/min like the #282 bucket: a legitimate user logs out once,
+   * while a script churning logouts at volume is the throttle
+   * target. Never resets on success. Must be &ge; 1.
+   */
+  private int logoutAttemptsPerMinute = 20;
+
+  public int getLogoutAttemptsPerMinute() {
+    return logoutAttemptsPerMinute;
+  }
+
+  public void setLogoutAttemptsPerMinute(int logoutAttemptsPerMinute) {
+    this.logoutAttemptsPerMinute = logoutAttemptsPerMinute;
+  }
 }
