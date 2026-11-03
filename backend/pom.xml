@@ -281,8 +281,9 @@
     <!-- Mutation testing pilot (backlog #192): PIT over the auth token
          service and the order state machine ONLY (JwtTokenService,
          OrderService, OrderCreationService), plus the shared password
-         policy (PasswordStrengthValidator, backlog #269) and the TOTP
-         service (TotpService, backlog #285), driven by
+         policy (PasswordStrengthValidator, backlog #269), the TOTP
+         service (TotpService, backlog #285) and the auth token bucket
+         (AuthRateLimiter, backlog #320), driven by
          their pure unit tests. This profile is CI-only: it is NOT
          active by default, so
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
@@ -305,7 +306,16 @@
          (coverage minion died reading its socket, MINION_DIED), so no
          local 5-class score exists either; the floor stays 27 as a
          conservative hold until the next CI backend-mutation run
-         measures the widened scope and re-ratchets it. Deliberate
+         measures the widened scope and re-ratchets it. Backlog #320
+         widens the scope once more (6 classes: AuthRateLimiter, driven
+         by its pure unit suite AuthRateLimiterTest) on the same terms:
+         PIT cannot run in this sandbox, so no local 6-class score
+         exists and the floor stays 27. The Spring/MockMvc filter suite
+         AuthRateLimitTest is deliberately NOT in targetTests: it
+         exercises the limiter through the filter, but every mutant
+         would pay a Spring context boot, and the pure suite already
+         pins the limiter's own branches directly (same rationale as
+         the TOTP MockMvc exclusion in docs/mutation.md). Deliberate
          floor bumps edit this constant together with docs/mutation.md
          and say why in the commit message. -->
     <profile>
@@ -330,6 +340,7 @@
                 <param>com.toni.marketplace.order.OrderCreationService</param>
                 <param>com.toni.marketplace.auth.PasswordStrengthValidator</param>
                 <param>com.toni.marketplace.auth.TotpService</param>
+                <param>com.toni.marketplace.auth.AuthRateLimiter</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -338,6 +349,7 @@
                 <param>com.toni.marketplace.auth.PasswordStrengthValidatorTest</param>
                 <param>com.toni.marketplace.auth.BreachedPasswordCheckerTest</param>
                 <param>com.toni.marketplace.auth.TotpServiceTest</param>
+                <param>com.toni.marketplace.auth.AuthRateLimiterTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>

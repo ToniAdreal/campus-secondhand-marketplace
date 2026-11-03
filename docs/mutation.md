@@ -16,17 +16,25 @@ units in the codebase and measures exactly that:
   the breached-password screen.
 - `com.toni.marketplace.auth.TotpService` (backlog #285) — TOTP codes,
   Base32, otpauth URIs, and recovery-code formatting/normalization.
+- `com.toni.marketplace.auth.AuthRateLimiter` (backlog #320) — the
+  token-bucket throttle for the auth endpoints: burst, refill,
+  snapshot/retry-after math, the disabled switch, and the
+  null/blank-key "unknown" bucket.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
 `PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
-`TotpServiceTest`) — no
+`TotpServiceTest`, `AuthRateLimiterTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
 suites (recovery-code flow, lockout, encryption at rest) exercise
 `TotpService` through `AuthService` but are deliberately NOT in PIT's
 `targetTests`: they would make every mutant pay a context boot, and
 the pure suite now pins the same branches directly (see #285 below).
+The same exclusion applies to the filter suite `AuthRateLimitTest`:
+it exercises `AuthRateLimiter` through `AuthRateLimitFilter`, but the
+pure suite pins the limiter's own branches directly (see #320 below),
+so no filter-seam test is in `targetTests`.
 
 ## How it runs
 
@@ -133,6 +141,48 @@ terms as #269: the next CI `backend-mutation` run measures the 5-class
 scope, and the round that reads its `pit-reports` artifact
 re-ratchets the floor from that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #320, 2026-11-03)
+
+Backlog #320 adds exactly one more class to the PIT scope —
+`auth.AuthRateLimiter` — driven by its pure unit suite
+`AuthRateLimiterTest` (13 tests before this round, 16 after). The
+item names the filter suite `AuthRateLimitTest` as a conditional
+addition ("if the pilot needs the filter seam"); the pilot does not
+need it — the pure suite pins every observable limiter behaviour
+directly, and the filter suite would make every mutant pay a Spring
+context boot for no new limiter branch, the same exclusion the TOTP
+MockMvc suites already carry. It stays out of `targetTests`
+deliberately, and the pom comment records why.
+
+The round closes the branches the pure suite left unpinned, so the
+widened scope does not ship known unkilled mutants with it:
+
+- a non-positive `attemptsPerMinute` (0 and -3) fails closed in the
+  constructor (`constructorRejectsNonPositiveAttemptsPerMinute`) —
+  the guard existed but no test ever tripped it;
+- the disabled switch: `tryConsume` always allows even past capacity,
+  `snapshot` reports the full bucket, `retryAfterSeconds` is 0, and
+  `isEnabled()` is false (`disabledLimiterAlwaysAllowsAndReportsFullState`);
+- null/blank keys share one "unknown" bucket instead of bypassing the
+  limit: five null-key consumes exhaust it, and blank/`""` keys then
+  deny while a real key stays untouched
+  (`nullAndBlankKeysShareTheUnknownBucket`).
+
+Two branches stay knowingly unpinned, as expected surviving mutants
+for the next CI run to report, not silently fixable by a test: the
+idle-eviction path only fires past 10,000 tracked keys and is
+unobservable through the public API (a refilled bucket looks
+identical whether its row was evicted or not), and the backwards-clock
+guard shares its branch with the elapsed-`0` case the burst tests
+already take. Neither is a behaviour gap worth a contrived test.
+
+The floor is **held at 27, not raised and not lowered**, on the same
+terms as #269/#285: PIT cannot run in this sandbox, so no local
+6-class score exists and none is claimed; the next CI
+`backend-mutation` run measures the widened scope, and the round
+that reads its `pit-reports` artifact re-ratchets the floor from
+that measured score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -156,9 +206,10 @@ coverage is 81/291 = 27.8%, and the floor is that score rounded
 **down** to a whole percent, so an identical rerun cannot fail on
 rounding. The floor is never set above the measured score. Note the
 scope drift honestly: that 27.8% was measured on the 3-class scope;
-#269 widened it to 4 classes and #285 to 5 classes, both unmeasured
+#269 widened it to 4 classes, #285 to 5 classes and #320 to 6
+classes, all unmeasured
 locally (PIT cannot run in this sandbox), so 27 is now a conservative
-hold for the 5-class scope, not a measured score for it — the next CI
+hold for the 6-class scope, not a measured score for it — the next CI
 `backend-mutation` run re-ratchets it from its measured score,
 rounded down. Widening `targetTests` to reach the remaining
 NO_COVERAGE methods is future work, not done here, and will require

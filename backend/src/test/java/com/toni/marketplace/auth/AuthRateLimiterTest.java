@@ -1,6 +1,7 @@
 package com.toni.marketplace.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -165,5 +166,51 @@ class AuthRateLimiterTest {
         .as("half a token is not a whole token")
         .isEqualTo(0);
     assertThat(limiter.snapshot("10.0.0.13").resetSeconds()).isEqualTo(54);
+  }
+
+  @Test
+  void constructorRejectsNonPositiveAttemptsPerMinute() {
+    AuthRateLimitProperties zero = new AuthRateLimitProperties();
+    zero.setAttemptsPerMinute(0);
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, zero))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    AuthRateLimitProperties negative = new AuthRateLimitProperties();
+    negative.setAttemptsPerMinute(-3);
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, negative))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void disabledLimiterAlwaysAllowsAndReportsFullState() {
+    AuthRateLimitProperties props = new AuthRateLimitProperties();
+    props.setAttemptsPerMinute(5);
+    props.setEnabled(false);
+    AuthRateLimiter disabled = new AuthRateLimiter(clock, props);
+
+    assertThat(disabled.isEnabled()).isFalse();
+    for (int i = 0; i < 10; i++) {
+      assertThat(disabled.tryConsume("10.0.0.14")).as("disabled attempt %d", i + 1).isTrue();
+    }
+    AuthRateLimiter.RateLimitState state = disabled.snapshot("10.0.0.14");
+    assertThat(state.limit()).isEqualTo(5);
+    assertThat(state.remaining()).isEqualTo(5);
+    assertThat(state.resetSeconds()).isEqualTo(0);
+    assertThat(disabled.retryAfterSeconds("10.0.0.14")).isEqualTo(0);
+  }
+
+  @Test
+  void nullAndBlankKeysShareTheUnknownBucket() {
+    assertThat(limiter.isEnabled()).isTrue();
+    for (int i = 0; i < 5; i++) {
+      assertThat(limiter.tryConsume(null)).as("null-key attempt %d", i + 1).isTrue();
+    }
+    // Null/blank keys never bypass the limit: they share one bucket, so
+    // blank keys hit the same exhausted bucket the null key filled.
+    assertThat(limiter.tryConsume(null)).isFalse();
+    assertThat(limiter.tryConsume("")).isFalse();
+    assertThat(limiter.tryConsume("   ")).isFalse();
+    // A real key is untouched by the unknown bucket's exhaustion.
+    assertThat(limiter.tryConsume("10.0.0.15")).isTrue();
   }
 }
