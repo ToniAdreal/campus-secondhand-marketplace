@@ -968,6 +968,33 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the
+   * dispute-evidence DELETE (backlog #315): {@code DELETE
+   * /api/disputes/{disputeId}/evidence/{evidenceId}}. Same keying as
+   * the other per-user buckets (per-IP fallback for anonymous
+   * requests, which the security chain 401s anyway). Deliberately
+   * separate from the #282 social-write bucket (filing evidence
+   * with the POST sibling stays there) even though the DELETE
+   * shares the dispute-evidence path prefix with that POST:
+   * removing evidence at volume is a different abuse shape from
+   * filing it, and the two must neither consume nor starve each
+   * other. Sized at 20/min like the #282 bucket: a legitimate
+   * user removes a photo or two per minute, while a script
+   * churning deletions at volume is the throttle target. Never
+   * resets on success. Must be &ge; 1.
+   */
+  private int disputeEvidenceDeleteAttemptsPerMinute = 20;
+
+  public int getDisputeEvidenceDeleteAttemptsPerMinute() {
+    return disputeEvidenceDeleteAttemptsPerMinute;
+  }
+
+  public void setDisputeEvidenceDeleteAttemptsPerMinute(int disputeEvidenceDeleteAttemptsPerMinute) {
+    this.disputeEvidenceDeleteAttemptsPerMinute = disputeEvidenceDeleteAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the public mock-PSP webhook receiver (backlog #306): {@code POST
    * /api/payments/webhooks/mock-psp}. Keyed on the IP, never on a

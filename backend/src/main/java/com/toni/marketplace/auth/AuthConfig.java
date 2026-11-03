@@ -771,6 +771,30 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the dispute-evidence DELETE (backlog
+   * #315): {@code DELETE /api/disputes/{disputeId}/evidence/{evidenceId}}
+   * (default 20 deletes/minute per authenticated user, like the #282
+   * bucket). Keyed on the JWT principal id like the other per-user
+   * buckets — one account removing evidence photos at volume is a
+   * per-account abuse surface, and keying by IP would let one NAT
+   * address starve every disputant behind it. Deliberately separate
+   * from the #282 social-write bucket (filing evidence with the POST
+   * sibling stays there), so delete traffic can neither consume nor
+   * be starved by filing traffic, nor vice versa. Never resets on
+   * success: a completed removal must not refill the allowance, and
+   * a throttled delete never reaches the controller, so it deletes
+   * neither the row nor the file.
+   */
+  @Bean
+  public AuthRateLimiter disputeEvidenceDeleteRateLimiter(Clock clock,
+                                                          AuthRateLimitProperties props) {
+    AuthRateLimitProperties evidenceDeleteProps = new AuthRateLimitProperties();
+    evidenceDeleteProps.setEnabled(props.isEnabled());
+    evidenceDeleteProps.setAttemptsPerMinute(props.getDisputeEvidenceDeleteAttemptsPerMinute());
+    return new AuthRateLimiter(clock, evidenceDeleteProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP

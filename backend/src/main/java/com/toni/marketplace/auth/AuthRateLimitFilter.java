@@ -561,6 +561,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * (its own principal key keeps it from ever starving an ADMIN's
  * bucket).
  *
+ * <p>Dispute-evidence DELETE ({@code DELETE
+ * /api/disputes/{disputeId}/evidence/{evidenceId}}, backlog #315)
+ * has its own per-<em>user</em> bucket (default 20/minute, like
+ * the #282 bucket) on the same keying as the message bucket (JWT
+ * principal id, per-IP fallback for a missing/invalid token),
+ * never reset on success: one account removing evidence photos
+ * at volume is one abuse shape, and a throttled attempt never
+ * reaches the controller, so it deletes neither the evidence row
+ * nor its stored file (the #40 orphan discipline: a delete that
+ * never runs cannot orphan anything). Deliberately separate from
+ * the #282 social-write bucket — filing evidence with the POST
+ * sibling stays there — so delete traffic can neither consume nor
+ * be starved by filing traffic, nor vice versa. The DELETE shape
+ * is matched before the filter's POST-only gate (like the DELETE
+ * gallery-photo and ADMIN listing-DELETE siblings); the evidence
+ * list GET on the shorter path never matches (no evidence id
+ * segment) and stays an unthrottled read.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -706,6 +724,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminCategoryLimiter;
   private final AuthRateLimiter savedSearchLimiter;
   private final AuthRateLimiter adminListingDeleteLimiter;
+  private final AuthRateLimiter disputeEvidenceDeleteLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -780,6 +799,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter savedSearchLimiter,
                              @Qualifier("adminListingDeleteRateLimiter")
                                  AuthRateLimiter adminListingDeleteLimiter,
+                             @Qualifier("disputeEvidenceDeleteRateLimiter")
+                                 AuthRateLimiter disputeEvidenceDeleteLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -822,6 +843,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminCategoryLimiter = adminCategoryLimiter;
     this.savedSearchLimiter = savedSearchLimiter;
     this.adminListingDeleteLimiter = adminListingDeleteLimiter;
+    this.disputeEvidenceDeleteLimiter = disputeEvidenceDeleteLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -897,6 +919,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // listing-detail GET never matches this branch (wrong method)
       // and stays an unthrottled read.
       return !adminListingDeleteLimiter.isEnabled();
+    }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isDisputeEvidenceDeletePath(path)) {
+      // Dispute-evidence DELETE (backlog #315): the one DELETE shape
+      // in its own per-user bucket — it must be checked before the
+      // POST-only gate below, or it would pass through unthrottled.
+      // The POST filing sibling on the shorter path stays in the
+      // #282 bucket (handled by the POST section below) and the
+      // evidence-list GET never matches this branch (no evidence id
+      // segment) and stays an unthrottled read.
+      return !disputeEvidenceDeleteLimiter.isEnabled();
     }
     if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
@@ -1558,6 +1590,27 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isDisputeEvidenceDeletePath(path)) {
+      // Dispute-evidence DELETE (backlog #315): own per-user bucket
+      // on the message keying (JWT principal id, per-IP fallback for
+      // a missing/invalid token — the security chain 401s anonymous
+      // writes, but anonymous hammering is still throttled), never
+      // reset on success — a completed removal must not refill the
+      // allowance, and delete traffic must not touch the #282
+      // filing bucket or any other bucket. A throttled attempt never
+      // reaches the controller, so it deletes neither the evidence
+      // row nor its stored file and the dispute stays exactly as it
+      // was. The shape reaches this branch via shouldNotFilter's
+      // pre-gate check above; the POST filing sibling on the
+      // shorter path stays in the #282 bucket.
+      String key = messageKey(request);
+      if (!disputeEvidenceDeleteLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, disputeEvidenceDeleteLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if ((("PUT".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSocialGraphFavoritePath(path))
             || ("POST".equalsIgnoreCase(request.getMethod()) && isSocialGraphFollowPath(path))
@@ -1972,7 +2025,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    * POST, the item mutation POSTs and the order transition POSTs
    * all have their own buckets (or, for the offer lifecycle and
    * ADMIN resolution POSTs, no bucket by #282's scope), and the
-   * evidence GET/DELETE siblings are not POSTs at all.
+   * evidence GET sibling is a read the filter never throttles, and
+   * the evidence DELETE sibling has its own #315 bucket, below.
    */
   private static boolean isSocialWritePath(String path) {
     return path != null
@@ -2206,6 +2260,24 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isAdminListingDeletePath(String path) {
     return path != null && path.matches("/api/items/\\d+");
+  }
+
+  /**
+   * True for the dispute-evidence delete shape ({@code DELETE
+   * /api/disputes/{disputeId}/evidence/{evidenceId}}, backlog #315):
+   * both id segments are numeric (dispute and evidence ids are),
+   * which keeps the POST filing sibling ({@code
+   * /api/disputes/{id}/evidence}, no evidence id segment — matched
+   * exactly by {@link #isSocialWritePath}) and the evidence-list
+   * GET (same shorter path, different method) out. Callers check
+   * the HTTP method alongside this matcher, since the filter only
+   * throttles the DELETE shape here. Deliberately a separate
+   * matcher from the #282 shape despite the shared path prefix:
+   * the two shapes are different throttled surfaces and must stay
+   * independently greppable.
+   */
+  private static boolean isDisputeEvidenceDeletePath(String path) {
+    return path != null && path.matches("/api/disputes/\\d+/evidence/\\d+");
   }
 
   /**
