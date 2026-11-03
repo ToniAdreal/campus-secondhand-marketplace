@@ -467,6 +467,23 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * this filter, and the list, preferences-catalogue and unread-count
  * GETs stay unthrottled reads.
  *
+ * <p>Account-identity writes ({@code POST /api/auth/username} and
+ * {@code DELETE /api/auth/me}, backlog #310) share a per-<em>user</em>
+ * bucket (default 5/minute, like the credential buckets) on the same
+ * keying as the message bucket (JWT principal id, per-IP fallback for a
+ * missing/invalid token), never reset on success: one account churning
+ * its own identity — renaming at volume, or hammering the closure
+ * password proof — is one abuse shape, and a throttled attempt never
+ * reaches the controller, so it renames nothing and closes nothing.
+ * Deliberately separate from the #290 password-change bucket —
+ * changing the password stays there — and the #296 session-revocation
+ * bucket — killing sessions stays there — so identity traffic can
+ * neither consume nor be starved by either, nor vice versa. The
+ * DELETE shape is matched before the filter's POST-only gate (like the
+ * DELETE session-revocation sibling); the profile-read sibling
+ * ({@code GET /api/auth/me}) never matches and stays an unthrottled
+ * read.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -553,6 +570,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String MOCK_PSP_WEBHOOK_PATH = "/api/payments/webhooks/mock-psp";
   private static final String STEP_UP_PATH = "/api/auth/step-up";
   private static final String PASSWORD_CHANGE_PATH = "/api/auth/password";
+  private static final String USERNAME_CHANGE_PATH = "/api/auth/username";
+  private static final String AUTH_ME_PATH = "/api/auth/me";
   private static final String PASSKEY_REGISTRATION_OPTIONS_PATH =
       "/api/auth/2fa/passkeys/registration/options";
   private static final String PASSKEY_REGISTRATION_VERIFY_PATH =
@@ -593,6 +612,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter socialWriteLimiter;
   private final AuthRateLimiter socialGraphLimiter;
   private final AuthRateLimiter notificationLimiter;
+  private final AuthRateLimiter accountIdentityLimiter;
   private final AuthRateLimiter offerLifecycleLimiter;
   private final AuthRateLimiter sessionRevocationLimiter;
   private final AuthRateLimiter adminResolutionLimiter;
@@ -648,6 +668,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter socialGraphLimiter,
                              @Qualifier("notificationRateLimiter")
                                  AuthRateLimiter notificationLimiter,
+                             @Qualifier("accountIdentityRateLimiter")
+                                 AuthRateLimiter accountIdentityLimiter,
                              @Qualifier("offerLifecycleRateLimiter")
                                  AuthRateLimiter offerLifecycleLimiter,
                              @Qualifier("sessionRevocationRateLimiter")
@@ -694,6 +716,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.socialWriteLimiter = socialWriteLimiter;
     this.socialGraphLimiter = socialGraphLimiter;
     this.notificationLimiter = notificationLimiter;
+    this.accountIdentityLimiter = accountIdentityLimiter;
     this.offerLifecycleLimiter = offerLifecycleLimiter;
     this.sessionRevocationLimiter = sessionRevocationLimiter;
     this.adminResolutionLimiter = adminResolutionLimiter;
@@ -795,6 +818,16 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // stream GET is ticket-gated, not filter-gated.
       return !notificationLimiter.isEnabled();
     }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && AUTH_ME_PATH.equals(path)) {
+      // Account closure (backlog #310): the DELETE shape in the
+      // account-identity bucket — it must be checked before the
+      // POST-only gate below, or it would pass through unthrottled.
+      // The POST username-change sibling is handled by the POST
+      // section below and shares this same bucket; the profile-read
+      // sibling (GET /api/auth/me) never matches this branch and
+      // stays an unthrottled read.
+      return !accountIdentityLimiter.isEnabled();
+    }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
@@ -830,6 +863,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // covers only the re-proof) and the credential bucket, so
       // guessing at one surface can never starve the others.
       return !passwordChangeLimiter.isEnabled();
+    }
+    if (USERNAME_CHANGE_PATH.equals(path)) {
+      // Username change (backlog #310): the POST member of the
+      // account-identity bucket — own per-user bucket on the message
+      // keying (JWT principal, per-IP fallback), never reset on
+      // success. The exact match keeps the DELETE account-closure
+      // sibling in the same bucket (handled by the pre-gate DELETE
+      // branch above) and every other /api/auth/* shape out.
+      return !accountIdentityLimiter.isEnabled();
     }
     if (isPasskeyChallengePath(path)) {
       // Passkey challenge issuance / enrolment verification (backlog
@@ -1121,6 +1163,28 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       String key = messageKey(request);
       if (!passwordChangeLimiter.tryConsume(key)) {
         writeTooManyRequests(response, passwordChangeLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
+    if (("POST".equalsIgnoreCase(request.getMethod()) && USERNAME_CHANGE_PATH.equals(path))
+        || ("DELETE".equalsIgnoreCase(request.getMethod()) && AUTH_ME_PATH.equals(path))) {
+      // Account-identity writes (backlog #310): own per-user bucket on
+      // the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // writes, but anonymous hammering is still throttled), never
+      // reset on success — a completed rename must not refill the
+      // allowance, and identity traffic must not touch the #290
+      // password-change bucket or the #296 session-revocation bucket.
+      // A throttled attempt never reaches the controller, so it
+      // renames nothing and closes nothing. The DELETE shape reaches
+      // this branch via shouldNotFilter's pre-gate check above; the
+      // POST shape via its POST section; the GET profile-read sibling
+      // never reaches either and stays an unthrottled read.
+      String key = messageKey(request);
+      if (!accountIdentityLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, accountIdentityLimiter, key);
         return;
       }
       chain.doFilter(request, response);

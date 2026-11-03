@@ -418,6 +418,29 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the account-identity writes (backlog #310):
+   * {@code POST /api/auth/username} and {@code DELETE /api/auth/me} share
+   * it (default 5 writes/minute per authenticated user, like the
+   * credential buckets). Keyed on the JWT principal id like the
+   * notification bucket — renaming or closing an account is a
+   * per-account abuse surface, and keying by IP would let one NAT
+   * address starve every user behind it. Deliberately separate from
+   * the #290 password-change bucket (changing the password stays there)
+   * and the #296 session-revocation bucket (killing sessions stays
+   * there), so identity traffic can never starve them, nor vice versa.
+   * Never resets on success: a completed rename must not refill the
+   * allowance, and a throttled closure attempt never reaches the
+   * controller, so it closes nothing.
+   */
+  @Bean
+  public AuthRateLimiter accountIdentityRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties identityProps = new AuthRateLimitProperties();
+    identityProps.setEnabled(props.isEnabled());
+    identityProps.setAttemptsPerMinute(props.getAccountIdentityAttemptsPerMinute());
+    return new AuthRateLimiter(clock, identityProps);
+  }
+
+  /**
    * Separate token bucket for the offer lifecycle transitions
    * ({@code POST /api/offers/{id}/accept}, {@code /decline},
    * {@code /counter}, {@code /counter-accept}, {@code /counter-decline}

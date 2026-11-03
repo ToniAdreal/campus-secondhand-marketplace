@@ -563,6 +563,35 @@ public class AuthRateLimitProperties {
 
   /**
    * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the account-identity
+   * writes (backlog #310): {@code POST /api/auth/username} (rename the
+   * caller's account) and {@code DELETE /api/auth/me} (close the caller's
+   * account) share this one bucket. Same keying as the other per-user
+   * buckets (per-IP fallback for anonymous requests, which the security
+   * chain 401s anyway). The two shapes share one bucket because they
+   * are one abuse shape — one account churning its own identity (rename
+   * spam, or repeated closure attempts against the password proof) —
+   * and the bucket must neither consume nor be starved by the #290
+   * password-change bucket (changing the password stays there) or the
+   * #296 session-revocation bucket (killing sessions stays there).
+   * Sized like the credential buckets (5/min): a legitimate user
+   * renames or closes an account once, so the ceiling only bites
+   * automation. Never resets on success — a completed rename must not
+   * refill the allowance, and a throttled closure attempt never reaches
+   * the controller, so it closes nothing. Must be &ge; 1.
+   */
+  private int accountIdentityAttemptsPerMinute = 5;
+
+  public int getAccountIdentityAttemptsPerMinute() {
+    return accountIdentityAttemptsPerMinute;
+  }
+
+  public void setAccountIdentityAttemptsPerMinute(int accountIdentityAttemptsPerMinute) {
+    this.accountIdentityAttemptsPerMinute = accountIdentityAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size and sustained refill rate per minute per
    * <em>authenticated user</em> (JWT principal id) for the offer
    * lifecycle transitions (backlog #293): {@code POST
    * /api/offers/{id}/accept}, {@code /decline}, {@code /counter},
