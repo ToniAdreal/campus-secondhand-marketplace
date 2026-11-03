@@ -726,6 +726,28 @@ public class AuthConfig {
   }
 
   /**
+   * Separate token bucket for the saved-search writes (backlog
+   * #313): {@code POST /api/users/me/saved-searches} and {@code
+   * DELETE /api/users/me/saved-searches/{id}} share it (default 20
+   * writes/minute per authenticated user, like the #282 bucket).
+   * Keyed on the JWT principal id like the other per-user buckets —
+   * the abuse surface is one account saving or deleting searches at
+   * volume, not an IP. Deliberately separate from the #308
+   * social-graph bucket (saving a listing vs saving a search are
+   * different surfaces despite the shared "save" word), so
+   * saved-search traffic can neither consume nor be starved by graph
+   * traffic, nor vice versa. Never resets on success: a completed
+   * save or delete must not refill the allowance.
+   */
+  @Bean
+  public AuthRateLimiter savedSearchRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    AuthRateLimitProperties savedSearchProps = new AuthRateLimitProperties();
+    savedSearchProps.setEnabled(props.isEnabled());
+    savedSearchProps.setAttemptsPerMinute(props.getSavedSearchAttemptsPerMinute());
+    return new AuthRateLimiter(clock, savedSearchProps);
+  }
+
+  /**
    * Separate token bucket for the public mock-PSP webhook receiver
    * (backlog #306): {@code POST /api/payments/webhooks/mock-psp}
    * (default 60 deliveries/minute per client IP, like the #204 CSP

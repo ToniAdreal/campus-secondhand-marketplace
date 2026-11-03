@@ -910,6 +910,34 @@ public class AuthRateLimitProperties {
   }
 
   /**
+   * Token-bucket size and sustained refill rate per minute per
+   * <em>authenticated user</em> (JWT principal id) for the
+   * saved-search writes (backlog #313): {@code POST
+   * /api/users/me/saved-searches} and {@code DELETE
+   * /api/users/me/saved-searches/{id}} share this one bucket. Same
+   * keying as the other per-user buckets (per-IP fallback for
+   * anonymous requests, which the security chain 401s anyway). The
+   * two shapes share one bucket because they are one abuse shape —
+   * one account saving or deleting searches at volume — and the
+   * bucket must neither consume nor be starved by the #308
+   * social-graph bucket (saving a listing vs saving a search are
+   * different surfaces despite the shared "save" word). Sized at
+   * 20/min like the #282 bucket: a legitimate user saves a handful
+   * of searches per minute, while a script churning them at volume
+   * is the throttle target. Never resets on success. Must be
+   * &ge; 1.
+   */
+  private int savedSearchAttemptsPerMinute = 20;
+
+  public int getSavedSearchAttemptsPerMinute() {
+    return savedSearchAttemptsPerMinute;
+  }
+
+  public void setSavedSearchAttemptsPerMinute(int savedSearchAttemptsPerMinute) {
+    this.savedSearchAttemptsPerMinute = savedSearchAttemptsPerMinute;
+  }
+
+  /**
    * Token-bucket size and sustained refill rate per minute per client IP
    * for the public mock-PSP webhook receiver (backlog #306): {@code POST
    * /api/payments/webhooks/mock-psp}. Keyed on the IP, never on a

@@ -523,6 +523,23 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * own principal key keeps it from ever starving an ADMIN's
  * bucket).
  *
+ * <p>Saved-search writes ({@code POST /api/users/me/saved-searches}
+ * and {@code DELETE /api/users/me/saved-searches/{id}}, backlog
+ * #313) share a per-<em>user</em> bucket (default 20/minute, like
+ * the #282 bucket) on the same keying as the message bucket (JWT
+ * principal id, per-IP fallback for a missing/invalid token), never
+ * reset on success: one account saving or deleting searches at
+ * volume is one abuse shape, and a throttled attempt never reaches
+ * the controller, so it saves or deletes nothing. Deliberately
+ * separate from the #308 social-graph bucket — saving a listing
+ * (favorite) and saving a search are different surfaces despite the
+ * shared "save" word — so saved-search traffic can neither consume
+ * nor be starved by graph traffic, nor vice versa. The DELETE shape
+ * is matched before the filter's POST-only gate (like the DELETE
+ * session-revocation, DELETE/PATCH passkey-management and
+ * listing-edit siblings); the saved-search list GET carries no id
+ * segment, never matches, and stays an unthrottled read.
+ *
  * <p>Behavior:
  * <ul>
  *   <li>Every attempt on a throttled endpoint consumes one token from its
@@ -627,6 +644,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private static final String NOTIFICATION_READ_ALL_PATH = "/api/notifications/read-all";
   private static final String ITEMS_PATH = "/api/items";
   private static final String CATEGORIES_PATH = "/api/categories";
+  private static final String SAVED_SEARCHES_PATH = "/api/users/me/saved-searches";
   private static final String ORDERS_PATH = "/api/orders";
   private static final String BEARER_PREFIX = "Bearer ";
 
@@ -665,6 +683,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter adminReportActionLimiter;
   private final AuthRateLimiter adminWebhookReplayLimiter;
   private final AuthRateLimiter adminCategoryLimiter;
+  private final AuthRateLimiter savedSearchLimiter;
   private final AuthRateLimiter mockPspWebhookLimiter;
   private final JwtTokenService jwt;
   private final ObjectMapper mapper;
@@ -735,6 +754,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter adminWebhookReplayLimiter,
                              @Qualifier("adminCategoryRateLimiter")
                                  AuthRateLimiter adminCategoryLimiter,
+                             @Qualifier("savedSearchRateLimiter")
+                                 AuthRateLimiter savedSearchLimiter,
                              @Qualifier("mockPspWebhookRateLimiter")
                                  AuthRateLimiter mockPspWebhookLimiter,
                              JwtTokenService jwt,
@@ -775,6 +796,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.adminReportActionLimiter = adminReportActionLimiter;
     this.adminWebhookReplayLimiter = adminWebhookReplayLimiter;
     this.adminCategoryLimiter = adminCategoryLimiter;
+    this.savedSearchLimiter = savedSearchLimiter;
     this.mockPspWebhookLimiter = mockPspWebhookLimiter;
     this.jwt = jwt;
     this.mapper = mapper;
@@ -888,6 +910,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // GET never matches the id-carrying matcher and stays an
       // unthrottled read.
       return !adminCategoryLimiter.isEnabled();
+    }
+    if ("DELETE".equalsIgnoreCase(request.getMethod()) && isSavedSearchDeletePath(path)) {
+      // Saved-search writes (backlog #313): the DELETE shape in the
+      // saved-search bucket — it must be checked before the POST-only
+      // gate below, or it would pass through unthrottled. The POST
+      // create sibling is handled by the POST section below and
+      // shares this same bucket; the saved-search list GET never
+      // matches the id-carrying matcher and stays an unthrottled read.
+      return !savedSearchLimiter.isEnabled();
     }
     if (!"POST".equalsIgnoreCase(request.getMethod())) {
       return true;
@@ -1098,6 +1129,15 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       // pre-gate branch above) and the category-list GET out (it
       // is not a POST).
       return !adminCategoryLimiter.isEnabled();
+    }
+    if (SAVED_SEARCHES_PATH.equals(path)) {
+      // Saved-search writes (backlog #313): the POST member of the
+      // saved-search bucket — own per-user bucket on the message
+      // keying, never reset on success. The exact match keeps the
+      // DELETE sibling in the same bucket (handled by the pre-gate
+      // branch above) and the saved-search list GET out (it is not
+      // a POST).
+      return !savedSearchLimiter.isEnabled();
     }
     if (isReportPath(path)) {
       return !reportLimiter.isEnabled();
@@ -1654,6 +1694,28 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       chain.doFilter(request, response);
       return;
     }
+    if (("POST".equalsIgnoreCase(request.getMethod()) && SAVED_SEARCHES_PATH.equals(path))
+        || ("DELETE".equalsIgnoreCase(request.getMethod()) && isSavedSearchDeletePath(path))) {
+      // Saved-search writes (backlog #313): own per-user bucket on
+      // the message keying (JWT principal id, per-IP fallback for a
+      // missing/invalid token — the security chain 401s anonymous
+      // writes, but anonymous hammering is still throttled), never
+      // reset on success — a completed save or delete must not
+      // refill the allowance, and saved-search traffic must not
+      // touch the #308 social-graph bucket or any other bucket. A
+      // throttled attempt never reaches the controller, so it saves
+      // or deletes nothing. The DELETE shape reaches this branch via
+      // shouldNotFilter's pre-gate check above; the POST shape via
+      // its POST section; the saved-search list GET never reaches
+      // either and stays an unthrottled read.
+      String key = messageKey(request);
+      if (!savedSearchLimiter.tryConsume(key)) {
+        writeTooManyRequests(response, savedSearchLimiter, key);
+        return;
+      }
+      chain.doFilter(request, response);
+      return;
+    }
     if (isReviewEditPath(path)) {
       // Review edits / seller responses (backlog #298): own per-user
       // bucket on the message keying (JWT principal id, per-IP
@@ -2108,6 +2170,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
    */
   private static boolean isSocialGraphBlockPath(String path) {
     return path != null && path.matches("/api/users/\\d+/block");
+  }
+
+  /**
+   * True for the saved-search delete shape ({@code DELETE
+   * /api/users/me/saved-searches/{id}}, backlog #313): the id segment
+   * is numeric (saved-search ids are), which keeps the collection
+   * POST ({@code /api/users/me/saved-searches}, no id segment —
+   * matched exactly elsewhere) and the saved-search list GET out.
+   * Callers check the HTTP method alongside this matcher, since the
+   * filter only throttles the DELETE shape here.
+   */
+  private static boolean isSavedSearchDeletePath(String path) {
+    return path != null && path.matches("/api/users/me/saved-searches/\\d+");
   }
 
   /**
