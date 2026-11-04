@@ -56,6 +56,7 @@ import AdminDisputesPage from './AdminDisputesPage';
 import AdminPaymentsPage from './AdminPaymentsPage';
 import SessionsPage from './SessionsPage';
 import VerifyEmailPage from './VerifyEmailPage';
+import NotFoundPage from './NotFoundPage';
 
 /**
  * Automated accessibility checks (backlog #183) — axe-core over the
@@ -73,7 +74,10 @@ import VerifyEmailPage from './VerifyEmailPage';
  * extends it to the third batch (admin, seller-profile and account
  * pages) in both themes, on the same gate. Backlog #323 extends it to
  * the fourth batch (the seven remaining routes) in light mode only;
- * their dark-mode cases are #328's scope. One honest jsdom
+ * their dark-mode cases are #328's scope, landed in the
+ * dark-theme describe below, along with the 404 page in both
+ * themes (its light case is the fifth batch's own describe).
+ * One honest jsdom
  * limit: `color-contrast` cannot complete in jsdom (it needs a real
  * canvas/layout engine), so axe reports it as *incomplete*, never as
  * a violation or a pass — contrast remains un-audited by this suite,
@@ -862,9 +866,9 @@ describe('automated accessibility checks (axe-core, backlog #183)', () => {
  * categories, disputes and payments, plus sessions and verify-email.
  * Same gate (zero serious/critical, WCAG 2.0/2.1 A+AA) and same jsdom
  * caveats as #183: rendered markup only, color-contrast incomplete.
- * Dark-mode cases for these seven pages are backlog #328's scope, not
- * this batch's — this describe deliberately stays light-only so #328
- * still has a real job. Every case waits for a populated row (or the
+ * Dark-mode cases for these seven pages landed in backlog #328, in
+ * the dark-theme describe below — this describe deliberately stays
+ * light-only. Every case waits for a populated row (or the
  * confirmed state for verify-email) before running axe, so the run
  * sees the real tables and forms, not loading skeletons. The
  * verify-email case mocks the confirm POST to success: the page fires
@@ -985,7 +989,45 @@ describe('automated accessibility checks, fourth batch (backlog #323)', () => {
 });
 
 /**
- * Same key pages under the dark theme (backlog #227). The `dark` class
+ * Fifth batch, light mode (backlog #328): the 404 page, the one
+ * route no earlier batch covered — main.tsx routes '*' to
+ * NotFoundPage, but grep for NotFound in this file was 0 before
+ * this batch. The page fires no API call, so the test renders it
+ * directly and waits on its heading, not on a fixture row. Its
+ * dark-mode case and the dark-mode cases for the seven #323 pages
+ * live in the dark-theme describe below, where the `dark` class
+ * setup already exists, rather than duplicating theme handling
+ * here. Same gate and same jsdom caveats as #183.
+ */
+describe('automated accessibility checks, fifth batch (backlog #328)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    useCartStore.setState({ items: [], sellerId: null, sellerUsername: null, batchId: null });
+  });
+
+  it('404 page has no serious/critical violations', async () => {
+    const { container } = renderRoute('/no-such-page', '*', <NotFoundPage />);
+    expect(
+      screen.getByRole('heading', { name: /this page doesn't exist/i }),
+    ).toBeTruthy();
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+});
+
+/**
+ * Same key pages under the dark theme (backlog #227). Backlog #328
+ * extends this describe with the 404 page and the dark-mode cases
+ * for the seven #323 pages, using the same populated fixtures and
+ * wait markers as their light-mode cases. The `dark` class
  * on <html> is what flips the palette, so these tests render the pages
  * with the class applied and assert the same zero-serious/critical gate
  * — a dark-variant class that broke markup (e.g. a lost label) would
@@ -1198,6 +1240,110 @@ describe('automated accessibility checks under the dark theme (backlog #227)', (
     setAccessToken('tok');
     const { container } = renderRoute('/seller/payouts', '/seller/payouts', <SellerPayoutsPage />);
     await waitFor(() => expect(screen.getByText('Payout for order #9')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('404 page has no serious/critical violations in dark mode', async () => {
+    const { container } = renderRoute('/no-such-page', '*', <NotFoundPage />);
+    expect(
+      screen.getByRole('heading', { name: /this page doesn't exist/i }),
+    ).toBeTruthy();
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin appeals page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute('/admin/appeals', '/admin/appeals', <AdminAppealsPage />);
+    await waitFor(() =>
+      expect(screen.getByText('this is my own textbook, sold once')).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin audit log page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/audit-log',
+      '/admin/audit-log',
+      <AdminAuditLogPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin categories page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/categories',
+      '/admin/categories',
+      <AdminCategoriesPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('cell', { name: 'Textbooks' })).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin disputes page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/disputes',
+      '/admin/disputes',
+      <AdminDisputesPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText('the parcel never arrived')).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin payments page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/payments',
+      '/admin/payments',
+      <AdminPaymentsPage />,
+    );
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Sessions page has no serious/critical violations in dark mode', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/settings/sessions',
+      '/settings/sessions',
+      <SessionsPage />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('This device')).toBeTruthy();
+      expect(screen.getByText(/Safari\/605.1/)).toBeTruthy();
+      expect(screen.getByText('SUCCESS')).toBeTruthy();
+    });
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Verify email page (confirmed state) has no serious/critical violations in dark mode', async () => {
+    // Like the #323 light case, the confirm POST is mocked to
+    // success: the page fires it on mount, and the axe target is
+    // the confirmed state.
+    postSpy.mockResolvedValue(envelope(null) as never);
+    const { container } = renderRoute(
+      '/verify-email?token=a11y-token',
+      '/verify-email',
+      <VerifyEmailPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/email address confirmed/i)).toBeTruthy(),
+    );
     await expectNoSeriousOrCriticalViolations(container);
   });
 });
