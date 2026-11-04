@@ -38,9 +38,27 @@ export APP_TOTP_ENCRYPTION_KEY=$(openssl rand -base64 32)
 
 ## Run
 
+The curls below need a session, so start the stack with the
+email-verification gate stubbed off via its documented env knob (backlog
+#325 — the same knob the CI `docker-compose-smoke` job exports, and the
+same one the e2e job uses for the jar):
+
 ```bash
-docker compose up --build -d
+APP_AUTH_EMAIL_VERIFICATION_ENABLED=false docker compose up --build -d
 ```
+
+With the gate left on (the plain `docker compose up` default), register
+does NOT return a session: it answers 201 with
+`{"code":0,"message":"ok","data":{"user":{…},"emailVerificationRequired":true}}`
+and no access token, and login before confirmation answers 403 — that is
+the production confirm-then-login flow (`POST
+/api/auth/email-verification/confirm {token}` flips the flag, then login
+issues the session), not a smoke failure. The compose smoke cannot run
+that flow end to end because no mail server exists here: the default
+sender logs the verification request with the token redacted, so no
+operator could read a confirmation link out of it. A real deployment
+injects an SMTP/SES sender for that step; the smoke shortcut above
+stands in for it and changes nothing about the production default.
 
 First boot takes a few minutes: the backend build stage (`maven:3.9.9`) downloads
 dependencies, MySQL initializes `marketdb`, and the backend replays the Flyway
@@ -52,11 +70,14 @@ the proxy wiring is part of what this verifies):
 
 ```bash
 # register through the proxy (username 3-60 chars, valid email, password 12-72 chars — the strength rule's 12 minimum, on top of the DTO's 8-72 range)
+# With the gate off (see Run above) register issues a session:
 curl -s -X POST http://localhost/api/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"username":"smoke","email":"smoke@example.com","password":"Sm0kePass123"}'
 # → {"code":0,"message":"ok","data":{"accessToken":"…","tokenType":"Bearer",…}}
 #    the refresh token is Set-Cookie'd as httpOnly `refresh_token`, never in the body
+#    (with the gate on, the same call answers the pending-verification 201
+#    described in Run above — no token, by design)
 ```
 
 Then exercise an authenticated endpoint through the proxy:

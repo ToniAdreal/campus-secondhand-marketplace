@@ -276,10 +276,19 @@ jobs:
     # images, then register/login/create-listing are exercised through the
     # nginx /api proxy with the backend on the `mysql` Spring profile.
     # Manual version: docs/smoke-test.md
+    # Email-verification gate (backlog #325): the compose file forwards
+    # APP_AUTH_EMAIL_VERIFICATION_ENABLED with default true, and this job
+    # exports 'false' — with the gate on, register returns a
+    # session-less pending-verification 201 (no accessToken to extract)
+    # and login before confirmation answers 403, so the register-token
+    # curl below could never pass. Gate-off here is the smoke shortcut,
+    # not a change to the production default.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker compose up --build -d
+        env:
+          APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
       - name: Wait for the API through the nginx /api proxy
         run: |
           code=""
@@ -322,10 +331,19 @@ jobs:
     # back it up with scripts/backup.sh, restore it into a scratch
     # project with scripts/restore-drill.sh (row counts must match),
     # then tear both stacks down. Manual version: docs/runbook.md.
+    # Email-verification gate (backlog #325): audited the same way as
+    # the smoke job — this job was broken too, and on the login step
+    # rather than the register step: with the gate on, the seeded
+    # account is unverified, so its login answers 403 and no token
+    # exists to extract. Same gate-off export as the smoke job; the
+    # restore-drill script itself only checks /health, the proxy 401
+    # and row counts, so it needs no gate change.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker compose up --build -d
+        env:
+          APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
       - name: Wait for the API through the nginx /api proxy
         run: |
           code=""
