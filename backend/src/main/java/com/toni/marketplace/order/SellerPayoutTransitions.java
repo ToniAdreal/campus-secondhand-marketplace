@@ -5,6 +5,8 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.dispute.DisputeProperties;
 import com.toni.marketplace.dispute.DisputeStatus;
 import com.toni.marketplace.dispute.OrderDisputeRepository;
+import com.toni.marketplace.notification.NotificationService;
+import com.toni.marketplace.notification.NotificationType;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
@@ -48,19 +50,37 @@ public class SellerPayoutTransitions {
   private final UserRepository users;
   private final DisputeProperties disputeProps;
   private final Clock clock;
+  private final NotificationService notifications;
 
+  @org.springframework.beans.factory.annotation.Autowired
   public SellerPayoutTransitions(SellerPayoutRepository payouts,
                                   OrderRepository orders,
                                   OrderDisputeRepository disputes,
                                   UserRepository users,
                                   DisputeProperties disputeProps,
-                                  Clock clock) {
+                                  Clock clock,
+                                  NotificationService notifications) {
     this.payouts = payouts;
     this.orders = orders;
     this.disputes = disputes;
     this.users = users;
     this.disputeProps = disputeProps;
     this.clock = clock;
+    this.notifications = notifications;
+  }
+
+  /** Constructor for direct unit tests that do not assert on notifications. */
+  public SellerPayoutTransitions(SellerPayoutRepository payouts,
+                                  OrderRepository orders,
+                                  OrderDisputeRepository disputes,
+                                  UserRepository users,
+                                  DisputeProperties disputeProps,
+                                  Clock clock) {
+    this(payouts, orders, disputes, users, disputeProps, clock, NotificationService.noop());
+  }
+
+  private NotificationService notifications() {
+    return notifications != null ? notifications : NotificationService.noop();
   }
 
   /**
@@ -117,6 +137,10 @@ public class SellerPayoutTransitions {
    * at pay time: a dispute opened after promotion, or a dispute refund
    * that moved the order to REFUNDED, must never be paid out. Returns
    * false for every skip reason, mirroring {@link #promoteToPayable}.
+   * On success it records one PAYOUT_PAID notification for the seller
+   * inside this same transaction (backlog #332, the #157 pattern):
+   * a rolled-back pay notifies nobody, and a rerun returns false
+   * before reaching the record, so it notifies nothing twice.
    */
   @Transactional
   public boolean markPaid(Long payoutId, Instant now) {
@@ -137,6 +161,7 @@ public class SellerPayoutTransitions {
     payout.setStatus(PayoutStatus.PAID);
     payout.setPaidAt(now);
     payouts.save(payout);
+    notifications().record(payout.getSellerId(), NotificationType.PAYOUT_PAID, payout.getOrderId());
     return true;
   }
 }

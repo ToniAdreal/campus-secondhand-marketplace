@@ -3,6 +3,7 @@ package com.toni.marketplace.order;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -18,8 +19,12 @@ import com.toni.marketplace.dispute.OrderDisputeRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.Notification;
+import com.toni.marketplace.notification.NotificationPreferenceRepository;
 import com.toni.marketplace.notification.NotificationRepository;
+import com.toni.marketplace.notification.NotificationType;
 import java.time.Instant;
+import java.util.List;
 import java.util.EnumSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -90,6 +95,9 @@ class SellerPayoutTest {
   private NotificationRepository notifications;
 
   @Autowired
+  private NotificationPreferenceRepository notificationPreferences;
+
+  @Autowired
   private AuditLogRepository auditLog;
 
   // Both ends: @AfterEach alone leaves the FIRST test in a shared fork
@@ -103,6 +111,10 @@ class SellerPayoutTest {
     payouts.deleteAll();
     disputes.deleteAll();
     notifications.deleteAll();
+    // Backlog #332: the mute test writes a preference row with a
+    // user FK — it must go before the users themselves, or the user
+    // delete violates FK_NOTIFICATION_PREFERENCE_USER.
+    notificationPreferences.deleteAll();
     auditLog.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
@@ -480,6 +492,108 @@ class SellerPayoutTest {
     assertThat(sweep.skipped()).isEqualTo(0);
     assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
         .isEqualTo(PayoutStatus.PENDING);
+  }
+
+  private List<Notification> payoutPaidNotifications() {
+    return notifications.findAll().stream()
+        .filter(n -> n.getType() == NotificationType.PAYOUT_PAID)
+        .toList();
+  }
+
+  /**
+   * Backlog #332: a PAYABLE row that becomes PAID fires exactly one
+   * PAYOUT_PAID row for the seller, carrying the settled order's id;
+   * a pending/promoted sweep fires none, and a rerun (no longer
+   * PAYABLE, so markPaid returns before recording) fires none twice.
+   */
+  @Test
+  void payoutPaidFiresExactlyOneNotification_rerunFiresNone() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+
+    assertThat(payoutService.runSweep(Instant.now()).promoted()).isEqualTo(0);
+    assertThat(payoutPaidNotifications()).isEmpty();
+
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+    assertThat(payoutPaidNotifications()).isEmpty();
+
+    assertThat(payoutService.runSweep(later).paid()).isEqualTo(1);
+    List<Notification> fired = payoutPaidNotifications();
+    assertThat(fired).hasSize(1);
+    assertThat(fired.get(0).getRecipientId()).isEqualTo(seller.getId());
+    assertThat(fired.get(0).getOrderId()).isEqualTo(orderId);
+
+    assertThat(payoutService.runSweep(later).paid()).isEqualTo(0);
+    assertThat(payoutPaidNotifications()).hasSize(1);
+  }
+
+  /** Backlog #332: a held PAYABLE row (#266) is not paid, so it notifies nobody. */
+  @Test
+  void heldPayableFiresNoPayoutNotification() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+
+    seller.setDisabled(true);
+    users.save(seller);
+
+    SellerPayoutService.PayoutSweepCounts sweep = payoutService.runSweep(later);
+    assertThat(sweep.paid()).isEqualTo(0);
+    assertThat(sweep.held()).isEqualTo(1);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAYABLE);
+    assertThat(payoutPaidNotifications()).isEmpty();
+  }
+
+  /**
+   * Backlog #332: the per-type preference seam (#216) picks the new
+   * type up — a seller who muted PAYOUT_PAID still gets paid by the
+   * sweep, but no notification row is written.
+   */
+  @Test
+  void mutedPayoutPaidSuppressesNotificationButStillPays() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, item);
+    completeOrder(seller, buyer, orderId);
+
+    mockMvc.perform(put("/api/notifications/preferences/PAYOUT_PAID")
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"enabled\":false}"))
+        .andExpect(status().isOk());
+
+    Instant later = Instant.now().plusSeconds(8L * 24 * 3600);
+    assertThat(payoutService.runSweep(later).promoted()).isEqualTo(1);
+    assertThat(payoutService.runSweep(later).paid()).isEqualTo(1);
+    assertThat(payouts.findByOrderId(orderId).orElseThrow().getStatus())
+        .isEqualTo(PayoutStatus.PAID);
+    assertThat(payoutPaidNotifications()).isEmpty();
+  }
+
+  /** Backlog #332: the new type appears in the preference catalogue, enabled and mutable. */
+  @Test
+  void payoutPaidIsInThePreferenceCatalogue() throws Exception {
+    User user = newUser();
+
+    mockMvc.perform(get("/api/notifications/preferences")
+            .header("Authorization", "Bearer " + token(user)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[?(@.type == 'PAYOUT_PAID')].label")
+            .value("Payout paid"))
+        .andExpect(jsonPath("$.data[?(@.type == 'PAYOUT_PAID')].security")
+            .value(false))
+        .andExpect(jsonPath("$.data[?(@.type == 'PAYOUT_PAID')].enabled")
+            .value(true));
   }
 
   @Test

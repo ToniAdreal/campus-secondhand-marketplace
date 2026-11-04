@@ -135,7 +135,19 @@ public enum NotificationType {
    * listing. A discovery alert, not a security alert: mutable in the
    * per-type preferences (backlog #216).
    */
-  SELLER_NEW_LISTING("New listing from a followed seller", false);
+  SELLER_NEW_LISTING("New listing from a followed seller", false),
+  /**
+   * A seller payout row moved PAYABLE → PAID (backlog #332). The row
+   * carries the settled order's id and goes to the payout's seller —
+   * the same ORDER_* lifecycle pattern, fired inside
+   * {@code SellerPayoutTransitions.markPaid}'s transaction, so a
+   * rolled-back pay notifies nobody and a rerun (no longer PAYABLE)
+   * notifies nothing twice. Mutable like the other order types
+   * (backlog #216) — a muted seller hears nothing. The copy says
+   * "marked paid", never a bank transfer: PAID is a ledger state in
+   * this mock (backlog #221).
+   */
+  PAYOUT_PAID("Payout paid", false);
 
   private final String label;
   private final boolean security;

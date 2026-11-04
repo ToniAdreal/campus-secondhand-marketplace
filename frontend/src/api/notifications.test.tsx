@@ -208,6 +208,10 @@ describe('notifications api hooks (#157)', () => {
       'A seller you follow published a new listing.',
     );
     expect(describeNotification('SELLER_NEW_LISTING')).not.toBe('Order update.');
+    // #332: the payout line says "marked paid" — PAID is a ledger
+    // state, never a bank transfer — and it is not the default line.
+    expect(describeNotification('PAYOUT_PAID')).toBe('Your payout was marked paid.');
+    expect(describeNotification('PAYOUT_PAID')).not.toBe('Order update.');
   });
 });
 

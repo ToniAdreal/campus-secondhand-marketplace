@@ -29,7 +29,8 @@ export type NotificationType =
   | 'TOTP_RESET_BY_ADMIN'
   | 'PASSKEY_REGISTERED'
   | 'PASSKEY_REMOVED'
-  | 'SELLER_NEW_LISTING';
+  | 'SELLER_NEW_LISTING'
+  | 'PAYOUT_PAID';
 
 export interface Notification {
   id: number;
@@ -187,6 +188,11 @@ export function describeNotification(
       // renders the link to it; the copy names the relationship, not
       // the seller, so an un-followed listing keeps reading sensibly.
       return 'A seller you follow published a new listing.';
+    case 'PAYOUT_PAID':
+      // Backlog #332: the row carries the settled order's id — the
+      // page links to that order. "Marked paid" on purpose: PAID is
+      // a ledger state in this mock, never a bank transfer (#221).
+      return 'Your payout was marked paid.';
     default:
       return 'Order update.';
   }
