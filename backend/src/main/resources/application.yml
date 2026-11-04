@@ -162,6 +162,14 @@ app:
       # the sanitized name, route template and version are ever
       # logged/counted — never the message, the stack, or any URL query.
       max-body-bytes: 4096
+  observability:
+    # Slow-request threshold (SlowRequestLoggingFilter, backlog #331):
+    # a request taking strictly longer than this logs one WARN line
+    # (method/path/status/durationMs/requestId — never bodies, query
+    # values, headers or tokens). 1000 ms is the default; raise it on a
+    # slow deployment instead of silencing the filter, so the line
+    # stays a real signal rather than noise.
+    slow-request-threshold: 1000ms
   auth:
     # Refresh-cookie Secure flag (AuthController, backlog #130): the
     # httpOnly refresh_token cookie is a 7-day credential, so behind
