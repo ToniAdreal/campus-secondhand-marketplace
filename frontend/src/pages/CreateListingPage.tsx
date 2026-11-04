@@ -3,7 +3,7 @@ import {
   isApiError,
   isRequestTimeout,
 } from '../api/client';
-import { type FormEvent, type ReactNode, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useCategories } from '../api/categories';
 import { uploadItemPhoto, useCreateListing } from '../api/items';
@@ -51,6 +51,62 @@ function splitFieldError(message: string): { field: string | null; general: stri
 
 type FieldErrors = Record<string, string>;
 
+/**
+ * Local create-listing draft (backlog #330). Only the four text fields are
+ * persisted, debounced 300 ms like the debounced search params elsewhere in
+ * the app, so a seller who navigates away mid-form does not lose the draft.
+ * The photo File is deliberately excluded: a File cannot live in
+ * localStorage, so it is never claimed persisted and must be re-chosen
+ * after a remount. No token, credential or user data goes into this store —
+ * only the listing text the seller typed. A corrupt or wrong-shaped stored
+ * value is ignored, never a crash.
+ */
+const CREATE_LISTING_DRAFT_KEY = 'campus-marketplace-create-listing-draft';
+
+interface CreateListingDraft {
+  title: string;
+  description: string;
+  price: string;
+  categoryId: string;
+}
+
+function readCreateListingDraft(): CreateListingDraft | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(CREATE_LISTING_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.title !== 'string' ||
+      typeof record.description !== 'string' ||
+      typeof record.price !== 'string' ||
+      typeof record.categoryId !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      title: record.title,
+      description: record.description,
+      price: record.price,
+      categoryId: record.categoryId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearCreateListingDraft(): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(CREATE_LISTING_DRAFT_KEY);
+    }
+  } catch {
+    // A denied/unavailable storage must not break the submit flow.
+  }
+}
+
 export default function CreateListingPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -58,14 +114,40 @@ export default function CreateListingPage() {
   const createListing = useCreateListing();
   const categoriesQuery = useCategories();
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [price, setPrice] = useState('');
-  const [categoryId, setCategoryId] = useState('');
+  // Lazy initialisers read the persisted draft once, so a remount restores
+  // the text fields while the photo input always starts empty (see above).
+  const [title, setTitle] = useState(() => readCreateListingDraft()?.title ?? '');
+  const [description, setDescription] = useState(
+    () => readCreateListingDraft()?.description ?? '',
+  );
+  const [price, setPrice] = useState(() => readCreateListingDraft()?.price ?? '');
+  const [categoryId, setCategoryId] = useState(
+    () => readCreateListingDraft()?.categoryId ?? '',
+  );
   const [photo, setPhoto] = useState<File | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [generalError, setGeneralError] = useState<ReactNode>(null);
   const [pending, setPending] = useState(false);
+
+  // Debounced persist: typing never writes on every keystroke, and the
+  // timer is cancelled on unmount, so a cleared draft cannot be re-saved
+  // by a timer that fires after a successful submit navigates away.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        if (title === '' && description === '' && price === '' && categoryId === '') {
+          window.localStorage.removeItem(CREATE_LISTING_DRAFT_KEY);
+        } else {
+          const draft: CreateListingDraft = { title, description, price, categoryId };
+          window.localStorage.setItem(CREATE_LISTING_DRAFT_KEY, JSON.stringify(draft));
+        }
+      } catch {
+        // A denied/unavailable storage must not break the form.
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [title, description, price, categoryId]);
 
   if (!user) {
     // Selling requires a session; LoginPage bounces back here afterwards.
@@ -144,6 +226,10 @@ export default function CreateListingPage() {
           return;
         }
       }
+      // Successful submit consumes the local draft (backlog #330); the
+      // photo-failure return above deliberately keeps it, since the
+      // seller stays on the page to see what happened.
+      clearCreateListingDraft();
       // A draft lands on My listings (where its Publish action lives);
       // a live listing lands on its public detail page, as before.
       navigate(asDraft ? '/my-listings' : `/items/${item.id}`);

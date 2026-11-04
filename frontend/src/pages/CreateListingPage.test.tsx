@@ -12,6 +12,9 @@ const getSpy = vi.spyOn(api, 'get');
 
 const fakeUser: AuthUser = { id: 5, username: 'toni', email: 'toni@example.com', roles: ['USER'] };
 
+// Must match CREATE_LISTING_DRAFT_KEY in CreateListingPage.tsx.
+const DRAFT_KEY = 'campus-marketplace-create-listing-draft';
+
 const fakeCategories = [
   { id: 1, name: 'Electronics', slug: 'electronics' },
   { id: 2, name: 'Books & Study', slug: 'books-study' },
@@ -267,5 +270,92 @@ describe('CreateListingPage', () => {
     expect(alert.textContent).toMatch(/file is empty/);
     expect(screen.getByRole('link', { name: /view your listing/i })).toBeTruthy();
     expect(currentPath).toBe('/items/new');
+  });
+
+  it('restores a stored draft on mount (#330)', async () => {
+    window.localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ title: 'Draft bike', description: 'Well loved', price: '9.99', categoryId: '2' }),
+    );
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    expect((screen.getByLabelText(/title/i) as HTMLInputElement).value).toBe('Draft bike');
+    expect((screen.getByLabelText(/description/i) as HTMLTextAreaElement).value).toBe('Well loved');
+    expect((screen.getByLabelText(/price \(usd\)/i) as HTMLInputElement).value).toBe('9.99');
+    expect((screen.getByLabelText(/category/i) as HTMLSelectElement).value).toBe('2');
+  });
+
+  it('persists typed fields debounced, survives a remount, and never persists the photo (#330)', async () => {
+    useAuthStore.getState().login(fakeUser, 'tok');
+    const { unmount } = renderCreate();
+    await screen.findByText('Electronics');
+
+    fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'Remount bike' } });
+    fireEvent.change(screen.getByLabelText(/description/i), { target: { value: 'Kept across navigation' } });
+    fireEvent.change(screen.getByLabelText(/price \(usd\)/i), { target: { value: '15.00' } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: '1' } });
+    const file = new File(['bytes'], 'bike.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText(/photo/i), { target: { files: [file] } });
+
+    await waitFor(() => expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull());
+    expect(JSON.parse(window.localStorage.getItem(DRAFT_KEY)!)).toMatchObject({
+      title: 'Remount bike',
+      price: '15.00',
+      categoryId: '1',
+    });
+
+    unmount();
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    expect((screen.getByLabelText(/title/i) as HTMLInputElement).value).toBe('Remount bike');
+    expect((screen.getByLabelText(/description/i) as HTMLTextAreaElement).value).toBe(
+      'Kept across navigation',
+    );
+    expect((screen.getByLabelText(/price \(usd\)/i) as HTMLInputElement).value).toBe('15.00');
+    expect((screen.getByLabelText(/category/i) as HTMLSelectElement).value).toBe('1');
+    // The File cannot live in localStorage: the photo input starts empty
+    // after a remount and must be re-chosen, not silently claimed kept.
+    expect((screen.getByLabelText(/photo/i) as HTMLInputElement).files?.length).toBe(0);
+  });
+
+  it('clears the draft on a successful publish (#330)', async () => {
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    postSpy.mockResolvedValue(createdItem());
+    fillValidForm();
+    await waitFor(() => expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /publish listing/i }));
+    await waitFor(() => expect(currentPath).toBe('/items/42'));
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+  });
+
+  it('clears the draft on a successful save draft (#330)', async () => {
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    postSpy.mockResolvedValue(envelope({ ...createdItemPayload(), status: 'DRAFT' }));
+    fillValidForm();
+    await waitFor(() => expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(currentPath).toBe('/my-listings'));
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+  });
+
+  it('ignores a corrupt stored draft instead of crashing (#330)', async () => {
+    window.localStorage.setItem(DRAFT_KEY, '{not json');
+    useAuthStore.getState().login(fakeUser, 'tok');
+    renderCreate();
+    await screen.findByText('Electronics');
+
+    expect((screen.getByLabelText(/title/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/price \(usd\)/i) as HTMLInputElement).value).toBe('');
   });
 });
