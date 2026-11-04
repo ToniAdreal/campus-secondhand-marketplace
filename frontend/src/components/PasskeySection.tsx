@@ -37,6 +37,12 @@ function formatEnrolledAt(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
+function formatLastUsedAt(iso: string | null): string {
+  if (!iso) return 'not recorded yet';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
 /**
  * The row label (backlog #241): the friendly name when the row has
  * one, otherwise the pre-#241 date label — a row is never rendered
@@ -66,6 +72,11 @@ function displayPasskeyName(pk: PasskeyInfo): string {
  * aria-label names the row, so a holder with several passkeys cannot
  * delete the wrong one by mistake. Rows without a name (pre-#241 rows
  * and blank renames) render the enrolment-date label instead.
+ *
+ * Backlog #329: each row also shows its last successful use. A null
+ * last-used (pre-#329 rows, never-used rows) renders "not recorded
+ * yet" — never a blank line, and never a claim that a pre-tracking
+ * key was unused.
  */
 export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[] | null>(null);
@@ -249,7 +260,10 @@ export default function PasskeySection({ totpOn }: { totpOn: boolean }) {
               ) : (
                 <>
                   <span className="min-w-0 flex-1 text-neutral-700">
-                    {displayPasskeyName(pk)}
+                    <span className="block">{displayPasskeyName(pk)}</span>
+                    <span className="block text-xs text-neutral-500">
+                      Last used: {formatLastUsedAt(pk.lastUsedAt)}
+                    </span>
                   </span>
                   <button
                     type="button"

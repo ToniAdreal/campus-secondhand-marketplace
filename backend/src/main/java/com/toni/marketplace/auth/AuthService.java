@@ -1487,7 +1487,9 @@ public class AuthService {
    * (unknown credential id) never feed it.
    *
    * <p>On success the failure counter resets, the stored signature
-   * counter advances, and the login completes exactly like the TOTP
+   * counter advances, the credential's last-used instant is stamped
+   * (backlog #329 — a failed assertion never stamps it), and the login
+   * completes exactly like the TOTP
    * leg (new-device alert, SUCCESS history row, session cap, the #199
    * trusted-device opt-in) — the fresh {@code auth_time} claim on the
    * minted pair makes this exchange a step-up proof event like any
@@ -1556,6 +1558,10 @@ public class AuthService {
       user.setTotpLockedUntil(null);
     }
     credential.setSignCount(newSignCount);
+    // Backlog #329: stamp last use on success only — this line is
+    // reached after verifyAssertion returns, never on the failure path
+    // above, so a failed assertion leaves lastUsedAt untouched.
+    credential.setLastUsedAt(now);
     passkeyCredentials.save(credential);
     // Backlog #178: the passkey exchange is where this login completes,
     // so the new-device check runs here too — the password stage only

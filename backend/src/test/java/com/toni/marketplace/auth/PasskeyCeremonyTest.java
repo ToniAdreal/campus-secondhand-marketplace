@@ -543,4 +543,48 @@ class PasskeyCeremonyTest {
     assertThat(auditLogs.findByActorUserIdOrderByIdAsc(user.getId())).anySatisfy(
         log -> assertThat(log.getAction()).isEqualTo(AuditAction.PASSKEY_REMOVED));
   }
+
+  @Test
+  void assertionSuccessStampsLastUsedAtAndListExposesIt() throws Exception {
+    User user = freshUser();
+    String credentialId = enrollPasskey(user, bearer(user));
+
+    // Enrolment is not a use: the stamp starts NULL.
+    assertThat(passkeyCredentials.findByCredentialId(credentialId).orElseThrow()
+        .getLastUsedAt()).isNull();
+
+    // A successful assertion completes the login through the same
+    // exchange the SPA uses, and stamps the credential with the
+    // controllable clock's instant.
+    String token = passkeyBearer(user);
+    assertThat(passkeyCredentials.findByCredentialId(credentialId).orElseThrow()
+        .getLastUsedAt()).isEqualTo(clock.instant());
+
+    MvcResult list = mockMvc.perform(get("/api/auth/2fa/passkeys")
+            .header("Authorization", "Bearer " + token))
+        .andExpect(status().isOk())
+        .andReturn();
+    JsonNode rows = dataOf(list);
+    assertThat(rows.size()).isEqualTo(1);
+    assertThat(rows.get(0).path("lastUsedAt").isNull()).isFalse();
+    assertThat(rows.get(0).has("publicKeyCose")).isFalse();
+  }
+
+  @Test
+  void failedAssertionLeavesLastUsedAtUntouched() throws Exception {
+    User user = freshUser();
+    String credentialId = enrollPasskey(user, bearer(user));
+    assertThat(passkeyCredentials.findByCredentialId(credentialId).orElseThrow()
+        .getLastUsedAt()).isNull();
+
+    // Wrong origin: verification fails with the identical 401, and the
+    // stamp must stay NULL — a failed attempt is not a use.
+    String loginChallenge = loginChallenge(user);
+    String assertionJson = buildAssertion(user, loginChallenge,
+        clientPlatform("http://evil.example"));
+    assertThat(authenticateWithAssertion(loginChallenge, assertionJson)
+        .getResponse().getStatus()).isEqualTo(401);
+    assertThat(passkeyCredentials.findByCredentialId(credentialId).orElseThrow()
+        .getLastUsedAt()).isNull();
+  }
 }

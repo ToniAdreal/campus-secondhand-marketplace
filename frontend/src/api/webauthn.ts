@@ -65,6 +65,10 @@ export interface PasskeyAssertionOptions {
  * Backlog #241: `name` is the display-only friendly label; it is null for rows enrolled
  * before #241 and for rows renamed to blank — the settings surface renders those with
  * the enrolment-date label, never a blank row.
+ * Backlog #329: `lastUsedAt` is the most recent successful assertion, null for rows
+ * enrolled before #329 and for rows never used — a failed assertion never stamps it,
+ * so null means "no successful use recorded", and the surface renders it as
+ * "not recorded yet", never a blank line.
  */
 export interface PasskeyInfo {
   id: number;
@@ -72,6 +76,7 @@ export interface PasskeyInfo {
   createdAt: string;
   signCount: number;
   name: string | null;
+  lastUsedAt: string | null;
 }
 
 function toDescriptor(id: string): PublicKeyCredentialDescriptor {

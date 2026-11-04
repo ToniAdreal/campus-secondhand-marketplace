@@ -59,7 +59,7 @@ describe('PasskeySection (backlog #220)', () => {
   it('lists the enrolled passkeys on mount, without public keys', async () => {
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0 },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, lastUsedAt: null },
       ]),
     );
     render(<PasskeySection totpOn={false} />);
@@ -90,7 +90,7 @@ describe('PasskeySection (backlog #220)', () => {
     postSpy.mockResolvedValueOnce(envelope({ credentialId: 'new-cred-id' }));
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 12, credentialId: 'new-cred-id', createdAt: '2026-10-23T01:02:03Z', signCount: 0 },
+        { id: 12, credentialId: 'new-cred-id', createdAt: '2026-10-23T01:02:03Z', signCount: 0, lastUsedAt: null },
       ]),
     );
 
@@ -162,7 +162,7 @@ describe('PasskeySection (backlog #220)', () => {
   it('removes a passkey and refreshes the list', async () => {
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0 },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, lastUsedAt: null },
       ]),
     );
     render(<PasskeySection totpOn={false} />);
@@ -195,8 +195,8 @@ describe('PasskeySection (backlog #220)', () => {
   it('lists a named passkey by its name and names it in the remove button (backlog #241)', async () => {
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
-        { id: 12, credentialId: 'cred-bbb', createdAt: '2026-10-21T01:02:03Z', signCount: 0, name: null },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone', lastUsedAt: null },
+        { id: 12, credentialId: 'cred-bbb', createdAt: '2026-10-21T01:02:03Z', signCount: 0, name: null, lastUsedAt: null },
       ]),
     );
     render(<PasskeySection totpOn={false} />);
@@ -210,7 +210,7 @@ describe('PasskeySection (backlog #220)', () => {
   it('renames a passkey and refreshes the list (backlog #241)', async () => {
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone', lastUsedAt: null },
       ]),
     );
     render(<PasskeySection totpOn={false} />);
@@ -221,11 +221,11 @@ describe('PasskeySection (backlog #220)', () => {
     fireEvent.change(input, { target: { value: 'Work laptop' } });
 
     patchSpy.mockResolvedValueOnce(
-      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop' }),
+      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop', lastUsedAt: null }),
     );
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop' },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'Work laptop', lastUsedAt: null },
       ]),
     );
 
@@ -243,7 +243,7 @@ describe('PasskeySection (backlog #220)', () => {
   it('a blank rename falls back to the date label (backlog #241)', async () => {
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone' },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: 'My phone', lastUsedAt: null },
       ]),
     );
     render(<PasskeySection totpOn={false} />);
@@ -252,11 +252,11 @@ describe('PasskeySection (backlog #220)', () => {
     fireEvent.change(screen.getByLabelText(/new name for my phone/i), { target: { value: '' } });
 
     patchSpy.mockResolvedValueOnce(
-      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null }),
+      envelope({ id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null, lastUsedAt: null }),
     );
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null },
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null, lastUsedAt: null },
       ]),
     );
 
@@ -271,6 +271,35 @@ describe('PasskeySection (backlog #220)', () => {
     expect(screen.getByText(/Passkey added/)).toBeTruthy();
   });
 
+  it('shows the last-used date for a used passkey (backlog #329)', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 3, name: 'My phone', lastUsedAt: '2026-11-03T10:20:30Z' },
+      ]),
+    );
+    render(<PasskeySection totpOn={false} />);
+
+    await screen.findByRole('button', { name: /remove my phone/i });
+    expect(screen.getByText(/Last used:/)).toBeTruthy();
+    // the row is not just a date: the name label stays beside the stamp
+    expect(screen.getByText('My phone')).toBeTruthy();
+  });
+
+  it('a null last-used renders as not recorded yet, never a blank row (backlog #329)', async () => {
+    getSpy.mockResolvedValueOnce(
+      envelope([
+        { id: 11, credentialId: 'cred-aaa', createdAt: '2026-10-20T01:02:03Z', signCount: 0, name: null, lastUsedAt: null },
+      ]),
+    );
+    render(<PasskeySection totpOn={false} />);
+
+    // Pre-#329 rows keep the enrolment-date label, and the last-used
+    // line says plainly that no use was recorded — no blank line, and
+    // no false "never used" claim for a pre-tracking row.
+    expect(await screen.findByText(/Passkey added/)).toBeTruthy();
+    expect(screen.getByText(/Last used: not recorded yet/)).toBeTruthy();
+  });
+
   it('sends the enrolment name with the verify call (backlog #241)', async () => {
     const create = mockWebAuthn();
     getSpy.mockResolvedValueOnce(envelope([]));
@@ -281,7 +310,7 @@ describe('PasskeySection (backlog #220)', () => {
     postSpy.mockResolvedValueOnce(envelope({ credentialId: 'new-cred-id' }));
     getSpy.mockResolvedValueOnce(
       envelope([
-        { id: 12, credentialId: 'new-cred-id', createdAt: '2026-10-23T01:02:03Z', signCount: 0, name: 'My phone' },
+        { id: 12, credentialId: 'new-cred-id', createdAt: '2026-10-23T01:02:03Z', signCount: 0, name: 'My phone', lastUsedAt: null },
       ]),
     );
 

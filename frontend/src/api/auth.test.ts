@@ -987,7 +987,7 @@ describe('passkeys as an alternative second factor (backlog #220)', () => {
   });
 
   it('listPasskeys GETs the enrolled passkeys', async () => {
-    const rows = [{ id: 1, credentialId: 'cred-1', createdAt: '2026-10-23T00:00:00Z', signCount: 0 }];
+    const rows = [{ id: 1, credentialId: 'cred-1', createdAt: '2026-10-23T00:00:00Z', signCount: 0, name: null, lastUsedAt: null }];
     getSpy.mockResolvedValueOnce(envelope(rows));
 
     const result = await listPasskeys();

@@ -30,6 +30,12 @@ import org.hibernate.type.SqlTypes;
  * #241 (Flyway V71 adds the column with no backfill) — the settings
  * surface falls back to the enrolment-date label for those rows.
  *
+ * <p>Backlog #329 adds the last-used timestamp (Flyway V75): stamped
+ * only on a successful assertion, NULL for pre-#329 rows and for rows
+ * never used — the settings surface renders NULL as "not recorded
+ * yet", so a stale key is distinguishable from a live one without
+ * inventing history for rows enrolled before tracking existed.
+ *
  * <p>Passkeys are a second factor, not a password replacement: a row
  * here joins the 202-challenge family ({@code TOTP code / recovery code
  * / passkey assertion}), and passwordless login is explicitly out of
@@ -86,6 +92,16 @@ public class PasskeyCredential {
   @Column(name = "name", length = 100)
   private String name;
 
+  /**
+   * Last successful assertion instant (backlog #329, Flyway V75);
+   * NULL for rows enrolled before #329 and for rows never used in a
+   * successful assertion — a failed assertion leaves it untouched, so
+   * it records completed logins only, never attempts. The settings
+   * surface renders NULL as "not recorded yet", never a blank row.
+   */
+  @Column(name = "last_used_at")
+  private Instant lastUsedAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -120,5 +136,7 @@ public class PasskeyCredential {
   public void setSignCount(long signCount) { this.signCount = signCount; }
   public String getName() { return name; }
   public void setName(String name) { this.name = name; }
+  public Instant getLastUsedAt() { return lastUsedAt; }
+  public void setLastUsedAt(Instant lastUsedAt) { this.lastUsedAt = lastUsedAt; }
   public Instant getCreatedAt() { return createdAt; }
 }

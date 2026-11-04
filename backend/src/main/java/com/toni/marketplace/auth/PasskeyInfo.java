@@ -15,12 +15,20 @@ import java.time.Instant;
  * surface renders those with the enrolment-date label ("Passkey added
  * &lt;date&gt;"), never a blank row, so a NULL here is a display
  * fallback, not missing data.
+ *
+ * <p>Backlog #329 adds the last-used instant: the clock instant of the
+ * most recent successful assertion, NULL for rows enrolled before
+ * #329 and for rows never used in a successful assertion (a failed
+ * assertion never stamps it). The settings surface renders NULL as
+ * "not recorded yet" — it means no successful use was recorded, not
+ * that the row is empty.
  */
 public record PasskeyInfo(long id, String credentialId, Instant createdAt, long signCount,
-                          String name) {
+                          String name, Instant lastUsedAt) {
 
   public static PasskeyInfo of(PasskeyCredential credential) {
     return new PasskeyInfo(credential.getId(), credential.getCredentialId(),
-        credential.getCreatedAt(), credential.getSignCount(), credential.getName());
+        credential.getCreatedAt(), credential.getSignCount(), credential.getName(),
+        credential.getLastUsedAt());
   }
 }
