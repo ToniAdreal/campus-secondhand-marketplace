@@ -4,8 +4,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import axe from 'axe-core';
 import { api, setAccessToken } from '../api/client';
-import type { AuthUser } from '../api/auth';
-import type { AdminDashboard, AdminUser } from '../api/admin';
+import type { AuthSession, AuthUser, LoginEvent, TrustedDevice } from '../api/auth';
+import type {
+  AdminDashboard,
+  AdminUser,
+  AuditLogEntry,
+  PaymentAttemptEntry,
+  SettlementSummary,
+  WebhookEventEntry,
+} from '../api/admin';
+import type { ReportAppeal } from '../api/appeals';
+import type { OrderDispute } from '../api/disputes';
 import type { Item } from '../api/items';
 import type { Message } from '../api/messages';
 import type { Notification } from '../api/notifications';
@@ -40,6 +49,13 @@ import ForgotPasswordPage from './ForgotPasswordPage';
 import ResetPasswordPage from './ResetPasswordPage';
 import MyListingsPage from './MyListingsPage';
 import SellerPayoutsPage from './SellerPayoutsPage';
+import AdminAppealsPage from './AdminAppealsPage';
+import AdminAuditLogPage from './AdminAuditLogPage';
+import AdminCategoriesPage from './AdminCategoriesPage';
+import AdminDisputesPage from './AdminDisputesPage';
+import AdminPaymentsPage from './AdminPaymentsPage';
+import SessionsPage from './SessionsPage';
+import VerifyEmailPage from './VerifyEmailPage';
 
 /**
  * Automated accessibility checks (backlog #183) — axe-core over the
@@ -55,7 +71,9 @@ import SellerPayoutsPage from './SellerPayoutsPage';
  * extended the suite to the money path (Cart, My orders, Seller
  * orders, Offers) in both themes, on the same gate. Backlog #284
  * extends it to the third batch (admin, seller-profile and account
- * pages) in both themes, on the same gate. One honest jsdom
+ * pages) in both themes, on the same gate. Backlog #323 extends it to
+ * the fourth batch (the seven remaining routes) in light mode only;
+ * their dark-mode cases are #328's scope. One honest jsdom
  * limit: `color-contrast` cannot complete in jsdom (it needs a real
  * canvas/layout engine), so axe reports it as *incomplete*, never as
  * a violation or a pass — contrast remains un-audited by this suite,
@@ -64,6 +82,7 @@ import SellerPayoutsPage from './SellerPayoutsPage';
  */
 
 const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
 
 const buyer: AuthUser = { id: 5, username: 'buyer', email: 'buyer@example.com', roles: ['USER'] };
 
@@ -276,6 +295,182 @@ const fakePayoutTotals: SellerPayoutTotals = {
   netCents: 2000,
 };
 
+/**
+ * Fourth-batch fixtures (backlog #323). Populated, not empty, on
+ * purpose — same rule as #284: the axe run should see the real
+ * tables, rows and forms, not just the empty states. Shapes mirror
+ * each page's own test file.
+ */
+const fakeAppeals: ReportAppeal[] = [
+  {
+    id: 10,
+    reportId: 4,
+    itemId: 7,
+    sellerId: 3,
+    reason: 'this is my own textbook, sold once',
+    status: 'OPEN',
+    listingRestored: null,
+    createdAt: '2026-10-18T10:00:00Z',
+    resolvedAt: null,
+  },
+  {
+    id: 8,
+    reportId: 2,
+    itemId: 5,
+    sellerId: 3,
+    reason: 'listing was misreported',
+    status: 'UPHELD',
+    listingRestored: true,
+    createdAt: '2026-10-16T10:00:00Z',
+    resolvedAt: '2026-10-17T10:00:00Z',
+  },
+];
+
+const fakeAuditRows: AuditLogEntry[] = [
+  {
+    id: 10,
+    actorUserId: 3,
+    action: 'ORDER_COMPLETED',
+    targetType: 'ORDER',
+    targetId: 42,
+    createdAt: '2026-09-03T10:00:00Z',
+  },
+  {
+    id: 9,
+    actorUserId: 1,
+    action: 'USER_DISABLED',
+    targetType: 'USER',
+    targetId: 4,
+    createdAt: '2026-09-02T10:00:00Z',
+  },
+];
+
+const fakeDisputes: OrderDispute[] = [
+  {
+    id: 10,
+    orderId: 9,
+    buyerId: 5,
+    sellerId: 3,
+    reason: 'the parcel never arrived',
+    status: 'OPEN',
+    previousStatus: 'PAID',
+    listingRestored: null,
+    createdAt: '2026-10-14T10:00:00Z',
+    resolvedAt: null,
+    resolutionNote: null,
+  },
+  {
+    id: 8,
+    orderId: 7,
+    buyerId: 6,
+    sellerId: 3,
+    reason: 'shutter broken',
+    status: 'RESOLVED_REFUND',
+    previousStatus: 'COMPLETED',
+    listingRestored: false,
+    createdAt: '2026-10-12T10:00:00Z',
+    resolvedAt: '2026-10-13T10:00:00Z',
+    resolutionNote: 'Item arrived damaged; refunding.',
+  },
+];
+
+const fakeSettlement: SettlementSummary = {
+  capturedCents: 35000,
+  refundedCents: 5000,
+  netCents: 30000,
+  totalOrders: 5,
+  pendingCount: 1,
+  paidCount: 1,
+  completedCount: 1,
+  cancelledCount: 1,
+  refundedCount: 1,
+};
+
+const fakeWebhookRows: WebhookEventEntry[] = [
+  {
+    id: 2,
+    eventId: 'evt_new',
+    eventType: 'refund.succeeded',
+    pspReference: 'rfd_new',
+    outcome: 'MISMATCH',
+    createdAt: '2026-01-12T00:00:00Z',
+  },
+  {
+    id: 1,
+    eventId: 'evt_old',
+    eventType: 'capture.succeeded',
+    pspReference: 'cap_old',
+    outcome: 'MATCHED',
+    createdAt: '2026-01-10T00:00:00Z',
+  },
+];
+
+const fakeAttemptRows: PaymentAttemptEntry[] = [
+  {
+    id: 7,
+    orderId: 42,
+    outcome: 'DECLINED',
+    idempotencyKey: 'cap_attempt42',
+    refundReason: null,
+    createdAt: '2026-01-12T00:00:00Z',
+  },
+  {
+    id: 5,
+    orderId: 41,
+    outcome: 'DECLINED',
+    idempotencyKey: 'cap_attempt41',
+    refundReason: null,
+    createdAt: '2026-01-11T00:00:00Z',
+  },
+];
+
+const fakeSessions: AuthSession[] = [
+  {
+    id: 'family-current',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0',
+    ipAddress: '203.0.113.7',
+    createdAt: '2026-10-08T01:00:00Z',
+    lastActiveAt: '2026-10-09T01:30:00Z',
+    current: true,
+  },
+  {
+    id: 'family-other',
+    userAgent: null,
+    ipAddress: '198.51.100.23',
+    createdAt: '2026-10-07T12:00:00Z',
+    lastActiveAt: '2026-10-08T12:00:00Z',
+    current: false,
+  },
+];
+
+const fakeLoginEvents: LoginEvent[] = [
+  {
+    id: 11,
+    outcome: 'SUCCESS',
+    identifier: 'toni',
+    ipAddress: '203.0.113.7',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/126.0',
+    createdAt: '2026-10-09T02:00:00Z',
+  },
+  {
+    id: 10,
+    outcome: 'BAD_PASSWORD',
+    identifier: 'toni',
+    ipAddress: null,
+    userAgent: null,
+    createdAt: '2026-10-09T01:00:00Z',
+  },
+];
+
+const fakeTrustedDevice: TrustedDevice = {
+  id: 7,
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1',
+  ipAddress: '192.0.2.44',
+  createdAt: '2026-10-08T09:00:00Z',
+  lastUsedAt: null,
+  expiresAt: '2026-11-07T09:00:00Z',
+};
+
 function orderPage(orders: Order[]) {
   return { content: orders, totalElements: orders.length, totalPages: 1, number: 0 };
 }
@@ -357,6 +552,66 @@ function routeGet(url: string) {
     return Promise.resolve(
       envelope({ content: [fakeSearchedMessage], totalElements: 1, totalPages: 1, number: 0 }),
     );
+  // Fourth batch (backlog #323). The categories page reuses the
+  // /categories branch above; the payments page fires its three GETs
+  // with the default filters (webhooks unfiltered, attempts DECLINED).
+  if (url === '/admin/appeals')
+    return Promise.resolve(
+      envelope({
+        content: fakeAppeals,
+        totalElements: fakeAppeals.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/admin/audit-log')
+    return Promise.resolve(
+      envelope({
+        content: fakeAuditRows,
+        totalElements: fakeAuditRows.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/admin/disputes')
+    return Promise.resolve(
+      envelope({
+        content: fakeDisputes,
+        totalElements: fakeDisputes.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/admin/payments/settlement') return Promise.resolve(envelope(fakeSettlement));
+  if (url === '/admin/payments/webhooks')
+    return Promise.resolve(
+      envelope({
+        content: fakeWebhookRows,
+        totalElements: fakeWebhookRows.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/admin/payments/attempts')
+    return Promise.resolve(
+      envelope({
+        content: fakeAttemptRows,
+        totalElements: fakeAttemptRows.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/auth/sessions') return Promise.resolve(envelope(fakeSessions));
+  if (url === '/auth/login-history')
+    return Promise.resolve(
+      envelope({
+        content: fakeLoginEvents,
+        totalElements: fakeLoginEvents.length,
+        totalPages: 1,
+        number: 0,
+      }),
+    );
+  if (url === '/auth/trusted-devices') return Promise.resolve(envelope([fakeTrustedDevice]));
   return Promise.reject(new Error(`no a11y fixture for GET ${url}`));
 }
 
@@ -597,6 +852,134 @@ describe('automated accessibility checks (axe-core, backlog #183)', () => {
     setAccessToken('tok');
     const { container } = renderRoute('/seller/payouts', '/seller/payouts', <SellerPayoutsPage />);
     await waitFor(() => expect(screen.getByText('Payout for order #9')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+});
+
+/**
+ * Fourth batch, light mode only (backlog #323): the seven routes the
+ * earlier batches never covered — admin appeals, audit log,
+ * categories, disputes and payments, plus sessions and verify-email.
+ * Same gate (zero serious/critical, WCAG 2.0/2.1 A+AA) and same jsdom
+ * caveats as #183: rendered markup only, color-contrast incomplete.
+ * Dark-mode cases for these seven pages are backlog #328's scope, not
+ * this batch's — this describe deliberately stays light-only so #328
+ * still has a real job. Every case waits for a populated row (or the
+ * confirmed state for verify-email) before running axe, so the run
+ * sees the real tables and forms, not loading skeletons. The
+ * verify-email case mocks the confirm POST to success: the page fires
+ * it on mount, and the axe target is the confirmed state a user with a
+ * valid link actually lands on.
+ */
+describe('automated accessibility checks, fourth batch (backlog #323)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    postSpy.mockResolvedValue(envelope(null) as never);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    useCartStore.setState({ items: [], sellerId: null, sellerUsername: null, batchId: null });
+  });
+
+  it('Admin appeals page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute('/admin/appeals', '/admin/appeals', <AdminAppealsPage />);
+    await waitFor(() =>
+      expect(screen.getByText('this is my own textbook, sold once')).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin audit log page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/audit-log',
+      '/admin/audit-log',
+      <AdminAuditLogPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin categories page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/categories',
+      '/admin/categories',
+      <AdminCategoriesPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('cell', { name: 'Textbooks' })).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin disputes page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/disputes',
+      '/admin/disputes',
+      <AdminDisputesPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText('the parcel never arrived')).toBeTruthy(),
+    );
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Admin payments page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: admin });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/admin/payments',
+      '/admin/payments',
+      <AdminPaymentsPage />,
+    );
+    // The webhook rows render last of the three sections, so waiting
+    // for one pins the settlement summary and the attempts table too.
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Sessions page has no serious/critical violations', async () => {
+    useAuthStore.setState({ user: buyer });
+    setAccessToken('tok');
+    const { container } = renderRoute(
+      '/settings/sessions',
+      '/settings/sessions',
+      <SessionsPage />,
+    );
+    // One marker per section: the current-session flag, a trusted
+    // device row, and a login-history outcome.
+    await waitFor(() => {
+      expect(screen.getByText('This device')).toBeTruthy();
+      expect(screen.getByText(/Safari\/605.1/)).toBeTruthy();
+      expect(screen.getByText('SUCCESS')).toBeTruthy();
+    });
+    await expectNoSeriousOrCriticalViolations(container);
+  });
+
+  it('Verify email page (confirmed state) has no serious/critical violations', async () => {
+    const { container } = renderRoute(
+      '/verify-email?token=a11y-token',
+      '/verify-email',
+      <VerifyEmailPage />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/email address confirmed/i)).toBeTruthy(),
+    );
     await expectNoSeriousOrCriticalViolations(container);
   });
 });
