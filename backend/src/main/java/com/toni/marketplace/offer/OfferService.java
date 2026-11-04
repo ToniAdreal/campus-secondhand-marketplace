@@ -216,8 +216,22 @@ public class OfferService {
     // Joins this transaction (REQUIRED): its guards answer 404/409/422
     // in the envelope and any failure rolls the whole accept back, so
     // the offer stays PENDING and no half-created order survives.
-    OrderDto order = creation.create(offer.getBuyerId(), offer.getItem().getId(),
-        offer.getPriceCents());
+    // Backlog #324: the creation call itself is also wrapped — under
+    // InnoDB REPEATABLE READ a loser whose snapshot predates the
+    // winner's commit reaches the order insert before any version
+    // check, so the uq_order_active_item arbiter (or the item
+    // @Version check) fires instead of the friendly guard. The buy-now
+    // seam (OrderService.createOrder) already maps both to 409; the
+    // offer seam did not, so a stale concurrent accept could fall
+    // through to the generic 500. Same 409 here, never a 5xx.
+    OrderDto order;
+    try {
+      order = creation.create(offer.getBuyerId(), offer.getItem().getId(),
+          offer.getPriceCents());
+    } catch (DataIntegrityViolationException | ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "item already has an active order");
+    }
     try {
       offer.setStatus(OfferStatus.ACCEPTED);
       offer.setOrderId(order.id());
@@ -317,8 +331,17 @@ public class OfferService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "offer is " + offer.getStatus() + ", it has no counter to accept");
     }
-    OrderDto order = creation.create(offer.getBuyerId(), offer.getItem().getId(),
-        offer.getCounterPriceCents());
+    // Backlog #324: same race mapping as accept() above — a stale
+    // concurrent counter-accept loses to 409 here (constraint or
+    // version arbiter), never to the generic 500.
+    OrderDto order;
+    try {
+      order = creation.create(offer.getBuyerId(), offer.getItem().getId(),
+          offer.getCounterPriceCents());
+    } catch (DataIntegrityViolationException | ObjectOptimisticLockingFailureException e) {
+      throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "item already has an active order");
+    }
     try {
       offer.setStatus(OfferStatus.ACCEPTED);
       offer.setOrderId(order.id());
