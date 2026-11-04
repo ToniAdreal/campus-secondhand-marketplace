@@ -68,6 +68,11 @@ describe('registrationOptionsToCreationOptions', () => {
     ]);
     expect(built.excludeCredentials).toHaveLength(1);
     expect(built.attestation).toBe('none');
+    // The server offers exactly ES256 and RS256, in that order.
+    expect(built.pubKeyCredParams).toEqual([
+      { type: 'public-key', alg: -7 },
+      { type: 'public-key', alg: -257 },
+    ]);
   });
 });
 

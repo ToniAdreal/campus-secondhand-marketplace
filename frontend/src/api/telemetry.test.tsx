@@ -43,6 +43,19 @@ describe('telemetry route templates', () => {
   it('maps unknown paths to unknown, never echoing the path', () => {
     expect(routeTemplate('/somewhere/secret-page')).toBe('unknown');
   });
+
+  it('maps an empty pathname to unknown', () => {
+    expect(routeTemplate('')).toBe('unknown');
+  });
+
+  it('adds the leading slash when the caller omits it', () => {
+    expect(routeTemplate('items/42')).toBe('/items/:id');
+  });
+
+  it('drops a trailing slash before matching', () => {
+    expect(routeTemplate('/items/42/')).toBe('/items/:id');
+    expect(routeTemplate('/items/new/')).toBe('/items/new');
+  });
 });
 
 describe('telemetry beacons', () => {
@@ -76,6 +89,34 @@ describe('telemetry beacons', () => {
     // The beacon carries exactly the three sanitized fields — no
     // message, no stack, no query string.
     expect(Object.keys(body).sort()).toEqual(['name', 'route', 'version']);
+  });
+
+  it('falls back to the generic name for an empty error name', () => {
+    reportFrontendError('', '/login');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchBody(fetchMock.mock.calls[0]).name).toBe('Error');
+  });
+
+  it('reports an unknown route when no pathname is given', () => {
+    reportFrontendError('Error');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('unknown');
+  });
+
+  it('sends the JSON content-type header', () => {
+    reportFrontendError('Error', '/login');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
+  });
+
+  it('never throws and sends nothing when fetch is unavailable', () => {
+    vi.stubGlobal('fetch', undefined);
+
+    expect(() => reportFrontendError('Error', '/login')).not.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('never throws when the beacon request fails', async () => {
@@ -112,6 +153,58 @@ describe('telemetry beacons', () => {
     } finally {
       uninstall();
     }
+  });
+
+  it('routes the error-event beacon through the current pathname template', () => {
+    window.history.pushState({}, '', '/items/42');
+    const uninstall = installFrontendErrorTelemetry();
+    try {
+      window.dispatchEvent(
+        new ErrorEvent('error', { error: new TypeError('boom') }),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('/items/:id');
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('routes the rejection beacon through the current pathname template', () => {
+    window.history.pushState({}, '', '/orders/7');
+    const uninstall = installFrontendErrorTelemetry();
+    try {
+      const event = new Event('unhandledrejection') as Event & {
+        reason?: unknown;
+      };
+      event.reason = new RangeError('too big');
+      window.dispatchEvent(event);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('/orders/:id');
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('stops beaconing after uninstall for both hook types', () => {
+    const uninstall = installFrontendErrorTelemetry();
+    uninstall();
+    // A no-op listener keeps jsdom from treating the dispatched error
+    // as unhandled; it cannot beacon, so a stray call still fails this test.
+    const noop = (): void => {};
+    window.addEventListener('error', noop);
+    try {
+      window.dispatchEvent(
+        new ErrorEvent('error', { error: new TypeError('boom') }),
+      );
+    } finally {
+      window.removeEventListener('error', noop);
+    }
+    const event = new Event('unhandledrejection') as Event & {
+      reason?: unknown;
+    };
+    event.reason = new RangeError('too big');
+    window.dispatchEvent(event);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('labels a non-Error rejection reason as UnhandledRejection', () => {

@@ -300,6 +300,58 @@ because the gate is the combined score, not any single file.
 Backlog #322 is done; a future widening still requires
 re-measuring first, per the #263 method.
 
+### Seventh measured run (backlog #327) — payouts, sellers, telemetry, webauthn
+
+The 14 ranges were measured separately first, with a temporary
+ranges-only config at break 0 (measure first, floor second — the
+same discipline as #252, #263, #280, #287 and #322; the temporary
+config was deleted after the run, never committed; full report
+copies: `goals/github-engineering-profile-building/hidden_files/stryker-327-measure-report.json`
+(first measure) and `stryker-327-measure2-report.json` (after the
+killing tests below)).
+Local run, 2026-11-04, head **7c42cdf** (backlog #326) plus the
+#327 config/gate/CI/doc changes and the killing tests, which touch
+no api source, 5 minutes 49 seconds, 4 workers:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 14 ranges (219 mutants) | 78.54% (172/219, counting the 1 timeout as scored) | 78.90% (172/218) |
+
+Mutant statuses: **KILLED 171, SURVIVED 46, NO_COVERAGE 1,
+TIMEOUT 1, ERROR 0.** Per-file scores: payouts 100.00% (21/21),
+sellers 100.00% (24/24), webauthn 89.09% (49/55, timeout scored),
+telemetry 65.55% (78/119). The first measure (before the killing
+tests) was 65.30% (142 killed, 65 survived, 11 no-coverage, 1
+timeout over the same 219 mutants) — that score did NOT clear the
+combined floor (see below), so the scope did not land on the
+first measure. Killing tests added in this round (test files only,
+no production-code change): telemetry route edges (empty pathname,
+missing leading slash, trailing slash), beacon edges (empty name
+fallback, missing pathname, JSON content-type header, fetch
+unavailable), install edges (beacon route through the current
+pathname for both hook types, no beaconing after uninstall),
+sellers listings guard (non-positive and non-finite ids, mirroring
+the profile guard test), and the webauthn `pubKeyCredParams`
+exact pair (ES256 −7, RS256 −257). Those tests moved telemetry
+60 → 78, sellers 20 → 24 and webauthn 41 → 48 kills; payouts was
+already 21/21. None is labelled equivalent here.
+
+### Floor decision (widened scope, fifth widening — LANDED)
+
+`thresholds.break` stays **90**: the floor is unchanged, not lowered
+to fit the new scope. The new scope is disjoint from the landed
+scope and no source file in either scope changed in this round,
+so the combined score is the arithmetic sum of the measured runs:
+(1401 + 172) / (1505 + 219) = 1573/1724 = **91.24%**, which
+clears the 90 floor (90 <= 91.24) — the #327 ranges are now a
+landed scope, and the CI `frontend-mutation` job measures the
+combined score on every run. The 46 survivors + 1 no-coverage
+mutant stay honest follow-up material (see the #327 subsection
+under "Surviving mutants"); they do not block the landing,
+because the gate is the combined score, not any single file.
+Backlog #327 is done; a future widening still requires
+re-measuring first, per the #263 method.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -377,6 +429,46 @@ None is labelled equivalent. Two test gaps explain all twelve:
   (L58 ObjectLiteral; L59 ObjectLiteral, ArrayDeclaration,
   StringLiteral) survive. Needs: assert the `['items']`
   invalidation on block, and both invalidations on unblock.
+
+### Payouts / sellers / telemetry / webauthn — 46 survived + 1 no-coverage (#327)
+
+None is labelled equivalent. The survivors cluster in four themes,
+all in telemetry except the webauthn environment guards:
+
+- Redundant normalization (telemetry routeTemplate L92, L95–96,
+  12 mutants): the leading-slash add and trailing-slash strip never
+  change a returned template, because the matcher splits on `/`
+  and filters empty segments — `items/42` and `/items/42/` match
+  exactly like `/items/42`. Needs: no test through this API can
+  kill them; a follow-up must either assert the normalized path
+  itself (not exposed) or accept them as dead defensive code.
+- Redundant fallbacks (telemetry L98, L126, L130, L132, ~7
+  mutants): the root early-return falls through to the `/`
+  template with the same result; the fetch-availability guard is
+  backed by the outer try/catch, which already swallows the
+  throw; the empty-name and missing-pathname fallbacks return
+  the same value the fallback branch would. Needs: same as
+  above — these mutants are only killable if the fallback
+  branches are made observable.
+- Sort comparator (telemetry L102–105, 12 mutants): the templates
+  array already lists the only competing pair (`/items/new`
+  before `/items/:id`) static-first, so the most-static-first
+  sort never changes which template matches first. Needs: a
+  competing static/dynamic pair listed dynamic-first, or the
+  same observability caveat as above.
+- Environment-gated guards (telemetry L174, L180, L189, 9 mutants
+  + 1 no-coverage; webauthn L19, L21, 4 mutants): `typeof window`
+  / `addEventListener` / `navigator` checks cannot be falsified
+  in jsdom, where the window and navigator always exist. Needs:
+  a non-jsdom harness, or leave them as platform-guard
+  follow-up material.
+- Webauthn wire details (L31, L39, 2 mutants): the base64url
+  padding-strip `$` anchor (btoa emits `=` only as trailing
+  padding, so stripping the first run is the same run) and the
+  decode loop's `<=` bound (the fixed-size `Uint8Array` ignores
+  the out-of-range write). Needs: a byte input whose btoa
+  output carries `=` anywhere but the end (none exists for
+  valid base64), or the same observability caveat.
 
 ## No-coverage mutants
 

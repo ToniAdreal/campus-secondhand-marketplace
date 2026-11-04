@@ -87,4 +87,22 @@ describe('sellers api hooks (#174)', () => {
     expect(result.current.fetchStatus).toBe('idle');
     expect(getSpy).not.toHaveBeenCalled();
   });
+
+  it('does not fetch listings for a non-positive id', async () => {
+    const { result } = renderHook(() => useSellerListings(0), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch listings for a non-finite id', async () => {
+    const { result } = renderHook(() => useSellerListings(Number.NaN), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
 });

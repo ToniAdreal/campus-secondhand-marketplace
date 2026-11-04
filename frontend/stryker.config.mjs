@@ -67,6 +67,19 @@
  * first (break 0) and lands only if the combined score still
  * clears the break-90 floor (see docs/mutation-frontend.md,
  * "#322 measured runs").
+ * #327 extends the same discipline to the payouts, sellers,
+ * telemetry and webauthn api modules: each range below is exactly
+ * one exported function — the two payout hooks (including the
+ * `useSellerPayoutsInfinite` getNextPageParam), the two seller
+ * hooks, the three telemetry functions (route template, beacon,
+ * install), and the seven webauthn pure functions. Key constants,
+ * interfaces and private helpers (`templateSegments`,
+ * `matchesTemplate`, `errorNameOf`, `toDescriptor`, `bufferOf`)
+ * are not in scope. The #327 scope was measured separately first
+ * (break 0, 65.30%); killing tests closed the gap to 78.54%
+ * before landing, and the combined score still clears the
+ * break-90 floor (see docs/mutation-frontend.md, "#327 measured
+ * runs"). No production-code change: no mutant exposed a real bug.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -127,6 +140,20 @@ export default {
     'src/api/savedSearches.ts:47-57',
     'src/api/savedSearches.ts:66-83',
     'src/api/savedSearches.ts:90-98',
+    'src/api/payouts.ts:48-59',
+    'src/api/payouts.ts:62-69',
+    'src/api/sellers.ts:30-39',
+    'src/api/sellers.ts:42-53',
+    'src/api/telemetry.ts:87-113',
+    'src/api/telemetry.ts:121-149',
+    'src/api/telemetry.ts:173-201',
+    'src/api/webauthn.ts:17-24',
+    'src/api/webauthn.ts:27-32',
+    'src/api/webauthn.ts:35-41',
+    'src/api/webauthn.ts:90-109',
+    'src/api/webauthn.ts:116-126',
+    'src/api/webauthn.ts:138-149',
+    'src/api/webauthn.ts:157-170',
   ],
   reporters: ['clear-text', 'json'],
   thresholds: {
