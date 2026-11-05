@@ -1333,6 +1333,15 @@ public class AuthService {
    * factor was expected or which check failed — and a failed exchange
    * of either kind feeds the shared #101 per-account lockout (an
    * active lock answers 423 for both).
+   *
+   * <p>Counting (backlog #336): the dispatcher itself counts nothing —
+   * its rejections are pre-verification (disabled account, no factor
+   * enrolled, a proof for a factor the account does not hold), so they
+   * are not verification outcomes. The second-factor counters live
+   * only in the two legs below, at their genuine verification
+   * success/failure sites. The disable/regenerate/step-up proofs use
+   * the separate {@code verifySecondFactor} seam, not this exchange,
+   * and are deliberately not counted here.
    */
   @Transactional(noRollbackFor = {InvalidCredentialsException.class,
       AccountLockedException.class})
@@ -1402,7 +1411,9 @@ public class AuthService {
     }
     // Backlog #89: resolve the stored secret (decrypt v1:, pass legacy
     // plaintext through). Tampered/undecryptable storage fails closed as
-    // the identical 401 — never an exception leak.
+    // the identical 401 — never an exception leak. Backlog #336: this is
+    // account state, not a guessed code, so it counts on neither
+    // second-factor counter.
     final String secret;
     try {
       secret = resolveTotpSecret(stored);
@@ -1419,6 +1430,10 @@ public class AuthService {
         // Backlog #101: a genuine failed exchange — count it, and lock
         // the exchange when the consecutive-failure ceiling is reached
         // (the locking failure itself answers 423, mirroring #60).
+        // Backlog #336: this was a verification failure, so it counts
+        // on the TOTP failure counter exactly once — including the
+        // attempt that trips the lock; later attempts refused by that
+        // lock (above) were never verified and count nothing.
         if (totpLockout.isEnabled()) {
           int attempts = user.getFailedTotpAttempts() + 1;
           user.setFailedTotpAttempts(attempts);
@@ -1427,10 +1442,12 @@ public class AuthService {
             // Backlog #171: the failure that trips the exchange lock is
             // LOCKED, mirroring the password stage.
             recordLogin(user.getId(), user.getUsername(), LoginOutcome.LOCKED, meta);
+            metrics().secondFactorTotpFailure();
             throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
           }
         }
         recordLogin(user.getId(), user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+        metrics().secondFactorTotpFailure();
         throw new InvalidCredentialsException();
       }
     }
@@ -1461,6 +1478,9 @@ public class AuthService {
     // transaction — an exchange that rolls back leaves no trust behind.
     String trustedToken = (rememberDevice && trustedDevicesAvailable())
         ? createTrustedDevice(user, meta) : null;
+    // Backlog #336: the exchange completed — a recovery-code completion
+    // counts here too, as a TOTP-leg success (it is the same leg).
+    metrics().secondFactorTotpSuccess();
     return new AuthResult(user, pair, trustedToken);
   }
 
@@ -1525,7 +1545,8 @@ public class AuthService {
     if (credential == null) {
       // Unknown credential id is account state, not guessing — the
       // identical 401, never lockout-counted, and the challenge stays
-      // live for the real attempt.
+      // live for the real attempt. Backlog #336: likewise never
+      // second-factor-counted — no assertion was verified.
       recordLogin(userId, user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
       throw new InvalidCredentialsException();
     }
@@ -1539,16 +1560,25 @@ public class AuthService {
       // A genuine second-factor failure — count it on the shared #101
       // counter, and lock when the ceiling is reached (the locking
       // failure itself answers 423, mirroring the TOTP leg).
+      // Backlog #336: it counts on the passkey failure counter exactly
+      // once, including the attempt that trips the lock; the leg cannot
+      // distinguish a bad signature from corrupt stored key material,
+      // so verifyAssertion failures count uniformly — the same
+      // treatment the #101 feed above already gives them. A malformed
+      // assertion that fails extraction before this point never
+      // reaches verification and counts nothing.
       if (totpLockout.isEnabled()) {
         int attempts = user.getFailedTotpAttempts() + 1;
         user.setFailedTotpAttempts(attempts);
         if (attempts >= totpLockout.getMaxAttempts()) {
           user.setTotpLockedUntil(now.plus(totpLockout.getLockDuration()));
           recordLogin(userId, user.getUsername(), LoginOutcome.LOCKED, meta);
+          metrics().secondFactorPasskeyFailure();
           throw new AccountLockedException(totpLockout.getLockDuration().getSeconds());
         }
       }
       recordLogin(userId, user.getUsername(), LoginOutcome.TOTP_FAILED, meta);
+      metrics().secondFactorPasskeyFailure();
       throw e;
     }
     // Success: the failure counter resets (mirrors the #60 login rule).
@@ -1578,6 +1608,8 @@ public class AuthService {
     // transaction — an exchange that rolls back leaves no trust behind.
     String trustedToken = (rememberDevice && trustedDevicesAvailable())
         ? createTrustedDevice(user, meta) : null;
+    // Backlog #336: the passkey exchange completed.
+    metrics().secondFactorPasskeySuccess();
     return new AuthResult(user, pair, trustedToken);
   }
 

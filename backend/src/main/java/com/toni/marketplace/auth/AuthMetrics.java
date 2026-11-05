@@ -14,7 +14,8 @@ import org.springframework.stereotype.Component;
  *   <li>{@code auth.login.success} — a password was verified at login.
  *       For a TOTP-enabled account this fires when the password stage
  *       passes and the 2FA challenge is issued (#78); completing the
- *       challenge is not counted separately.</li>
+ *       challenge is counted on the second-factor counters below
+ *       (#336), not here.</li>
  *   <li>{@code auth.login.failure} — a login was rejected for an unknown
  *       identifier or a wrong password (the identical-401 pair, #60).
  *       Attempts against an already-locked account count neither: the
@@ -29,6 +30,25 @@ import org.springframework.stereotype.Component;
  *   <li>{@code auth.password.changed} — a password change completed
  *       (#38). Rejected attempts (wrong current password, reuse, weak
  *       new password) do not count.</li>
+ *   <li>{@code auth.second_factor.totp.success} /
+ *       {@code auth.second_factor.totp.failure} — the TOTP /
+ *       recovery-code leg of the {@code /api/auth/2fa/authenticate}
+ *       exchange (#336): one increment per completed exchange, success
+ *       on a minted pair (a recovery-code completion counts as a TOTP
+ *       success — it is the same leg), failure on a genuine code
+ *       verification failure. Account-state rejections never count:
+ *       a disabled account, an account with no second factor enrolled,
+ *       a proof offered for a factor the account does not hold, an
+ *       undecryptable stored secret, and an attempt refused by an
+ *       already-active #101 lock all leave both counters still.</li>
+ *   <li>{@code auth.second_factor.passkey.success} /
+ *       {@code auth.second_factor.passkey.failure} — the passkey leg of
+ *       the same exchange (#336), same discipline: one increment per
+ *       completed exchange, failure only on a genuine assertion
+ *       verification failure (including the failure that trips the
+ *       #101 lock — it was a verification failure). An unknown
+ *       credential id is account state and never counts, and a
+ *       pre-verification dispatcher rejection never reaches this leg.</li>
  * </ul>
  *
  * <p>Latency timers (backlog #153) live here too, so the counters and
@@ -66,6 +86,10 @@ public class AuthMetrics {
   private final Counter lockoutTriggered;
   private final Counter refreshTheftDetected;
   private final Counter passwordChanged;
+  private final Counter secondFactorTotpSuccess;
+  private final Counter secondFactorTotpFailure;
+  private final Counter secondFactorPasskeySuccess;
+  private final Counter secondFactorPasskeyFailure;
   private final Timer loginSuccessTimer;
   private final Timer loginFailureTimer;
   private final Timer refreshSuccessTimer;
@@ -88,6 +112,18 @@ public class AuthMetrics {
         .register(reg);
     this.passwordChanged = Counter.builder("auth.password.changed")
         .description("Completed password changes")
+        .register(reg);
+    this.secondFactorTotpSuccess = Counter.builder("auth.second_factor.totp.success")
+        .description("Second-factor exchanges completed with a TOTP or recovery code")
+        .register(reg);
+    this.secondFactorTotpFailure = Counter.builder("auth.second_factor.totp.failure")
+        .description("Second-factor exchanges rejected on a genuine TOTP/recovery-code failure")
+        .register(reg);
+    this.secondFactorPasskeySuccess = Counter.builder("auth.second_factor.passkey.success")
+        .description("Second-factor exchanges completed with a passkey assertion")
+        .register(reg);
+    this.secondFactorPasskeyFailure = Counter.builder("auth.second_factor.passkey.failure")
+        .description("Second-factor exchanges rejected on a genuine passkey assertion failure")
         .register(reg);
     this.loginSuccessTimer = Timer.builder("auth.login.duration")
         .tag("outcome", "success")
@@ -134,6 +170,22 @@ public class AuthMetrics {
 
   public void passwordChanged() {
     passwordChanged.increment();
+  }
+
+  public void secondFactorTotpSuccess() {
+    secondFactorTotpSuccess.increment();
+  }
+
+  public void secondFactorTotpFailure() {
+    secondFactorTotpFailure.increment();
+  }
+
+  public void secondFactorPasskeySuccess() {
+    secondFactorPasskeySuccess.increment();
+  }
+
+  public void secondFactorPasskeyFailure() {
+    secondFactorPasskeyFailure.increment();
   }
 
   /** Starts a login timer sample; stop it exactly once via {@link #stopLoginTimer}. */
