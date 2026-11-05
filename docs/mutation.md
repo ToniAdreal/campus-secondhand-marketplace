@@ -20,11 +20,16 @@ units in the codebase and measures exactly that:
   token-bucket throttle for the auth endpoints: burst, refill,
   snapshot/retry-after math, the disabled switch, and the
   null/blank-key "unknown" bucket.
+- `com.toni.marketplace.order.SellerPayoutTransitions` (backlog #333)
+  — the per-row payout transitions: the seller-account hold, the
+  dispute-window gate, promotion and pay guards, and the pay-time
+  PAYOUT_PAID notification.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
 `PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
-`TotpServiceTest`, `AuthRateLimiterTest`) — no
+`TotpServiceTest`, `AuthRateLimiterTest`,
+`SellerPayoutTransitionsTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
 suites (recovery-code flow, lockout, encryption at rest) exercise
@@ -183,6 +188,47 @@ terms as #269/#285: PIT cannot run in this sandbox, so no local
 that reads its `pit-reports` artifact re-ratchets the floor from
 that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #333, 2026-11-05)
+
+Backlog #333 adds exactly one more class to the PIT scope —
+`order.SellerPayoutTransitions` — driven by its new pure unit suite
+`SellerPayoutTransitionsTest` (21 tests). The item names the direct
+test class as a conditional addition ("if the existing suite cannot
+kill the mutants"); the pilot needs it — the existing
+`SellerPayoutTest` drives the bean through the sweep service with a
+Spring context boot per test, which would make every mutant pay a
+context boot for no new transition branch, the same exclusion the
+TOTP and filter suites already carry. It stays out of `targetTests`
+deliberately, and this section records why.
+
+The suite pins every guard directly, with Mockito repositories and a
+one-hour dispute window so the window arithmetic stays exact:
+
+- the seller hold in all three shapes: missing payout row (not held),
+  missing seller row (held, fail closed), disabled seller (held);
+- every `promoteToPayable` skip: missing row, wrong status, held
+  seller, missing order, non-COMPLETED order, open dispute, null
+  anchor, window still open — each asserting `false` plus no save;
+- promotion itself: exactly at window expiry (the `isAfter`
+  boundary), and the `completedAt`-null fallback to `updatedAt`;
+- every `markPaid` skip on the same terms, plus the pay-time
+  notification recorded exactly once (a rerun returns `false` before
+  reaching the record) and the null-notification-service guard
+  degrading to the noop service instead of throwing.
+
+Two test-authoring traps the suite documents in comments: the dispute
+lookup keys on `order.getId()`, which is null on a directly
+constructed `Order`, so the dispute stub matches any id; and
+`updatedAt` is set only by `@PrePersist`, so the fallback-anchor case
+uses a mocked `Order` rather than a constructed one.
+
+The floor is **held at 27, not raised and not lowered**, on the same
+terms as #269/#285/#320: PIT cannot run in this sandbox, so no local
+7-class score exists and none is claimed; the next CI
+`backend-mutation` run measures the widened scope, and the round
+that reads its `pit-reports` artifact re-ratchets the floor from
+that measured score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -206,10 +252,10 @@ coverage is 81/291 = 27.8%, and the floor is that score rounded
 **down** to a whole percent, so an identical rerun cannot fail on
 rounding. The floor is never set above the measured score. Note the
 scope drift honestly: that 27.8% was measured on the 3-class scope;
-#269 widened it to 4 classes, #285 to 5 classes and #320 to 6
-classes, all unmeasured
+#269 widened it to 4 classes, #285 to 5 classes, #320 to 6
+classes and #333 to 7 classes, all unmeasured
 locally (PIT cannot run in this sandbox), so 27 is now a conservative
-hold for the 6-class scope, not a measured score for it — the next CI
+hold for the 7-class scope, not a measured score for it — the next CI
 `backend-mutation` run re-ratchets it from its measured score,
 rounded down. Widening `targetTests` to reach the remaining
 NO_COVERAGE methods is future work, not done here, and will require

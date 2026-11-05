@@ -341,6 +341,7 @@
                 <param>com.toni.marketplace.auth.PasswordStrengthValidator</param>
                 <param>com.toni.marketplace.auth.TotpService</param>
                 <param>com.toni.marketplace.auth.AuthRateLimiter</param>
+                <param>com.toni.marketplace.order.SellerPayoutTransitions</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -350,6 +351,7 @@
                 <param>com.toni.marketplace.auth.BreachedPasswordCheckerTest</param>
                 <param>com.toni.marketplace.auth.TotpServiceTest</param>
                 <param>com.toni.marketplace.auth.AuthRateLimiterTest</param>
+                <param>com.toni.marketplace.order.SellerPayoutTransitionsTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>
