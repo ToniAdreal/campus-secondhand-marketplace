@@ -195,6 +195,133 @@ public class ItemService {
         blockedSellerIds(callerId));
   }
 
+  /** Default page size for cursor pagination (backlog #334), matching the offset default of 20. */
+  static final int CURSOR_DEFAULT_LIMIT = 20;
+
+  /** Hard cap for cursor pagination (backlog #334): one cursor page never scans more than this. */
+  static final int CURSOR_MAX_LIMIT = 100;
+
+  /** One cursor page: the rows plus the opaque cursor for the next page, null at the end. */
+  public record CursorPage(List<ItemDto> items, String nextCursor) {}
+
+  /** A decoded browse cursor: the (createdAt, id) tuple of the last row the previous page served. */
+  record BrowseCursor(Instant createdAt, long id) {}
+
+  /**
+   * Encodes a page's last row as an opaque cursor: base64url of
+   * {@code "<ISO-8601 createdAt>:<id>"}. The full instant text (not
+   * epoch millis) round-trips exactly, so the keyset predicate compares
+   * against the stored value the client actually saw — truncating to
+   * millis could misplace a row created inside the same millisecond.
+   * The id tiebreak makes the tuple unique even when rows share one
+   * createdAt instant.
+   */
+  static String encodeCursor(ItemDto last) {
+    String raw = last.createdAt().toString() + ":" + last.id();
+    return java.util.Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  /** Decodes an opaque cursor; anything malformed is 400 in the envelope. */
+  static BrowseCursor decodeCursor(String raw) {
+    try {
+      String decoded = new String(java.util.Base64.getUrlDecoder().decode(raw),
+          java.nio.charset.StandardCharsets.UTF_8);
+      int sep = decoded.lastIndexOf(':');
+      if (sep <= 0) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid cursor");
+      }
+      return new BrowseCursor(Instant.parse(decoded.substring(0, sep)),
+          Long.parseLong(decoded.substring(sep + 1)));
+    } catch (ResponseStatusException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid cursor");
+    }
+  }
+
+  /**
+   * Cursor pagination for the browse list (backlog #334): the stable
+   * alternative to offset paging. A page is the rows strictly older
+   * than the previous page's last (createdAt, id) tuple in the pinned
+   * newest-first order, so a listing created mid-browse can never shift
+   * a later page into duplicates or skips — offset paging cannot make
+   * that promise. The first page is a request with no cursor (a lone
+   * {@code limit} also opens cursor mode).
+   *
+   * <p>Scope, honestly: cursor mode is defined over the newest-first
+   * order only — a price sort with a cursor is 400, because a price
+   * keyset would need a different tuple and a different contract, and
+   * this slice does not invent one. For the same reason cursor mode
+   * always uses the LIKE filter path, never the MySQL full-text path:
+   * relevance ordering has no stable keyset, so a keyword filter in
+   * cursor mode ranks by recency, not relevance (the offset path keeps
+   * full-text ranking on MySQL). The row count is limit + 1 fetched
+   * and the extra row is the has-more probe, never served.
+   */
+  @Transactional(readOnly = true)
+  public CursorPage listItemsCursorForCaller(Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 String cursor, Integer limit, Long callerId) {
+    return listCursor(categoryId, keyword, minPriceCents, maxPriceCents, sort, cursor, limit,
+        blockedSellerIds(callerId), null);
+  }
+
+  /**
+   * Cursor pagination for the seller's own list (backlog #334,
+   * {@code mine=true}): the same keyset shape over the seller-scoped
+   * projection — the seller's RESERVED/SOLD rows ride along, mirroring
+   * the offset seller view, and the block set never applies to one's
+   * own rows.
+   */
+  @Transactional(readOnly = true)
+  public CursorPage listItemsCursorForSeller(Long sellerId, Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 String cursor, Integer limit) {
+    return listCursor(categoryId, keyword, minPriceCents, maxPriceCents, sort, cursor, limit,
+        List.of(), sellerId);
+  }
+
+  private CursorPage listCursor(Long categoryId, String keyword,
+                                 Long minPriceCents, Long maxPriceCents, String sort,
+                                 String cursor, Integer limit,
+                                 List<Long> blockedSellerIds, Long sellerId) {
+    String canonicalSort = validatePriceRangeAndSort(minPriceCents, maxPriceCents, sort);
+    if (!canonicalSort.equals("newest")) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "cursor pagination requires the default newest sort");
+    }
+    int pageSize = limit == null ? CURSOR_DEFAULT_LIMIT : limit;
+    if (pageSize < 1 || pageSize > CURSOR_MAX_LIMIT) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+          "limit must be between 1 and " + CURSOR_MAX_LIMIT);
+    }
+    BrowseCursor position = cursor == null ? null : decodeCursor(cursor);
+    Pageable probe = PageRequest.of(0, pageSize + 1);
+    Instant cursorCreatedAt = position == null ? null : position.createdAt();
+    Long cursorId = position == null ? null : position.id();
+    List<ItemDto> rows;
+    if (sellerId != null) {
+      rows = items.findListViewFilteredBySellerAfter(sellerId, categoryId,
+          normalizeKeyword(keyword), minPriceCents, maxPriceCents,
+          cursorCreatedAt, cursorId, probe);
+    } else if (blockedSellerIds.isEmpty()) {
+      rows = items.findListViewFilteredAfter(categoryId,
+          normalizeKeyword(keyword), minPriceCents, maxPriceCents,
+          cursorCreatedAt, cursorId, probe);
+    } else {
+      rows = items.findListViewFilteredAfterExcludingSellers(categoryId,
+          normalizeKeyword(keyword), minPriceCents, maxPriceCents, blockedSellerIds,
+          cursorCreatedAt, cursorId, probe);
+    }
+    boolean hasMore = rows.size() > pageSize;
+    List<ItemDto> pageRows = hasMore ? rows.subList(0, pageSize) : rows;
+    List<ItemDto> dtos = withPhotos(pageRows);
+    String nextCursor = hasMore && !dtos.isEmpty()
+        ? encodeCursor(dtos.get(dtos.size() - 1)) : null;
+    return new CursorPage(dtos, nextCursor);
+  }
+
   /**
    * Search suggestions (backlog #235): title-prefix matches over the
    * same browseable set the list view shows (EXPIRED/DRAFT and

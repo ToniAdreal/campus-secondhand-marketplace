@@ -54,20 +54,46 @@ public class ItemController {
    * 401 — the security chain already requires authentication for this
    * route, and the explicit principal check below keeps the contract
    * if that ever loosens.
+   *
+   * <p>Cursor pagination (backlog #334): passing {@code cursor} (or a
+   * lone {@code limit}) switches this endpoint from offset paging to
+   * keyset paging — the response becomes
+   * {@code {items, nextCursor}} instead of a Spring page, and
+   * {@code page}/{@code size} are ignored. {@code limit} defaults to
+   * 20 and caps at 100; a cursor page is newest-first only (a price
+   * sort with a cursor is 400) and always uses the LIKE filter path,
+   * never MySQL full-text relevance ranking — see
+   * {@link ItemService#listItemsCursorForCaller}. The SPA keeps offset
+   * pagination in v1 (honest scope — the cursor is a backend slice
+   * with a follow-up, not a silent frontend swap).
    */
   @GetMapping
-  public ApiResponse<Page<ItemDto>> list(
+  public ApiResponse<?> list(
       @RequestParam(required = false) Long categoryId,
       @RequestParam(name = "q", required = false) String keyword,
       @RequestParam(required = false) @PositiveOrZero Long minPriceCents,
       @RequestParam(required = false) @PositiveOrZero Long maxPriceCents,
       @RequestParam(required = false) String sort,
       @RequestParam(required = false, defaultValue = "false") boolean mine,
+      @RequestParam(required = false) String cursor,
+      @RequestParam(required = false) Integer limit,
       @PageableDefault(size = 20) Pageable pageable) {
     Object principal = SecurityContextHolder.getContext().getAuthentication() == null
         ? null
         : SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     Long callerId = principal instanceof Long id ? id : null;
+    if (cursor != null || limit != null) {
+      if (mine) {
+        if (callerId == null) {
+          throw new org.springframework.web.server.ResponseStatusException(
+              org.springframework.http.HttpStatus.UNAUTHORIZED, "unauthorized");
+        }
+        return ApiResponse.ok(itemService.listItemsCursorForSeller(
+            callerId, categoryId, keyword, minPriceCents, maxPriceCents, sort, cursor, limit));
+      }
+      return ApiResponse.ok(itemService.listItemsCursorForCaller(
+          categoryId, keyword, minPriceCents, maxPriceCents, sort, cursor, limit, callerId));
+    }
     if (mine) {
       if (callerId == null) {
         throw new org.springframework.web.server.ResponseStatusException(

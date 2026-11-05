@@ -196,6 +196,114 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
                                     Pageable pageable);
 
   /**
+   * Cursor-paginated variant of {@link #findListViewFiltered} (backlog
+   * #334): the same constructor projection and predicates, plus the
+   * keyset predicate on the pinned newest-first order — strictly older
+   * than the (createdAt, id) tuple the previous page ended on, so a
+   * listing created mid-browse can never shift a later page into
+   * duplicates or skips. A null cursor tuple disables the predicate
+   * (first page). The caller passes a page size of limit + 1 and treats
+   * the extra row as the has-more probe; the ORDER BY is in the query,
+   * so the Pageable must be unsorted. The id tiebreak makes the tuple
+   * unique even when several rows share one createdAt instant.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' and i.status <> 'DRAFT' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\') "
+          + "and (:cursorCreatedAt is null "
+          + "or i.createdAt < :cursorCreatedAt "
+          + "or (i.createdAt = :cursorCreatedAt and i.id < :cursorId)) "
+          + "order by i.createdAt desc, i.id desc")
+  List<ItemDto> findListViewFilteredAfter(@Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
+                                    @Param("cursorCreatedAt") java.time.Instant cursorCreatedAt,
+                                    @Param("cursorId") Long cursorId,
+                                    org.springframework.data.domain.Pageable pageable);
+
+  /**
+   * Block-excluding cursor variant of {@link #findListViewFilteredAfter}
+   * (backlog #334, mirroring #187): the same keyset predicate plus
+   * {@code i.sellerId not in :blockedSellerIds}. Only called with a
+   * non-empty exclusion set.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and i.status <> 'EXPIRED' and i.status <> 'DRAFT' "
+          + "and not (i.status = 'AVAILABLE' and i.expiresAt is not null "
+          + "and i.expiresAt <= current_timestamp) "
+          + "and i.sellerId not in :blockedSellerIds "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\') "
+          + "and (:cursorCreatedAt is null "
+          + "or i.createdAt < :cursorCreatedAt "
+          + "or (i.createdAt = :cursorCreatedAt and i.id < :cursorId)) "
+          + "order by i.createdAt desc, i.id desc")
+  List<ItemDto> findListViewFilteredAfterExcludingSellers(
+                                    @Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
+                                    @Param("blockedSellerIds") java.util.Collection<Long> blockedSellerIds,
+                                    @Param("cursorCreatedAt") java.time.Instant cursorCreatedAt,
+                                    @Param("cursorId") Long cursorId,
+                                    org.springframework.data.domain.Pageable pageable);
+
+  /**
+   * Seller-scoped cursor variant of {@link #findListViewFilteredBySeller}
+   * (backlog #334): the same projection, predicates and keyset shape,
+   * narrowed to one seller — the {@code mine=true} list paged by
+   * cursor instead of offset. No status/expiry predicate, mirroring
+   * the seller view: the seller's RESERVED and SOLD rows ride along.
+   */
+  @Query(
+      value = "select new com.toni.marketplace.item.ItemDto("
+          + "i.id, i.title, i.description, i.priceCents, i.status, i.sellerId, u.username, "
+          + "c.id, c.name, i.photoUrl, i.createdAt, i.updatedAt, i.expiresAt, i.viewCount) "
+          + "from Item i left join i.category c "
+          + "left join User u on u.id = i.sellerId "
+          + "where i.sellerId = :sellerId "
+          + "and (:categoryId is null or i.category.id = :categoryId) "
+          + "and (:minPriceCents is null or i.priceCents >= :minPriceCents) "
+          + "and (:maxPriceCents is null or i.priceCents <= :maxPriceCents) "
+          + "and (:keyword is null "
+          + "or lower(i.title) like lower(concat('%', :keyword, '%')) escape '\\' "
+          + "or lower(i.description) like lower(concat('%', :keyword, '%')) escape '\\') "
+          + "and (:cursorCreatedAt is null "
+          + "or i.createdAt < :cursorCreatedAt "
+          + "or (i.createdAt = :cursorCreatedAt and i.id < :cursorId)) "
+          + "order by i.createdAt desc, i.id desc")
+  List<ItemDto> findListViewFilteredBySellerAfter(@Param("sellerId") Long sellerId,
+                                    @Param("categoryId") Long categoryId,
+                                    @Param("keyword") String keyword,
+                                    @Param("minPriceCents") Long minPriceCents,
+                                    @Param("maxPriceCents") Long maxPriceCents,
+                                    @Param("cursorCreatedAt") java.time.Instant cursorCreatedAt,
+                                    @Param("cursorId") Long cursorId,
+                                    org.springframework.data.domain.Pageable pageable);
+
+  /**
    * Seller-scoped variant of {@link #findListViewFiltered} (backlog #146):
    * the same constructor projection and the same optional category /
    * keyword / price predicates, plus {@code i.sellerId = :sellerId}. The
