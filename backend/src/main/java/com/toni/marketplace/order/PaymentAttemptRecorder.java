@@ -91,6 +91,21 @@ public class PaymentAttemptRecorder {
   }
 
   /**
+   * Buyer payment-attempt history (backlog #335): one order's rows,
+   * paginated newest first (the controller's {@code @PageableDefault}
+   * supplies createdAt/id DESC; the global max-page-size cap from #75
+   * clamps oversized {@code size}). The access check lives in
+   * {@link OrderService#listOrderAttempts} — this method only reads
+   * rows. Rows map to {@link PaymentAttemptDto} — never the entity —
+   * reusing the ADMIN viewer's projection as-is, so no new
+   * PSP-internal field is introduced.
+   */
+  @Transactional(readOnly = true)
+  public Page<PaymentAttemptDto> listOrderAttempts(long orderId, Pageable pageable) {
+    return attempts.findByOrderId(orderId, pageable).map(PaymentAttemptDto::of);
+  }
+
+  /**
    * ADMIN payment-attempt viewer (backlog #211): paginated, newest first
    * (the controller's {@code @PageableDefault} supplies createdAt/id
    * DESC; the global max-page-size cap from #75 clamps oversized

@@ -58,6 +58,8 @@ export const orderKeys = {
   /** The buyer list key carries the status filter, like sellerList below. */
   list: (status = '') => [...orderKeys.all, 'list', status] as const,
   detail: (id: number) => [...orderKeys.all, 'detail', id] as const,
+  /** Buyer payment-attempt history hangs off its own key (backlog #335). */
+  attempts: (id: number) => [...orderKeys.all, 'attempts', id] as const,
   /** Seller-side reads hang off their own key so the buyer and seller lists refetch independently. */
   sellerList: (status = '') => [...orderKeys.all, 'seller', 'list', status] as const,
   sellerSummary: () => [...orderKeys.all, 'seller', 'summary'] as const,
@@ -165,6 +167,44 @@ export function useOrder(id: number) {
     queryKey: orderKeys.detail(id),
     queryFn: () =>
       api.get<ApiResponse<Order>>(`/orders/${id}`).then((res) => res.data.data),
+  });
+}
+
+/**
+ * One row of the buyer payment-attempt history (backlog #335), mirroring
+ * the backend's PaymentAttemptDto exactly as the ADMIN viewer does —
+ * no new PSP-internal field. The order-scoped idempotency key is an
+ * operator correlation id: it travels in the DTO (the backend shape is
+ * shared with the ADMIN viewer) but buyer surfaces deliberately do not
+ * render it. The buyer's payment token is never stored by the backend,
+ * so none exists here either.
+ */
+export interface OrderPaymentAttempt {
+  id: number;
+  orderId: number;
+  outcome: 'SUCCEEDED' | 'DECLINED' | 'REFUNDED';
+  idempotencyKey: string | null;
+  refundReason: string | null;
+  createdAt: string;
+}
+
+/**
+ * GET /api/orders/{id}/attempts — the buyer's own payment-attempt
+ * history (or any order's, for an ADMIN), paginated newest first.
+ * Fetched lazily like the receipt: `enabled` flips when the buyer opens
+ * the attempts section on the order confirmation page, so order pages
+ * make no extra fetch until the trail is asked for. Callers render the
+ * first page (the backend default size 20); deeper history stays
+ * behind a follow-up, not a silent second fetch.
+ */
+export function useOrderAttempts(id: number, enabled = true) {
+  return useQuery({
+    queryKey: orderKeys.attempts(id),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<OrderPaymentAttempt>>>(`/orders/${id}/attempts`)
+        .then((res) => res.data.data),
+    enabled,
   });
 }
 

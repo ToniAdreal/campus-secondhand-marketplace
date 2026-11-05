@@ -515,6 +515,31 @@ public class OrderService {
   }
 
   /**
+   * Buyer payment-attempt history (backlog #335): the order's
+   * {@code payment_attempt} rows, paginated newest first. Access mirrors
+   * {@link #getOrderFor} exactly — the buyer who placed the order, or an
+   * ADMIN. Unknown id → 404; anyone else → 403, and that includes the
+   * listing's seller: the seller's view stays the seller-orders surface
+   * (plus the ADMIN viewer), so a seller probing this buyer endpoint
+   * learns nothing about the buyer's payment trail. Rows are
+   * {@link PaymentAttemptDto} projections via
+   * {@link PaymentAttemptRecorder#listOrderAttempts} — the same shape
+   * the ADMIN viewer serves, with no new PSP-internal field.
+   */
+  @Transactional(readOnly = true)
+  public Page<PaymentAttemptDto> listOrderAttempts(Long callerId, boolean callerIsAdmin,
+                                                   Long orderId, Pageable pageable) {
+    Order order = orders.findById(orderId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "order not found"));
+    if (!callerIsAdmin && !order.getBuyerId().equals(callerId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+          "order does not belong to you");
+    }
+    return paymentAttempts.listOrderAttempts(orderId, pageable);
+  }
+
+  /**
    * Reads a single order for the seller whose listing the order is on — or
    * for an ADMIN. Unknown id → 404; an order on somebody else's listing →
    * 403. The admin bypass mirrors {@link #getOrderFor(Long, boolean, Long)};

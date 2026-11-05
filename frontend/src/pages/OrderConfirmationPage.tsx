@@ -9,6 +9,7 @@ import {
   usePayOrder,
   useRegenerateHandoverCode,
 } from '../api/orders';
+import OrderPaymentAttempts from '../components/OrderPaymentAttempts';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderReceipt from '../components/OrderReceipt';
 import OrderShipmentControl from '../components/OrderShipmentControl';
@@ -129,6 +130,7 @@ export default function OrderConfirmationPage() {
       <div className="mt-2">
         <OrderPspReferences order={data} />
       </div>
+      <OrderPaymentAttempts orderId={data.id} />
       <OrderShipmentControl order={data} />
       <OrderReceipt orderId={data.id} />
       {canPay && (

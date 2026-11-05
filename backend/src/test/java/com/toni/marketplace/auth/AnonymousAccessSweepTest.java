@@ -206,6 +206,7 @@ class AnonymousAccessSweepTest {
       "PUT /api/reviews/{id}/response",
       "POST /api/orders/{id}/pay",
       "GET /api/orders/{id}/receipt",
+      "GET /api/orders/{id}/attempts",
       "POST /api/orders/{id}/refund",
       "GET /api/seller/reports",
       "POST /api/seller/reports/{id}/appeal",

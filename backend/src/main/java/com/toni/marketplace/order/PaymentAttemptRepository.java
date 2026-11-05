@@ -13,6 +13,14 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
   /** Every attempt against one order, newest first. */
   List<PaymentAttempt> findByOrderIdOrderByCreatedAtDescIdDesc(long orderId);
 
+  /**
+   * Buyer payment-attempt history (backlog #335): the same rows, paged —
+   * the caller-supplied {@link Pageable} carries the newest-first sort
+   * (the controller's {@code @PageableDefault} supplies createdAt/id
+   * DESC, matching the list query above).
+   */
+  Page<PaymentAttempt> findByOrderId(long orderId, Pageable pageable);
+
   /** The most recent attempt against one order, if any. */
   Optional<PaymentAttempt> findFirstByOrderIdOrderByCreatedAtDescIdDesc(long orderId);
 

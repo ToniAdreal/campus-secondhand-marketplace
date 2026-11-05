@@ -67,6 +67,33 @@ public class OrderController {
   }
 
   /**
+   * Buyer payment-attempt history (backlog #335). The order's
+   * {@code payment_attempt} rows (backlog #211), paginated newest first —
+   * so a buyer who hit a decline sees their own attempt trail instead of
+   * only the generic wording and the capture/refund ids (#119). The
+   * buyer who placed the order — or an ADMIN — may read; anyone else
+   * gets 403 (the listing's seller included — the seller's view stays
+   * the seller-orders surface); anonymous callers get the JSON 401
+   * envelope; unknown ids get 404. Rows are the ADMIN viewer's
+   * {@link PaymentAttemptDto} reused as-is: outcome, order id, the
+   * order-scoped PSP idempotency key and the attempt instant — the
+   * buyer's payment token is never stored, so none can leak here.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({@io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "payment attempts, newest first (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not the order's buyer or an ADMIN (envelope)"), @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown order id (envelope)")})
+  @GetMapping("/{id}/attempts")
+  public ApiResponse<Page<PaymentAttemptDto>> attempts(
+      @PathVariable Long id,
+      @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC)
+      Pageable pageable) {
+    Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    Long callerId = (Long) authentication.getPrincipal();
+    boolean admin = authentication.getAuthorities().stream()
+        .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    return ApiResponse.ok(orderService.listOrderAttempts(callerId, admin, id, pageable));
+  }
+
+  /**
    * Reads the printable receipt for one order (backlog #180). The buyer,
    * the listing's seller, or an ADMIN may read; anyone else gets 404 —
    * the same answer as an unknown id, so a receipt URL never leaks that
