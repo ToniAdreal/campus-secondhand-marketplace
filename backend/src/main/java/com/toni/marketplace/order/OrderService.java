@@ -216,13 +216,24 @@ public class OrderService {
    * Backlog #234: the mint also stamps the code's expiry (now +
    * {@code app.orders.handover.ttl}), so a pay-time code and a
    * regenerated code carry the same lifetime.
+   * Backlog #345: the expiry is truncated to whole seconds before it
+   * is stored. The column is {@code TIMESTAMP} with no fractional
+   * precision on both dialects (H2 in MySQL mode, and MySQL itself),
+   * and the round trip rounds to the nearest second — a mint at
+   * 12:00:00.999999999 with a 1-hour TTL stored 13:00:01, a full
+   * second past the intended expiry, so the code wrongly survived
+   * its exact-TTL boundary (complete answered 200 instead of 422).
+   * Truncating down guarantees the stored expiry never exceeds the
+   * intended expiry (at most just under one second early, against
+   * a 7-day TTL), and a second-aligned value round-trips exactly.
    */
   private String mintHandoverCode(Order order) {
     String code = String.format("%06d", new SecureRandom().nextInt(1_000_000));
     order.setHandoverCodeHash(handoverHash(code));
     order.setHandoverFailedAttempts(0);
     order.setHandoverLockedUntil(null);
-    order.setHandoverCodeExpiresAt(clock().instant().plus(handoverProps().getTtl()));
+    order.setHandoverCodeExpiresAt(clock().instant().plus(handoverProps().getTtl())
+        .truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
     return code;
   }
 
