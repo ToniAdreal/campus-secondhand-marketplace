@@ -15,8 +15,10 @@ import {
  * The seven honest smoke flows (backlog #181, money path added by #194,
  * offer + dispute paths added by #213) — see playwright.config.ts for
  * what this layer does and does not claim. The eighth flow — the cart
- * checkout journey (backlog #253) — lives in checkout.e2e.ts; both files
- * share their account/API/login moulds via e2e/helpers.ts.
+ * checkout journey (backlog #253) — lives in checkout.e2e.ts, and the
+ * ninth flow — buyer–seller messaging (backlog #342) — lives in
+ * messaging.e2e.ts; all three files share their account/API/login
+ * moulds via e2e/helpers.ts.
  * Selectors are role/label based (the SPA's #167 accessibility pass binds
  * every form field to a label), never CSS paths, so a renamed class cannot
  * silently green the suite and a lost label turns it red.
@@ -48,8 +50,9 @@ import {
  * margin. Order create/pay/complete calls carry a Bearer token and never
  * touch the credential bucket; logout is not a credential endpoint either.
  * The checkout journey's own runs are derived in checkout.e2e.ts (worst
- * run 3 of 5 as well); the two files run serially in one worker and every
- * login resets the bucket, so the combined worst run stays 3.
+ * run 3 of 5 as well), and the messaging flow's in messaging.e2e.ts
+ * (worst run 3 of 5 as well); the three files run serially in one worker
+ * and every login resets the bucket, so the combined worst run stays 3.
  */
 
 /**

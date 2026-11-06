@@ -14,7 +14,8 @@ import {
  * browser e2e smoke suite, and the first that starts from the cart
  * instead of Buy now: add to cart → cart checkout → pay → seller
  * completes with the handover code → buyer reviews. The seven earlier
- * flows live in smoke.e2e.ts; the shared account/API/login moulds live
+ * flows live in smoke.e2e.ts and the ninth (messaging) in
+ * messaging.e2e.ts; the shared account/API/login moulds live
  * in helpers.ts. Selectors are role/label based, like the rest of the
  * suite, never CSS paths.
  *
@@ -57,7 +58,7 @@ import {
  * Order create/pay/complete/review calls carry a Bearer token and
  * never touch the credential bucket.
  *
- * Stack note: like the other seven flows, this spec runs in the
+ * Stack note: like the other eight flows, this spec runs in the
  * existing CI `e2e` job (vite preview + backend jar on H2, picked up
  * automatically by the config's `**\/*.e2e.ts` match) — no new job,
  * no second stack. The docker-compose job stays curl-only.
