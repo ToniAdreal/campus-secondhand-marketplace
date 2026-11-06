@@ -1,5 +1,6 @@
 package com.toni.marketplace;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.toni.marketplace.audit.AuditAction;
@@ -7,16 +8,24 @@ import com.toni.marketplace.audit.AuditService;
 import com.toni.marketplace.audit.AuditTargetType;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Package-layering guardrails (backlog #67; {@code audit/} rules added in
- * backlog #117; newer packages constrained in backlog #279). The build fails
- * on violation.
+ * backlog #117; newer packages constrained in backlog #279; job/ write
+ * discipline in backlog #339). The build fails on violation.
  *
  * <p>Intended dependency direction (also documented in the README architecture
  * section):
@@ -47,8 +56,22 @@ import org.springframework.web.bind.annotation.RestController;
  *       depends on {@code AuditService} at all; {@code audit/}'s own ADMIN
  *       controller (#109) only reads through the service.
  *   <li>{@code job/} is the only cross-domain package: scheduled maintenance
- *       sweeps (data retention) that legitimately touch several domains'
- *       stores.
+ *       sweeps (data retention, orphan-upload cleanup, saved-search matching)
+ *       that legitimately touch several domains' stores.
+ *   <li>Cross-domain writes are pinned by {@code
+ *       only_job_writes_across_multiple_domains} (backlog #339): a class
+ *       outside {@code job/} mutates repositories in at most one foreign
+ *       domain. The survey behind the rule: reads across domains are
+ *       aggregation only (AdminDashboardService, AccountDataExportService,
+ *       SellerProfileService, OrderReceiptService resolving usernames and
+ *       disputes) and are not constrained by the rule, which counts
+ *       {@code save*}/{@code delete*} repository calls only; the lifecycle
+ *       writes that do cross one foreign store are the listing-status flips
+ *       order/ (create/pay/cancel/complete/refund), dispute/ (resolution),
+ *       moderation/ (report/appeal) and auth/ (account closure) perform on
+ *       the item/ store. DisputeService is the single documented exception:
+ *       dispute resolution refunds the order and releases the listing in one
+ *       transition, so it writes dispute/ + order/ + item/ together.
  * </ul>
  */
 @AnalyzeClasses(
@@ -161,6 +184,86 @@ class ArchitectureTest {
           .because(
               "recording joins the audited transition's own transaction in the service layer;"
                   + " AuditLogController serves reads only and must never gain a write path");
+
+  @ArchTest
+  static final ArchRule only_job_writes_across_multiple_domains =
+      classes()
+          .that()
+          .resideOutsideOfPackage("com.toni.marketplace.job..")
+          .and(notDisputeService())
+          .should(mutatingRepositoryCallsTouchAtMostOneForeignDomain())
+          .because(
+              "cross-domain writes live in job/ sweeps or in a single owning lifecycle"
+                  + " transition: a service outside job/ mutates stores in at most one foreign"
+                  + " domain (the listing-status flip an order/dispute/moderation/auth"
+                  + " transition performs on the item/ store); DisputeService is the one"
+                  + " documented exception — dispute resolution refunds the order and"
+                  + " releases the listing in a single transition, so it writes dispute/ +"
+                  + " order/ + item/ together");
+
+  private static DescribedPredicate<JavaClass> notDisputeService() {
+    return new DescribedPredicate<JavaClass>("not DisputeService") {
+      @Override
+      public boolean test(JavaClass javaClass) {
+        return !javaClass.getName().equals("com.toni.marketplace.dispute.DisputeService");
+      }
+    };
+  }
+
+  /**
+   * Counts the foreign domains whose repositories a class mutates ({@code save*} /
+   * {@code delete*} calls only — reads are aggregation, not writes) and fails the
+   * class when it touches more than one. A class's own domain never counts.
+   */
+  private static ArchCondition<JavaClass> mutatingRepositoryCallsTouchAtMostOneForeignDomain() {
+    return new ArchCondition<JavaClass>("mutate repositories of at most one foreign domain") {
+      @Override
+      public void check(JavaClass javaClass, ConditionEvents events) {
+        String ownDomain = domainOf(javaClass.getPackageName());
+        Map<String, Set<String>> foreignWrites = new TreeMap<>();
+        for (JavaMethodCall call : javaClass.getMethodCallsFromSelf()) {
+          JavaClass targetOwner = call.getTargetOwner();
+          if (!targetOwner.getName().endsWith("Repository")) {
+            continue;
+          }
+          if (!targetOwner.getPackageName().startsWith("com.toni.marketplace.")) {
+            continue;
+          }
+          if (!isMutatingRepositoryMethod(call.getTarget().getName())) {
+            continue;
+          }
+          String domain = domainOf(targetOwner.getPackageName());
+          if (!domain.equals(ownDomain)) {
+            foreignWrites.computeIfAbsent(domain, d -> new TreeSet<>()).add(targetOwner.getSimpleName());
+          }
+        }
+        if (foreignWrites.size() > 1) {
+          events.add(
+              SimpleConditionEvent.violated(
+                  javaClass,
+                  javaClass.getName()
+                      + " mutates repositories in more than one foreign domain "
+                      + foreignWrites
+                      + " — move the sweep into job/ or keep the transition to a single"
+                      + " foreign store"));
+        }
+      }
+    };
+  }
+
+  private static String domainOf(String packageName) {
+    String prefix = "com.toni.marketplace.";
+    if (!packageName.startsWith(prefix)) {
+      return "";
+    }
+    String rest = packageName.substring(prefix.length());
+    int dot = rest.indexOf('.');
+    return dot < 0 ? rest : rest.substring(0, dot);
+  }
+
+  private static boolean isMutatingRepositoryMethod(String methodName) {
+    return methodName.startsWith("save") || methodName.startsWith("delete");
+  }
 
   private static DescribedPredicate<JavaClass> authRestControllers() {
     // ArchUnit 1.2.1 has no Predicates.annotatedWith; isAnnotatedWith is the equivalent.

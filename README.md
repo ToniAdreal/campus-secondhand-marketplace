@@ -228,11 +228,23 @@ auth/, order/ services ──▶ AuditService         (transitions record from t
                                                 audit/'s own ADMIN controller reads only)
 *Controller ──▶ *Service ──▶ *Repository        (controllers never touch
                                                 repositories directly)
-job/    ──▶ auth/, order/, audit/ stores        (scheduled sweeps only)
-admin/  ──▶ all domain stores                   (read-only ADMIN aggregation —
+job/    ──▶ auth/, order/, audit/, item/, notification/ stores
+                                                (scheduled sweeps only — the retention
+                                                sweep deletes across five domains)
+admin/  ──▶ auth/, dispute/, item/, moderation/, order/ stores
+                                                (read-only ADMIN aggregation —
                                                 the operations dashboard counts
-                                                across domains without any domain
+                                                across five domains without any domain
                                                 depending on another for it)
+order/, dispute/, moderation/, auth/ services ──▶ item/ store
+                                                (lifecycle transitions only: the
+                                                order/dispute/moderation/auth transition
+                                                flips the listing status in the same
+                                                transaction — each service touches at
+                                                most one foreign store, backlog #339)
+dispute/ service ──▶ order/ + item/ stores     (the single three-domain transition:
+                                                dispute resolution refunds the order
+                                                and releases the listing together)
 ```
 
 The exception types used to live in auth/ and item/ while the
