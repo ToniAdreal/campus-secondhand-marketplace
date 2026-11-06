@@ -5,6 +5,8 @@ import type { ReactNode } from 'react';
 import { api } from './client';
 import {
   describeNotification,
+  MAX_NOTIFICATION_STREAM_RECONNECTS,
+  NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS,
   notificationKeys,
   useDeleteNotification,
   useMarkAllNotificationsRead,
@@ -247,6 +249,7 @@ class FakeEventSource {
 describe('useNotificationStream (#203)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     FakeEventSource.instances = [];
   });
 
@@ -285,16 +288,122 @@ describe('useNotificationStream (#203)', () => {
     expect(FakeEventSource.instances).toHaveLength(0);
   });
 
-  it('a stream error closes the source — the refetch fallback remains', async () => {
+  it('a stream error reconnects with a fresh ticket and the new stream still invalidates (#340)', async () => {
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy
+      .mockResolvedValueOnce(envelope({ ticket: 'ticket-1' }))
+      .mockResolvedValueOnce(envelope({ ticket: 'ticket-2' }));
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(postSpy).toHaveBeenCalledWith('/notifications/stream-ticket');
+    const first = FakeEventSource.instances[0];
+    expect(first.url).toBe('/api/notifications/stream?ticket=ticket-1');
+
+    first.onerror?.();
+    expect(first.closed).toBe(true);
+    // No reconnect yet — the first backoff (1s) has not elapsed.
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    const second = FakeEventSource.instances[1];
+    expect(second.url).toBe('/api/notifications/stream?ticket=ticket-2');
+
+    second.emit('notification');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: notificationKeys.all });
+
+    unmount();
+    expect(second.closed).toBe(true);
+  });
+
+  it('stops reconnecting past the cap and falls back to refetch silently (#340)', async () => {
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-cap' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    // Three reconnects with exponential backoff (1s, 2s, 4s), then silence.
+    const delays = [1, 2, 4].map((n) => n * NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    for (const delay of delays) {
+      const latest = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+      latest.onerror?.();
+      expect(latest.closed).toBe(true);
+      await vi.advanceTimersByTimeAsync(delay);
+      expect(FakeEventSource.instances.length).toBe(postSpy.mock.calls.length);
+    }
+    expect(FakeEventSource.instances).toHaveLength(1 + MAX_NOTIFICATION_STREAM_RECONNECTS);
+    expect(postSpy).toHaveBeenCalledTimes(1 + MAX_NOTIFICATION_STREAM_RECONNECTS);
+
+    // The fourth error is past the cap: no timer, no fifth ticket.
+    const last = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+    last.onerror?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1 + MAX_NOTIFICATION_STREAM_RECONNECTS);
+    expect(postSpy).toHaveBeenCalledTimes(1 + MAX_NOTIFICATION_STREAM_RECONNECTS);
+  });
+
+  it('a failed ticket request retries within the same cap (#340)', async () => {
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy
+      .mockRejectedValueOnce(new Error('ticket failed'))
+      .mockResolvedValue(envelope({ ticket: 'ticket-retry' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0].url).toBe(
+      '/api/notifications/stream?ticket=ticket-retry',
+    );
+  });
+
+  it('unmount cancels a pending reconnect (#340)', async () => {
+    vi.useFakeTimers();
+    postSpy.mockClear();
     vi.stubGlobal('EventSource', FakeEventSource);
     postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
     const queryClient = makeClient();
 
-    renderHook(() => useNotificationStream(true), { wrapper: wrapperFor(queryClient) });
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
 
-    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
     const source = FakeEventSource.instances[0];
     source.onerror?.();
     expect(source.closed).toBe(true);
+
+    unmount();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(postSpy).toHaveBeenCalledTimes(1);
   });
 });

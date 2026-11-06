@@ -232,17 +232,27 @@ export function useUnreadNotificationCount(enabled = true) {
 }
 
 /**
- * Live notification stream (backlog #203): while signed in, opens the
- * backend's SSE stream and invalidates the notifications subtree on
- * every `notification` event, so the bell badge moves without a
- * refetch cycle. EventSource cannot send an Authorization header, so
- * the stream is opened with the one-time ticket from POST
- * /notifications/stream-ticket — the access token never appears in a
- * URL. The stream is a hint only: the event carries just {type, id}
- * and the real rows are refetched through the queries above. Any
- * failure (ticket request, stream error) closes the stream silently —
- * the query/refetch behaviour stays as the fallback.
+ * Live notification stream (backlog #203, bounded reconnect #340):
+ * while signed in, opens the backend's SSE stream and invalidates the
+ * notifications subtree on every `notification` event, so the bell
+ * badge moves without a refetch cycle. EventSource cannot send an
+ * Authorization header, so the stream is opened with the one-time
+ * ticket from POST /notifications/stream-ticket — the access token
+ * never appears in a URL. The stream is a hint only: the event
+ * carries just {type, id} and the real rows are refetched through
+ * the queries above.
+ *
+ * Bounded reconnect (#340): a stream error — or a failed ticket
+ * request — closes the dead source and re-requests a fresh one-time
+ * ticket, up to MAX_NOTIFICATION_STREAM_RECONNECTS reopens with
+ * exponential backoff from NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS.
+ * Past the cap the stream stays closed silently and the query/refetch
+ * behaviour remains the fallback — never an unbounded retry loop.
+ * Unmounting cancels a pending reconnect and closes the source.
  */
+export const MAX_NOTIFICATION_STREAM_RECONNECTS = 3;
+export const NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS = 1000;
+
 export function useNotificationStream(enabled = true) {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -250,28 +260,53 @@ export function useNotificationStream(enabled = true) {
       return;
     }
     let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
-    api
-      .post<ApiResponse<{ ticket: string }>>('/notifications/stream-ticket')
-      .then((res) => {
-        if (cancelled) {
-          return;
-        }
-        source = new EventSource(
-          `/api/notifications/stream?ticket=${encodeURIComponent(res.data.data.ticket)}`,
-        );
-        source.addEventListener('notification', () => {
-          void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+
+    const scheduleReconnect = (nextAttempt: number) => {
+      if (cancelled || nextAttempt > MAX_NOTIFICATION_STREAM_RECONNECTS) {
+        return;
+      }
+      const delay =
+        NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS * 2 ** (nextAttempt - 1);
+      reconnectTimer = setTimeout(() => openStream(nextAttempt), delay);
+    };
+
+    const openStream = (attempt: number) => {
+      if (cancelled) {
+        return;
+      }
+      api
+        .post<ApiResponse<{ ticket: string }>>('/notifications/stream-ticket')
+        .then((res) => {
+          if (cancelled) {
+            return;
+          }
+          source = new EventSource(
+            `/api/notifications/stream?ticket=${encodeURIComponent(res.data.data.ticket)}`,
+          );
+          source.addEventListener('notification', () => {
+            void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+          });
+          source.onerror = () => {
+            source?.close();
+            source = null;
+            scheduleReconnect(attempt + 1);
+          };
+        })
+        .catch(() => {
+          // Ticket request failed — retry within the same cap, then
+          // give up silently; the refetch fallback remains.
+          scheduleReconnect(attempt + 1);
         });
-        source.onerror = () => {
-          source?.close();
-        };
-      })
-      .catch(() => {
-        // Best-effort: no stream, the refetch fallback remains.
-      });
+    };
+
+    openStream(0);
     return () => {
       cancelled = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+      }
       source?.close();
     };
   }, [enabled, queryClient]);
