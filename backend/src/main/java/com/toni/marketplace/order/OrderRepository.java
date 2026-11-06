@@ -1,15 +1,33 @@
 package com.toni.marketplace.order;
 
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
+
+  /**
+   * Locking read of one order row for the handover failure recorder
+   * (backlog #337): {@code SELECT ... FOR UPDATE} serialises
+   * concurrent {@code HandoverAttemptService.recordFailure} writers,
+   * so every failed attempt lands and the lock engages at the
+   * ceiling instead of the losers dying on the {@code @Version}
+   * check. The lock is held only for that caller's tiny
+   * {@code REQUIRES_NEW} transaction; the caller
+   * ({@code OrderService.verifyHandoverCode}) invokes the recorder
+   * before mutating anything itself and holds no row lock, so the
+   * recorder can never deadlock against it.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select o from Order o where o.id = :id")
+  java.util.Optional<Order> findByIdWithWriteLock(@Param("id") Long id);
 
   List<Order> findByBuyerId(Long buyerId);
 

@@ -22,6 +22,20 @@ import org.springframework.web.server.ResponseStatusException;
  * the count survive the 400. The caller must invoke this BEFORE any
  * mutation of its own, so the suspended outer transaction holds no row
  * lock the recorder could deadlock against.
+ *
+ * <p>Backlog #337 — the increment is a read-modify-write on a
+ * {@code @Version} row with no lock, so a burst of concurrent wrong
+ * guesses raced: measured on H2, 8 simultaneous failures recorded
+ * only 1–3 attempts and the rest died with
+ * {@code ObjectOptimisticLockingFailureException} (which the HTTP
+ * layer would have answered 409 instead of the identical 400), and
+ * the 5-attempt lock never engaged. The row is therefore read with a
+ * pessimistic write lock ({@code SELECT ... FOR UPDATE} via
+ * {@link OrderRepository#findByIdWithWriteLock}): writers serialise,
+ * every increment lands, and the lock engages at the ceiling. A
+ * bounded retry was considered and rejected — the lock is held only
+ * for this one tiny transaction, and retrying would still leave a
+ * residual failure window under contention.
  */
 @Service
 public class HandoverAttemptService {
@@ -37,10 +51,14 @@ public class HandoverAttemptService {
    * lock when the consecutive-failure ceiling is reached. An already
    * expired lock is cleared first, so the first failure after expiry
    * starts a fresh allowance (mirrors the #60/#101 lockout shape).
+   * The row is read under a pessimistic write lock (backlog #337):
+   * concurrent failures serialise instead of losing increments to
+   * the {@code @Version} check, so a burst of wrong guesses always
+   * engages the lock at the ceiling.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void recordFailure(Long orderId, int maxAttempts, Duration lockDuration, Instant now) {
-    Order order = orders.findById(orderId)
+    Order order = orders.findByIdWithWriteLock(orderId)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
             "order not found"));
     if (order.getHandoverLockedUntil() != null
