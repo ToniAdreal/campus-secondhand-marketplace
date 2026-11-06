@@ -283,7 +283,9 @@
          OrderService, OrderCreationService), plus the shared password
          policy (PasswordStrengthValidator, backlog #269), the TOTP
          service (TotpService, backlog #285) and the auth token bucket
-         (AuthRateLimiter, backlog #320), driven by
+         (AuthRateLimiter, backlog #320), the payout transitions
+         (SellerPayoutTransitions, backlog #333) and the order receipt
+         builder (OrderReceiptService, backlog #338), driven by
          their pure unit tests. This profile is CI-only: it is NOT
          active by default, so
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
@@ -310,14 +312,26 @@
          widens the scope once more (6 classes: AuthRateLimiter, driven
          by its pure unit suite AuthRateLimiterTest) on the same terms:
          PIT cannot run in this sandbox, so no local 6-class score
-         exists and the floor stays 27. The Spring/MockMvc filter suite
-         AuthRateLimitTest is deliberately NOT in targetTests: it
-         exercises the limiter through the filter, but every mutant
-         would pay a Spring context boot, and the pure suite already
-         pins the limiter's own branches directly (same rationale as
-         the TOTP MockMvc exclusion in docs/mutation.md). Deliberate
-         floor bumps edit this constant together with docs/mutation.md
-         and say why in the commit message. -->
+         exists and the floor stays 27. Backlog #333 widens the scope
+         once more (7 classes: SellerPayoutTransitions, driven by its
+         pure unit suite SellerPayoutTransitionsTest) on the same terms.
+         Backlog #338 widens the scope once more (8 classes:
+         OrderReceiptService, driven by its pure unit suite
+         OrderReceiptServiceTest) on the same terms: PIT cannot run in
+         this sandbox, so no local 8-class score exists and the floor
+         stays 27. The Spring/MockMvc receipt suite OrderReceiptTest
+         is deliberately NOT in targetTests: it exercises the service
+         through the controller, but every mutant would pay a Spring
+         context boot, and the pure suite already pins the service's
+         own branches directly (same rationale as the TOTP MockMvc
+         exclusion in docs/mutation.md). The Spring/MockMvc filter suite
+         AuthRateLimitTest is likewise NOT in targetTests: it exercises
+         the limiter through the filter, but every mutant would pay a
+         Spring context boot, and the pure suite already pins the
+         limiter's own branches directly (same rationale as the TOTP
+         MockMvc exclusion in docs/mutation.md). Deliberate floor bumps
+         edit this constant together with docs/mutation.md and say why
+         in the commit message. -->
     <profile>
       <id>mutation</id>
       <build>
@@ -342,6 +356,7 @@
                 <param>com.toni.marketplace.auth.TotpService</param>
                 <param>com.toni.marketplace.auth.AuthRateLimiter</param>
                 <param>com.toni.marketplace.order.SellerPayoutTransitions</param>
+                <param>com.toni.marketplace.order.OrderReceiptService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -352,6 +367,7 @@
                 <param>com.toni.marketplace.auth.TotpServiceTest</param>
                 <param>com.toni.marketplace.auth.AuthRateLimiterTest</param>
                 <param>com.toni.marketplace.order.SellerPayoutTransitionsTest</param>
+                <param>com.toni.marketplace.order.OrderReceiptServiceTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>

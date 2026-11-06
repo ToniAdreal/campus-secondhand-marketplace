@@ -24,12 +24,18 @@ units in the codebase and measures exactly that:
   — the per-row payout transitions: the seller-account hold, the
   dispute-window gate, promotion and pay guards, and the pay-time
   PAYOUT_PAID notification.
+- `com.toni.marketplace.order.OrderReceiptService` (backlog #338)
+  — the printable-receipt builder: the buyer/seller/ADMIN read rule
+  with its no-leak 404, the `paid` flag's status/capture-id
+  disjunction, the zero-refunded-total → null map, the
+  RESOLVED_REFUND-only dispute note, the latest-refunded-attempt
+  reason, and the `"unknown"` username for a deleted account.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
 `PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
 `TotpServiceTest`, `AuthRateLimiterTest`,
-`SellerPayoutTransitionsTest`) — no
+`SellerPayoutTransitionsTest`, `OrderReceiptServiceTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
 suites (recovery-code flow, lockout, encryption at rest) exercise
@@ -229,6 +235,59 @@ terms as #269/#285/#320: PIT cannot run in this sandbox, so no local
 that reads its `pit-reports` artifact re-ratchets the floor from
 that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #338, 2026-11-06)
+
+Backlog #338 adds exactly one more class to the PIT scope —
+`order.OrderReceiptService` — driven by its new pure unit suite
+`OrderReceiptServiceTest` (16 tests). The item names the direct
+test class as a conditional addition ("if the existing suite cannot
+kill the mutants"); the pilot needs it — the existing
+`OrderReceiptTest` drives the service through MockMvc with a Spring
+context boot per test, which would make every mutant pay a context
+boot for no new receipt branch, the same exclusion the TOTP, filter
+and payout suites already carry. It stays out of `targetTests`
+deliberately, and the pom comment records why.
+
+The suite pins every guard directly, with Mockito repositories and
+directly constructed orders (no id is ever assigned, so the dispute
+and attempt stubs match on any order id):
+
+- the read rule in all four shapes: unknown id → 404, stranger →
+  404 with the same message, buyer/seller/ADMIN each read;
+- the `paid` flag disjunct by disjunct: PENDING with a capture id
+  is paid, PAID/COMPLETED/REFUNDED are paid without one, PENDING
+  without one is not, and — the branch only this suite can pin —
+  DISPUTED without a capture id is paid (through the API a dispute
+  always follows a payment, so the MockMvc suite only ever sees
+  DISPUTED with a capture id set);
+- the refunded-total map at its boundary: 0 → null (the
+  `>=` boundary mutant) and 30000 → 30000 (the negated mutant);
+- the dispute note: a RESOLVED_REFUND dispute's note is carried,
+  no such dispute → null (a release resolution lives under a
+  different status and never surfaces as a refund note);
+- the refund reason: the latest REFUNDED attempt's reason is
+  carried, no refunded attempt → null;
+- the deleted-account usernames: a missing buyer row and a missing
+  seller row each render as `"unknown"` instead of failing the
+  receipt.
+
+One branch is pinned as documentation of a deliberate absence:
+SHIPPED without a capture id is *not* paid — SHIPPED is not in the
+`paid` disjunction because the capture id is the payment proof, and
+a shipped order always carries one in production (ship requires
+PAID first). No mutant exposed a real bug, so there is no
+production-code change in this round.
+
+The floor is **held at 27, not raised and not lowered**, on the same
+terms as #269/#285/#320/#333: PIT cannot run in this sandbox — the
+measure-first step, an OrderReceiptService-only run at threshold 0
+on 2026-11-06, reproduced the sandbox failure in ~25 s (coverage
+minion died with `EOFException` reading its socket, `MINION_DIED`,
+`BUILD FAILURE`), so no local 8-class score exists and none is
+claimed; the next CI `backend-mutation` run measures the widened
+scope, and the round that reads its `pit-reports` artifact
+re-ratchets the floor from that measured score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -253,9 +312,9 @@ coverage is 81/291 = 27.8%, and the floor is that score rounded
 rounding. The floor is never set above the measured score. Note the
 scope drift honestly: that 27.8% was measured on the 3-class scope;
 #269 widened it to 4 classes, #285 to 5 classes, #320 to 6
-classes and #333 to 7 classes, all unmeasured
+classes, #333 to 7 classes and #338 to 8 classes, all unmeasured
 locally (PIT cannot run in this sandbox), so 27 is now a conservative
-hold for the 7-class scope, not a measured score for it — the next CI
+hold for the 8-class scope, not a measured score for it — the next CI
 `backend-mutation` run re-ratchets it from its measured score,
 rounded down. Widening `targetTests` to reach the remaining
 NO_COVERAGE methods is future work, not done here, and will require
@@ -420,8 +479,10 @@ set against the current scope, as stated there.
 
 ## Honest scope
 
-The mutation score covers the four classes above — two packages'
-core units plus the shared password policy — **not** the codebase.
+The mutation score covers the eight classes above — the auth token
+service, the order state machine, the shared password policy, TOTP,
+the auth token bucket, the payout transitions and the receipt builder
+— **not** the codebase.
 Controllers, repositories, and the frontend have no mutation score,
 and none is claimed for them in the README. Widening the scope
 continues one class at a time, with the floor re-measured each time.

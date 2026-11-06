@@ -341,17 +341,23 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   branches 89, statements 93) fail the run when missed. CI runs this in
   place of plain `npm test`.
 - Mutation testing pilot (backlog #192): PIT (pitest) over the auth token
-  service, the order state machine, the password-policy validator, and
-  the TOTP service (`JwtTokenService`, `OrderService`, `OrderCreationService`,
-  `PasswordStrengthValidator` — added by backlog #269, driven by
-  `PasswordStrengthValidatorTest` + `BreachedPasswordCheckerTest` — and
-  `TotpService` — added by backlog #285, driven by `TotpServiceTest`), in the
-  CI-only `mutation` Maven profile / `backend-mutation` job — never in
-  the default local `mvn test` path. The floor is a ratchet set from the
-  first real CI run's measured score, recorded in docs/mutation.md; the
-  score covers those five classes, not the codebase. The #269 and #285
-  widenings are unmeasured pending the next CI backend-mutation run — the
-  floor stays 27 until then (docs/mutation.md).
+  service, the order state machine, the password-policy validator, the
+  TOTP service, the auth token bucket, the payout transitions and the
+  order receipt builder (`JwtTokenService`, `OrderService`,
+  `OrderCreationService`, `PasswordStrengthValidator` — added by backlog
+  #269, driven by `PasswordStrengthValidatorTest` +
+  `BreachedPasswordCheckerTest` — `TotpService` — added by backlog #285,
+  driven by `TotpServiceTest` — `AuthRateLimiter` — added by backlog
+  #320, driven by `AuthRateLimiterTest` — `SellerPayoutTransitions` —
+  added by backlog #333, driven by `SellerPayoutTransitionsTest` — and
+  `OrderReceiptService` — added by backlog #338, driven by
+  `OrderReceiptServiceTest`), in the CI-only `mutation` Maven profile /
+  `backend-mutation` job — never in the default local `mvn test` path.
+  The floor is a ratchet set from the first real CI run's measured
+  score, recorded in docs/mutation.md; the score covers those eight
+  classes, not the codebase. The #269, #285, #320, #333 and #338
+  widenings are unmeasured pending the next CI backend-mutation run —
+  the floor stays 27 until then (docs/mutation.md).
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   eight flows (register lands on browse signed in; browse → listing detail
   renders; login → create listing → it appears in My listings; buy-now →
