@@ -39,6 +39,24 @@ import org.springframework.stereotype.Component;
  *       {@link OrderService#pay(Long, Long, String)} — never on a 409
  *       race loss, a validation 400, or an idempotent re-pay (which
  *       returns before any capture is attempted).</li>
+ *   <li>{@code payouts.promoted} / {@code payouts.paid} /
+ *       {@code payouts.skipped} / {@code payouts.held} — the hourly
+ *       seller-payout sweep ({@link SellerPayoutService#runSweep},
+ *       backlog #341): one increment per row outcome, mirroring the
+ *       sweep's own {@code PayoutSweepCounts} and its finished log
+ *       line, so the counters and the log can never disagree. Promoted
+ *       counts PENDING → PAYABLE, paid counts PAYABLE → PAID, skipped
+ *       counts rows the sweep passed over (window still open, order no
+ *       longer COMPLETED, open dispute, wrong status — or a concurrent
+ *       transition winning the {@code @Version} race), held counts rows
+ *       the sweep's pre-check held for a disabled or closed seller
+ *       account. A row that becomes held between the pre-check and the
+ *       transition lands in skipped instead (the transition returns
+ *       false) — the race window is real but narrow, and the row is
+ *       retried by the next sweep either way. Nothing counts when the
+ *       sweep never runs (no {@code JobLockGuard} lease): zero rows
+ *       touched means zero increments, matching the zero counts the
+ *       run returns.</li>
  * </ul>
  *
  * <p>Latency timers (backlog #153) live here too, so the counters and
@@ -91,6 +109,10 @@ public class OrderMetrics {
   private final Counter refunded;
   private final Counter expired;
   private final Counter paymentsDeclined;
+  private final Counter payoutPromoted;
+  private final Counter payoutPaid;
+  private final Counter payoutSkipped;
+  private final Counter payoutHeld;
   private final Timer createSuccessTimer;
   private final Timer createFailureTimer;
   private final Timer paySuccessTimer;
@@ -119,6 +141,18 @@ public class OrderMetrics {
         .register(reg);
     this.paymentsDeclined = Counter.builder("payments.declined")
         .description("Mock PSP capture declines (order stays PENDING)")
+        .register(reg);
+    this.payoutPromoted = Counter.builder("payouts.promoted")
+        .description("Seller payouts promoted PENDING to PAYABLE by the hourly sweep")
+        .register(reg);
+    this.payoutPaid = Counter.builder("payouts.paid")
+        .description("Seller payouts marked PAID by the hourly sweep")
+        .register(reg);
+    this.payoutSkipped = Counter.builder("payouts.skipped")
+        .description("Seller payout rows the hourly sweep passed over (window open, dispute, or a lost race)")
+        .register(reg);
+    this.payoutHeld = Counter.builder("payouts.held")
+        .description("Seller payout rows the hourly sweep held for a disabled or closed seller account")
         .register(reg);
     this.createSuccessTimer = Timer.builder("orders.create.duration")
         .tag("outcome", "success")
@@ -173,6 +207,22 @@ public class OrderMetrics {
 
   public void paymentsDeclined() {
     paymentsDeclined.increment();
+  }
+
+  public void payoutPromoted() {
+    payoutPromoted.increment();
+  }
+
+  public void payoutPaid() {
+    payoutPaid.increment();
+  }
+
+  public void payoutSkipped() {
+    payoutSkipped.increment();
+  }
+
+  public void payoutHeld() {
+    payoutHeld.increment();
   }
 
   /** Starts a create timer sample; stop it exactly once via {@link #stopCreateTimer}. */

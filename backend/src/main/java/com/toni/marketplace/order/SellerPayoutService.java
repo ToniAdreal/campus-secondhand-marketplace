@@ -74,18 +74,21 @@ public class SellerPayoutService {
   private final SellerPayoutTransitions transitions;
   private final Clock clock;
   private final JobLockGuard jobLock;
+  private final OrderMetrics metrics;
 
   @Autowired
   public SellerPayoutService(SellerPayoutRepository payouts,
                              SellerPayoutAdjustmentRepository adjustments,
                              SellerPayoutTransitions transitions,
                              Clock clock,
-                             JobLockGuard jobLock) {
+                             JobLockGuard jobLock,
+                             OrderMetrics metrics) {
     this.payouts = payouts;
     this.adjustments = adjustments;
     this.transitions = transitions;
     this.clock = clock;
     this.jobLock = jobLock;
+    this.metrics = metrics != null ? metrics : OrderMetrics.noop();
   }
 
   /** Direct-construction constructor for body-logic unit tests (no lease). */
@@ -93,7 +96,16 @@ public class SellerPayoutService {
                              SellerPayoutAdjustmentRepository adjustments,
                              SellerPayoutTransitions transitions,
                              Clock clock) {
-    this(payouts, adjustments, transitions, clock, JobLockGuard.disabled());
+    this(payouts, adjustments, transitions, clock, JobLockGuard.disabled(), OrderMetrics.noop());
+  }
+
+  /** Direct-construction constructor for body-logic unit tests that assert on metrics. */
+  public SellerPayoutService(SellerPayoutRepository payouts,
+                             SellerPayoutAdjustmentRepository adjustments,
+                             SellerPayoutTransitions transitions,
+                             Clock clock,
+                             OrderMetrics metrics) {
+    this(payouts, adjustments, transitions, clock, JobLockGuard.disabled(), metrics);
   }
 
   /** How many rows one sweep run promoted, paid, skipped — and held for seller-account state. */
@@ -200,14 +212,18 @@ public class SellerPayoutService {
       try {
         if (transitions.isSellerHeld(payoutId)) {
           held++;
+          metrics.payoutHeld();
           log.info("payout sweep held payout {}: seller account disabled or closed", payoutId);
         } else if (transitions.promoteToPayable(payoutId, now)) {
           promoted++;
+          metrics.payoutPromoted();
         } else {
           skipped++;
+          metrics.payoutSkipped();
         }
       } catch (ObjectOptimisticLockingFailureException e) {
         skipped++;
+        metrics.payoutSkipped();
         log.info("payout sweep skipped payout {}: a concurrent transition won", payoutId);
       }
     }
@@ -217,14 +233,18 @@ public class SellerPayoutService {
       try {
         if (transitions.isSellerHeld(payoutId)) {
           held++;
+          metrics.payoutHeld();
           log.info("payout sweep held payout {}: seller account disabled or closed", payoutId);
         } else if (transitions.markPaid(payoutId, now)) {
           paid++;
+          metrics.payoutPaid();
         } else {
           skipped++;
+          metrics.payoutSkipped();
         }
       } catch (ObjectOptimisticLockingFailureException e) {
         skipped++;
+        metrics.payoutSkipped();
         log.info("payout sweep skipped payout {}: a concurrent transition won", payoutId);
       }
     }
