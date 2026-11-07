@@ -2,16 +2,17 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
 /**
  * Shared helpers for the browser e2e smoke suite (backlog #181, split
- * by #253, messaging flow added by #342): smoke.e2e.ts holds the seven
- * original flows, checkout.e2e.ts holds the cart checkout journey,
- * messaging.e2e.ts holds the buyer–seller messaging flow, and all
- * three import from here so the account/registration/login/row-status
- * moulds stay identical. Nothing here seeds state through a back door
+ * by #253, messaging flow added by #342, moderation flow added by
+ * #346): smoke.e2e.ts holds the seven original flows, checkout.e2e.ts
+ * holds the cart checkout journey, messaging.e2e.ts holds the
+ * buyer–seller messaging flow, moderation.e2e.ts holds the listing
+ * report → admin action flow, and all four import from here so the
+ * account/registration/login/row-status moulds stay identical. Nothing here seeds state through a back door
  * — registration and listing creation go through the public API,
  * exactly as the specs did when these helpers lived inline in
  * smoke.e2e.ts.
  *
- * Credential-bucket note (shared by the three spec files, re-derived per
+ * Credential-bucket note (shared by the four spec files, re-derived per
  * file in its own header): login and register share ONE bucket
  * (capacity 5 per IP, refill 5/min, a successful login resets it to
  * full — see AuthRateLimitFilter). The specs run serially in one

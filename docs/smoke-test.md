@@ -155,7 +155,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly nine flows: (1) register lands on browse signed in;
+- Exactly ten flows: (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -169,7 +169,10 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   the review pinned via the API on the seller's profile (backlog #253);
   (9) buyer messages → seller replies → buyer sees the reply, and a
   third user who never participated opens the same detail page and gets
-  the privacy note instead of the thread (backlog #342).
+  the privacy note instead of the thread (backlog #342);
+  (10) buyer reports a listing → the ADMIN acts on it in /admin/reports
+  → the listing shows WITHDRAWN and stops offering purchase, and a
+  dismissed report leaves its listing AVAILABLE (backlog #346).
   Flows 5 and 7 seed their PAID orders through the real API (the pay
   response is where the code is disclosed); the completions/resolutions
   themselves are driven in the browser. Selectors are role/label based.
