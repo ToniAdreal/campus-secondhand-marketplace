@@ -29,6 +29,24 @@ import org.springframework.stereotype.Component;
  *       {@link OrderService#expireStaleOrder}). Counted here, not as
  *       {@code orders.cancelled}: expiry is a system transition, not a
  *       buyer action, and the two must stay distinguishable.</li>
+ *   <li>{@code orders.shipped} — PAID → SHIPPED by the seller
+ *       (backlog #348). A re-ship attempt (422) does not count, and
+ *       the shipped path's later receipt confirmation counts on
+ *       {@code orders.completed}, not here.</li>
+ *   <li>{@code orders.disputed} — an order was disputed
+ *       (PAID/SHIPPED/COMPLETED → DISPUTED, backlog #348), counted on
+ *       the dispute-open path only. An idempotent re-open returns the
+ *       live dispute without counting, and a resolve counts on its
+ *       own outcome ({@code orders.refunded} for a refund resolution,
+ *       nothing for a release) — never here. Without it a dispute
+ *       opened but never resolved is invisible on
+ *       {@code /actuator/prometheus} while every other lifecycle
+ *       step is counted.</li>
+ *   <li>{@code orders.handover_confirmed} — a seller completed an
+ *       order by presenting the buyer's handover code (backlog #348).
+ *       The ADMIN-override completion (no code is presented) and the
+ *       shipped-path receipt confirmation (buyer's statement, no
+ *       code) count on {@code orders.completed} only — never here.</li>
  *   <li>{@code payments.declined} — the mock PSP declined a capture
  *       (#115, extending #92). This is deliberately not an
  *       {@code orders.*} counter: a decline is not an order transition
@@ -108,6 +126,9 @@ public class OrderMetrics {
   private final Counter completed;
   private final Counter refunded;
   private final Counter expired;
+  private final Counter shipped;
+  private final Counter disputed;
+  private final Counter handoverConfirmed;
   private final Counter paymentsDeclined;
   private final Counter payoutPromoted;
   private final Counter payoutPaid;
@@ -138,6 +159,15 @@ public class OrderMetrics {
         .register(reg);
     this.expired = Counter.builder("orders.expired")
         .description("Stale PENDING orders expired by the scheduled job")
+        .register(reg);
+    this.shipped = Counter.builder("orders.shipped")
+        .description("PAID orders shipped by their seller (re-ship attempts excluded)")
+        .register(reg);
+    this.disputed = Counter.builder("orders.disputed")
+        .description("Orders disputed by buyer or seller (re-opens and resolves excluded)")
+        .register(reg);
+    this.handoverConfirmed = Counter.builder("orders.handover_confirmed")
+        .description("Orders completed by a seller presenting the buyer's handover code")
         .register(reg);
     this.paymentsDeclined = Counter.builder("payments.declined")
         .description("Mock PSP capture declines (order stays PENDING)")
@@ -203,6 +233,18 @@ public class OrderMetrics {
 
   public void expired() {
     expired.increment();
+  }
+
+  public void shipped() {
+    shipped.increment();
+  }
+
+  public void disputed() {
+    disputed.increment();
+  }
+
+  public void handoverConfirmed() {
+    handoverConfirmed.increment();
   }
 
   public void paymentsDeclined() {

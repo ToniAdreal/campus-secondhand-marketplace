@@ -222,6 +222,10 @@ public class DisputeService {
       dispute.setOpenedBy(opener);
       DisputeDto dto = DisputeDto.from(disputes.save(dispute));
       disputes.flush();
+      // Backlog #348: counted after both flushes, mirroring
+      // OrderService — a lost race (409) or a later rollback moves no
+      // counter, and the idempotent re-open above returns before it.
+      metrics().disputed();
       audit().record(callerId, AuditAction.ORDER_DISPUTED, AuditTargetType.ORDER, orderId);
       notifications().record(opener == DisputeOpener.BUYER ? sellerId : order.getBuyerId(),
           NotificationType.ORDER_DISPUTED, orderId);

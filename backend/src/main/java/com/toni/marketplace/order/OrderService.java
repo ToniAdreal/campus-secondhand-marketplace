@@ -1017,9 +1017,19 @@ public class OrderService {
     if (!callerIsAdmin) {
       verifyHandoverCode(order, handoverCode);
     }
-    return transitionToCompleted(order, callerId,
+    OrderDto dto = transitionToCompleted(order, callerId,
         callerIsAdmin ? AuditAction.ORDER_COMPLETED_ADMIN_OVERRIDE
             : AuditAction.ORDER_COMPLETED);
+    if (!callerIsAdmin) {
+      // Backlog #348: the handover code was presented and verified
+      // above, and the transition just succeeded — this completion is
+      // a handover confirmation. The ADMIN override (no code) and the
+      // shipped-path receipt confirmation (confirmReceipt calls
+      // transitionToCompleted directly) never reach this line, and
+      // the idempotent re-complete above returns before it.
+      metrics().handoverConfirmed();
+    }
+    return dto;
   }
 
   /**
@@ -1085,6 +1095,10 @@ public class OrderService {
       order.setShippedAt(clock().instant());
       OrderDto dto = OrderDto.from(orders.save(order));
       orders.flush();
+      // Backlog #348: counted after the flush, mirroring
+      // transitionToCompleted — a lost @Version race (409) or any
+      // later rollback moves no counter.
+      metrics().shipped();
       audit().record(callerId, AuditAction.ORDER_SHIPPED,
           AuditTargetType.ORDER, orderId);
       // Backlog #238: notify the buyer in the same transaction — a
