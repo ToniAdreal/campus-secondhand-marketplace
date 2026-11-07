@@ -177,6 +177,18 @@ describe('checkoutCart', () => {
       { itemId: 7, title: book.title, ok: false, errorMessage: 'Something went wrong. Please try again.' },
     ]);
   });
+
+  it('a response with no data body still falls back to the generic copy (#351)', async () => {
+    const createOrder = vi.fn(async () => {
+      const error = new Error('gateway error') as Error & { response?: unknown };
+      error.response = {};
+      throw error;
+    });
+    const outcomes = await checkoutCart([book], 'batch-9', createOrder);
+    expect(outcomes).toEqual([
+      { itemId: 7, title: book.title, ok: false, errorMessage: 'Something went wrong. Please try again.' },
+    ]);
+  });
 });
 
 describe('revalidateCartItems (backlog #244)', () => {
