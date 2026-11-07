@@ -80,6 +80,21 @@
  * before landing, and the combined score still clears the
  * break-90 floor (see docs/mutation-frontend.md, "#327 measured
  * runs"). No production-code change: no mutant exposed a real bug.
+ * #347 extends the same discipline to the notifications +
+ * recently-viewed api modules: each range below is exactly one
+ * exported hook — the eight notifications hooks (`useNotifications`,
+ * `useUnreadNotificationCount`, `useNotificationStream` with its
+ * bounded reconnect, `useNotificationPreferences`,
+ * `useSetNotificationPreference`, `useMarkAllNotificationsRead`,
+ * `useDeleteNotification`, `useMarkNotificationRead`) and
+ * `useRecentlyViewed`. Key constants (`notificationKeys`,
+ * `recentlyViewedKeys`, the reconnect cap constants) and the pure
+ * `describeNotification` copy function are not in scope. The #347
+ * scope was measured separately first (break 0, 82.08% over 106
+ * mutants, counting the 2 timeouts as scored) and the combined
+ * score still clears the break-90 floor (see
+ * docs/mutation-frontend.md, "#347 measured runs"). No
+ * production-code change: no mutant exposed a real bug.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -154,6 +169,15 @@ export default {
     'src/api/webauthn.ts:116-126',
     'src/api/webauthn.ts:138-149',
     'src/api/webauthn.ts:157-170',
+    'src/api/notifications.ts:207-216',
+    'src/api/notifications.ts:223-232',
+    'src/api/notifications.ts:256-313',
+    'src/api/notifications.ts:320-329',
+    'src/api/notifications.ts:339-353',
+    'src/api/notifications.ts:361-372',
+    'src/api/notifications.ts:379-388',
+    'src/api/notifications.ts:395-406',
+    'src/api/recentlyViewed.ts:22-32',
   ],
   reporters: ['clear-text', 'json'],
   thresholds: {

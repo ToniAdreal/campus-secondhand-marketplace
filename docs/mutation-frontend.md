@@ -1,4 +1,4 @@
-# Frontend mutation testing pilot (backlog #252, widened by #263, #280, #287 and #322)
+# Frontend mutation testing pilot (backlog #252, widened by #263, #280, #287, #322, #327 and #347)
 
 Line coverage (Vitest, gated in the `frontend` CI job since #247) proves
 code is *executed* by tests; it does not prove the tests would *notice*
@@ -352,6 +352,53 @@ because the gate is the combined score, not any single file.
 Backlog #327 is done; a future widening still requires
 re-measuring first, per the #263 method.
 
+### Eighth measured run (backlog #347) — notifications + recently-viewed hooks
+
+The 9 hook ranges were measured separately first, with temporary
+ranges-only configs at break 0 (measure first, floor second —
+the same discipline as #252, #263, #280, #287, #322 and #327;
+the temporary configs were deleted after the run, never
+committed; full report copies:
+`goals/github-engineering-profile-building/hidden_files/stryker-347-measure-notifications.json`
+and `stryker-347-measure-recentlyViewed.json`). Chunked per file
+so a restart loses at most one chunk (the #287 lesson).
+Local run, 2026-11-07, head **2106add** (backlog #346) plus the
+#347 config/gate/CI/doc changes, which touch no api source,
+notifications chunk 2 minutes 40 seconds + recently-viewed chunk
+38 seconds, 4 workers:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 9 hook ranges (106 mutants) | 82.08% (87/106, counting the 2 timeouts as scored) | 84.47% (87/103) |
+
+Mutant statuses: **KILLED 85, SURVIVED 16, NO_COVERAGE 3,
+TIMEOUT 2, ERROR 0.** Per-file scores: recentlyViewed 100.00%
+(5 killed + 2 timeout, 0 survived, 0 no-coverage over 7
+mutants), notifications 80.81% (80/99). The gap is concentrated,
+not diffuse: 14 of the 16 survivors sit in `useNotificationStream`
+(the #340 bounded-reconnect hook — reconnect delay arithmetic,
+cancelled guards, cleanup branches and the effect dependency
+array), and the other 2 are the `useSetNotificationPreference`
+onSuccess invalidation, which no test asserts (see below). The 3
+no-coverage mutants are the stream hook's default-param and
+cancelled-guard blocks. None is labelled equivalent here.
+
+### Floor decision (widened scope, sixth widening — LANDED)
+
+`thresholds.break` stays **90**: the floor is unchanged, not lowered
+to fit the new scope. The new scope is disjoint from the landed
+scope and no source file in either scope changed in this round,
+so the combined score is the arithmetic sum of the measured runs:
+(1573 + 87) / (1724 + 106) = 1660/1830 = **90.71%**, which
+clears the 90 floor (90 <= 90.71) — the #347 ranges are now a
+landed scope, and the CI `frontend-mutation` job measures the
+combined score on every run. The 16 survivors + 3 no-coverage
+mutants stay honest follow-up material (see the #347 subsection
+under "Surviving mutants"); they do not block the landing,
+because the gate is the combined score, not any single file.
+Backlog #347 is done; a future widening still requires
+re-measuring first, per the #263 method.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -469,6 +516,55 @@ all in telemetry except the webauthn environment guards:
   the out-of-range write). Needs: a byte input whose btoa
   output carries `=` anywhere but the end (none exists for
   valid base64), or the same observability caveat.
+
+### Notifications + recently-viewed hooks — 16 survived + 3 no-coverage (#347)
+
+None is labelled equivalent. The survivors cluster in two themes:
+
+- Stream reconnect/cleanup edges (14, all in `useNotificationStream`):
+  the backoff delay arithmetic (L271 `* 2 ** (nextAttempt - 1)` →
+  `/`; the cap test advances exactly the nominal 1s/2s/4s delays,
+  so a shorter mutant delay still lands inside the advance — the
+  tests pin the delays as upper bounds only, never the exact
+  values), the ticket-failure retry step (L300 `attempt + 1` →
+  `attempt - 1`, covered only by the single retry test, which
+  asserts a retry happens, never the attempt value), the
+  `||` short-circuit (L259 ConditionalExpression → `false`;
+  covered only by tests rendering enabled, so the guard never
+  fires either way — the disabled test short-circuits on
+  `!enabled` and never reaches the mutated side) and the
+  `typeof EventSource === 'undefined'` guard (L259 StringLiteral
+  → `""`; jsdom always provides EventSource, so the branch cannot
+  be falsified here — same environment-gate caveat as the #327
+  telemetry guards), the cancelled guards (L276, L282
+  ConditionalExpression → `false`; no test races cancellation
+  against the openStream entry or the ticket resolution), the
+  cleanup body (L306 `cancelled = true` → `false`, L307–308 the
+  `reconnectTimer !== null` branch and `clearTimeout` call, L292
+  `source?.close()` — the two cleanup steps are redundant
+  defences, so mutating either one alone still suppresses the
+  reconnect and the unmount test cannot tell which step ran),
+  and the effect dependency array (L312 ArrayDeclaration → `[]`;
+  no test re-renders with changed `enabled`/`queryClient`).
+  Needs: exact-delay pins with fake timers, a retry test that
+  asserts the attempt count, cleanup-step assertions, and a
+  re-render test for the deps; the EventSource-undefined mutant
+  needs a non-jsdom harness.
+- Preference-toggle invalidation (2): `useSetNotificationPreference`
+  onSuccess (L348 ArrowFunction → `() => undefined`, L350
+  ObjectLiteral → `{}`) — the Settings toggle test drives the
+  mutation but never asserts the `['notifications', 'preferences']`
+  invalidation. Needs: assert the catalogue query refetches after
+  a successful toggle.
+
+The 3 no-coverage mutants are the stream hook's default `enabled`
+param (L256 BooleanLiteral → `false`; every stream test passes
+an explicit arg) and two cancelled-guard blocks (L276–278,
+L282–284 BlockStatement → `{}`; no test reaches those branches).
+`useRecentlyViewed` has no survivors: its malformed-payload
+fallback is already pinned by the existing test, and its 2
+timeouts (the whole-hook ObjectLiteral/BlockStatement mutants)
+count as scored, not as gaps.
 
 ## No-coverage mutants
 

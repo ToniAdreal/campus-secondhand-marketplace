@@ -49,7 +49,7 @@ describe('check-mutation-gate', () => {
     expect(job).toMatch(/check-mutation-gate\.mjs/);
   });
 
-  it('real config: mutates the cart, auth and theme stores plus the #287 mapper ranges plus the #322 hook ranges plus the #327 payouts/sellers/telemetry/webauthn ranges and declares a numeric break floor', () => {
+  it('real config: mutates the cart, auth and theme stores plus the #287 mapper ranges plus the #322 hook ranges plus the #327 payouts/sellers/telemetry/webauthn ranges plus the #347 notifications/recently-viewed ranges and declares a numeric break floor', () => {
     const config = readRepo('frontend/stryker.config.mjs');
     const { mutate, breakThreshold } = parseStrykerConfig(config);
     expect(mutate).toEqual([
@@ -115,6 +115,15 @@ describe('check-mutation-gate', () => {
       'src/api/webauthn.ts:116-126',
       'src/api/webauthn.ts:138-149',
       'src/api/webauthn.ts:157-170',
+      'src/api/notifications.ts:207-216',
+      'src/api/notifications.ts:223-232',
+      'src/api/notifications.ts:256-313',
+      'src/api/notifications.ts:320-329',
+      'src/api/notifications.ts:339-353',
+      'src/api/notifications.ts:361-372',
+      'src/api/notifications.ts:379-388',
+      'src/api/notifications.ts:395-406',
+      'src/api/recentlyViewed.ts:22-32',
     ]);
     expect(typeof breakThreshold).toBe('number');
     for (const file of mutate) {

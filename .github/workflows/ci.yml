@@ -85,13 +85,14 @@ jobs:
 
   frontend-mutation:
     # Frontend mutation pilot (backlog #252, widened by #263, #280,
-    # #287, #322 and #327; the #327 combined scope measures 91.24%
-    # at the break-90 floor (2026-11-04, arithmetic sum of the
+    # #287, #322, #327 and #347; the #347 combined scope measures 90.71%
+    # at the break-90 floor (2026-11-07, arithmetic sum of the
     # measured runs) — see
     # frontend/stryker.config.mjs + docs/mutation-frontend.md):
     # Stryker over the cart + auth + theme stores + the api error
     # mappers + the social-graph / saved-search api hook ranges +
-    # the payouts / sellers / telemetry / webauthn api ranges. The job
+    # the payouts / sellers / telemetry / webauthn api ranges +
+    # the notifications / recently-viewed api hook ranges. The job
     # fails below the config's
     # thresholds.break ratchet. The floor is the measured mutation
     # score of the pilot run, rounded DOWN to a whole percent so an
