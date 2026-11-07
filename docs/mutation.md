@@ -45,7 +45,14 @@ the pure suite now pins the same branches directly (see #285 below).
 The same exclusion applies to the filter suite `AuthRateLimitTest`:
 it exercises `AuthRateLimiter` through `AuthRateLimitFilter`, but the
 pure suite pins the limiter's own branches directly (see #320 below),
-so no filter-seam test is in `targetTests`.
+so no filter-seam test is in `targetTests`. Backlog #345 is the
+deliberate exception: the eight MockMvc suites driving the
+`OrderService` methods added after #192 (`OrderCancelTest`,
+`OrderCompleteTest`, `OrderRefundTest`, `OrderDisputeTest`,
+`OrderShipmentTest`, `OrderReadTest`, `OrderHandoverCodeTest`,
+`OrderPaymentTest`) ARE in `targetTests`, because no pure suite
+reaches those methods at all — the context boot per mutant is
+accepted and paid in CI (see #345 below).
 
 ## How it runs
 
@@ -288,6 +295,42 @@ claimed; the next CI `backend-mutation` run measures the widened
 scope, and the round that reads its `pit-reports` artifact
 re-ratchets the floor from that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #345, 2026-11-07)
+
+Backlog #345 widens `targetTests` — no new `targetClasses` — to the
+eight MockMvc suites that drive the `OrderService` methods added
+after #192 (cancel / complete / refund / dispute / handover / read
+paths): `OrderCancelTest` (9 tests), `OrderCompleteTest` (10),
+`OrderRefundTest` (11), `OrderDisputeTest` (18),
+`OrderShipmentTest` (7), `OrderReadTest` (12),
+`OrderHandoverCodeTest` (7) and `OrderPaymentTest` (8) — 82 tests
+in total. These are the only drivers of the 162 NO_COVERAGE mutants
+from run 39735286602, so this is the widening the NO_COVERAGE gap
+section below called future work. It is the deliberate exception to
+the MockMvc exclusion: unlike `OrderReceiptTest` and
+`AuthRateLimitTest`, no pure suite pins these methods' branches, so
+the Spring context boot per mutant is accepted and paid in CI
+rather than worked around with a second pure suite. The `*IT`
+classes stay out (CI-only, Testcontainers).
+
+The floor is **held at 27, not raised and not lowered**, on the same
+terms as #269/#285/#320/#333/#338: PIT cannot run in this sandbox —
+the measure-first step, an `OrderService`-only run at threshold 0
+driving the eight new suites on 2026-11-07, reproduced the sandbox
+failure in 29 s (1 mutation test unit created in the pre-scan, then
+the coverage minion died with `EOFException` reading its socket,
+`MINION_DIED`, `BUILD FAILURE`; log
+`hidden_files/pit-345-measure-first.log`), so no local widened-scope
+score exists and none is claimed. The new suites can only add kills
+against the same target classes, so the widened score is expected
+to rise from the 27.8% of run 39735286602 — but that is an
+expectation, not a score, and the floor stays 27 until the run is
+read. The round that reads the next CI `backend-mutation` run's
+`pit-reports` artifact re-ratchets the floor from the measured
+score, rounded down, and dispositions the newly reachable survivors
+per the #212 discipline (no survivor is dispositioned here: none
+was measured).
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -316,9 +359,11 @@ classes, #333 to 7 classes and #338 to 8 classes, all unmeasured
 locally (PIT cannot run in this sandbox), so 27 is now a conservative
 hold for the 8-class scope, not a measured score for it — the next CI
 `backend-mutation` run re-ratchets it from its measured score,
-rounded down. Widening `targetTests` to reach the remaining
-NO_COVERAGE methods is future work, not done here, and will require
-re-measuring.
+rounded down. Backlog #345 widens `targetTests` to the eight MockMvc
+suites driving the remaining NO_COVERAGE methods (same 8 classes, no
+new `targetClasses`), likewise unmeasured until that CI run; the newly
+reachable survivors get dispositioned by the round that reads its
+`pit-reports` artifact.
 
 ## Surviving mutants
 
@@ -472,10 +517,14 @@ the 48** — every survivor is targeted (48 targeted + 0 still-surviving
 
 162 mutants sit in `OrderService` methods added after #192
 (cancel / complete / refund / dispute / handover / read paths) that
-only the MockMvc suites exercise. They are not survivors — no driving
-test reaches them at all — and nothing in this follow-up changes that:
-widening PIT's `targetTests` is future work, and the 27 floor above is
-set against the current scope, as stated there.
+only the MockMvc suites exercise. They are not survivors — as of run
+39735286602 no driving test reached them at all. Backlog #345 closes
+that gap in scope: the eight MockMvc suites are now in PIT's
+`targetTests`, so the mutants are reachable — but the widened scope
+is unmeasured (PIT cannot run in this sandbox), the 27 floor above
+is still set against the last measured run, and the newly reachable
+survivors are dispositioned by the round that reads the next CI
+`backend-mutation` run's `pit-reports` artifact.
 
 ## Honest scope
 
@@ -486,3 +535,6 @@ the auth token bucket, the payout transitions and the receipt builder
 Controllers, repositories, and the frontend have no mutation score,
 and none is claimed for them in the README. Widening the scope
 continues one class at a time, with the floor re-measured each time.
+Backlog #345 widens `targetTests` to the eight MockMvc suites driving
+the `OrderService` methods added after #192; that widened scope is
+likewise unmeasured until the next CI run.

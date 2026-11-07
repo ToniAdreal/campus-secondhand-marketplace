@@ -286,7 +286,10 @@
          (AuthRateLimiter, backlog #320), the payout transitions
          (SellerPayoutTransitions, backlog #333) and the order receipt
          builder (OrderReceiptService, backlog #338), driven by
-         their pure unit tests. This profile is CI-only: it is NOT
+         their pure unit tests — plus, since backlog #345, the eight
+         MockMvc suites that drive the OrderService methods no pure
+         suite reaches (cancel / complete / refund / dispute /
+         handover / read paths). This profile is CI-only: it is NOT
          active by default, so
          the plain local `mvn -o test` / `mvn verify` path never runs PIT.
          CI runs it in the dedicated backend-mutation job
@@ -329,7 +332,15 @@
          the limiter through the filter, but every mutant would pay a
          Spring context boot, and the pure suite already pins the
          limiter's own branches directly (same rationale as the TOTP
-         MockMvc exclusion in docs/mutation.md). Deliberate floor bumps
+         MockMvc exclusion in docs/mutation.md). Backlog #345 is the
+         deliberate exception to that exclusion: the eight MockMvc suites added to targetTests below
+         (OrderCancelTest, OrderCompleteTest, OrderRefundTest, OrderDisputeTest, OrderShipmentTest,
+         OrderReadTest, OrderHandoverCodeTest, OrderPaymentTest) are the ONLY drivers of the 162
+         NO_COVERAGE mutants in the OrderService methods added after #192, so the Spring context boot
+         per mutant is accepted and paid in CI, not worked around with a second pure suite. The *IT
+         classes stay out (CI-only, Testcontainers). No local score exists for the widened scope (PIT
+         cannot run in this sandbox), so the floor stays 27 until the next CI backend-mutation run
+         measures it. Deliberate floor bumps
          edit this constant together with docs/mutation.md and say why
          in the commit message. -->
     <profile>
@@ -368,6 +379,19 @@
                 <param>com.toni.marketplace.auth.AuthRateLimiterTest</param>
                 <param>com.toni.marketplace.order.SellerPayoutTransitionsTest</param>
                 <param>com.toni.marketplace.order.OrderReceiptServiceTest</param>
+                <!-- Backlog #345: the eight MockMvc suites that drive the OrderService methods
+                     no pure suite reaches (cancel / complete / refund / dispute / handover /
+                     read paths) — the only drivers of the 162 NO_COVERAGE mutants from run
+                     39735286602. Each mutant pays a Spring context boot; accepted, see the
+                     profile comment above. The *IT classes stay out. -->
+                <param>com.toni.marketplace.order.OrderCancelTest</param>
+                <param>com.toni.marketplace.order.OrderCompleteTest</param>
+                <param>com.toni.marketplace.order.OrderRefundTest</param>
+                <param>com.toni.marketplace.dispute.OrderDisputeTest</param>
+                <param>com.toni.marketplace.order.OrderShipmentTest</param>
+                <param>com.toni.marketplace.order.OrderReadTest</param>
+                <param>com.toni.marketplace.order.OrderHandoverCodeTest</param>
+                <param>com.toni.marketplace.order.OrderPaymentTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>
