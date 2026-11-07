@@ -3,6 +3,7 @@ package com.toni.marketplace.common;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -20,8 +21,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -50,6 +53,18 @@ import org.springframework.transaction.annotation.Transactional;
  * The set is asserted by equality, so
  * adding a controller endpoint without extending this contract — or removing
  * one silently — fails the test until the contract is updated deliberately.
+ *
+ * <p>Live envelope shapes (backlog #343): the document above only proves
+ * springdoc <em>lists</em> a path and its annotated codes — a handler that
+ * answered a bare body, or an envelope whose {@code code} disagreed with
+ * the HTTP status, would still pass it. The sampled live assertions at the
+ * bottom of this class drive real error responses through MockMvc across
+ * controllers and pin the {@code {code, message, data}} shape on each:
+ * {@code code} equals the HTTP status, {@code message} is non-blank, and
+ * {@code data} is null. (Backlog #142's {@code ErrorEnvelopeContractTest}
+ * sweeps the same shape family by family through a test-only controller;
+ * these samples are the contract test's own proof that the production
+ * controllers behind the documented paths actually answer it.)
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -499,5 +514,96 @@ class OpenApiContractTest {
         .contains("401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/appeals/{id}/reject", "post"))
         .contains("401", "403", "404", "409", "422");
+  }
+
+  // Live envelope shapes (backlog #343) ---------------------------------
+  //
+  // Sampled live MockMvc assertions across controllers: a handler that
+  // returned a bare body or a wrong code field would pass the document
+  // assertions above, so each sample drives a real error response and
+  // pins the {code, message, data} shape — code equals the HTTP status,
+  // message is a non-blank string, data is null, the body parses as JSON
+  // and is never the container's HTML error page.
+  //
+  // Documented deviation: a validation failure does NOT carry the field
+  // errors in data. GlobalExceptionHandler folds the first field error
+  // into the message ("title: must not be blank") and ApiResponse.fail
+  // always sets data to null — the envelope's own schema ("data is null
+  // on failure") — so the 400 sample asserts the field name in the
+  // message instead of a data payload.
+
+  private JsonNode assertErrorEnvelope(MockHttpServletRequestBuilder request,
+      int expectedStatus) throws Exception {
+    MvcResult result = mockMvc.perform(request)
+        .andExpect(status().is(expectedStatus))
+        .andReturn();
+    String body = result.getResponse().getContentAsString();
+    assertThat(result.getResponse().getContentType())
+        .as("content type for status %s", expectedStatus)
+        .contains(MediaType.APPLICATION_JSON_VALUE);
+    assertThat(body)
+        .as("body for status %s must not be the container HTML error page", expectedStatus)
+        .doesNotContain("<html");
+    JsonNode json = objectMapper.readTree(body);
+    assertThat(json.has("code") && json.has("message") && json.has("data"))
+        .as("envelope shape for status %s: %s", expectedStatus, body)
+        .isTrue();
+    assertThat(json.get("code").asInt())
+        .as("envelope code must equal the HTTP status")
+        .isEqualTo(expectedStatus);
+    assertThat(json.get("message").asText()).isNotBlank();
+    assertThat(json.get("data").isNull())
+        .as("error envelopes carry no data")
+        .isTrue();
+    return json;
+  }
+
+  private MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder request) {
+    return request.header("Authorization", "Bearer " + accessToken);
+  }
+
+  @Test
+  void anonymousAccessToProtectedPathIs401Envelope() throws Exception {
+    assertErrorEnvelope(get("/api/auth/me"), 401);
+  }
+
+  @Test
+  void apiDocsAnonymousIs401Envelope() throws Exception {
+    assertErrorEnvelope(get("/v3/api-docs"), 401);
+  }
+
+  @Test
+  void unknownItemIs404Envelope() throws Exception {
+    assertErrorEnvelope(authed(get("/api/items/{id}", 999999L)), 404);
+  }
+
+  @Test
+  void validationFailureIs400EnvelopeWithFieldErrorInMessage() throws Exception {
+    JsonNode json = assertErrorEnvelope(
+        authed(post("/api/items")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"   \",\"description\":\"good battery\",\"priceCents\":25000}")),
+        400);
+    // The field error rides in the message, not in data (see the note
+    // above): the message must name the offending field.
+    assertThat(json.get("message").asText()).contains("title");
+  }
+
+  @Test
+  void nonAdminAdminListIs403Envelope() throws Exception {
+    assertErrorEnvelope(authed(get("/api/admin/users")), 403);
+  }
+
+  @Test
+  void duplicateRegistrationIs409Envelope() throws Exception {
+    String body = "{\"username\":\"openapi-dupe\",\"email\":\"openapi-dupe@example.com\""
+        + ",\"password\":\"s3cret-pass1\"}";
+    mockMvc.perform(post("/api/auth/register")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().is2xxSuccessful());
+    assertErrorEnvelope(post("/api/auth/register")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(body), 409);
   }
 }

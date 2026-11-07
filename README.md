@@ -472,7 +472,9 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   springdoc; response codes springdoc cannot infer (402/409/422/423/202/429)
   are annotated by hand, and `OpenApiContractTest` pins the exact controller
   path set (131 paths — a new endpoint fails the test until the contract is
-  extended deliberately) plus those codes (402 on pay only).
+  extended deliberately) plus those codes (402 on pay only), and sampled live
+  error responses across controllers pin the `{code, message, data}` envelope
+  shape (code equals the HTTP status, message non-blank, data null).
 
 ## Roadmap (from the original project)
 
