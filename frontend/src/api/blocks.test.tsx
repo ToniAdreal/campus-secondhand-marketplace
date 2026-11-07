@@ -46,6 +46,15 @@ describe('blocks api hooks (#187)', () => {
     expect(result.current.data).toEqual([blocked]);
   });
 
+  it('degrades a malformed payload to an empty list instead of crashing (#351)', async () => {
+    getSpy.mockResolvedValueOnce(envelope('not-an-array'));
+
+    const { result } = renderHook(() => useMyBlocks(), { wrapper: wrapperFor(makeClient()) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
   it('does not fetch while disabled (anonymous)', async () => {
     const { result } = renderHook(() => useMyBlocks(false), {
       wrapper: wrapperFor(makeClient()),
@@ -65,17 +74,24 @@ describe('blocks api hooks (#187)', () => {
 
     expect(postSpy).toHaveBeenCalledWith('/users/3/block');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['blocks'] });
+    // The block also refreshes the item lists — a blocked seller's
+    // listings disappear from the browse projections (#187, #351).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['items'] });
   });
 
   it('DELETEs /users/{id}/block on unblock', async () => {
     deleteSpy.mockResolvedValueOnce(envelope(null));
+    const client = makeClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     const { result } = renderHook(() => useUnblockUser(), {
-      wrapper: wrapperFor(makeClient()),
+      wrapper: wrapperFor(client),
     });
 
     result.current.mutate(3);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(deleteSpy).toHaveBeenCalledWith('/users/3/block');
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['blocks'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['items'] });
   });
 });

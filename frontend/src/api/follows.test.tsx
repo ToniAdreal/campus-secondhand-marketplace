@@ -53,6 +53,17 @@ describe('follows api hooks (#217)', () => {
     expect(result.current.data).toEqual([followed]);
   });
 
+  it('degrades a malformed payload to an empty list instead of crashing (#351)', async () => {
+    getSpy.mockResolvedValueOnce(envelope('not-an-array'));
+
+    const { result } = renderHook(() => useMyFollows(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
   it('does not fetch while disabled (anonymous)', async () => {
     const { result } = renderHook(() => useMyFollows(false), {
       wrapper: wrapperFor(makeClient()),

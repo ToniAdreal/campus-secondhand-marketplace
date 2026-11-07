@@ -61,6 +61,17 @@ describe('saved searches api hooks (#164)', () => {
     expect(result.current.data?.[0].matchCount).toBe(4);
   });
 
+  it('degrades a malformed payload to an empty list instead of crashing (#351)', async () => {
+    getSpy.mockResolvedValueOnce(envelope('not-an-array'));
+
+    const { result } = renderHook(() => useSavedSearches(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
   it('does not fetch while disabled (anonymous)', async () => {
     const { result } = renderHook(() => useSavedSearches(false), {
       wrapper: wrapperFor(makeClient()),

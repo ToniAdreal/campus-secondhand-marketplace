@@ -89,6 +89,24 @@ describe('useCartStore add', () => {
   });
 });
 
+describe('useCartStore clear (backlog #351)', () => {
+  it('empties the cart and unbinds the seller and the batch', () => {
+    useCartStore.getState().addItem(book);
+    useCartStore.getState().addItem(lamp);
+    const before = useCartStore.getState();
+    expect(before.items).toHaveLength(2);
+    expect(before.sellerId).toBe(3);
+    expect(before.batchId).toBeTruthy();
+
+    useCartStore.getState().clear();
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([]);
+    expect(state.sellerId).toBeNull();
+    expect(state.sellerUsername).toBeNull();
+    expect(state.batchId).toBeNull();
+  });
+});
+
 describe('deriveCartIdempotencyKey', () => {
   it('is deterministic in batch id + item id — a retry derives the identical key', () => {
     expect(deriveCartIdempotencyKey('batch-1', 7)).toBe('batch-1:7');
@@ -148,6 +166,16 @@ describe('checkoutCart', () => {
     createOrder.mockClear();
     await checkoutCart([book, lamp], 'batch-9', createOrder);
     expect(createOrder.mock.calls.map((call) => call[1])).toEqual(firstKeys);
+  });
+
+  it('a failing checkout with no injected mapper falls back to the generic copy (#351)', async () => {
+    const createOrder = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const outcomes = await checkoutCart([book], 'batch-9', createOrder);
+    expect(outcomes).toEqual([
+      { itemId: 7, title: book.title, ok: false, errorMessage: 'Something went wrong. Please try again.' },
+    ]);
   });
 });
 

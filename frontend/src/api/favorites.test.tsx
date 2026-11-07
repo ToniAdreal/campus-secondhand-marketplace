@@ -57,6 +57,15 @@ describe('favorites api hooks (#143)', () => {
     expect(result.current.data?.[0].status).toBe('SOLD');
   });
 
+  it('degrades a malformed payload to an empty list instead of crashing (#351)', async () => {
+    getSpy.mockResolvedValueOnce(envelope('not-an-array'));
+
+    const { result } = renderHook(() => useFavorites(), { wrapper: wrapperFor(makeClient()) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
   it('does not fetch while disabled (anonymous)', async () => {
     const { result } = renderHook(() => useFavorites(false), {
       wrapper: wrapperFor(makeClient()),
