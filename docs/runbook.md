@@ -146,6 +146,63 @@ says nothing about latency; the domain timers
 (`auth.login.duration`, `orders.pay.duration`, …) are the latency
 surface.
 
+## PayoutHeldGrowing
+
+`payouts.held` grew by at least 5 in 6 hours. A row is held when the
+hourly sweep finds its seller's account disabled or closed, so the
+payout can never be paid until someone acts on the account. A held row
+is counted by every hourly sweep while it stays held, so this fires
+for five rows held in one sweep and for one row stuck across five
+sweeps alike.
+
+First three checks:
+
+1. Read the sweep log lines (`payout sweep held payout …: seller
+   account disabled or closed`) to list the held payout ids, then
+   check each seller's account state — a mistaken disable is fixed by
+   re-enabling the account, and held rows resume automatically on the
+   next sweep.
+2. If the accounts are closed for cause, decide what the held money
+   should do instead — the sweep will never pay a held row on its
+   own, so leaving it means the payout sits forever.
+3. Check whether a recent ADMIN action disabled many accounts at once
+   (the audit log records disables) — a bulk disable manufactures
+   this alert.
+
+What it is NOT: it is not a payment failure — the mock PSP was never
+asked, so no capture was declined. It is also not proof that many
+sellers are affected: one stuck row, counted once per hourly sweep,
+trips the threshold after five sweeps.
+
+## PayoutSweepPaysNothing
+
+Rows were promoted PENDING to PAYABLE in the last 6 hours but none
+were paid (`payouts.promoted` moved, `payouts.paid` did not). A
+promoted row is normally paid by the next hourly sweep, so six hours
+with promotions and zero payments means the pay loop is failing,
+skipping, or holding every row.
+
+First three checks:
+
+1. Read the sweep's finished log line (`payout sweep finished:
+   promoted=… paid=… skipped=… held=…`) and the per-row lines —
+   skipped rows name their cause (window still open, open dispute,
+   a concurrent transition winning), held rows name the seller's
+   account state.
+2. Check `payouts_held_total` in the same window: if held is climbing,
+   this alert is its consequence — fix the held accounts and the
+   payments resume.
+3. Confirm the sweep is actually running: this rule can only see a
+   sweep that promotes, so a sweep that never acquires its
+   single-instance lease leaves both counters flat and stays silent
+   here — if promoted is flat too, look at the scheduler and the
+   JobLockGuard lease in the logs instead.
+
+What it is NOT: it is not proof the sweep is dead — a dead sweep is
+invisible to this rule by design (see check 3). It is also not a
+money incident: the mock PSP pays nobody, so a PAID row is a ledger
+state, never a bank transfer.
+
 ## Backup and restore drill (backlog #225)
 
 The compose stack's MySQL data (`mysql-data` volume) and listing photos

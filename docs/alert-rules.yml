@@ -8,7 +8,7 @@
 # file into their own Prometheus.
 #
 # Every metric referenced below is one this application actually emits:
-# - auth_* / orders_* / payments_* counters are defined in
+# - auth_* / orders_* / payments_* / payouts_* counters are defined in
 #   AuthMetrics / OrderMetrics / WebhookMetrics (backend, Micrometer);
 #   dots in the Micrometer names become underscores in the Prometheus
 #   export and counters carry the _total suffix.
@@ -94,3 +94,24 @@ groups:
           summary: "More than 5% of HTTP responses are 5xx"
           description: "The http.server.requests series shows a rising share of 5xx responses. 5xx responses in this app are the {code,message,data} error envelope's server-error cases; client errors (4xx) do not count here."
           runbook_url: "docs/runbook.md#http5xxratehigh"
+      - alert: PayoutHeldGrowing
+        expr: |
+          sum(increase(payouts_held_total[6h])) >= 5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Seller payouts are being held for disabled or closed accounts"
+          description: "payouts.held grew by at least 5 in 6 hours. A held row is counted by every hourly sweep while it stays held, so this fires for five rows held in one sweep or for one row stuck across five sweeps — either way money owed to a seller is not moving until an operator acts."
+          runbook_url: "docs/runbook.md#payoutheldgrowing"
+      - alert: PayoutSweepPaysNothing
+        expr: |
+          sum(increase(payouts_promoted_total[6h])) > 0
+            and sum(increase(payouts_paid_total[6h])) == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The payout sweep promotes rows but pays none of them"
+          description: "Rows were promoted PENDING to PAYABLE in the last 6 hours but none were paid. A promoted row is normally paid by the next hourly sweep, so six hours with promotions and zero payments means the pay loop is failing, skipping, or holding every row."
+          runbook_url: "docs/runbook.md#payoutsweeppaysnothing"
