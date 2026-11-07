@@ -58,7 +58,7 @@ import {
  * Order create/pay/complete/review calls carry a Bearer token and
  * never touch the credential bucket.
  *
- * Stack note: like the other eight flows, this spec runs in the
+ * Stack note: like the other ten flows, this spec runs in the
  * existing CI `e2e` job (vite preview + backend jar on H2, picked up
  * automatically by the config's `**\/*.e2e.ts` match) — no new job,
  * no second stack. The docker-compose job stays curl-only.

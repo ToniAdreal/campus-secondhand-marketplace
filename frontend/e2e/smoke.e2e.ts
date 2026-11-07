@@ -18,8 +18,10 @@ import {
  * checkout journey (backlog #253) — lives in checkout.e2e.ts, the
  * ninth flow — buyer–seller messaging (backlog #342) — lives in
  * messaging.e2e.ts, and the tenth flow — listing report → admin
- * action (backlog #346) — lives in moderation.e2e.ts; all four files
- * share their account/API/login moulds via e2e/helpers.ts.
+ * action (backlog #346) — lives in moderation.e2e.ts, and the
+ * eleventh flow — favorites + seller follow (backlog #352) — lives in
+ * favorites.e2e.ts; all five files share their account/API/login
+ * moulds via e2e/helpers.ts.
  * Selectors are role/label based (the SPA's #167 accessibility pass binds
  * every form field to a label), never CSS paths, so a renamed class cannot
  * silently green the suite and a lost label turns it red.
@@ -52,10 +54,11 @@ import {
  * touch the credential bucket; logout is not a credential endpoint either.
  * The checkout journey's own runs are derived in checkout.e2e.ts (worst
  * run 3 of 5 as well), the messaging flow's in messaging.e2e.ts
- * (worst run 3 of 5 as well), and the moderation flow's in
- * moderation.e2e.ts (worst run 3 of 5 as well); the four files run
- * serially in one worker and every login resets the bucket, so the
- * combined worst run stays 3.
+ * (worst run 3 of 5 as well), the moderation flow's in
+ * moderation.e2e.ts (worst run 3 of 5 as well), and the favorites +
+ * seller-follow flow's in favorites.e2e.ts (worst run 3 of 5 as
+ * well); the five files run serially in one worker and every login
+ * resets the bucket, so the combined worst run stays 3.
  */
 
 /**

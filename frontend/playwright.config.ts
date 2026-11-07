@@ -33,7 +33,7 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly ten flows (the seven in smoke.e2e.ts — register,
+ * - Exactly eleven flows (the seven in smoke.e2e.ts — register,
  *   browse→detail, login→create→my-listings, plus the money path from
  *   backlog #194: buy→pay→handover code→PAID, and seller completes with
  *   the code→buyer sees COMPLETED; plus the two money paths from
@@ -47,16 +47,24 @@ import { defineConfig, devices } from '@playwright/test';
  *   user cannot open the thread — plus the moderation flow from
  *   backlog #346 in moderation.e2e.ts: buyer reports → admin acts
  *   on the report → the listing shows WITHDRAWN and stops offering
- *   purchase, and a dismissed report leaves its listing AVAILABLE).
+ *   purchase, and a dismissed report leaves its listing AVAILABLE —
+ *   plus the favorites + seller-follow flow from backlog #352 in
+ *   favorites.e2e.ts: buyer favorites a listing from its detail
+ *   page → it appears on /favorites → unfavorites it back off,
+ *   then follows the listing's seller and the follow state survives
+ *   a reload, and a guest sees no favorite control while /favorites
+ *   bounces to /login).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
- *   retried into green, and the ten flows share one backend (one H2
+ *   retried into green, and the eleven flows share one backend (one H2
  *   database, per-IP auth rate-limit buckets), so they run serially. The
  *   credential-bucket arithmetic for the seven smoke flows is re-derived in the
  *   header of e2e/smoke.e2e.ts (worst run between login resets: 3 of 5),
  *   and the checkout journey's runs in the header of e2e/checkout.e2e.ts,
  *   and the messaging flow's runs in the header of e2e/messaging.e2e.ts,
- *   and the moderation flow's runs in the header of e2e/moderation.e2e.ts.
+ *   the moderation flow's runs in the header of e2e/moderation.e2e.ts,
+ *   and the favorites + seller-follow flow's runs in the header of
+ *   e2e/favorites.e2e.ts.
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.
