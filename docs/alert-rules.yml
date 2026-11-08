@@ -115,3 +115,28 @@ groups:
           summary: "The payout sweep promotes rows but pays none of them"
           description: "Rows were promoted PENDING to PAYABLE in the last 6 hours but none were paid. A promoted row is normally paid by the next hourly sweep, so six hours with promotions and zero payments means the pay loop is failing, skipping, or holding every row."
           runbook_url: "docs/runbook.md#payoutsweeppaysnothing"
+      - alert: OrderDisputeRateHigh
+        expr: |
+          sum(rate(orders_disputed_total[1h]))
+            / clamp_min(sum(rate(orders_disputed_total[1h]))
+                        + sum(rate(orders_paid_total[1h])), 0.001)
+          > 0.1
+            and sum(increase(orders_disputed_total[1h])) >= 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 1 in 10 paid orders is being disputed"
+          description: "orders.disputed (disputes opened in the last hour) is growing fast relative to orders.paid (fresh PENDING to PAID transitions in the same hour): the ratio is disputed / (disputed + paid). The rule also requires at least 2 disputes in the hour, so a single dispute in a quiet hour does not page."
+          runbook_url: "docs/runbook.md#orderdisputeratehigh"
+      - alert: PaidOrdersNeverHandoverConfirmed
+        expr: |
+          sum(increase(orders_paid_total[7d])) > 0
+            and sum(increase(orders_handover_confirmed_total[7d])) == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Paid orders are not reaching handover confirmation"
+          description: "Orders were paid in the last 7 days but none was completed by a seller presenting the buyer's handover code (orders.handover_confirmed). Handover normally lags payment by the shipping time, so the rule watches a full week; a paid order completed by ADMIN override or by the shipped-path receipt confirmation counts on orders.completed, not here."
+          runbook_url: "docs/runbook.md#paidordersneverhandoverconfirmed"

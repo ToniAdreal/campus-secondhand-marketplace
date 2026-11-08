@@ -29,7 +29,9 @@ import org.yaml.snakeyaml.Yaml;
  * pinned to the export documented in docs/smoke-test.md. A rule that
  * invents a metric fails here instead of paging nobody in production.
  * Backlog #350 added the two payout-sweep alerts (PayoutHeldGrowing,
- * PayoutSweepPaysNothing) over the #341 counters.
+ * PayoutSweepPaysNothing) over the #341 counters. Backlog #353 added
+ * the two order-lifecycle alerts (OrderDisputeRateHigh,
+ * PaidOrdersNeverHandoverConfirmed) over the #348 counters.
  */
 class AlertRulesContractTest {
 
@@ -59,6 +61,10 @@ class AlertRulesContractTest {
         Set.of("payouts_held_total"));
     EXPECTED_ALERTS.put("PayoutSweepPaysNothing",
         Set.of("payouts_promoted_total", "payouts_paid_total"));
+    EXPECTED_ALERTS.put("OrderDisputeRateHigh",
+        Set.of("orders_disputed_total", "orders_paid_total"));
+    EXPECTED_ALERTS.put("PaidOrdersNeverHandoverConfirmed",
+        Set.of("orders_paid_total", "orders_handover_confirmed_total"));
   }
 
   /** Prometheus series → the Micrometer builder name that defines it. */
@@ -76,6 +82,8 @@ class AlertRulesContractTest {
     BUILDER_NAMES.put("payouts_held_total", "payouts.held");
     BUILDER_NAMES.put("payouts_promoted_total", "payouts.promoted");
     BUILDER_NAMES.put("payouts_paid_total", "payouts.paid");
+    BUILDER_NAMES.put("orders_disputed_total", "orders.disputed");
+    BUILDER_NAMES.put("orders_handover_confirmed_total", "orders.handover_confirmed");
   }
 
   /** The Metrics class each builder name must be found in. */
@@ -93,6 +101,8 @@ class AlertRulesContractTest {
     BUILDER_SOURCES.put("payouts.held", "order/OrderMetrics.java");
     BUILDER_SOURCES.put("payouts.promoted", "order/OrderMetrics.java");
     BUILDER_SOURCES.put("payouts.paid", "order/OrderMetrics.java");
+    BUILDER_SOURCES.put("orders.disputed", "order/OrderMetrics.java");
+    BUILDER_SOURCES.put("orders.handover_confirmed", "order/OrderMetrics.java");
   }
 
   private static Path repoRoot() {

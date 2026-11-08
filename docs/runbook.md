@@ -203,6 +203,65 @@ invisible to this rule by design (see check 3). It is also not a
 money incident: the mock PSP pays nobody, so a PAID row is a ledger
 state, never a bank transfer.
 
+## OrderDisputeRateHigh
+
+More than 1 in 10 paid orders was disputed in the last hour
+(`orders.disputed` growing fast relative to `orders.paid`), with at
+least 2 disputes in the hour. A dispute is a buyer opening a case on
+a PAID, SHIPPED or COMPLETED order; the order moves to DISPUTED
+without money moving, and complete/refund answer 422 until an ADMIN
+resolves it.
+
+First three checks:
+
+1. Open the ADMIN dispute queue and read the open disputes — are
+   they about one seller or listing (a bad actor or a bad batch) or
+   spread across many? The reason text is the only evidence in v1.
+2. Compare with `orders.paid` in the same window: a ratio spike on a
+   quiet payment hour (few paid) is weaker evidence than one with
+   steady payment flow, and a dispute may concern an order paid days
+   ago (the dispute window is 7 days from the paid or completed
+   transition).
+3. Check whether a recent change touched the dispute, handover, or
+   ship paths — a regression there can manufacture disputes — and
+   check the payout sweep log: open disputes hold payouts, so a
+   dispute spike also stalls seller money.
+
+What it is NOT: it is not proof of fraud or of a lost sale — a
+dispute is a case being opened, not a chargeback (the mock PSP moves
+no real money), and it says nothing about which side is right; only
+the ADMIN resolution decides that. A single dispute can never fire
+this rule.
+
+## PaidOrdersNeverHandoverConfirmed
+
+Orders were paid in the last 7 days but none was completed by a
+seller presenting the buyer's handover code
+(`orders.handover_confirmed` stayed flat while `orders.paid` moved).
+Handover normally lags payment by the shipping time, so the rule
+watches a full week rather than a day.
+
+First three checks:
+
+1. Compare `orders.completed` in the same 7 days: if completions are
+   flowing but handover confirmations are flat, completions are
+   bypassing the code — ADMIN overrides or shipped-path receipt
+   confirmations. Check the audit log for
+   ORDER_COMPLETED_ADMIN_OVERRIDE rows.
+2. Check how old the paid orders are: paid orders from the last day
+   or two may simply still be in transit — look at the SHIPPED
+   orders and their ages before treating this as a stall.
+3. Check the handover-code exchange itself: sellers complete with a
+   code the buyer sees only in the pay/regenerate responses, and 5
+   wrong attempts lock the exchange for 15 minutes — a broken code
+   path, or buyers never receiving the code, stalls every handover
+   at once.
+
+What it is NOT: it is not proof that fulfilment stopped — orders may
+be completing by ADMIN override or receipt confirmation. It is also
+not a payment failure: the mock capture already happened at pay time.
+And a quiet week with zero paid orders cannot fire this rule at all.
+
 ## Backup and restore drill (backlog #225)
 
 The compose stack's MySQL data (`mysql-data` volume) and listing photos
