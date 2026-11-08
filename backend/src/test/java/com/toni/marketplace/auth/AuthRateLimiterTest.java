@@ -213,4 +213,64 @@ class AuthRateLimiterTest {
     // A real key is untouched by the unknown bucket's exhaustion.
     assertThat(limiter.tryConsume("10.0.0.15")).isTrue();
   }
+
+  @Test
+  void windowedBucketRefillsAcrossTheWindowNotPerMinute() {
+    // Backlog #354: the per-address mail bucket is 5 per HOUR, not per
+    // minute — a per-minute bucket of the same capacity would still let
+    // ~300 mails a day through to one victim.
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      assertThat(hourly.tryConsume("victim@example.com")).as("attempt %d", i + 1).isTrue();
+    }
+    assertThat(hourly.tryConsume("victim@example.com")).as("6th attempt").isFalse();
+
+    // One minute refills nothing at 5/hour (a token takes 12 minutes).
+    clock.advance(Duration.ofMinutes(1));
+    assertThat(hourly.tryConsume("victim@example.com"))
+        .as("no token after one minute")
+        .isFalse();
+
+    // Twelve minutes refills exactly one token.
+    clock.advance(Duration.ofMinutes(11));
+    assertThat(hourly.tryConsume("victim@example.com"))
+        .as("one token after twelve minutes")
+        .isTrue();
+    assertThat(hourly.tryConsume("victim@example.com")).isFalse();
+
+    // A full hour from the last consume refills the bucket completely.
+    clock.advance(Duration.ofMinutes(60));
+    for (int i = 0; i < 5; i++) {
+      assertThat(hourly.tryConsume("victim@example.com"))
+          .as("refilled attempt %d", i + 1).isTrue();
+    }
+    assertThat(hourly.tryConsume("victim@example.com")).isFalse();
+  }
+
+  @Test
+  void windowedRetryAfterAndResetSpanTheWindow() {
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      hourly.tryConsume("victim@example.com");
+    }
+    // One token every 12 minutes: the next token is exactly 720 s away,
+    // and a full bucket is an hour away.
+    assertThat(hourly.retryAfterSeconds("victim@example.com")).isEqualTo(720);
+    AuthRateLimiter.RateLimitState state = hourly.snapshot("victim@example.com");
+    assertThat(state.limit()).isEqualTo(5);
+    assertThat(state.remaining()).isEqualTo(0);
+    assertThat(state.resetSeconds()).isEqualTo(3600);
+  }
+
+  @Test
+  void windowedConstructorRejectsNonPositiveAttemptsOrWindow() {
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, 0, Duration.ofHours(1), true))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, 5, Duration.ZERO, true))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, 5, Duration.ofMinutes(-1), true))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new AuthRateLimiter(clock, 5, null, true))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 }

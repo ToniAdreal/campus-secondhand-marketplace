@@ -23,7 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
  * per-IP bucket (5/minute here, the production default), sized like the
  * credential bucket and separate from it — the backlog #101 pattern. Each
  * test uses a fresh client IP because the limiter buckets are in-memory
- * and survive across tests within this class.
+ * and survive across tests within this class — and (backlog #354) a fresh
+ * address too, because the resend endpoint additionally draws from the
+ * shared per-address mail bucket (5/hour): the same address hammered
+ * from different IPs would share that budget and trip it before the
+ * per-IP bucket under test.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -61,7 +65,7 @@ class EmailVerificationRateLimitTest {
     mockMvc.perform(post("/api/auth/email-verification/resend")
             .with(fromIp(clientIp))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"email\":\"whoever@example.com\"}"))
+            .content("{\"email\":\"whoever-" + clientIp + "@example.com\"}"))
         .andExpect(status().isOk());
   }
 
@@ -73,7 +77,7 @@ class EmailVerificationRateLimitTest {
     mockMvc.perform(post("/api/auth/email-verification/resend")
             .with(fromIp(ip))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"email\":\"whoever@example.com\"}"))
+            .content("{\"email\":\"whoever-" + ip + "@example.com\"}"))
         .andExpect(status().isTooManyRequests())
         // 5/min = one token per 12 s.
         .andExpect(header().string("Retry-After", "12"))

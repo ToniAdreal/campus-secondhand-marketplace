@@ -163,6 +163,29 @@ public class AuthConfig {
   }
 
   /**
+   * Shared per-address mail bucket (backlog #354): {@code POST
+   * /api/auth/password-reset}, {@code POST
+   * /api/auth/email-verification/resend} and {@code POST
+   * /api/auth/email-change} share this ONE limiter, keyed on the SHA-256
+   * hash of the trimmed, lowercased target address (see
+   * {@code AuthRateLimitFilter.mailAddressKey}). Default 5 mails per
+   * address per hour ({@code mail-per-address-attempts-per-window} per
+   * {@code mail-per-address-window}) — a windowed bucket, not a
+   * per-minute one, because the threat is a sustained mailbox flood
+   * from many IPs, and a per-minute bucket of the same capacity would
+   * still allow ~300 mails a day to one victim. It sits IN ADDITION to
+   * the three endpoints' existing per-IP buckets (which stay exactly
+   * as they are): a request must pass both. The confirm endpoints stay
+   * out — they carry no address to key on. Never resets on success.
+   */
+  @Bean
+  public AuthRateLimiter mailPerAddressRateLimiter(Clock clock,
+                                                   AuthRateLimitProperties props) {
+    return new AuthRateLimiter(clock, props.getMailPerAddressAttemptsPerWindow(),
+        props.getMailPerAddressWindow(), props.isEnabled());
+  }
+
+  /**
    * Separate token bucket for listing reports
    * ({@code POST /api/items/{id}/report}, backlog #160; default 10
    * reports/minute per authenticated user). Keyed on the JWT principal

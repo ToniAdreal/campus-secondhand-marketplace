@@ -1,5 +1,6 @@
 package com.toni.marketplace.auth;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -174,6 +175,53 @@ public class AuthRateLimitProperties {
 
   public void setEmailChangeRequestAttemptsPerMinute(int emailChangeRequestAttemptsPerMinute) {
     this.emailChangeRequestAttemptsPerMinute = emailChangeRequestAttemptsPerMinute;
+  }
+
+  /**
+   * Token-bucket size for the shared per-address mail bucket (backlog
+   * #354): {@code POST /api/auth/password-reset}, {@code POST
+   * /api/auth/email-verification/resend} and {@code POST
+   * /api/auth/email-change} share ONE limiter keyed on the target
+   * address — the SHA-256 hash of the trimmed, lowercased address as
+   * typed (the reset endpoint's {@code usernameOrEmail} field, the
+   * resend's {@code email}, the change request's {@code newEmail}) —
+   * so a distributed attacker flooding ONE victim's mailbox from many
+   * IPs, each under its 5/minute per-IP bucket, still stops at this
+   * many mails per {@link #getMailPerAddressWindow} for that address.
+   * The window is an hour, not a minute: a per-minute bucket of the
+   * same capacity would still allow ~300 mails a day to one victim.
+   * Sized at 5/hour — a legitimate user requests a reset, re-requests
+   * once when the mail is slow, and still has headroom, while a flood
+   * is stopped cold. Never resets on success, like every other
+   * non-credential bucket. The raw address is never stored, logged or
+   * metric-labelled — only its hash ever reaches the limiter map (see
+   * {@code AuthRateLimitFilter.mailAddressKey}). The confirm endpoints
+   * stay on their existing per-IP buckets: they carry no address to
+   * key on. Must be &ge; 1.
+   */
+  private int mailPerAddressAttemptsPerWindow = 5;
+
+  public int getMailPerAddressAttemptsPerWindow() {
+    return mailPerAddressAttemptsPerWindow;
+  }
+
+  public void setMailPerAddressAttemptsPerWindow(int mailPerAddressAttemptsPerWindow) {
+    this.mailPerAddressAttemptsPerWindow = mailPerAddressAttemptsPerWindow;
+  }
+
+  /**
+   * Window for {@link #getMailPerAddressAttemptsPerWindow} (backlog
+   * #354): one hour by default. Together the two knobs say "5 mails
+   * per address per hour". Must be positive.
+   */
+  private Duration mailPerAddressWindow = Duration.ofHours(1);
+
+  public Duration getMailPerAddressWindow() {
+    return mailPerAddressWindow;
+  }
+
+  public void setMailPerAddressWindow(Duration mailPerAddressWindow) {
+    this.mailPerAddressWindow = mailPerAddressWindow;
   }
 
   /**

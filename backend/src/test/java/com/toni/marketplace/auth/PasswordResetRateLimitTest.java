@@ -22,7 +22,11 @@ import org.springframework.transaction.annotation.Transactional;
  * through the {@link AuthRateLimitFilter}: request and confirm share one
  * per-IP bucket (5/minute here, the production default), sized like the
  * credential bucket. Each test uses a fresh client IP because the limiter
- * buckets are in-memory and survive across tests within this class.
+ * buckets are in-memory and survive across tests within this class — and
+ * (backlog #354) a fresh identifier too, because the request endpoint
+ * additionally draws from the shared per-address mail bucket (5/hour):
+ * the same address hammered from different IPs would share that budget
+ * and trip it before the per-IP bucket under test.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -60,7 +64,7 @@ class PasswordResetRateLimitTest {
     mockMvc.perform(post("/api/auth/password-reset")
             .with(fromIp(clientIp))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"whoever\"}"))
+            .content("{\"usernameOrEmail\":\"whoever-" + clientIp + "\"}"))
         .andExpect(status().isOk());
   }
 
@@ -72,7 +76,7 @@ class PasswordResetRateLimitTest {
     mockMvc.perform(post("/api/auth/password-reset")
             .with(fromIp(ip))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"usernameOrEmail\":\"whoever\"}"))
+            .content("{\"usernameOrEmail\":\"whoever-" + ip + "\"}"))
         .andExpect(status().isTooManyRequests())
         // 5/min = one token per 12 s.
         .andExpect(header().string("Retry-After", "12"))

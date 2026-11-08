@@ -1,6 +1,7 @@
 package com.toni.marketplace.auth;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -15,6 +16,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * so a short burst passes but sustained hammering is throttled. Buckets are
  * created lazily and idle entries are evicted opportunistically to bound
  * memory (an attacker cycling IPs must not grow the map forever).
+ *
+ * <p>The per-minute constructor below is the historical shape: the window is
+ * one minute, so capacity and refill rate are the same number. The
+ * windowed constructor generalises it — capacity is
+ * {@code attemptsPerWindow} and the refill rate is that many tokens per
+ * {@code window} — for surfaces whose honest budget is per hour, not per
+ * minute (the per-address mail bucket, backlog #354: 5 mails per address
+ * per hour; a per-minute bucket of the same capacity would still allow
+ * ~300 mails a day to one victim). The math is identical — only the
+ * window differs — so {@link #snapshot} and {@link #retryAfterSeconds}
+ * keep working unchanged: {@code Retry-After} is still seconds until the
+ * next single token and {@code RateLimit-Reset} seconds until the bucket
+ * is full again, just over the longer window.
  *
  * <p>Instances are plain objects, not components: {@code AuthConfig} builds
  * one per throttled surface (credential endpoints vs. the refresh endpoint),
@@ -37,13 +51,33 @@ public class AuthRateLimiter {
   private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
 
   public AuthRateLimiter(Clock clock, AuthRateLimitProperties props) {
-    if (props.getAttemptsPerMinute() < 1) {
-      throw new IllegalArgumentException("attemptsPerMinute must be >= 1");
+    this(clock, props.getAttemptsPerMinute(), Duration.ofMinutes(1), props.isEnabled());
+  }
+
+  /**
+   * Windowed variant: {@code attemptsPerWindow} tokens per {@code window},
+   * refilled steadily across the window. A window longer than a minute is
+   * for budgets that are per hour (or longer) by nature — the per-address
+   * mail bucket (backlog #354) — where a per-minute bucket would let a
+   * sustained flood through at capacity-per-minute. The idle-eviction
+   * policy is shared with the per-minute shape: a bucket idle longer than
+   * {@code EVICT_IDLE_MILLIS} may be dropped once the map passes
+   * {@code MAX_TRACKED_KEYS}, which for a long window shortens the budget
+   * of a rarely-hit key — acceptable here because a flood against one
+   * address keeps that key hot (and a flood spread over 10,000 addresses
+   * is the per-IP buckets' problem, not this one's).
+   */
+  public AuthRateLimiter(Clock clock, int attemptsPerWindow, Duration window, boolean enabled) {
+    if (attemptsPerWindow < 1) {
+      throw new IllegalArgumentException("attemptsPerWindow must be >= 1");
+    }
+    if (window == null || window.isZero() || window.isNegative()) {
+      throw new IllegalArgumentException("window must be positive");
     }
     this.clock = clock;
-    this.enabled = props.isEnabled();
-    this.capacity = props.getAttemptsPerMinute();
-    this.refillTokensPerMillis = props.getAttemptsPerMinute() / 60_000.0;
+    this.enabled = enabled;
+    this.capacity = attemptsPerWindow;
+    this.refillTokensPerMillis = attemptsPerWindow / (double) window.toMillis();
   }
 
   /** Master switch from {@link AuthRateLimitProperties}. */

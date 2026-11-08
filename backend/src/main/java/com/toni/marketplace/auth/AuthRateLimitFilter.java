@@ -1,15 +1,24 @@
 package com.toni.marketplace.auth;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.toni.marketplace.common.ApiResponse;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.Ordered;
@@ -50,6 +59,36 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * bucket is deliberately separate, so request traffic can neither
  * consume nor be starved by verification/confirm traffic, and a
  * staged change never resets it.
+ *
+ * <p>The three mail-sending request endpoints — {@code POST
+ * /api/auth/password-reset}, {@code POST
+ * /api/auth/email-verification/resend} and {@code POST
+ * /api/auth/email-change} (backlog #354) — share one more limiter in
+ * addition to their per-IP buckets: a per-address bucket (default 5
+ * mails per address per hour) keyed on the SHA-256 hash of the
+ * trimmed, lowercased target address as typed (the reset endpoint's
+ * {@code usernameOrEmail}, the resend's {@code email}, the change
+ * request's {@code newEmail}). The per-IP buckets alone cannot stop a
+ * distributed flood — an attacker mailing one victim from many IPs
+ * stays under 5/minute on every IP — so this bucket closes the gap:
+ * a request must pass its per-IP bucket AND the address bucket. The
+ * window is an hour, not a minute, because the budget is "mails per
+ * mailbox", and a per-minute bucket of the same capacity would still
+ * allow ~300 mails a day to one victim. The filter reads the JSON
+ * body to recover the address (see {@link #consumeMailPerAddress});
+ * the body is re-served to the controller from a cached copy, so the
+ * downstream read is unaffected. The raw address is never logged,
+ * never metric-labelled and never stored — only its hash ever reaches
+ * the limiter map (pinned by test). Normalised-case variants share
+ * one bucket; an unparseable body, a missing field or an oversized
+ * body falls back to one shared {@code email:unknown} bucket (a flood
+ * of malformed requests throttles itself rather than bypassing the
+ * limit). Honest boundary: the reset endpoint keys on the identifier
+ * as typed, so the username spelling and the email spelling of the
+ * same account are separate buckets — the filter does no database
+ * lookup, and the per-IP bucket remains the backstop for that
+ * aliasing. The confirm endpoints stay on their per-IP buckets: they
+ * carry no address to key on.
  *
  * <p>The second-factor exchange ({@code POST /api/auth/2fa/authenticate},
  * backlog #101) has a fifth, per-IP bucket (default 5/minute): the
@@ -745,6 +784,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
   private final AuthRateLimiter totpLimiter;
   private final AuthRateLimiter emailVerificationLimiter;
   private final AuthRateLimiter emailChangeRequestLimiter;
+  private final AuthRateLimiter mailPerAddressLimiter;
   private final AuthRateLimiter reportLimiter;
   private final AuthRateLimiter dataExportLimiter;
   private final AuthRateLimiter exportConfirmLimiter;
@@ -794,6 +834,8 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                                  AuthRateLimiter emailVerificationLimiter,
                              @Qualifier("emailChangeRequestRateLimiter")
                                  AuthRateLimiter emailChangeRequestLimiter,
+                             @Qualifier("mailPerAddressRateLimiter")
+                                 AuthRateLimiter mailPerAddressLimiter,
                              @Qualifier("reportRateLimiter") AuthRateLimiter reportLimiter,
                              @Qualifier("dataExportRateLimiter")
                                  AuthRateLimiter dataExportLimiter,
@@ -873,6 +915,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     this.totpLimiter = totpLimiter;
     this.emailVerificationLimiter = emailVerificationLimiter;
     this.emailChangeRequestLimiter = emailChangeRequestLimiter;
+    this.mailPerAddressLimiter = mailPerAddressLimiter;
     this.reportLimiter = reportLimiter;
     this.dataExportLimiter = dataExportLimiter;
     this.exportConfirmLimiter = exportConfirmLimiter;
@@ -1980,7 +2023,23 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         writeTooManyRequests(response, passwordResetLimiter, ip);
         return;
       }
-      chain.doFilter(request, response);
+      if (RESET_PATH.equals(path)) {
+        // The request endpoint additionally consumes the shared
+        // per-address mail bucket (backlog #354) — a distributed
+        // flood against one mailbox must stop even when every IP
+        // stays under its per-IP ceiling. The helper returns the
+        // request to pass downstream (a cached-body copy, so the
+        // controller still reads the JSON), or null when the address
+        // bucket refused — the 429 is already written.
+        HttpServletRequest mailRequest = consumeMailPerAddress(request, response,
+            "usernameOrEmail");
+        if (mailRequest == null) {
+          return;
+        }
+        chain.doFilter(mailRequest, response);
+      } else {
+        chain.doFilter(request, response);
+      }
       return;
     }
     if (TOTP_AUTH_PATH.equals(path)) {
@@ -2005,7 +2064,14 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         writeTooManyRequests(response, emailChangeRequestLimiter, ip);
         return;
       }
-      chain.doFilter(request, response);
+      // Plus the shared per-address mail bucket (backlog #354), keyed
+      // on the NEW address — the mailbox the token would be mailed to.
+      // Same helper contract as the reset branch above.
+      HttpServletRequest mailRequest = consumeMailPerAddress(request, response, "newEmail");
+      if (mailRequest == null) {
+        return;
+      }
+      chain.doFilter(mailRequest, response);
       return;
     }
     if (VERIFY_RESEND_PATH.equals(path) || VERIFY_CONFIRM_PATH.equals(path)
@@ -2022,7 +2088,19 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         writeTooManyRequests(response, emailVerificationLimiter, ip);
         return;
       }
-      chain.doFilter(request, response);
+      if (VERIFY_RESEND_PATH.equals(path)) {
+        // The resend additionally consumes the shared per-address
+        // mail bucket (backlog #354) — same helper contract as the
+        // reset branch above. The confirm endpoints carry no address
+        // to key on and stay on the per-IP bucket only.
+        HttpServletRequest mailRequest = consumeMailPerAddress(request, response, "email");
+        if (mailRequest == null) {
+          return;
+        }
+        chain.doFilter(mailRequest, response);
+      } else {
+        chain.doFilter(request, response);
+      }
       return;
     }
     if (LOGOUT_PATH.equals(path)) {
@@ -2083,6 +2161,155 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
       }
     }
     return "ip:" + clientIp(request);
+  }
+
+  /**
+   * Consumes one token from the shared per-address mail bucket (backlog
+   * #354) for a mail-sending request endpoint, keyed on the target
+   * address in the JSON body ({@code field}). Returns the request to
+   * pass downstream — a {@link CachedBodyRequest} serving the bytes
+   * just read, so the controller's {@code @RequestBody} read is
+   * unaffected — or {@code null} when the address bucket refused, in
+   * which case the 429 envelope is already written and the caller must
+   * return without touching the chain. A body that cannot be read, is
+   * not JSON, carries no usable address, or exceeds
+   * {@link #MAX_MAIL_BODY_BYTES} falls back to the shared
+   * {@code email:unknown} bucket: malformed traffic throttles itself
+   * instead of bypassing the limit (and an oversized body is passed
+   * downstream as-is — the controller answers its usual 400, and no
+   * mail is ever sent for it).
+   */
+  private HttpServletRequest consumeMailPerAddress(HttpServletRequest request,
+      HttpServletResponse response, String field) throws IOException {
+    byte[] body = readMailBody(request);
+    String key = body == null ? "email:unknown" : mailAddressKey(body, field);
+    if (!mailPerAddressLimiter.tryConsume(key)) {
+      writeTooManyRequests(response, mailPerAddressLimiter, key);
+      return null;
+    }
+    return body == null ? request : new CachedBodyRequest(request, body);
+  }
+
+  /**
+   * Bodies over this size can never be a mail-request payload (the valid
+   * shapes are a few hundred bytes at most); anything larger is treated
+   * as unparseable for the per-address key (see
+   * {@link #consumeMailPerAddress}). The cap also bounds the memory the
+   * filter reads ahead of the controller.
+   */
+  private static final int MAX_MAIL_BODY_BYTES = 8 * 1024;
+
+  /**
+   * Reads the request body for a mail-sending endpoint, bounded by
+   * {@link #MAX_MAIL_BODY_BYTES}. Returns the bytes, or {@code null}
+   * when the body is larger than the cap or cannot be read at all —
+   * the caller then keys on the shared {@code email:unknown} bucket
+   * and passes the original request downstream. A body that overran
+   * the cap is partially consumed, so the controller answers its usual
+   * 400 for it — and no mail is ever sent for it. A declared
+   * {@code Content-Length} over the cap skips the read entirely, so
+   * the stream stays untouched in that case.
+   */
+  private static byte[] readMailBody(HttpServletRequest request) {
+    if (request.getContentLength() > MAX_MAIL_BODY_BYTES) {
+      return null;
+    }
+    try {
+      byte[] body = request.getInputStream().readNBytes(MAX_MAIL_BODY_BYTES + 1);
+      return body.length > MAX_MAIL_BODY_BYTES ? null : body;
+    } catch (IOException e) {
+      return null;
+    }
+  }
+
+  /**
+   * Bucket key for the per-address mail limiter (backlog #354): the
+   * {@code field} value of the JSON body, trimmed and lowercased (the
+   * #47 canonical form, plus the trim the filter needs because it sees
+   * pre-validation input), hashed with SHA-256 and prefixed so the
+   * namespace cannot collide with the {@code u:} / {@code ip:} keys of
+   * the per-user/per-IP buckets. Only the hash ever reaches the limiter
+   * map — the raw address is never stored, logged or metric-labelled.
+   * A missing, non-text or blank field keys on the shared
+   * {@code email:unknown} bucket (see {@link #consumeMailPerAddress}).
+   */
+  private String mailAddressKey(byte[] body, String field) {
+    try {
+      JsonNode root = mapper.readTree(body);
+      if (root == null || !root.isObject()) {
+        return "email:unknown";
+      }
+      JsonNode value = root.get(field);
+      if (value == null || !value.isTextual()) {
+        return "email:unknown";
+      }
+      String normalized = value.asText().trim().toLowerCase(Locale.ROOT);
+      if (normalized.isBlank()) {
+        return "email:unknown";
+      }
+      return "email:" + JwtTokenService.sha256Hex(normalized);
+    } catch (IOException | RuntimeException e) {
+      return "email:unknown";
+    }
+  }
+
+  /**
+   * Serves a previously-read request body to the downstream chain
+   * (backlog #354): the filter must read the JSON body to recover the
+   * target address for the per-address mail bucket, and the
+   * controller's {@code @RequestBody} read afterwards must see the
+   * same bytes. A plain {@code ContentCachingRequestWrapper} does not
+   * replay a stream the filter already consumed, so this wrapper holds
+   * the bytes and hands out a fresh stream (and reader) per call.
+   */
+  private static final class CachedBodyRequest extends HttpServletRequestWrapper {
+    private final byte[] body;
+
+    CachedBodyRequest(HttpServletRequest request, byte[] body) {
+      super(request);
+      this.body = body;
+    }
+
+    @Override
+    public int getContentLength() {
+      return body.length;
+    }
+
+    @Override
+    public long getContentLengthLong() {
+      return body.length;
+    }
+
+    @Override
+    public ServletInputStream getInputStream() {
+      ByteArrayInputStream in = new ByteArrayInputStream(body);
+      return new ServletInputStream() {
+        @Override
+        public int read() {
+          return in.read();
+        }
+
+        @Override
+        public boolean isFinished() {
+          return in.available() == 0;
+        }
+
+        @Override
+        public boolean isReady() {
+          return true;
+        }
+
+        @Override
+        public void setReadListener(ReadListener readListener) {
+          throw new UnsupportedOperationException("async read not supported");
+        }
+      };
+    }
+
+    @Override
+    public BufferedReader getReader() {
+      return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
+    }
   }
 
   /**
