@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
  * The lock table's transactional steps (backlog #215), each in its own
  * {@code REQUIRES_NEW} transaction so a lease commits the moment it is
  * taken — independently of whatever transaction the guarded job body is
- * about to run (or is already running: two of the six jobs are
+ * about to run (or is already running: two of the seven jobs are
  * {@code @Transactional} themselves, and a lease that only became
  * visible at their commit would guard nothing).
  *

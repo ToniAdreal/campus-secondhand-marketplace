@@ -19,10 +19,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Single-instance guard for the six mutating {@code @Scheduled} jobs
+ * Single-instance guard for the seven mutating {@code @Scheduled} jobs
  * (backlog #215): pending-order expiry, offer expiry, saved-search
- * matching, the nightly data-retention purge, listing expiry and the
- * orphan-upload sweep. Before this guard, a second backend instance (a
+ * matching, the nightly data-retention purge, listing expiry, the
+ * orphan-upload sweep and the seller-payout sweep. Before this guard, a second backend instance (a
  * rolling-deploy overlap is enough) double-ran every one of them —
  * duplicate saved-search notifications were the user-visible tip, and
  * each job's safety was an accident of its own queries.

@@ -31,9 +31,14 @@ import com.toni.marketplace.offer.OfferService;
 import com.toni.marketplace.offer.PriceOfferRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.OrderExpiryProperties;
+import com.toni.marketplace.order.OrderMetrics;
 import com.toni.marketplace.order.OrderRepository;
 import com.toni.marketplace.order.OrderService;
 import com.toni.marketplace.order.PendingOrderExpiryService;
+import com.toni.marketplace.order.SellerPayoutAdjustmentRepository;
+import com.toni.marketplace.order.SellerPayoutRepository;
+import com.toni.marketplace.order.SellerPayoutService;
+import com.toni.marketplace.order.SellerPayoutTransitions;
 import com.toni.marketplace.order.WebhookEventRepository;
 import java.time.Duration;
 import java.time.Instant;
@@ -43,11 +48,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Wiring pin for the single-instance guard (backlog #215): every one of
- * the six mutating {@code @Scheduled} jobs consults the guard under its
+ * the seven mutating {@code @Scheduled} jobs consults the guard under its
  * own distinct lease name BEFORE touching any collaborator — with the
  * lease denied, the firing returns the job's zero result and no
- * repository or service is ever called. A seventh job wired later, or
- * one of the six quietly losing its guard, fails here. The SSE
+ * repository or service is ever called. An eighth job wired later, or
+ * one of the seven quietly losing its guard, fails here. The SSE
  * heartbeat ({@code NotificationStreamService}) is intentionally not
  * in this list: it mutates nothing outside its own JVM.
  */
@@ -64,17 +69,19 @@ class JobLockWiringTest {
   }
 
   @Test
-  void theSixJobsGuardUnderSixDistinctNames() {
+  void theSevenJobsGuardUnderSevenDistinctNames() {
     assertThat(Set.of(
         PendingOrderExpiryService.LOCK_NAME,
         OfferExpiryService.LOCK_NAME,
         SavedSearchMatchingService.LOCK_NAME,
         DataRetentionService.LOCK_NAME,
         ListingExpiryService.LOCK_NAME,
-        OrphanUploadSweeper.LOCK_NAME))
+        OrphanUploadSweeper.LOCK_NAME,
+        SellerPayoutService.LOCK_NAME))
         .containsExactlyInAnyOrder(
             "pending-order-expiry", "offer-expiry", "saved-search-matching",
-            "data-retention", "listing-expiry", "orphan-upload-sweep");
+            "data-retention", "listing-expiry", "orphan-upload-sweep",
+            "seller-payout-sweep");
   }
 
   @Test
@@ -170,5 +177,19 @@ class JobLockWiringTest {
     assertThat(job.sweepOrphanUploads()).isEqualTo(0);
     verify(denied).tryAcquire(OrphanUploadSweeper.LOCK_NAME);
     verifyNoInteractions(items, itemPhotos, disputeEvidence);
+  }
+
+  @Test
+  void sellerPayoutSweepSkipsWhenTheLeaseIsDenied() {
+    SellerPayoutRepository payouts = mock(SellerPayoutRepository.class);
+    SellerPayoutAdjustmentRepository adjustments = mock(SellerPayoutAdjustmentRepository.class);
+    SellerPayoutTransitions transitions = mock(SellerPayoutTransitions.class);
+    SellerPayoutService job = new SellerPayoutService(
+        payouts, adjustments, transitions, clock, denied, OrderMetrics.noop());
+
+    assertThat(job.runSweep(clock.instant()))
+        .isEqualTo(new SellerPayoutService.PayoutSweepCounts(0, 0, 0, 0));
+    verify(denied).tryAcquire(SellerPayoutService.LOCK_NAME);
+    verifyNoInteractions(payouts, adjustments, transitions);
   }
 }

@@ -24,7 +24,7 @@ import java.time.Instant;
 @Table(name = "job_lock")
 public class JobLock {
 
-  /** The job's stable lock name (one of the six services' LOCK_NAME constants). */
+  /** The job's stable lock name (one of the seven services' LOCK_NAME constants). */
   @Id
   @Column(length = 64, nullable = false)
   private String name;

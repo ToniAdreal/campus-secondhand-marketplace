@@ -392,7 +392,7 @@ app:
     recently-viewed-retention: 30
     notifications-retention: 90
   jobs:
-    # Single-instance guard for the six mutating @Scheduled jobs
+    # Single-instance guard for the seven mutating @Scheduled jobs
     # (JobLockGuard, backlog #215): a DB-backed lease in the Flyway V61
     # job_lock table — one instance runs each firing, the others skip
     # (counted on scheduler.jobs.skipped). lock-lease is how long a
