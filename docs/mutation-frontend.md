@@ -399,6 +399,77 @@ because the gate is the combined score, not any single file.
 Backlog #347 is done; a future widening still requires
 re-measuring first, per the #263 method.
 
+### Ninth measured run (backlog #351) — combined scope, re-derived ranges + #322 survivors dead
+
+The #351 killing tests (commits `e946e44` and `a684262`) closed
+the #322 survivors plus the cart-store fallbacks the doc names
+below: malformed-payload fallback assertions for the four list
+hooks (`useFavorites`, `useMyFollows`, `useMyBlocks`,
+`useSavedSearches`), block/unblock `['items']` invalidation
+assertions, cart `clear`, and the checkout default error copy.
+The scope was re-measured at break 0 first (measure first, floor
+second — the same discipline as #252, #263, #280, #287, #322,
+#327 and #347; chunked per file so a restart loses at most one
+chunk, the #287 lesson; full report copies:
+`goals/github-engineering-profile-building/hidden_files/stryker-351-measure-listhooks.json`
+and `stryker-351-measure-cart.json`): **0 survivors** — the
+listhooks chunk 44 killed + 2 timeout over 46 mutants, the cart
+chunk 10/10 killed after a follow-up test for the one survivor
+(`useCartStore.ts:231` OptionalChaining, the second `?.` in the
+default `describeError` chain, only observable when the response
+exists but `data` does not).
+
+The combined pass then found 21 ranges stale: the #288
+axios-to-fetch migration had moved the functions (categories x1,
+orders x9, admin x6, client x1, webauthn x4), so the old ranges
+were silently mutating the wrong code (orders.ts:398-419 covered
+the `useCreateOrderWithKey` hook, not a mapper) and the
+instrumented total had fallen from 1830 to 1566. The ranges were
+re-derived from the current TypeScript AST before the combined
+run — a pure line-shift correction, the same functions in the
+same order with the same line counts, verified by
+instrument-count probes.
+
+Combined run, 2026-11-07, head **a684262** plus the re-derived
+ranges, isolated clone, systemd transient unit, 57 minutes 51
+seconds, dry run 1224 tests in 1 minute 52 seconds, 4 workers
+(the dry run counts only tests related to mutated files, vs
+1337 in the full vitest suite):
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| Combined (stores + mappers + hooks, 1843 mutants) | 91.37% (1684/1843, timeout counted as scored) | 92.98% (1683/1810) |
+
+Mutant statuses: **KILLED 1683, SURVIVED 126, NO_COVERAGE 33,
+TIMEOUT 1, ERROR 0.** Per-file: orders 375/375, items 133/133,
+categories 44/44, reports 72/72, blocks 25/25, favorites 14/14,
+follows 19/19, savedSearches 26/26, payouts 21/21,
+recentlyViewed 7/7, sellers 24/24, theme store 5/5 — every
+mutant the #351 killing tests targeted is dead. `useCartStore`
+has exactly 4 survivors, the four pre-existing ones documented
+below (`removeItem` L112 + `revalidateCartItems` L198/L200/L205);
+`clear` and the default `describeError` fallback are dead, and
+the store has 0 no-coverage mutants now. The remaining gap
+concentrates in telemetry (40 survived), notifications (16
+survived + 3 no-coverage), reviews (12 + 10), disputes (11 + 5)
+and admin (12 + 6). Full report copy:
+`goals/github-engineering-profile-building/hidden_files/stryker-351-combined-report.json`.
+
+### Floor decision (widened scope, seventh widening — LANDED)
+
+`thresholds.break` is now **91**: the measured combined score is
+91.37%, and the floor is that score rounded **down** to a whole
+percent, so an identical rerun cannot fail on rounding. The floor
+is never set above the measured score. The re-derived ranges are
+now a landed scope, and the CI `frontend-mutation` job measures
+the combined score on every run. The #322 survivors + the cart
+`clear` / default-error fallbacks are dead (see the updated
+subsections below); the other survivors stay honest follow-up
+material — they do not block the landing, because the gate is
+the combined score, not any single file. Backlog #351 is done; a
+future widening still requires re-measuring first, per the #263
+method.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -443,6 +514,12 @@ the score before touching the floor.
 
 ### `checkoutCart` default error mapper — 1
 
+**KILLED by #351** (commit `e946e44`, re-measured 0 survivors in
+the cart chunk, combined run `useCartStore` 0 no-coverage): a
+failing checkout with no injected mapper now asserts the fallback
+copy. The entry below is kept as the record of what the test
+closes.
+
 - L230 ArrowFunction (default `describeError` → `() => undefined`):
   covered by success-path tests only, survived. Every failing-checkout
   test injects its own mapper, so the default is never exercised on a
@@ -451,12 +528,24 @@ the score before touching the floor.
 
 ### `useCartStore.clear` — 1
 
+**KILLED by #351** (commit `e946e44`, re-measured 0 survivors in
+the cart chunk, combined run `useCartStore` 0 no-coverage): the
+clear test (two items, `clear`, assert empty items and null
+seller/batch) is in the unit suite. The entry below is kept as
+the record of what the test closes.
+
 - L117 ArrowFunction (`clear` → `() => undefined`): ran the full
   related set and survived. No test calls `clear` and asserts the cart
   is empty afterwards. Needs: add two items, `clear`, assert empty
   items and null seller/batch.
 
 ### Social-graph / saved-search hooks — 11 survived + 1 no-coverage (#322)
+
+**ALL DEAD by #351** (commits `e946e44` + `a684262`; break-0
+re-measurement of the scope found 0 survivors, and the combined
+run shows blocks 25/25, favorites 14/14, follows 19/19,
+savedSearches 26/26 with no survivors and no no-coverage). The
+entries below are kept as the record of what the tests close.
 
 None is labelled equivalent. Two test gaps explain all twelve:
 
@@ -567,6 +656,13 @@ timeouts (the whole-hook ObjectLiteral/BlockStatement mutants)
 count as scored, not as gaps.
 
 ## No-coverage mutants
+
+**BOTH GROUPS DEAD by #351** (commit `e946e44`; the cart chunk
+re-measured 10/10 killed and the combined run shows
+`useCartStore` 0 no-coverage): the `clear` test covers L117 and
+the failing-checkout-without-mapper test covers the L231–232
+fallback body. The entries below are kept as the record of what
+the tests close.
 
 The 7 NO_COVERAGE mutants, all in paths no related test executes:
 
