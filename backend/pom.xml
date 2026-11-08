@@ -338,9 +338,9 @@
          OrderReadTest, OrderHandoverCodeTest, OrderPaymentTest) are the ONLY drivers of the 162
          NO_COVERAGE mutants in the OrderService methods added after #192, so the Spring context boot
          per mutant is accepted and paid in CI, not worked around with a second pure suite. The *IT
-         classes stay out (CI-only, Testcontainers). No local score exists for the widened scope (PIT
-         cannot run in this sandbox), so the floor stays 27 until the next CI backend-mutation run
-         measures it. Deliberate floor bumps
+         classes stay out (CI-only, Testcontainers). Backlog #355 read that run (GitHub Actions
+         42434347952, head 099aba0): the widened scope measured 477/599 = 79.6% mutation coverage,
+         so the floor is now 79. Deliberate floor bumps
          edit this constant together with docs/mutation.md and say why
          in the commit message. -->
     <profile>
@@ -398,7 +398,7 @@
                 <param>HTML</param>
               </outputFormats>
               <timestampedReports>false</timestampedReports>
-              <mutationThreshold>27</mutationThreshold>
+              <mutationThreshold>79</mutationThreshold>
             </configuration>
             <executions>
               <execution>

@@ -331,6 +331,224 @@ score, rounded down, and dispositions the newly reachable survivors
 per the #212 discipline (no survivor is dispositioned here: none
 was measured).
 
+### Widened scope, measured (backlog #355, 2026-11-08)
+
+GitHub Actions run **42434347952**, 2026-11-08T01:27:44Z, head
+**099aba0** (backlog #353); the `backend-mutation` job succeeded.
+(The run's overall conclusion is failure — other jobs failed for
+unrelated reasons; the `pit-reports` artifact is the mutation job's
+output.) This is the first CI `backend-mutation` run after the #345
+`targetTests` widening, so it is the run the #345 note deferred the
+floor re-ratchet and the survivor disposition to.
+
+| Scope | Line coverage | Mutation coverage | Test strength |
+|---|---|---|---|
+| Project (8 classes) | 87% (805/928) | 80% (477/599) | 88% (477/542) |
+| `auth` — 4 classes | 89% (385/434) | 85% (249/294) | 90% (249/277) |
+| `order` — 4 classes | 85% (420/494) | 75% (228/305) | 86% (228/265) |
+
+Mutant statuses, project-wide: **KILLED 476, SURVIVED 65,
+NO_COVERAGE 57, TIMED_OUT 1** (the timed-out mutant counts as
+detected: 477 detected / 599). The displayed 80% is the rounded
+figure; the exact score is 477/599 = 79.6%.
+
+Floor decision: the floor moves **27 → 79** — the measured mutation
+coverage, 79.6%, rounded down to a whole percent per the #212
+discipline, so an identical rerun cannot fail on rounding. The floor
+is never set above the measured score.
+
+#### Disposition of the 65 SURVIVED mutants (backlog #355)
+
+Per the #212 discipline: every survivor gets a killing test, or a
+documented disposition naming why it cannot be killed — none
+dispositioned silently. Because PIT cannot run in the local sandbox,
+a targeted mutant is not claimed killed here; the kill is confirmed
+(or not) by the next CI `backend-mutation` run.
+
+`OrderService` — 37, all targeted by new tests in
+`OrderServiceTest` (the aware-service tests, built unit-style
+against mocks so the kill does not depend on a Spring context):
+
+- `cancel` (4: L676 `flush`, L677 `metrics.cancelled`, L681
+  `audit.record`, L685 `notifications.record`, all VoidMethodCall) —
+  targeted by
+  `cancel_awareService_recordsSideEffectsAndReleasesListing`, which
+  asserts the CANCELLED status, the listing back to AVAILABLE, and
+  each verified side effect.
+- `complete` (2: L1023 NegateConditionals on the `!callerIsAdmin`
+  guard, L1030 `metrics.handoverConfirmed`) — targeted by the
+  seller-path test
+  `complete_awareService_sellerPathConfirmsHandoverAndRecordsSideEffects`
+  (verifies `handoverConfirmed()`) together with
+  `complete_adminOverride_neverCountsHandoverConfirmed` (verifies
+  `never()`); negating the guard breaks both.
+- `getSellerOrderFor` (2: L554 NegateConditionals on the
+  owner-or-admin check, L558 NullReturnVals) — targeted by
+  `getSellerOrderFor_ownerAdminAndStranger` (owner and admin pass,
+  stranger gets 403, and the returned DTO id is asserted).
+- `listSellerOrders` (2: L379 NegateConditionals on the
+  `status == null` branch, L380 NullReturnVals) — targeted by
+  `listSellerOrders_nullStatusUsesUnfilteredQuery` and
+  `listSellerOrders_statusUsesFilteredQuery`, which verify the exact
+  repository method called in each branch.
+- `mintHandoverCode` (1: L235 `setHandoverCodeExpiresAt`) —
+  targeted by the seller-path complete test, which asserts the expiry
+  equals the pay instant plus the 7-day TTL.
+- `nextRefundKeyFor` (2: L594 MathMutator on the refund-count
+  arithmetic, L595 `setRefundIdempotencyKey`) — targeted by the
+  full-refund test, which asserts the key is exactly `rfd_5_2`.
+- `refund` (14) — targeted by
+  `refund_awareService_fullRefundRecordsMoneyAndSideEffects` (500-char
+  reason pins the L1381 `> 500` boundary; amount exactly equal to the
+  remaining pins the L1394 `amount > remaining` boundary; the
+  refunded-amount / refund-count / refund-id / flush / forget-refund /
+  refunded-metric / audit / notification assertions pin L1392,
+  L1412–L1414, L1432, L1436, L1443, L1450, L1453),
+  `refund_awareService_partialRefundStaysPaidAndCountsNoRefundMetric`
+  (the L1442 `completesRefund` branch: partial stays PAID and never
+  counts the refunded metric), and
+  `refund_zeroAmount_throws422AndCallsNoPsp` as a companion pinning
+  the `amount <= 0` guard (no survivor sits on that guard — it was
+  already killed in the measured run — but the zero-amount path had
+  no direct test).
+- `regenerateHandoverCode` (1: L1295 `flush`) — targeted by
+  `regenerateHandoverCode_awareService_flushesAndRestampsExpiry`
+  (`times(2).flush()` across pay + regenerate).
+- `ship` (3: L1097 `flush`, L1101 `metrics.shipped`, L1107
+  `notifications.record`) — targeted by
+  `ship_awareService_recordsSideEffects`.
+- `transitionToCompleted` (5: L1174 `setHandoverFailedAttempts`,
+  L1175 `setHandoverLockedUntil`, L1190 `flush`, L1191
+  `metrics.completed`, L1209 `notifications.record`) — targeted by
+  the seller-path complete test, which pre-sets 3 failed attempts and
+  an expired lock and asserts both are cleared, plus the flush,
+  completed-metric and notification verifications.
+- `verifyHandoverCode` (1: L1246 NegateConditionals on the expiry
+  check) — targeted by `complete_expiredHandoverCode_throws422` and
+  by the seller-path complete test (a live code must pass).
+
+`JwtTokenService` — 4, all targeted by new tests in
+`JwtTokenServiceTest`:
+
+- `authTimeOf` (2: L426 NegateConditionals, NullReturnVals) —
+  targeted by `rotate_preservesAuthTime_neverFreshens` (rotation an
+  hour after issuance must carry the original `auth_time`, on both
+  the access and the refresh token) and
+  `rotate_tokenWithoutAuthTime_succeedsWithNoClaim` (a pre-#218 token
+  with no claim must rotate without inventing one).
+- `rotateLive` (2: L514 and L546 NegateConditionals on the two
+  `authTimeAt != null` guards, refresh and access claim) — targeted
+  by the same two rotate tests: negating either guard drops the claim
+  when present or throws on the null when absent.
+
+`TotpService` — 14: 6 targeted, 8 documented equivalents.
+
+- `base32Decode` (1: L274 ConditionalsBoundary on the
+  `c >= BASE32_DECODE.length || BASE32_DECODE[c] < 0` guard) —
+  targeted by `base32Decode_boundaryValues`: `'A'` (table value 0)
+  must decode, and char 128 (exactly past the 128-entry table) must
+  throw `IllegalArgumentException`.
+- `encodeLabel` (5: L231 ConditionalsBoundary on the unreserved-set
+  range checks) — targeted by
+  `otpauthUri_keepsBoundaryLabelCharactersLiteral`, which puts the
+  first and last letter and digit of each range (`AZaz09`) through
+  the URI unencoded.
+- `base32Encode` L252 (ConditionalsBoundary, `while (bitsLeft >= 5)`)
+  — **equivalent**: when `bitsLeft` is exactly 5 the loop would emit
+  `(buffer >> 0) & 0x1f`, and the post-loop flush emits
+  `(buffer << 0) & 0x1f` — the same five bits, in the same order, one
+  emit later at most. The bit stream is a pure shift register, so
+  deferring the emit cannot change the output string for any input.
+- `base32Encode` L246 (3 MathMutators on the
+  `(bytes.length * 8 + 4) / 5` initial capacity) — **equivalent**: the
+  expression only sizes the `StringBuilder`; a `StringBuilder` grows
+  as needed, so the encoded output is identical.
+- `generateRecoveryCode` L110 (ConditionalsBoundary, the raw loop's
+  `i < RECOVERY_CODE_CHARS`) — **equivalent**: the display loop
+  still copies only the first 16 raw characters, so a 17th generated
+  character is never displayed, stored, or hashed.
+- `hotp` L195 (ConditionalsBoundary, `for (i = 7; i >= 0; i--)`) —
+  **equivalent through the public API**: skipping `i = 0` leaves
+  `message[0]` at 0 instead of `(counter >> 56) & 0xff`, and `hotp`
+  is only called from `verify()` with time-step counters (epoch
+  seconds / 30), which never reach 2^56.
+- `isAllDigits` L218 (NegateConditionals, the loop condition) and
+  L221 (BooleanTrueReturnVals on the in-loop `return false`) —
+  **equivalent**: `isAllDigits` is only a fail-fast guard inside
+  `verify()`; a non-digit code can never equal a `%06d` HOTP value,
+  so `verify()` returns false with or without the guard. The guard
+  saves a needless HMAC, nothing observable.
+
+`AuthRateLimiter` — 10: 4 targeted, 1 superseded, 5 documented
+equivalents.
+
+- `evictIdleIfNeeded` L171 (NegateConditionals) — targeted by
+  `evictionDoesNotRunBelowTheKeyCap`: with the guard negated,
+  eviction runs at 2 tracked keys and the idle bucket is recreated
+  full, so the final `tryConsume` returns true instead of false.
+- `evictIdleIfNeeded` L171 (ConditionalsBoundary, `>` vs `>=`) —
+  targeted by `evictionDoesNotRunAtExactlyTheKeyCap`: exactly 10,000
+  keys tracked (1 idle + 9,999 filler) must not evict — the guard is
+  strictly-greater — while 10,001 keys do (`evictionRunsPastTheKeyCap`).
+- `retryAfterSeconds` L136 (VoidMethodCall, `bucket.refill`) —
+  targeted by `retryAfterSecondsRefillsWithoutAConsume`: without the
+  refill the post-advance call still reports 12 s instead of 0.
+- `tryConsume` L66 (VoidMethodCall, `evictIdleIfNeeded`) — targeted
+  by `evictionRunsPastTheKeyCap`: without the call the idle bucket is
+  never evicted and the final `tryConsume` returns false.
+- `<init>` L40 (ConditionalsBoundary, the props constructor's
+  `attemptsPerMinute < 1` guard) — **superseded by #354**: the guard
+  moved into the windowed constructor added there, and the old
+  constructor now only delegates. The equivalent boundary in the new
+  shape is pinned by `windowedConstructorAcceptsExactlyOneAttempt`
+  (limit 1 accepted) together with the existing zero/negative
+  props-constructor tests.
+- `retryAfterSeconds` L137 (ConditionalsBoundary, `>=` vs `>`) —
+  **equivalent**: at exactly 1.0 token the deficit path computes
+  `(1.0 - 1.0) / rate = 0`, `ceil(0 - 1e-9) = 0`, and returns 0 —
+  the same value as the early return. Above 1.0 both branches return
+  0; below 1.0 both take the deficit path.
+- `retryAfterSeconds` L138 (PrimitiveReturnsMutator, `return 0`) —
+  **equivalent**: the mutant replaces the returned value with 0,
+  which is what the code already returns.
+- `snapshot` L115 (ConditionalsBoundary, `bucket.tokens < capacity`)
+  — **equivalent**: at exactly full the deficit path computes 0 ms
+  and `resetSeconds` stays 0, the same value as the skipped branch;
+  below full both branches take the deficit path.
+- `tryConsume` L73 (BooleanTrueReturnVals, `return true`) and L78
+  (BooleanFalseReturnVals, `return false`) — **equivalent**: each
+  mutant replaces the returned value with the value the code already
+  returns.
+
+Still surviving after this follow-up: **none of the 65** — 51
+targeted by new tests (37 OrderService + 4 JwtTokenService + 6
+TotpService + 4 AuthRateLimiter) + 14 dispositioned above (8
+TotpService equivalents + 6 AuthRateLimiter equivalents/superseded)
+= 65. The timed-out mutant (`TotpService.verify` L182, a
+MathMutator on the skew-step addition) already counts as detected;
+it is the HOTP time-step loop, and no separate disposition is
+needed.
+
+#### NO_COVERAGE after the widening (backlog #355)
+
+57 mutants remain NO_COVERAGE, down from 162: the eight MockMvc
+suites from #345 now drive the cancel / complete / refund / dispute /
+handover / read paths. What is left sits in methods no `targetTests`
+suite drives: `OrderService` holds 40 (`expireStaleOrder` 10,
+`settlementSummary` 8, `sellerSalesCsv` 4, `listOrderAttempts` 3,
+`pay` 2, `listSellerOrders` 2, `listOrders` 1, `monthWindow` 1,
+`sellerSalesSummary` 1, and 8 single mutants in the `cancel` /
+`expireStaleOrder` / `getOrder` / `getSellerOrderFor` /
+`listOrderAttempts` / `refund` / `transitionToCompleted` lambdas);
+`JwtTokenService` holds 13 across the TOTP-challenge and
+session-family methods (`createTotpChallenge`,
+`familyBelongsToUser`, `getTotpChallengeTtl`, `liveSessionTokens`,
+`mintStepUpAccessToken`, `parseTotpChallenge`, `revokeFamily`,
+`sessionFamilyOfToken` and their lambdas); `AuthRateLimiter` holds 4
+in its eviction lambda. These are not survivors — no driving test
+reaches them at all — and closing them is a future widening item,
+not this one.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
@@ -349,21 +567,19 @@ the enlarged class those suites reach at all.
 
 ### Floor decision
 
-`mutationThreshold` is now **27**: the latest measured mutation
-coverage is 81/291 = 27.8%, and the floor is that score rounded
-**down** to a whole percent, so an identical rerun cannot fail on
-rounding. The floor is never set above the measured score. Note the
-scope drift honestly: that 27.8% was measured on the 3-class scope;
-#269 widened it to 4 classes, #285 to 5 classes, #320 to 6
-classes, #333 to 7 classes and #338 to 8 classes, all unmeasured
-locally (PIT cannot run in this sandbox), so 27 is now a conservative
-hold for the 8-class scope, not a measured score for it — the next CI
-`backend-mutation` run re-ratchets it from its measured score,
-rounded down. Backlog #345 widens `targetTests` to the eight MockMvc
-suites driving the remaining NO_COVERAGE methods (same 8 classes, no
-new `targetClasses`), likewise unmeasured until that CI run; the newly
-reachable survivors get dispositioned by the round that reads its
-`pit-reports` artifact.
+`mutationThreshold` is now **79**: the latest measured mutation
+coverage is 477/599 = 79.6% (GitHub Actions run 42434347952,
+2026-11-08, head 099aba0 — backlog #355), and the floor is that
+score rounded **down** to a whole percent, so an identical rerun
+cannot fail on rounding. The floor is never set above the measured
+score. The 79.6% is measured on the full 8-class scope with the #345
+`targetTests` widening, so unlike the 27 it replaces, this floor is a
+measured score for the current scope — not a conservative hold. The
+next CI `backend-mutation` run re-measures it; if the new killing
+tests land their kills the score rises, and the floor ratchets up
+from that run's measured score, rounded down. (History: the floor was
+27 from run 39735286602's 81/291 = 27.8%, backlog #212, measured on
+the 3-class scope.)
 
 ## Surviving mutants
 
@@ -515,16 +731,15 @@ the 48** — every survivor is targeted (48 targeted + 0 still-surviving
 
 ### The NO_COVERAGE gap (honest scope)
 
-162 mutants sit in `OrderService` methods added after #192
+162 mutants sat in `OrderService` methods added after #192
 (cancel / complete / refund / dispute / handover / read paths) that
-only the MockMvc suites exercise. They are not survivors — as of run
-39735286602 no driving test reached them at all. Backlog #345 closes
-that gap in scope: the eight MockMvc suites are now in PIT's
-`targetTests`, so the mutants are reachable — but the widened scope
-is unmeasured (PIT cannot run in this sandbox), the 27 floor above
-is still set against the last measured run, and the newly reachable
-survivors are dispositioned by the round that reads the next CI
-`backend-mutation` run's `pit-reports` artifact.
+only the MockMvc suites exercise. Backlog #345 closed that gap in
+scope: the eight MockMvc suites are now in PIT's `targetTests`. Run
+42434347952 (backlog #355) measured the result: 57 NO_COVERAGE
+remain (see the breakdown above) and the rest are now reached and
+mostly killed. They are not survivors — no driving test reaches
+them at all — and the 79 floor above is set against this measured
+run.
 
 ## Honest scope
 
@@ -535,6 +750,6 @@ the auth token bucket, the payout transitions and the receipt builder
 Controllers, repositories, and the frontend have no mutation score,
 and none is claimed for them in the README. Widening the scope
 continues one class at a time, with the floor re-measured each time.
-Backlog #345 widens `targetTests` to the eight MockMvc suites driving
-the `OrderService` methods added after #192; that widened scope is
-likewise unmeasured until the next CI run.
+Backlog #345 widened `targetTests` to the eight MockMvc suites
+driving the `OrderService` methods added after #192; run 42434347952
+measured that widened scope at 79.6% (backlog #355).

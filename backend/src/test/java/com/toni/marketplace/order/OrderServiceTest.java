@@ -25,6 +25,7 @@ import io.micrometer.core.instrument.Timer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
@@ -36,6 +37,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -681,5 +685,280 @@ class OrderServiceTest {
             .isEqualTo(HttpStatus.CONFLICT));
     verify(orders, never()).save(any());
     verify(items, never()).save(any());
+  }
+
+  // --- Backlog #355: mutation-survivor kill tests (aware service) ---
+  //
+  // Each test below is targeted at named SURVIVED mutants from PIT run
+  // 42434347952 (head 099aba0, 2026-11-08 — see docs/mutation.md), the
+  // first CI backend-mutation run after the #345 targetTests widening.
+  // PIT cannot run in this sandbox, so these tests are "targeted at"
+  // those mutants — the kill itself is confirmed by the next CI
+  // backend-mutation run, not claimed here.
+
+  @Test
+  void cancel_awareService_recordsSideEffectsAndReleasesListing() {
+    OrderService aware = awareService();
+    Order order = pendingOrder(7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    Item item = order.getItem();
+    item.setStatus(ItemStatus.RESERVED);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(items.findById(any())).thenReturn(Optional.of(item));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(items.save(any(Item.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    OrderDto dto = aware.cancel(7L, 5L);
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.AVAILABLE);
+    verify(orders).flush();
+    verify(awareMetrics).cancelled();
+    verify(awareAudit).record(7L, AuditAction.ORDER_CANCELLED, AuditTargetType.ORDER, 5L);
+    verify(awareNotifications).record(9L, NotificationType.ORDER_CANCELLED, 5L);
+  }
+
+  @Test
+  void refund_awareService_fullRefundRecordsMoneyAndSideEffects() {
+    OrderService aware = awareService();
+    Item item = listing(9L);
+    item.setStatus(ItemStatus.RESERVED);
+    Order order = new Order(item, 7L, 2500L);
+    order.setStatus(OrderStatus.PAID);
+    order.setRefundedAmountCents(1000L);
+    order.setRefundCount(1);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(items.findById(any())).thenReturn(Optional.of(item));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(items.save(any(Item.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(payments.refund(eq(order), eq("rfd_5_2"), eq(1500L)))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 1500L));
+    // Exactly 500 chars: the boundary the > 500 reason guard must accept.
+    String reason500 = "r".repeat(500);
+
+    OrderDto dto = aware.refund(9L, false, 5L, null, reason500);
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.REFUNDED);
+    assertThat(order.getRefundId()).isEqualTo("rfd_mock_1");
+    assertThat(order.getRefundedAmountCents()).isEqualTo(2500L);
+    assertThat(order.getRefundCount()).isEqualTo(2);
+    assertThat(order.getRefundIdempotencyKey()).isEqualTo("rfd_5_2");
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.AVAILABLE);
+    verify(payments).refund(eq(order), eq("rfd_5_2"), eq(1500L));
+    verify(orders).flush();
+    verify(payments).forgetRefund("rfd_5_2");
+    verify(awareAttempts).recordRefunded(5L, "rfd_5_2", reason500);
+    verify(awareMetrics).refunded();
+    verify(awareAudit).record(9L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, 5L);
+    verify(awareNotifications).record(7L, NotificationType.ORDER_REFUNDED, 5L);
+  }
+
+  @Test
+  void refund_awareService_partialRefundStaysPaidAndCountsNoRefundMetric() {
+    OrderService aware = awareService();
+    Item item = listing(9L);
+    item.setStatus(ItemStatus.RESERVED);
+    Order order = new Order(item, 7L, 2500L);
+    order.setStatus(OrderStatus.PAID);
+    order.setRefundedAmountCents(1000L);
+    order.setRefundCount(1);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(payments.refund(eq(order), eq("rfd_5_2"), eq(500L)))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_2", 500L));
+
+    OrderDto dto = aware.refund(9L, false, 5L, 500L, "damaged in transit");
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
+    assertThat(order.getRefundedAmountCents()).isEqualTo(1500L);
+    assertThat(order.getRefundCount()).isEqualTo(2);
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.RESERVED);
+    verify(awareMetrics, never()).refunded();
+    verify(awareAudit).record(9L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, 5L);
+    verify(awareNotifications).record(7L, NotificationType.ORDER_REFUNDED, 5L);
+  }
+
+  @Test
+  void refund_zeroAmount_throws422AndCallsNoPsp() {
+    OrderService aware = awareService();
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+
+    assertThatThrownBy(() -> aware.refund(9L, false, 5L, 0L, "no reason to refund nothing"))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+    verify(payments, never()).refund(any(), anyString(), anyLong());
+  }
+
+  @Test
+  void ship_awareService_recordsSideEffects() {
+    OrderService aware = awareService();
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    OrderDto dto = aware.ship(9L, false, 5L, "DHL", "TRACK-1");
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.SHIPPED);
+    assertThat(dto.carrier()).isEqualTo("DHL");
+    assertThat(dto.trackingNumber()).isEqualTo("TRACK-1");
+    assertThat(dto.shippedAt()).isEqualTo(PAY_NOW);
+    assertThat(order.getShippedAt()).isEqualTo(PAY_NOW);
+    verify(orders).flush();
+    verify(awareMetrics).shipped();
+    verify(awareAudit).record(9L, AuditAction.ORDER_SHIPPED, AuditTargetType.ORDER, 5L);
+    verify(awareNotifications).record(7L, NotificationType.ORDER_SHIPPED, 5L);
+  }
+
+  @Test
+  void complete_awareService_sellerPathConfirmsHandoverAndRecordsSideEffects() {
+    OrderService aware = awareService();
+    Order order = pendingOrder(7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    Item item = order.getItem();
+    item.setStatus(ItemStatus.RESERVED);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(items.findById(any())).thenReturn(Optional.of(item));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(items.save(any(Item.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(awareMetrics.startPayTimer()).thenReturn(sample);
+    when(payments.capture(eq(order), anyString(), any()))
+        .thenReturn(new PaymentService.CaptureResult("cap_mock_355", 2500L));
+
+    OrderDto paid = aware.pay(7L, 5L);
+    assertThat(paid.status()).isEqualTo(OrderStatus.PAID);
+    assertThat(paid.handoverCode()).isNotNull().hasSize(6);
+    // A stale (expired) lock from earlier failed guesses: completion must
+    // still succeed and clear both the counter and the lock.
+    order.setHandoverFailedAttempts(3);
+    order.setHandoverLockedUntil(PAY_NOW.minusSeconds(60));
+
+    OrderDto dto = aware.complete(9L, false, 5L, paid.handoverCode());
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.COMPLETED);
+    assertThat(order.getHandoverFailedAttempts()).isZero();
+    assertThat(order.getHandoverLockedUntil()).isNull();
+    assertThat(order.getCompletedAt()).isEqualTo(PAY_NOW);
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.SOLD);
+    // The mint stamps the expiry (default 7-day TTL on the fixed clock).
+    assertThat(order.getHandoverCodeExpiresAt()).isEqualTo(PAY_NOW.plus(Duration.ofDays(7)));
+    verify(orders, times(2)).flush();
+    verify(awareMetrics).completed();
+    verify(awareMetrics).handoverConfirmed();
+    verify(awareAudit).record(9L, AuditAction.ORDER_COMPLETED, AuditTargetType.ORDER, 5L);
+    verify(awareNotifications).record(7L, NotificationType.ORDER_COMPLETED, 5L);
+  }
+
+  @Test
+  void complete_adminOverride_neverCountsHandoverConfirmed() {
+    OrderService aware = awareService();
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    Item item = order.getItem();
+    item.setStatus(ItemStatus.RESERVED);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(items.findById(any())).thenReturn(Optional.of(item));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(items.save(any(Item.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    OrderDto dto = aware.complete(1L, true, 5L, null);
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.COMPLETED);
+    assertThat(item.getStatus()).isEqualTo(ItemStatus.SOLD);
+    verify(awareMetrics, never()).handoverConfirmed();
+    verify(awareAudit).record(1L, AuditAction.ORDER_COMPLETED_ADMIN_OVERRIDE,
+        AuditTargetType.ORDER, 5L);
+  }
+
+  @Test
+  void complete_expiredHandoverCode_throws422() {
+    OrderService aware = awareService();
+    Order order = pendingOrder(7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(awareMetrics.startPayTimer()).thenReturn(sample);
+    when(payments.capture(eq(order), anyString(), any()))
+        .thenReturn(new PaymentService.CaptureResult("cap_mock_355", 2500L));
+
+    OrderDto paid = aware.pay(7L, 5L);
+    order.setHandoverCodeExpiresAt(PAY_NOW.minusSeconds(1));
+
+    assertThatThrownBy(() -> aware.complete(9L, false, 5L, paid.handoverCode()))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+  }
+
+  @Test
+  void regenerateHandoverCode_awareService_flushesAndRestampsExpiry() {
+    OrderService aware = awareService();
+    Order order = pendingOrder(7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+    when(orders.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(awareMetrics.startPayTimer()).thenReturn(sample);
+    when(payments.capture(eq(order), anyString(), any()))
+        .thenReturn(new PaymentService.CaptureResult("cap_mock_355", 2500L));
+
+    OrderDto paid = aware.pay(7L, 5L);
+    OrderDto regenerated = aware.regenerateHandoverCode(7L, 5L);
+
+    assertThat(regenerated.handoverCode()).isNotNull().hasSize(6)
+        .isNotEqualTo(paid.handoverCode());
+    assertThat(order.getHandoverCodeHash()).isEqualTo(sha256Hex(regenerated.handoverCode()));
+    assertThat(order.getHandoverCodeExpiresAt()).isEqualTo(PAY_NOW.plus(Duration.ofDays(7)));
+    verify(orders, times(2)).flush();
+  }
+
+  @Test
+  void getSellerOrderFor_ownerAdminAndStranger() {
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    when(orders.findById(5L)).thenReturn(Optional.of(order));
+
+    assertThat(service.getSellerOrderFor(9L, false, 5L).id()).isEqualTo(5L);
+    assertThat(service.getSellerOrderFor(1L, true, 5L).id()).isEqualTo(5L);
+    assertThatThrownBy(() -> service.getSellerOrderFor(8L, false, 5L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.FORBIDDEN));
+  }
+
+  @Test
+  void listSellerOrders_nullStatusUsesUnfilteredQuery() {
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    Pageable pageable = Pageable.unpaged();
+    Page<Order> page = new PageImpl<>(List.of(order));
+    when(orders.findByItem_SellerId(9L, pageable)).thenReturn(page);
+
+    Page<OrderDto> result = service.listSellerOrders(9L, null, pageable);
+
+    assertThat(result.getContent()).hasSize(1);
+    assertThat(result.getContent().get(0).id()).isEqualTo(5L);
+    verify(orders).findByItem_SellerId(9L, pageable);
+    verify(orders, never()).findByItem_SellerIdAndStatus(anyLong(), any(), any());
+  }
+
+  @Test
+  void listSellerOrders_statusUsesFilteredQuery() {
+    Order order = paidOrder(5L, 7L);
+    ReflectionTestUtils.setField(order, "id", 5L);
+    Pageable pageable = Pageable.unpaged();
+    Page<Order> page = new PageImpl<>(List.of(order));
+    when(orders.findByItem_SellerIdAndStatus(9L, OrderStatus.PAID, pageable))
+        .thenReturn(page);
+
+    Page<OrderDto> result = service.listSellerOrders(9L, OrderStatus.PAID, pageable);
+
+    assertThat(result.getContent()).hasSize(1);
+    verify(orders).findByItem_SellerIdAndStatus(9L, OrderStatus.PAID, pageable);
+    verify(orders, never()).findByItem_SellerId(anyLong(), any());
   }
 }

@@ -19,9 +19,9 @@ jobs:
     # Mutation pilot (backlog #192): PIT over the auth token service and
     # the order state machine only (see backend/pom.xml `mutation`
     # profile + docs/mutation.md). The job fails below the profile's
-    # mutationThreshold ratchet. The floor is 27 (backlog #212): the
-    # measured mutation coverage on run 39735286602 (2026-10-22, head
-    # 41c334d) is 81/291 = 27.8%, floored to a whole percent so an
+    # mutationThreshold ratchet. The floor is 79 (backlog #355): the
+    # measured mutation coverage on run 42434347952 (2026-11-08, head
+    # 099aba0) is 477/599 = 79.6%, floored to a whole percent so an
     # identical rerun cannot fail on rounding — never above the
     # measured score (recorded in docs/mutation.md), never guessed.
     # PIT never runs in the default local `mvn -o test` path. The PIT

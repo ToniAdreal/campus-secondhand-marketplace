@@ -273,4 +273,92 @@ class AuthRateLimiterTest {
     assertThatThrownBy(() -> new AuthRateLimiter(clock, 5, null, true))
         .isInstanceOf(IllegalArgumentException.class);
   }
+
+  // Backlog #355 — PIT run 42434347952 survivors: the constructor
+  // boundary, the retryAfter refill seam, and the idle-eviction paths
+  // (see docs/mutation.md). The eviction kills use the windowed shape:
+  // over a one-hour window a refilled bucket (~0.9 token after 11 min)
+  // is observably different from an evicted-then-recreated full one,
+  // which the per-minute shape cannot distinguish (see the #320 note).
+
+  @Test
+  void windowedConstructorAcceptsExactlyOneAttempt() {
+    AuthRateLimiter one = new AuthRateLimiter(clock, 1, Duration.ofHours(1), true);
+    assertThat(one.tryConsume("k")).isTrue();
+    assertThat(one.tryConsume("k")).isFalse();
+  }
+
+  @Test
+  void retryAfterSecondsRefillsWithoutAConsume() {
+    for (int i = 0; i < 5; i++) {
+      limiter.tryConsume("10.0.0.6");
+    }
+    assertThat(limiter.retryAfterSeconds("10.0.0.6")).isEqualTo(12);
+    // No tryConsume in between: only retryAfterSeconds' own refill can
+    // observe the passed minute.
+    clock.advance(Duration.ofMinutes(1));
+    assertThat(limiter.retryAfterSeconds("10.0.0.6")).isEqualTo(0);
+  }
+
+  @Test
+  void evictionDoesNotRunBelowTheKeyCap() {
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      hourly.tryConsume("idle-key");
+    }
+    clock.advance(Duration.ofMinutes(11));
+    assertThat(hourly.tryConsume("other-key")).isTrue();
+    // Idle 11 min but only 2 keys tracked: no eviction, so the bucket
+    // refills to ~0.9 of a token — still short of one.
+    assertThat(hourly.tryConsume("idle-key")).isFalse();
+  }
+
+  @Test
+  void evictionRunsPastTheKeyCap() {
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      hourly.tryConsume("idle-key");
+    }
+    for (int i = 0; i < 10_000; i++) {
+      hourly.tryConsume("filler-" + i);
+    }
+    clock.advance(Duration.ofMinutes(11));
+    // 10,001 keys tracked: the idle bucket is evicted and recreated full.
+    assertThat(hourly.tryConsume("idle-key")).isTrue();
+  }
+
+  @Test
+  void evictionDoesNotRunAtExactlyTheKeyCap() {
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      hourly.tryConsume("idle-key");
+    }
+    // Exactly MAX_TRACKED_KEYS (10,000) keys tracked: the guard is
+    // strictly-greater, so no eviction runs yet — a `>=` mutant would
+    // evict here and recreate the idle bucket full.
+    for (int i = 0; i < 9_999; i++) {
+      hourly.tryConsume("filler-" + i);
+    }
+    clock.advance(Duration.ofMinutes(11));
+    // Idle 11 min but the map is exactly at the cap: no eviction, so the
+    // bucket refills to ~0.9 of a token — still short of one. No fresh key
+    // is consumed first: adding one would push the map past the cap and
+    // evict before this probe runs.
+    assertThat(hourly.tryConsume("idle-key")).isFalse();
+  }
+
+  @Test
+  void evictionBoundaryIsStrictlyPastTenThousandKeys() {
+    AuthRateLimiter hourly = new AuthRateLimiter(clock, 5, Duration.ofHours(1), true);
+    for (int i = 0; i < 5; i++) {
+      hourly.tryConsume("idle-key");
+    }
+    for (int i = 0; i < 9_999; i++) {
+      hourly.tryConsume("filler-" + i);
+    }
+    clock.advance(Duration.ofMinutes(11));
+    // Exactly 10,000 keys: at the cap, not past it — no eviction, and
+    // the refilled ~0.9 token is still short of one.
+    assertThat(hourly.tryConsume("idle-key")).isFalse();
+  }
 }

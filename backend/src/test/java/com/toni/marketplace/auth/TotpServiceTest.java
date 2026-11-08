@@ -1,6 +1,7 @@
 package com.toni.marketplace.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -208,5 +209,30 @@ class TotpServiceTest {
     assertThat(TotpService.normalizeRecoveryCode("123456")).isNull();
     assertThat(TotpService.normalizeRecoveryCode("")).isNull();
     assertThat(TotpService.normalizeRecoveryCode(null)).isNull();
+  }
+
+  // Backlog #355 — PIT run 42434347952 survivors: the Base32 table
+  // bounds and the label-encoding boundaries (see docs/mutation.md).
+  // The remaining TotpService survivors of that run are documented
+  // equivalents there, not killable through the public API.
+
+  @Test
+  void base32Decode_boundaryValues() {
+    // 'A' decodes to value 0: the table's < 0 guard must not reject it.
+    assertThat(TotpService.base32Decode("AA")).isEqualTo(new byte[] {0x00});
+    // Char 128 is exactly past the 128-entry decode table: the bounds
+    // guard must reject it (a > guard would index out of bounds).
+    assertThatThrownBy(() -> TotpService.base32Decode("\u0080"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void otpauthUri_keepsBoundaryLabelCharactersLiteral() {
+    // Every boundary of the unreserved-set check: first/last letters and
+    // digits must pass through unencoded, or the label is mangled.
+    TotpService service = serviceAt(Instant.ofEpochSecond(59));
+    String uri = service.otpauthUri("AZaz09", "AZaz09", RFC_SECRET);
+    assertThat(uri).contains("AZaz09:AZaz09");
+    assertThat(uri).contains("issuer=AZaz09");
   }
 }

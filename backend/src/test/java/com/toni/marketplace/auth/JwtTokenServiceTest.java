@@ -478,4 +478,66 @@ class JwtTokenServiceTest {
     assertThat(rotated.refreshToken()).isNotEqualTo(pair.refreshToken());
     verify(refreshTokens, never()).deleteByFamilyJti(any());
   }
+
+  // Backlog #355 — PIT run 42434347952 survivors: auth_time preservation
+  // across rotation was never pinned (see docs/mutation.md).
+
+  @Test
+  void rotate_preservesAuthTime_neverFreshens() {
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L, NOW.plus(Duration.ofDays(7)), NOW, "family-jti");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+    when(users.findById(42L)).thenReturn(Optional.of(alice));
+    // Rotation happens an hour after issuance: the new pair must carry
+    // the ORIGINAL auth_time, not the rotation instant.
+    JwtTokenService later = new JwtTokenService(key, Duration.ofMinutes(15), Duration.ofDays(7), Duration.ofSeconds(60), Duration.ofDays(30), Duration.ofMinutes(5),
+        refreshTokens, users, Clock.fixed(NOW.plus(Duration.ofHours(1)), ZoneOffset.UTC));
+
+    JwtTokenService.TokenPair rotated = later.rotateRefreshToken(pair.refreshToken());
+
+    JwtTokenService.AccessClaims claims = later.parseAccessToken(rotated.accessToken());
+    assertThat(claims.authTime()).isEqualTo(NOW);
+    // The refresh token's copy is what the NEXT rotation preserves.
+    // The raw JJWT parser needs the same fixed clock as the service:
+    // NOW is a pinned date in the past, so wall-clock parsing would
+    // reject the token as expired.
+    Long refreshAuthTime = Jwts.parser().verifyWith(key)
+        .clock(() -> Date.from(NOW.plus(Duration.ofHours(1)))).build()
+        .parseSignedClaims(rotated.refreshToken()).getPayload()
+        .get("auth_time", Long.class);
+    assertThat(refreshAuthTime).isEqualTo(NOW.getEpochSecond());
+  }
+
+  @Test
+  void rotate_tokenWithoutAuthTime_succeedsWithNoClaim() {
+    // Tokens minted before #218 carry no auth_time: rotation must not
+    // invent one (and must not throw on the null).
+    String legacyRefresh = Jwts.builder()
+        .subject("42")
+        .claim("type", "refresh")
+        .id("legacy-jti")
+        .issuedAt(Date.from(NOW))
+        .expiration(Date.from(NOW.plus(Duration.ofDays(7))))
+        .signWith(key)
+        .compact();
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(legacyRefresh), "legacy-jti", 42L, NOW.plus(Duration.ofDays(7)), NOW, "family-jti");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+    when(users.findById(42L)).thenReturn(Optional.of(alice));
+
+    JwtTokenService.TokenPair rotated = service.rotateRefreshToken(legacyRefresh);
+
+    JwtTokenService.AccessClaims claims = service.parseAccessToken(rotated.accessToken());
+    assertThat(claims.authTime()).isNull();
+    // Same fixed-clock note as the test above: the raw parser must read
+    // the token at NOW, not at wall-clock time.
+    Long refreshAuthTime = Jwts.parser().verifyWith(key)
+        .clock(() -> Date.from(NOW)).build()
+        .parseSignedClaims(rotated.refreshToken()).getPayload()
+        .get("auth_time", Long.class);
+    assertThat(refreshAuthTime).isNull();
+  }
 }
