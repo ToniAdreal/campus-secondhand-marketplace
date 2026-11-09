@@ -217,8 +217,9 @@ jobs:
           if-no-files-found: ignore
 
   load-smoke:
-    # Load smoke for the read hot paths (backlog #224): k6 drives the
-    # browse list + item detail against the real backend jar on its
+    # Load smoke for the read hot paths + the order write path (backlog
+    # #224, #360): k6 drives the browse list + item detail AND the
+    # create-order -> pay pair against the real backend jar on its
     # default H2 profile, in the e2e job's mould (the jar is packaged
     # with tests skipped ON PURPOSE — the backend-unit /
     # backend-integration jobs gate those suites on the same push; here
@@ -227,12 +228,13 @@ jobs:
     # first CI run's p95/error-rate are recorded in docs/load-smoke.md
     # with the run id, and only then are thresholds set at or below the
     # measured floor, never guessed). The job DOES fail on failed
-    # checks: a non-200 on a seeded read is a correctness defect, not a
-    # performance variance. k6 is downloaded as a pinned release
-    # tarball (no third-party action); the local sandbox cannot run k6
-    # against the backend (TCP-blocked), so the script is inspect-checked
-    # locally and proven here. The k6 summary is uploaded on every run
-    # so the measured numbers are retrievable, not just pass/fail.
+    # checks: a non-200 on a seeded read or a failed write step is a
+    # correctness defect, not a performance variance. k6 is downloaded as
+    # a pinned release tarball (no third-party action); the local sandbox
+    # cannot run k6 against the backend (TCP-blocked), so the script is
+    # inspect-checked locally and proven here. The k6 summary is uploaded
+    # on every run so the measured numbers are retrievable, not just
+    # pass/fail.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
