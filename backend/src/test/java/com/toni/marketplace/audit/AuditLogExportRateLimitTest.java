@@ -13,17 +13,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.toni.marketplace.auth.AccountDataExportController;
 import com.toni.marketplace.auth.JwtTokenService;
+import com.toni.marketplace.auth.MutableClock;
 import com.toni.marketplace.auth.PasswordService;
 import com.toni.marketplace.auth.Role;
 import com.toni.marketplace.auth.User;
 import com.toni.marketplace.auth.UserRepository;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.core.task.support.TaskExecutorAdapter;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,6 +61,24 @@ import org.springframework.transaction.annotation.Transactional;
  * asserted by its CSV header prefix, not by exact rows: audit rows
  * from other test classes sharing this context must not leak into
  * the assertions.
+ *
+ * <p>The application {@code Clock} bean is replaced with a {@link MutableClock}
+ * (backlog #362, mirroring {@code MessageRateLimitTest}) so refill timing
+ * is deterministic: with wall time, the three streaming exports in a
+ * burst take real seconds and the bucket refills underneath them, so the
+ * burst test's {@code Retry-After} drifted (20 read as 18 under load).
+ * With the clock frozen, no refill happens between the burst and the
+ * 429, so the expected 20 s is exact — 3/min is one token per 20 s.
+ *
+ * <p>The MVC async executor is replaced with a
+ * {@code TaskExecutorAdapter} around a {@link SyncTaskExecutor}
+ * (backlog #362, same fix as {@code AuditLogExportTest}): the pool
+ * thread's stream flush commits the response, which fires Spring
+ * Security's deferred header write, while the first dispatch unwinds
+ * on the test thread and fires the same write again — both into
+ * {@code MockHttpServletResponse}'s non-thread-safe header map
+ * ({@code ConcurrentModificationException}). Running the callable on
+ * the calling thread serialises the two writes.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -65,12 +93,47 @@ import org.springframework.transaction.annotation.Transactional;
     "app.auth.login-lockout.enabled=false"})
 class AuditLogExportRateLimitTest {
 
+  @TestConfiguration
+  static class ControllableClock {
+    @Bean
+    @Primary
+    MutableClock testClock() {
+      return new MutableClock();
+    }
+  }
+
+  /**
+   * Runs MVC async work on the calling thread (backlog #362): Spring
+   * Boot wires the MVC async executor from the bean named
+   * {@code applicationTaskExecutor} — but only when it is an
+   * {@code AsyncTaskExecutor} — so replacing that bean (and only in
+   * these export tests' contexts) with a {@code TaskExecutorAdapter}
+   * around a {@code SyncTaskExecutor} makes the
+   * {@code StreamingResponseBody} callable execute inline during the
+   * first dispatch — the stream flush, the response commit and the
+   * filter-chain unwind then all happen on one thread, and the
+   * deferred security-header write can no longer race itself.
+   * ({@code SyncTaskExecutor} alone does not implement
+   * {@code AsyncTaskExecutor}, so it would not be picked up at all:
+   * Boot would silently fall back to the pool executor.)
+   * Production is untouched: a real container owns its response.
+   */
+  @TestConfiguration
+  static class SingleThreadedAsync {
+    @Bean("applicationTaskExecutor")
+    AsyncTaskExecutor applicationTaskExecutor() {
+      return new TaskExecutorAdapter(new SyncTaskExecutor());
+    }
+  }
+
   private static final AtomicLong SEQ = new AtomicLong();
 
   @Autowired private MockMvc mockMvc;
   @Autowired private UserRepository users;
   @Autowired private PasswordService passwords;
   @Autowired private JwtTokenService jwt;
+  @Autowired private MutableClock clock;
+  @Autowired @Qualifier("applicationTaskExecutor") private AsyncTaskExecutor taskExecutor;
 
   private User freshAdmin() {
     String tag = "auditexp-" + SEQ.incrementAndGet() + "-"
@@ -98,10 +161,14 @@ class AuditLogExportRateLimitTest {
     // and see an empty body, which grouped runs exposed as "" instead
     // of the CSV header. The 429/401 paths below never reach the
     // controller, so they stay plain performs (no async is started).
+    // The stream already ran inline on this thread (SingleThreadedAsync),
+    // so the async result is set; this wait only guards the dispatch
+    // ordering and returns immediately.
     MvcResult started = mockMvc.perform(get("/api/admin/audit-log/export")
             .header("Authorization", "Bearer " + token(admin)))
         .andExpect(request().asyncStarted())
         .andReturn();
+    started.getAsyncResult(10_000);
     String body = mockMvc.perform(asyncDispatch(started))
         .andExpect(status().isOk())
         .andExpect(content().contentTypeCompatibleWith("text/csv"))
@@ -139,6 +206,20 @@ class AuditLogExportRateLimitTest {
   }
 
   @Test
+  void asyncExecutorIsSingleThreaded() {
+    // Guards the #362 fix's precondition: Boot wires the MVC async
+    // executor from the applicationTaskExecutor bean only when it is
+    // an AsyncTaskExecutor, so the bean must be a TaskExecutorAdapter
+    // around a SyncTaskExecutor — and the probe proves it really runs
+    // inline on the calling thread. If Boot ever stops wiring it, this
+    // fails loudly instead of the export tests going flaky again.
+    assertThat(taskExecutor).isInstanceOf(TaskExecutorAdapter.class);
+    AtomicReference<Thread> runningThread = new AtomicReference<>();
+    taskExecutor.execute(() -> runningThread.set(Thread.currentThread()));
+    assertThat(runningThread.get()).isSameAs(Thread.currentThread());
+  }
+
+  @Test
   void exportBurstIs429WithEnvelopeAndRetryAfter() throws Exception {
     User admin = freshAdmin();
     for (int i = 0; i < 3; i++) {
@@ -153,6 +234,28 @@ class AuditLogExportRateLimitTest {
         .andExpect(jsonPath("$.code").value(429))
         .andExpect(jsonPath("$.message").value("too many requests"))
         .andExpect(jsonPath("$.data").doesNotExist());
+  }
+
+  @Test
+  void exportBucketRefillsWithTheControllableClock() throws Exception {
+    User admin = freshAdmin();
+    for (int i = 0; i < 3; i++) {
+      exportOnce(admin);
+    }
+    exportOverLimit(admin);
+
+    clock.advance(Duration.ofSeconds(20));
+    // One token refilled (3/min → 20 s per token): exactly one more
+    // export passes …
+    exportOnce(admin);
+    // … and the bucket is empty again.
+    exportOverLimit(admin);
+
+    clock.advance(Duration.ofMinutes(1));
+    // Full refill: a fresh burst of 3 passes.
+    for (int i = 0; i < 3; i++) {
+      exportOnce(admin);
+    }
   }
 
   @Test

@@ -16,11 +16,18 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.core.task.support.TaskExecutorAdapter;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -36,12 +43,43 @@ import org.springframework.transaction.annotation.Transactional;
  * truncation header when the filtered trail is longer. ADMIN 200 with
  * CSV header + filtered rows, non-ADMIN 403, anonymous 401 envelope,
  * cap enforced. The success answer streams
- * ({@code StreamingResponseBody}), so these tests dispatch async.
+ * ({@code StreamingResponseBody}), so these tests dispatch async — and
+ * the stream runs on the calling thread, not the MVC async pool
+ * (backlog #362): the pool thread's stream flush commits the response,
+ * which fires Spring Security's deferred header write, while the
+ * first dispatch unwinds on the test thread and fires the same write
+ * again — both into {@code MockHttpServletResponse}'s non-thread-safe
+ * header map ({@code ConcurrentModificationException}). Running the
+ * callable on the calling thread serialises the two writes.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional
 class AuditLogExportTest {
+
+  /**
+   * Runs MVC async work on the calling thread (backlog #362): Spring
+   * Boot wires the MVC async executor from the bean named
+   * {@code applicationTaskExecutor} — but only when it is an
+   * {@code AsyncTaskExecutor} — so replacing that bean (and only in
+   * these export tests' contexts) with a {@code TaskExecutorAdapter}
+   * around a {@code SyncTaskExecutor} makes the
+   * {@code StreamingResponseBody} callable execute inline during the
+   * first dispatch — the stream flush, the response commit and the
+   * filter-chain unwind then all happen on one thread, and the
+   * deferred security-header write can no longer race itself.
+   * ({@code SyncTaskExecutor} alone does not implement
+   * {@code AsyncTaskExecutor}, so it would not be picked up at all:
+   * Boot would silently fall back to the pool executor.)
+   * Production is untouched: a real container owns its response.
+   */
+  @TestConfiguration
+  static class SingleThreadedAsync {
+    @Bean("applicationTaskExecutor")
+    AsyncTaskExecutor applicationTaskExecutor() {
+      return new TaskExecutorAdapter(new SyncTaskExecutor());
+    }
+  }
 
   private static final Instant T1 = Instant.parse("2026-10-09T10:00:00Z");
   private static final Instant T2 = Instant.parse("2026-10-09T11:00:00Z");
@@ -62,6 +100,10 @@ class AuditLogExportTest {
 
   @Autowired
   private JwtTokenService jwt;
+
+  @Autowired
+  @Qualifier("applicationTaskExecutor")
+  private AsyncTaskExecutor taskExecutor;
 
   private User admin;
   private User alice;
@@ -104,7 +146,25 @@ class AuditLogExportTest {
     MvcResult started = mockMvc.perform(builder)
         .andExpect(request().asyncStarted())
         .andReturn();
+    // The stream already ran inline on this thread (SingleThreadedAsync),
+    // so the async result is set; this wait only guards the dispatch
+    // ordering and returns immediately.
+    started.getAsyncResult(10_000);
     return mockMvc.perform(asyncDispatch(started)).andReturn().getResponse();
+  }
+
+  @Test
+  void asyncExecutorIsSingleThreaded() {
+    // Guards the #362 fix's precondition: Boot wires the MVC async
+    // executor from the applicationTaskExecutor bean only when it is
+    // an AsyncTaskExecutor, so the bean must be a TaskExecutorAdapter
+    // around a SyncTaskExecutor — and the probe proves it really runs
+    // inline on the calling thread. If Boot ever stops wiring it, this
+    // fails loudly instead of the export tests going flaky again.
+    assertThat(taskExecutor).isInstanceOf(TaskExecutorAdapter.class);
+    AtomicReference<Thread> runningThread = new AtomicReference<>();
+    taskExecutor.execute(() -> runningThread.set(Thread.currentThread()));
+    assertThat(runningThread.get()).isSameAs(Thread.currentThread());
   }
 
   private static String[] lines(MockHttpServletResponse response) throws Exception {
