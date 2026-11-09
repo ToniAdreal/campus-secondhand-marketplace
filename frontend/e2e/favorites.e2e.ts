@@ -49,10 +49,10 @@ import {
  * behaviour change for its own backlog item, not this flow.
  *
  * What it does NOT cover, stated plainly: the saved-searches section
- * that shares the /favorites page stays covered by its own Vitest +
- * RTL tests — this flow never touches it; the follow's notification
- * side (#217) and the per-user favorite/follow rate limits stay
- * covered by their own backend tests. The listing is seeded through
+ * that shares the /favorites page is covered by its own e2e flow
+ * (backlog #359, savedSearches.e2e.ts) — this flow never touches it;
+ * the follow's notification side (#217) and the per-user
+ * favorite/follow rate limits stay covered by their own backend tests. The listing is seeded through
  * the real API (register + create listing), never a fixture; only the
  * favorite, the follow and the guest checks are browser-driven, the
  * flow-5 mould.

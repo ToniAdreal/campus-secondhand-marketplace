@@ -155,7 +155,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly eleven flows: (1) register lands on browse signed in;
+- Exactly twelve flows: (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -177,7 +177,12 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   /favorites → the buyer unfavorites it back off, then follows the
   listing's seller from the seller profile and the follow state
   survives a reload; a guest sees no favorite control on the detail
-  page and /favorites bounces to /login (backlog #352).
+  page and /favorites bounces to /login (backlog #352);
+  (12) buyer filters the browse page by a keyword → saves the search
+  → it appears in the saved-searches section on /favorites with its
+  match count → running it lands back on the exact browse URL →
+  deleting it removes it, and a browse page with no filter active
+  offers no save control (backlog #359).
   Flows 5 and 7 seed their PAID orders through the real API (the pay
   response is where the code is disclosed); the completions/resolutions
   themselves are driven in the browser. Selectors are role/label based.
