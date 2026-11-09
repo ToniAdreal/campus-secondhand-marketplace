@@ -214,6 +214,15 @@ dispute/, offer/, review/ ──╳── auth/ web classes
                                                 domain types such as User and
                                                 UserRepository, never an auth
                                                 controller)
+message/, notification/, moderation/, item/ ──╳── auth/ web classes
+                                                (same rule extended in backlog #357:
+                                                the only auth/ references in these
+                                                packages today are domain types —
+                                                MessageService's UserBlockRepository /
+                                                UserRepository imports and ItemService's
+                                                fully-qualified UserBlockRepository /
+                                                SellerFollowRepository references —
+                                                allowed, never a web class)
 common/ ──╳── dispute/ offer/ review/ notification/ moderation/ admin/
                                                 (kernel rule extended in #279:
                                                 common/ depends on no newer

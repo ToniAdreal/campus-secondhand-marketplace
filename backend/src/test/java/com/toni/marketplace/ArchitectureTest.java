@@ -24,8 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Package-layering guardrails (backlog #67; {@code audit/} rules added in
- * backlog #117; newer packages constrained in backlog #279; job/ write
- * discipline in backlog #339). The build fails on violation.
+ * backlog #117; newer packages constrained in backlog #279; message/,
+ * notification/, moderation/ and item/ held to the auth-web rule in
+ * backlog #357; job/ write discipline in backlog #339). The build fails on violation.
  *
  * <p>Intended dependency direction (also documented in the README architecture
  * section):
@@ -43,6 +44,13 @@ import org.springframework.web.bind.annotation.RestController;
  *       {@code review/} are held to the same rule (#279) — they may still
  *       use {@code auth/} domain types (e.g. {@code User},
  *       {@code UserRepository}), just never {@code auth/} web classes.
+ *       {@code message/}, {@code notification/}, {@code moderation/} and
+ *       {@code item/} are held to the same rule (#357) on the same terms:
+ *       the only auth/ references in these packages today are domain types
+ *       ({@code MessageService}'s {@code UserBlockRepository} /
+ *       {@code UserRepository} imports and {@code ItemService}'s
+ *       fully-qualified {@code UserBlockRepository} /
+ *       {@code SellerFollowRepository} references) and stay allowed.
  *   <li>{@code audit/} (#98) is a leaf trail package: it depends only on
  *       {@code common/} plus its own repository and a {@link java.time.Clock}
  *       — never on a domain package. Domain services ({@code auth/},
@@ -134,6 +142,24 @@ class ArchitectureTest {
               "dispute/, offer/ and review/ must not reach into auth/ web classes, mirroring"
                   + " the order/ rule; cross-domain needs go through auth/ domain types or"
                   + " common/ types, never through an auth controller");
+
+  @ArchTest
+  static final ArchRule message_notification_moderation_item_never_import_auth_web_classes =
+      noClasses()
+          .that()
+          .resideInAnyPackage(
+              "com.toni.marketplace.message..",
+              "com.toni.marketplace.notification..",
+              "com.toni.marketplace.moderation..",
+              "com.toni.marketplace.item..")
+          .should()
+          .dependOnClassesThat(authRestControllers())
+          .because(
+              "message/, notification/, moderation/ and item/ must not reach into auth/ web"
+                  + " classes, mirroring the order/ and dispute/offer/review/ rules; the"
+                  + " only auth/ references in these packages today are domain types"
+                  + " (MessageService imports and ItemService fully-qualified references),"
+                  + " which stay allowed");
 
   @ArchTest
   static final ArchRule audit_depends_on_no_domain_package =
