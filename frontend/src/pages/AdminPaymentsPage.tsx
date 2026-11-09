@@ -6,11 +6,13 @@ import {
   describePaymentAttemptsError,
   describeSettlementError,
   describeWebhookEventsError,
+  describeWebhookReplayError,
   formatCents,
   isForbidden,
   useAdminPaymentAttempts,
   useAdminPaymentSettlement,
   useAdminWebhookEvents,
+  useReplayWebhookEvent,
   type PaymentAttemptEntry,
   type SettlementSummary,
   type WebhookEventEntry,
@@ -42,7 +44,10 @@ import { useAuthStore } from '../store/useAuthStore';
  * type, the PSP reference it carried, the outcome as a chip and the
  * received-at time. The ledger stores no raw body or signature, so the
  * section can show neither — the PSP reference is the join key against
- * the orders table.
+ * the orders table. Mismatched rows carry a Replay button (backlog
+ * #358) that re-runs the recorded event through POST
+ * /api/admin/payments/webhooks/{id}/replay (#170); an already-matched
+ * event is a recorded no-op, so it gets no button.
  *
  * The payment-attempts section (backlog #211) lists the
  * payment_attempt ledger the same way, defaulting to DECLINED attempts
@@ -82,6 +87,17 @@ export default function AdminPaymentsPage() {
   const [webhookPage, setWebhookPage] = useState(0);
   const [webhookOutcome, setWebhookOutcome] = useState('');
   const webhooks = useAdminWebhookEvents(webhookPage, webhookOutcome, isAdmin);
+
+  // Webhook replay (backlog #358): one mutation shared by every row;
+  // `replayingId` pins the pending state to the clicked row, and
+  // `replayFeedback` carries the last outcome (success text or the
+  // envelope error) until the next replay attempt replaces it.
+  const replay = useReplayWebhookEvent();
+  const [replayingId, setReplayingId] = useState<number | null>(null);
+  const [replayFeedback, setReplayFeedback] = useState<{
+    kind: 'ok' | 'error';
+    text: string;
+  } | null>(null);
 
   // Payment-attempt viewer (backlog #211): paginated newest first,
   // defaulting to DECLINED attempts; a new outcome filter restarts
@@ -221,6 +237,8 @@ export default function AdminPaymentsPage() {
           Mock-PSP deliveries recorded in the webhook ledger, newest first. The PSP
           reference is the capture or refund id the delivery carried; the raw delivery
           body and its signature are not stored, so they are not shown here.
+          Mismatched events can be replayed from this table — an already-matched
+          event was applied once already, so it has no replay button.
         </p>
         <div className="mb-4">
           <label htmlFor="webhook-outcome" className="sr-only">
@@ -248,6 +266,16 @@ export default function AdminPaymentsPage() {
         {webhooks.isError && (
           <p className="text-red-600">{describeWebhookEventsError(webhooks.error)}</p>
         )}
+        {replayFeedback !== null &&
+          (replayFeedback.kind === 'ok' ? (
+            <p role="status" className="mb-4 text-sm text-emerald-700">
+              {replayFeedback.text}
+            </p>
+          ) : (
+            <p role="alert" className="mb-4 text-sm text-red-600">
+              {replayFeedback.text}
+            </p>
+          ))}
         {webhooks.isSuccess && webhookRows.length === 0 && (
           <div className="rounded-lg bg-white p-6 text-center shadow-sm">
             <p className="text-neutral-600">
@@ -268,6 +296,9 @@ export default function AdminPaymentsPage() {
                     <th scope="col" className="px-4 py-3 font-medium">PSP reference</th>
                     <th scope="col" className="px-4 py-3 font-medium">Outcome</th>
                     <th scope="col" className="px-4 py-3 font-medium">Received</th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      <span className="sr-only">Replay</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -288,6 +319,42 @@ export default function AdminPaymentsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">{new Date(row.createdAt).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        {row.outcome !== 'MATCHED' && (
+                          <button
+                            type="button"
+                            aria-label={`Replay ${row.eventId}`}
+                            disabled={replay.isLoading && replayingId === row.id}
+                            onClick={() => {
+                              setReplayingId(row.id);
+                              setReplayFeedback(null);
+                              replay.mutate(row.id, {
+                                onSuccess: (ack) => {
+                                  setReplayFeedback({
+                                    kind: 'ok',
+                                    text: ack.applied
+                                      ? `Replayed ${ack.eventId} — it now matches and was applied once.`
+                                      : `Replayed ${ack.eventId} — it still mismatches; nothing was applied.`,
+                                  });
+                                  setReplayingId(null);
+                                },
+                                onError: (error) => {
+                                  setReplayFeedback({
+                                    kind: 'error',
+                                    text: describeWebhookReplayError(error),
+                                  });
+                                  setReplayingId(null);
+                                },
+                              });
+                            }}
+                            className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                          >
+                            {replay.isLoading && replayingId === row.id
+                              ? 'Replaying…'
+                              : 'Replay'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

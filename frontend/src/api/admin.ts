@@ -300,12 +300,17 @@ export interface SettlementSummary {
  * refetches the others. The settlement summary is a single unpaginated
  * aggregate, so its key carries no parameters.
  */
+const adminPaymentsRoot = ['admin', 'payments'] as const;
+
 export const adminPaymentKeys = {
-  all: ['admin', 'payments'] as const,
+  all: adminPaymentsRoot,
   settlement: (window: SettlementWindow = {}) =>
     [...adminPaymentKeys.all, 'settlement', window.from ?? null, window.to ?? null] as const,
+  /** Prefix for every webhook-event list variant (backlog #358): a replay
+   * invalidates this prefix so every paginated/filtered list refetches. */
+  webhooksRoot: [...adminPaymentsRoot, 'webhooks'] as const,
   webhooks: (page: number, outcome: string) =>
-    [...adminPaymentKeys.all, 'webhooks', page, outcome] as const,
+    [...adminPaymentKeys.webhooksRoot, page, outcome] as const,
   attempts: (page: number, outcome: string) =>
     [...adminPaymentKeys.all, 'attempts', page, outcome] as const,
 };
@@ -368,6 +373,76 @@ export function describeWebhookEventsError(error: unknown): string {
   }
   if (code === 400) {
     return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * Acknowledgement returned for an ADMIN webhook replay, mirroring the
+ * backend's PaymentWebhookService.WebhookReplayAck (POST
+ * /api/admin/payments/webhooks/{id}/replay, backlog #170). `duplicate`
+ * means the event was already applied and the replay was the recorded
+ * no-op (the stored outcome is returned verbatim); `applied` means
+ * this replay re-reconciled a previously mismatched event and stored
+ * the new verdict. `lastReplayAt` is an ISO-8601 instant — the replay
+ * always stamps it, so it is never null on this shape.
+ */
+export interface WebhookReplayAck {
+  id: number;
+  eventId: string;
+  outcome: string;
+  duplicate: boolean;
+  applied: boolean;
+  replayCount: number;
+  lastReplayAt: string;
+}
+
+/**
+ * POST /api/admin/payments/webhooks/{id}/replay — ADMIN-only (the
+ * backend's @PreAuthorize is the real gate). Re-runs one recorded
+ * event through the delivery's own seams: an already-applied event is
+ * a recorded no-op returning its stored outcome, a mismatched event
+ * applies exactly once. On success the whole webhook-events subtree
+ * is invalidated so the list refetches the row's new outcome; the
+ * settlement and attempts subtrees are untouched.
+ */
+export function useReplayWebhookEvent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api
+        .post<ApiResponse<WebhookReplayAck>>(`/admin/payments/webhooks/${id}/replay`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminPaymentKeys.webhooksRoot });
+    },
+  });
+}
+
+/**
+ * Maps a failed webhook-replay call to user-facing copy. The backend
+ * speaks the {code,message,data} envelope; the known cases get plain
+ * language. A 401 here is usually the stale-event guard (the recorded
+ * event is outside the signature freshness window), not a missing
+ * session — the server message names it, so it wins over the generic
+ * login copy.
+ */
+export function describeWebhookReplayError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 404) {
+    return 'That webhook event no longer exists.';
+  }
+  if (code === 401) {
+    if (/stale/i.test(message)) {
+      return 'That event is too old to replay — replays only cover events inside the signature freshness window.';
+    }
+    return 'Please log in again to replay webhook events.';
+  }
+  if (code === 403) {
+    return 'You are not authorized to replay webhook events.';
   }
   return message || 'Something went wrong. Please try again.';
 }

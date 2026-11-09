@@ -16,6 +16,7 @@ import {
   describeSettlementError,
   describePaymentAttemptsError,
   describeWebhookEventsError,
+  describeWebhookReplayError,
   formatCents,
   isForbidden,
   useAdminAuditLog,
@@ -25,12 +26,14 @@ import {
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
+  useReplayWebhookEvent,
   useResetAdminUserTotp,
   type AdminUser,
   type AuditLogEntry,
   type PaymentAttemptEntry,
   type SettlementSummary,
   type WebhookEventEntry,
+  type WebhookReplayAck,
 } from './admin';
 
 const getSpy = vi.spyOn(api, 'get');
@@ -575,6 +578,79 @@ describe('useAdminWebhookEvents', () => {
 
     expect(result.current.fetchStatus).toBe('idle');
     expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Webhook replay (backlog #358): POST /admin/payments/webhooks/{id}/replay.
+const replayAckFixture: WebhookReplayAck = {
+  id: 2,
+  eventId: 'evt_new',
+  outcome: 'MATCHED',
+  duplicate: false,
+  applied: true,
+  replayCount: 1,
+  lastReplayAt: '2026-01-12T00:01:00Z',
+};
+
+describe('useReplayWebhookEvent', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts an empty body to /replay, unwraps the ack, and invalidates the webhooks prefix', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockResolvedValueOnce(envelope(replayAckFixture));
+
+    const { result } = renderHook(() => useReplayWebhookEvent(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const returned = await result.current.mutateAsync(2);
+
+    expect(postSpy).toHaveBeenCalledWith('/admin/payments/webhooks/2/replay', {});
+    expect(returned).toEqual(replayAckFixture);
+    // Prefix invalidation of the webhooks subtree, exactly once — every
+    // paginated/filtered list variant refetches; settlement and attempts
+    // are untouched.
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: adminPaymentKeys.webhooksRoot,
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: adminPaymentKeys.all });
+    expect(adminPaymentKeys.webhooksRoot).toEqual(['admin', 'payments', 'webhooks']);
+  });
+
+  it('a failed replay invalidates nothing', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockRejectedValueOnce(new Error('network down'));
+
+    const { result } = renderHook(() => useReplayWebhookEvent(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    await expect(result.current.mutateAsync(2)).rejects.toThrow('network down');
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeWebhookReplayError', () => {
+  it.each([
+    [404, 'webhook event not found', 'That webhook event no longer exists.'],
+    [
+      401,
+      'stale webhook event: replay re-verifies the recorded timestamp',
+      'That event is too old to replay — replays only cover events inside the signature freshness window.',
+    ],
+    [401, 'unauthorized', 'Please log in again to replay webhook events.'],
+    [403, 'Access Denied', 'You are not authorized to replay webhook events.'],
+    [500, 'replay unavailable', 'replay unavailable'],
+  ])('maps %s %s to user-facing copy', (code, message, expected) => {
+    expect(describeWebhookReplayError(envelopeError(code, message))).toBe(expected);
+  });
+
+  it('falls back to the generic copy when the envelope carries no message', () => {
+    expect(describeWebhookReplayError({})).toBe('Something went wrong. Please try again.');
   });
 });
 

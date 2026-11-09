@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import AdminPaymentsPage from './AdminPaymentsPage';
 
 const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
 
 const adminCaller: AuthUser = {
   id: 1,
@@ -385,5 +386,122 @@ describe('AdminPaymentsPage', () => {
     renderAt('/admin/payments');
 
     await waitFor(() => expect(screen.getByText('No webhook events yet.')).toBeTruthy());
+  });
+
+  // Webhook replay (backlog #358): a per-row Replay button on mismatched
+  // events only — an already-matched event is a recorded no-op.
+  function replayAckEnvelope(data: unknown) {
+    return { data: { code: 0, message: 'ok', data } } as never;
+  }
+
+  it('shows a Replay button only on mismatched webhook rows', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+    expect(
+      screen.getByRole('button', { name: 'Replay evt_new' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Replay evt_old' })).toBeNull();
+  });
+
+  it('replay success posts to /replay, shows the applied copy, and refetches the list', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+    postSpy.mockResolvedValueOnce(
+      replayAckEnvelope({
+        id: 2,
+        eventId: 'evt_new',
+        outcome: 'MATCHED',
+        duplicate: false,
+        applied: true,
+        replayCount: 1,
+        lastReplayAt: '2026-01-12T00:01:00Z',
+      }),
+    );
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replay evt_new' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Replayed evt_new — it now matches and was applied once.'),
+      ).toBeTruthy(),
+    );
+    expect(postSpy).toHaveBeenCalledWith('/admin/payments/webhooks/2/replay', {});
+    // The mutation invalidates the webhooks prefix, so the list refetches
+    // after the replay (initial load + refetch).
+    await waitFor(() =>
+      expect(
+        getSpy.mock.calls.filter(
+          ([url]) => url === '/admin/payments/webhooks',
+        ).length,
+      ).toBeGreaterThan(1),
+    );
+  });
+
+  it('a replay that still mismatches reports that nothing was applied', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+    postSpy.mockResolvedValueOnce(
+      replayAckEnvelope({
+        id: 2,
+        eventId: 'evt_new',
+        outcome: 'MISMATCH',
+        duplicate: false,
+        applied: false,
+        replayCount: 1,
+        lastReplayAt: '2026-01-12T00:01:00Z',
+      }),
+    );
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replay evt_new' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Replayed evt_new — it still mismatches; nothing was applied.'),
+      ).toBeTruthy(),
+    );
+  });
+
+  it('a 404 replay surfaces the envelope error', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockSettlementAndWebhooks({
+      content: webhookRowsFixture,
+      totalElements: 2,
+      totalPages: 1,
+      number: 0,
+    });
+    postSpy.mockRejectedValueOnce(apiFailure(404, 'webhook event not found'));
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('evt_new')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replay evt_new' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toContain('no longer exists');
   });
 });
