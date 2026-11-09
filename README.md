@@ -416,8 +416,14 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   `aria-label` + `aria-pressed`; route changes move focus to the new
   page's heading (`RouteFocusManager`); the error-boundary fallback is
   a `role="alert"` region. Honest scope: this is label/focus/name
-  correctness, not a WCAG audit — no contrast, motion, or full
-  screen-reader pass has been done.
+  correctness, not a WCAG audit — no contrast or full screen-reader
+  pass has been done; motion is handled separately by the #361 rule below.
+- Reduced motion (backlog #361): `@media (prefers-reduced-motion: reduce)`
+  in `frontend/src/index.css` flattens transitions and animations and
+  pins scrolling to auto, so a user who asks the OS to reduce motion gets
+  none of the hover transitions; pinned by `reducedMotion.test.ts`, which
+  reads the shipped stylesheet. Honest scope: motion reduction only, not
+  a WCAG audit — no contrast or screen-reader pass is claimed.
 - Automated accessibility checks (backlog #183): `AccessibilityAxe.test.tsx`
   runs axe-core (devDependency, test-only — never in the shipped bundle)
   over the rendered markup of all thirty pages in both themes (thirty-one

@@ -40,3 +40,23 @@ body {
     display: none !important;
   }
 }
+
+/*
+ * Reduced motion (backlog #361): a user who asks the OS to reduce motion
+ * still gets every Tailwind transition-colors hover state otherwise, so
+ * the media query below flattens transitions and animations and pins
+ * scrolling to auto. No smooth scrolling exists in the app today — the
+ * scroll-behavior line guards a future addition. This is motion
+ * reduction, not a WCAG audit; see the README testing row.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
