@@ -308,7 +308,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly twelve flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
+- Exactly thirteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -335,12 +335,15 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   → it appears in the saved-searches section on /favorites with its
   match count → running it lands back on the exact browse URL →
   deleting it removes it, and a browse page with no filter active
-  offers no save control (backlog #359).
-  Alongside the twelve flows, the color-contrast pass (backlog #369,
+  offers no save control (backlog #359);
+  (13) buy-now → pay → the seller ships with a carrier + tracking
+  number → the buyer confirms receipt → the order reads COMPLETED
+  and the listing flips to SOLD, pinned via the API (backlog #370).
+  Alongside the thirteen flows, the color-contrast pass (backlog #369,
   `frontend/e2e/colorContrast.e2e.ts`) runs axe with the
   `color-contrast` rule only over nine key pages in both themes — the
   jsdom axe suite cannot compute contrast, so this pass is where
-  contrast is actually audited. It is a pass, not a thirteenth flow.
+  contrast is actually audited. It is a pass, not a fourteenth flow.
   Its first CI run is the measurement; genuine failures are fixed or
   filed as follow-ups, never worked around by disabling the rule.
   Flows 5 and 7 seed their PAID orders through the real API (the pay
