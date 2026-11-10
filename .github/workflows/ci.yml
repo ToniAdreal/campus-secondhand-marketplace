@@ -278,8 +278,11 @@ jobs:
 
   docker-compose-smoke:
     # Full-stack smoke on real MySQL 8: compose builds the backend + frontend
-    # images, then register/login/create-listing are exercised through the
-    # nginx /api proxy with the backend on the `mysql` Spring profile.
+    # images, then register/login/create-listing/order/pay are exercised
+    # through the nginx /api proxy with the backend on the `mysql` Spring
+    # profile, and the mock-PSP webhook path (backlog #366: signed
+    # capture.succeeded delivery → MATCHED, replay → duplicate, tampered
+    # signature → 401, ledger row in the ADMIN webhook-events viewer).
     # Manual version: docs/smoke-test.md
     # Email-verification gate (backlog #325): the compose file forwards
     # APP_AUTH_EMAIL_VERIFICATION_ENABLED with default true, and this job
@@ -291,9 +294,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Generate the mock-PSP webhook secret (backlog #366)
+        run: echo "APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: docker compose up --build -d
         env:
           APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
+          # First-admin bootstrap (backlog #213): the webhook step logs in
+          # as this ADMIN to read the webhook-event ledger. Throwaway
+          # credentials that live only in this job's compose stack.
+          APP_BOOTSTRAP_ADMIN_USERNAME: 'smokeadmin'
+          APP_BOOTSTRAP_ADMIN_EMAIL: 'smokeadmin@example.com'
+          APP_BOOTSTRAP_ADMIN_PASSWORD: 'SmokeAdmin1234'
       - name: Wait for the API through the nginx /api proxy
         run: |
           code=""
@@ -336,11 +347,82 @@ jobs:
             -d '{"username":"smoke","email":"smoke@example.com","password":"Sm0kePass123"}' \
             -o /tmp/register.json
           TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/register.json"))["data"]["accessToken"])')
+          # The webhook step (backlog #366) runs in a fresh shell, so the
+          # token and the listing id cross over in /tmp files.
+          echo "$TOKEN" > /tmp/smoke-token.txt
           curl -fsS http://localhost/api/items -H "Authorization: Bearer $TOKEN" -o /dev/null
           curl -fsS -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
             -H 'Content-Type: application/json' \
-            -d '{"title":"smoke listing","priceCents":1999}' -o /dev/null
+            -d '{"title":"smoke listing","priceCents":1999}' -o /tmp/listing.json
           echo "smoke OK: register + list + create-listing all answered through the proxy"
+      - name: Pay for the listing, then drive the mock-PSP webhook path (backlog #366)
+        run: |
+          # A buyer cannot order their own listing (422, OrderCreationService),
+          # so the webhook path needs a second user: the seller is `smoke`
+          # (previous step), the buyer registers here. The gate is off in
+          # this job, so register issues a session like the seller's did.
+          curl -fsS -X POST http://localhost/api/auth/register \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"smokebuyer","email":"smokebuyer@example.com","password":"Sm0kePass123"}' \
+            -o /tmp/buyer-register.json
+          BUYER_TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/buyer-register.json"))["data"]["accessToken"])')
+          ITEM_ID=$(python3 -c 'import json; print(json.load(open("/tmp/listing.json"))["data"]["id"])')
+          # Create the order (Idempotency-Key is mandatory — a missing header
+          # is a 400, backlog #9) and pay it; the pay response carries the
+          # mock capture id (#114) the webhook delivery must reference to
+          # reconcile.
+          KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          curl -fsS -X POST http://localhost/api/orders -H "Authorization: Bearer $BUYER_TOKEN" \
+            -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" \
+            -d "{\"itemId\":$ITEM_ID}" -o /tmp/order.json
+          ORDER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/order.json"))["data"]["id"])')
+          curl -fsS -X POST "http://localhost/api/orders/$ORDER_ID/pay" \
+            -H "Authorization: Bearer $BUYER_TOKEN" \
+            -H 'Content-Type: application/json' -d '{}' -o /tmp/pay.json
+          CAPTURE_ID=$(python3 -c 'import json; d=json.load(open("/tmp/pay.json"))["data"]; assert d["captureId"], d; print(d["captureId"])')
+          echo "paid order $ORDER_ID, capture $CAPTURE_ID"
+          # Sign a capture.succeeded delivery: HMAC-SHA256 over
+          # "<t>.<raw body>" (backlog #149), keyed with the same secret the
+          # compose backend booted with (generated at the top of this job —
+          # never the committed dev placeholder, which the mysql profile
+          # refuses to boot with). The body is written to a file first so
+          # the signed bytes and the sent bytes are identical.
+          export EVENT_ID="evt_smoke_$(date +%s)"
+          export CAPTURE_ID
+          SIG=$(python3 -c 'import hashlib,hmac,json,os,time; body=json.dumps({"id":os.environ["EVENT_ID"],"type":"capture.succeeded","captureId":os.environ["CAPTURE_ID"]},separators=(",",":")).encode(); open("/tmp/webhook-body.json","wb").write(body); t=str(int(time.time())); print("t="+t+",v1="+hmac.new(os.environ["APP_PAYMENTS_WEBHOOK_SECRET"].encode(),(t+".").encode()+body,hashlib.sha256).hexdigest())')
+          # First delivery: the order already carries the capture id and
+          # sits PAID, so the ledger reconciles it as MATCHED.
+          curl -fsS -X POST http://localhost/api/payments/webhooks/mock-psp \
+            -H 'Content-Type: application/json' \
+            -H "X-Mock-Psp-Signature: $SIG" \
+            --data-binary @/tmp/webhook-body.json -o /tmp/webhook-ack.json
+          python3 -c 'import json; d=json.load(open("/tmp/webhook-ack.json"))["data"]; assert d["outcome"]=="MATCHED" and d["duplicate"] is False, d; print("webhook MATCHED:", d)'
+          # Replay of the same delivery: same event id, no second ledger
+          # row, stored outcome returned with duplicate=true.
+          curl -fsS -X POST http://localhost/api/payments/webhooks/mock-psp \
+            -H 'Content-Type: application/json' \
+            -H "X-Mock-Psp-Signature: $SIG" \
+            --data-binary @/tmp/webhook-body.json -o /tmp/webhook-replay.json
+          python3 -c 'import json; d=json.load(open("/tmp/webhook-replay.json"))["data"]; assert d["outcome"]=="MATCHED" and d["duplicate"] is True, d; print("webhook replay duplicate:", d)'
+          # Tampered signature: the same body under a bogus header answers
+          # the 401 envelope and writes no ledger row.
+          code=$(curl -s -o /tmp/webhook-tampered.json -w '%{http_code}' -X POST http://localhost/api/payments/webhooks/mock-psp \
+            -H 'Content-Type: application/json' \
+            -H 'X-Mock-Psp-Signature: t=1,v1=0000000000000000000000000000000000000000000000000000000000000000' \
+            --data-binary @/tmp/webhook-body.json)
+          test "$code" = "401" || { echo "tampered signature answered $code, want 401"; cat /tmp/webhook-tampered.json; exit 1; }
+          python3 -c 'import json; d=json.load(open("/tmp/webhook-tampered.json")); assert d["code"]==401, d; print("tampered signature -> 401 envelope")'
+          # The ledger row, read back through the ADMIN webhook-events
+          # viewer (backlog #156): exactly one row for this event id,
+          # MATCHED, keyed on the capture id.
+          ADMIN_TOKEN=$(curl -fsS -X POST http://localhost/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"usernameOrEmail":"smokeadmin","password":"SmokeAdmin1234"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])')
+          curl -fsS 'http://localhost/api/admin/payments/webhooks?outcome=MATCHED' \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -o /tmp/webhook-ledger.json
+          python3 -c 'import json,os; d=json.load(open("/tmp/webhook-ledger.json"))["data"]; rows=[r for r in d["content"] if r["eventId"]==os.environ["EVENT_ID"]]; assert len(rows)==1 and rows[0]["outcome"]=="MATCHED" and rows[0]["pspReference"]==os.environ["CAPTURE_ID"], d; print("ledger row:", rows[0])'
+          echo "webhook smoke OK: MATCHED + replay duplicate + tampered 401 + ledger row"
       - name: Tear down
         if: always()
         run: docker compose down -v
@@ -357,9 +439,16 @@ jobs:
     # exists to extract. Same gate-off export as the smoke job; the
     # restore-drill script itself only checks /health, the proxy 401
     # and row counts, so it needs no gate change.
+    # Mock-PSP webhook secret (backlog #366): docker-compose.yml now
+    # requires APP_PAYMENTS_WEBHOOK_SECRET (the mysql profile refuses to
+    # boot on the committed dev placeholder), so this job generates one
+    # like the smoke job does — otherwise its own `docker compose up`
+    # would fail at interpolation.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Generate the mock-PSP webhook secret (backlog #366)
+        run: echo "APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: docker compose up --build -d
         env:
           APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'

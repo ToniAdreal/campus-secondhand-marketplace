@@ -47,6 +47,22 @@ services:
       # to boot on the mysql profile with the committed dev placeholder —
       # generate one with: export APP_TOTP_ENCRYPTION_KEY=$(openssl rand -base64 32)
       APP_TOTP_ENCRYPTION_KEY: ${APP_TOTP_ENCRYPTION_KEY:?APP_TOTP_ENCRYPTION_KEY is required — export it before 'docker compose up' (see docs/smoke-test.md)}
+      # Mock-PSP webhook secret (backlog #366): the backend refuses to
+      # boot on the mysql profile with the committed dev placeholder
+      # (WebhookSecretStartupCheck) — the compose stack must be handed a
+      # random secret, and the smoke signs its deliveries with that same
+      # value. Generate one with:
+      #   export APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)
+      APP_PAYMENTS_WEBHOOK_SECRET: ${APP_PAYMENTS_WEBHOOK_SECRET:?APP_PAYMENTS_WEBHOOK_SECRET is required — export it before 'docker compose up' (see docs/smoke-test.md)}
+      # First-admin bootstrap (backlog #366, #213): forwarded so the CI
+      # smoke can log in as ADMIN and read the webhook-event ledger.
+      # All three must be set together or all unset — the initializer is
+      # a strict no-op when unset and fails fast on a partial set. A
+      # plain `docker compose up` sets none of them, so no admin is
+      # seeded unless the operator asks for one.
+      APP_BOOTSTRAP_ADMIN_USERNAME: ${APP_BOOTSTRAP_ADMIN_USERNAME:-}
+      APP_BOOTSTRAP_ADMIN_EMAIL: ${APP_BOOTSTRAP_ADMIN_EMAIL:-}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-}
       # Listing photos are served from app.uploads.dir; pin it to the
       # uploads-data volume mount below so the path does not depend on the
       # image's WORKDIR (./uploads would resolve to /app/uploads anyway).

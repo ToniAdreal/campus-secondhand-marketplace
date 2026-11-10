@@ -31,6 +31,32 @@ with a reminder if you forget):
 export APP_TOTP_ENCRYPTION_KEY=$(openssl rand -base64 32)
 ```
 
+The same fail-fast applies to the mock-PSP webhook secret (backlog #366):
+the backend will not boot on the `mysql` profile with the committed dev
+placeholder for `app.payments.webhook-secret` — `WebhookSecretStartupCheck`
+fails fast so anyone who can read the repository cannot forge a
+signature-valid PSP callback. Export a third, independent random secret
+the same way (the compose file errors out early with a reminder if you
+forget). The smoke below signs its webhook deliveries with this value —
+never the committed dev placeholder, which the `mysql` profile refuses
+to boot with:
+
+```bash
+export APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)
+```
+
+The ledger-viewer step of the smoke below needs an ADMIN login, and
+registration only ever mints USER accounts — the first admin comes from
+the opt-in bootstrap (backlog #213). Export all three together before
+`docker compose up` (a partial set fails the boot fast; all unset is a
+strict no-op and no admin is seeded):
+
+```bash
+export APP_BOOTSTRAP_ADMIN_USERNAME=smokeadmin
+export APP_BOOTSTRAP_ADMIN_EMAIL=smokeadmin@example.com
+export APP_BOOTSTRAP_ADMIN_PASSWORD=SmokeAdmin1234
+```
+
 ## Prerequisites
 
 - Docker Engine + Compose v2 (`docker compose`)
@@ -96,6 +122,103 @@ curl -s -X POST http://localhost/api/items -H "Authorization: Bearer $TOKEN" \
   -d '{"title":"smoke listing","priceCents":1999}' | head -c 300
 # → {"code":0,"message":"ok","data":{"id":1,"title":"smoke listing",…}}
 ```
+
+### Mock-PSP webhook path (backlog #366)
+
+Pay for the listing, then drive a signed mock-PSP webhook delivery
+through the same proxy. A buyer cannot order their own listing (422),
+so the buyer is a second user — register one, then create the order
+(`Idempotency-Key` is mandatory, a missing header is a 400) and pay it.
+The pay response carries the mock capture id, which is the reference
+the webhook delivery must carry to reconcile:
+
+```bash
+BUYER_TOKEN=$(curl -s -X POST http://localhost/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"smokebuyer","email":"smokebuyer@example.com","password":"Sm0kePass123"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])')
+
+ITEM_ID=1  # the id from the create-listing response above
+KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+ORDER_ID=$(curl -s -X POST http://localhost/api/orders -H "Authorization: Bearer $BUYER_TOKEN" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" \
+  -d "{\"itemId\":$ITEM_ID}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')
+
+CAPTURE_ID=$(curl -s -X POST "http://localhost/api/orders/$ORDER_ID/pay" \
+  -H "Authorization: Bearer $BUYER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["captureId"], d; print(d["captureId"])')
+# → e.g. cap_mock_… (the mock PSP's reference for this capture)
+```
+
+Sign a `capture.succeeded` delivery for the paid order. The signature
+is HMAC-SHA256 over `"<t>.<raw body>"` (backlog #149), keyed with the
+`APP_PAYMENTS_WEBHOOK_SECRET` value the compose backend booted with.
+The body is written to a file first so the signed bytes and the sent
+bytes are identical:
+
+```bash
+EVENT_ID="evt_manual_$(date +%s)"
+SIG=$(EVENT_ID="$EVENT_ID" CAPTURE_ID="$CAPTURE_ID" python3 -c 'import hashlib,hmac,json,os,time; body=json.dumps({"id":os.environ["EVENT_ID"],"type":"capture.succeeded","captureId":os.environ["CAPTURE_ID"]},separators=(",",":")).encode(); open("/tmp/webhook-body.json","wb").write(body); t=str(int(time.time())); print("t="+t+",v1="+hmac.new(os.environ["APP_PAYMENTS_WEBHOOK_SECRET"].encode(),(t+".").encode()+body,hashlib.sha256).hexdigest())')
+```
+
+First delivery — the order already carries the capture id and sits
+PAID, so the ledger reconciles it as MATCHED:
+
+```bash
+curl -s -X POST http://localhost/api/payments/webhooks/mock-psp \
+  -H 'Content-Type: application/json' \
+  -H "X-Mock-Psp-Signature: $SIG" \
+  --data-binary @/tmp/webhook-body.json
+# → {"code":0,"message":"ok","data":{"eventId":"evt_manual_…","outcome":"MATCHED","duplicate":false}}
+```
+
+Replay the same delivery — same event id, no second ledger row, the
+stored outcome returned with `duplicate:true`:
+
+```bash
+curl -s -X POST http://localhost/api/payments/webhooks/mock-psp \
+  -H 'Content-Type: application/json' \
+  -H "X-Mock-Psp-Signature: $SIG" \
+  --data-binary @/tmp/webhook-body.json
+# → {"code":0,"message":"ok","data":{"eventId":"evt_manual_…","outcome":"MATCHED","duplicate":true}}
+```
+
+Tampered signature — the same body under a bogus header answers the
+401 envelope and writes no ledger row (a stale timestamp answers the
+same 401; the freshness window is 5 minutes):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost/api/payments/webhooks/mock-psp \
+  -H 'Content-Type: application/json' \
+  -H 'X-Mock-Psp-Signature: t=1,v1=0000000000000000000000000000000000000000000000000000000000000000' \
+  --data-binary @/tmp/webhook-body.json
+# → 401
+```
+
+Finally, read the ledger row back through the ADMIN webhook-events
+viewer (backlog #156) — log in as the bootstrap admin exported above
+and filter on the MATCHED outcome. Exactly one row carries this event
+id, keyed on the capture id:
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://localhost/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"usernameOrEmail":"smokeadmin","password":"SmokeAdmin1234"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])')
+
+curl -s 'http://localhost/api/admin/payments/webhooks?outcome=MATCHED' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -m json.tool | head -30
+# → data.content holds one row with eventId "evt_manual_…",
+#   outcome "MATCHED", pspReference "<the capture id>"
+```
+
+A webhook never moves money state by itself: the MATCHED verdict only
+confirms the order was already PAID with that capture id. A delivery
+for an unknown reference, an order in the wrong state, or an unknown
+event type is a MISMATCH (still 200, so the PSP stops retrying) — the
+synchronous pay path stays the source of truth.
 
 Everything except `/api/auth/**`, `/uploads/**`, `/actuator/health`,
 `/actuator/health/liveness`, `/actuator/health/readiness`,
