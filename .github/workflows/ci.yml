@@ -310,6 +310,20 @@ jobs:
             docker compose logs backend
             exit 1
           fi
+      - name: SPA HTML carries the mirrored security headers (backlog #363)
+        run: |
+          headers=$(curl -sS -D - http://localhost/ -o /dev/null)
+          echo "$headers"
+          echo "$headers" | grep -qi '^X-Content-Type-Options: nosniff'
+          echo "$headers" | grep -qi '^X-Frame-Options: DENY'
+          echo "$headers" | grep -qi '^Referrer-Policy: no-referrer'
+          # The CSP must be the backend's strict policy plus the sha256 of
+          # the pre-paint theme script in index.html — recomputed here from
+          # the checked-out source so a drifted hash fails the job instead
+          # of silently flashing the theme on first paint.
+          hash=$(python3 -c "import re,hashlib,base64; body=re.search(r'<script>(.*?)</script>', open('frontend/index.html').read(), re.S).group(1); print('sha256-' + base64.b64encode(hashlib.sha256(body.encode()).digest()).decode())")
+          echo "$headers" | grep -qF "Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self' '$hash'; connect-src 'self' ws:"
+          echo "SPA HTML carries all four mirrored security headers (backlog #363)"
       - name: Actuator health is public and UP (liveness probe for the stack)
         run: |
           body=$(curl -fsS http://localhost:8080/actuator/health)

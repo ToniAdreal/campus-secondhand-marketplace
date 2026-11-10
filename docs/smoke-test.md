@@ -103,6 +103,36 @@ Everything except `/api/auth/**`, `/uploads/**`, `/actuator/health`,
 an unauthenticated `curl http://localhost/api/items` must return the JSON 401 envelope,
 which itself proves the proxy → security filter chain path works.
 
+### Security headers on the SPA (backlog #363)
+
+`frontend/nginx.conf` mirrors the backend's security headers onto the
+SPA's HTML documents (the backend flag covers the API + `/uploads/**`
+only): `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer`, and the same strict CSP as the backend's
+opt-in policy (`default-src 'self'; img-src 'self' data:; script-src
+'self'; connect-src 'self' ws:`) with the sha256 hash of the pre-paint
+theme script in `frontend/index.html` added to `script-src`, so the
+first frame still applies the stored theme. HSTS stays off — local HTTP
+dev; it is opt-in on the backend for HTTPS deployments only.
+
+Verify against the running stack:
+
+```bash
+curl -s -D - http://localhost/ -o /dev/null
+# → HTTP/1.1 200 OK, plus:
+#   X-Content-Type-Options: nosniff
+#   X-Frame-Options: DENY
+#   Referrer-Policy: no-referrer
+#   Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self' 'sha256-…'; connect-src 'self' ws:
+```
+
+If `index.html`'s inline theme script ever changes, recompute its hash
+(sha256 over the script element's exact text content, base64) and update
+`nginx.conf` — a stale hash blocks the script, so the theme degrades to
+the main.tsx re-apply with a brief flash, never a broken theme. CI pins
+this: the `docker-compose-smoke` job asserts all four headers on the SPA
+HTML and cross-checks the hash against the checked-out `index.html`.
+
 ### Actuator probes
 
 The backend exposes Spring Boot Actuator:
