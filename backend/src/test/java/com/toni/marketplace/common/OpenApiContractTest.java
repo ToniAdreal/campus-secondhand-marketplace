@@ -516,6 +516,47 @@ class OpenApiContractTest {
         .contains("401", "403", "404", "409", "422");
   }
 
+  @Test
+  void apiDocsListItemsResponseCarriesPageAndCursorVariants() throws Exception {
+    // Backlog #371: GET /api/items returns ApiResponse<?> (offset page vs
+    // cursor page), so springdoc used to infer a bare ApiResponseObject and
+    // the api-drift gate could not see the pinned page fields. The 200 data
+    // schema must now be a oneOf of both real payloads.
+    JsonNode docs = apiDocs();
+    JsonNode data = docs.path("paths").path("/api/items").path("get")
+        .path("responses").path("200").path("content").path("application/json")
+        .path("schema").path("properties").path("data");
+    JsonNode oneOf = data.path("oneOf");
+    assertThat(oneOf.isArray()).as("GET /api/items 200 data must be a oneOf").isTrue();
+    assertThat(oneOf.size()).isEqualTo(2);
+
+    JsonNode schemas = docs.path("components").path("schemas");
+    Set<String> variantNames = new TreeSet<>();
+    for (JsonNode branch : oneOf) {
+      String ref = branch.path("$ref").asText();
+      assertThat(ref).startsWith("#/components/schemas/");
+      variantNames.add(ref.substring("#/components/schemas/".length()));
+    }
+    assertThat(variantNames).containsExactly("CursorPage", "ItemPage");
+
+    // Offset page: the pinned api-drift fields (content / totalElements /
+    // totalPages / number), content items are ItemDto.
+    JsonNode page = schemas.path("ItemPage").path("properties");
+    assertThat(page.path("content").path("type").asText()).isEqualTo("array");
+    assertThat(page.path("content").path("items").path("$ref").asText())
+        .isEqualTo("#/components/schemas/ItemDto");
+    assertThat(page.path("totalElements").path("type").asText()).isEqualTo("integer");
+    assertThat(page.path("totalPages").path("type").asText()).isEqualTo("integer");
+    assertThat(page.path("number").path("type").asText()).isEqualTo("integer");
+
+    // Cursor page: {items, nextCursor}, items are ItemDto.
+    JsonNode cursor = schemas.path("CursorPage").path("properties");
+    assertThat(cursor.path("items").path("type").asText()).isEqualTo("array");
+    assertThat(cursor.path("items").path("items").path("$ref").asText())
+        .isEqualTo("#/components/schemas/ItemDto");
+    assertThat(cursor.path("nextCursor").path("type").asText()).isEqualTo("string");
+  }
+
   // Live envelope shapes (backlog #343) ---------------------------------
   //
   // Sampled live MockMvc assertions across controllers: a handler that

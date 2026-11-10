@@ -4,7 +4,9 @@ import com.toni.marketplace.common.ApiResponse;
 import com.toni.marketplace.common.EtagSupport;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.PositiveOrZero;
+import java.util.List;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.MediaType;
@@ -33,6 +35,22 @@ public class ItemController {
 
   public ItemController(ItemService itemService) {
     this.itemService = itemService;
+  }
+
+  /**
+   * Documentation-only page shape (backlog #371): {@link #list} answers
+   * {@code ApiResponse<Page<ItemDto>>} on the offset path, but the method
+   * returns {@code ApiResponse<?>} because the cursor path answers a
+   * different payload ({@link ItemService.CursorPage}), so springdoc
+   * inferred a bare {@code ApiResponseObject} and the api-drift gate
+   * (#205) could not see the pinned page fields. Nailing the generic
+   * down in this subclass lets the {@code oneOf} on the method pin the
+   * real page shape; the class is never instantiated at runtime.
+   */
+  static final class ItemPage extends PageImpl<ItemDto> {
+    private ItemPage() {
+      super(List.of(), Pageable.unpaged(), 0);
+    }
   }
 
   /**
@@ -66,8 +84,39 @@ public class ItemController {
    * {@link ItemService#listItemsCursorForCaller}. The SPA keeps offset
    * pagination in v1 (honest scope — the cursor is a backend slice
    * with a follow-up, not a silent frontend swap).
+   *
+   * <p>OpenAPI shape (backlog #371): the method returns
+   * {@code ApiResponse<?>} because the two paging modes answer
+   * different payloads, so the 200 schema is pinned explicitly here —
+   * {@code data} is a {@code oneOf} of the offset page and the cursor
+   * page — instead of letting springdoc infer the untyped
+   * {@code ApiResponseObject} (the api-drift failure on main run
+   * 42734704718).
    */
   @GetMapping
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "page of listings (envelope); data is a Spring page by default, "
+              + "or {items, nextCursor} when cursor/limit is passed",
+          content = @io.swagger.v3.oas.annotations.media.Content(
+              mediaType = "application/json",
+              schema = @io.swagger.v3.oas.annotations.media.Schema(type = "object"),
+              schemaProperties = {
+                  @io.swagger.v3.oas.annotations.media.SchemaProperty(name = "code",
+                      schema = @io.swagger.v3.oas.annotations.media.Schema(type = "integer",
+                          description = "0 on success; the HTTP status code on failure")),
+                  @io.swagger.v3.oas.annotations.media.SchemaProperty(name = "message",
+                      schema = @io.swagger.v3.oas.annotations.media.Schema(type = "string",
+                          description = "\"ok\" on success; a human-readable reason on failure")),
+                  @io.swagger.v3.oas.annotations.media.SchemaProperty(name = "data",
+                      schema = @io.swagger.v3.oas.annotations.media.Schema(
+                          oneOf = {ItemPage.class, ItemService.CursorPage.class},
+                          description = "Response payload; null on failure"))})),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "invalid sort, negative price bounds, min > max, "
+              + "or a price sort with a cursor (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "mine=true without a token (envelope)")})
   public ApiResponse<?> list(
       @RequestParam(required = false) Long categoryId,
       @RequestParam(name = "q", required = false) String keyword,
