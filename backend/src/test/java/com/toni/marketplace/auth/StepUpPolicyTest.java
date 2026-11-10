@@ -35,7 +35,7 @@ class StepUpPolicyTest {
 
   private StepUpPolicy policyWithHolder(Instant authTime) {
     CurrentAccessClaims holder = new CurrentAccessClaims();
-    holder.set(new JwtTokenService.AccessClaims(1L, "u", List.of("USER"), 0L, authTime));
+    holder.set(new JwtTokenService.AccessClaims(1L, "u", List.of("USER"), 0L, authTime, null));
     @SuppressWarnings("unchecked")
     ObjectProvider<CurrentAccessClaims> provider = mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(holder);

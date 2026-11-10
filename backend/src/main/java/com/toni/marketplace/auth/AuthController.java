@@ -669,8 +669,9 @@ public class AuthController {
    * id. The response reports how many families were revoked. Unlike
    * {@code POST /api/auth/logout} this does NOT bump tokenVersion, so the
    * current session's access token keeps working; the revoked sessions'
-   * already-issued access tokens live out their ≤15-minute TTL (their
-   * refresh cookies 401 at once) — the honest limit stated in the README.
+   * already-issued access tokens 401 at once too (backlog #42: the
+   * filter's family check reads a revoked family as dead — the old
+   * "live out their ≤15-minute TTL" limit is closed).
    * An absent or unknown cookie identifies no current family, so every
    * family is revoked.
    */

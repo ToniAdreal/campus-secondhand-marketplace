@@ -75,6 +75,31 @@ class SessionRevokeOthersTest {
   }
 
   @Test
+  void revokeOthersKillsTheOtherSessionsAccessTokenImmediately() throws Exception {
+    // Backlog #42: the revoked session's already-issued access token 401s
+    // at once — it no longer lives out its 15-minute TTL — while the
+    // current session's token keeps working (no tokenVersion bump).
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
+    MvcResult loggedIn = login("alice", "s3cret-pass1", "device-b");
+    Cookie cookieB = refreshCookie(loggedIn);
+    String accessA = accessToken(registered);
+    String accessB = accessToken(loggedIn);
+
+    mockMvc.perform(post("/api/auth/sessions/revoke-others")
+            .header("Authorization", "Bearer " + accessB)
+            .cookie(cookieB))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.revokedCount").value(1));
+
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessA))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessB))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+  }
+
+  @Test
   void revokeOthersCountsEveryOtherFamily() throws Exception {
     register("alice", "alice@example.com", "s3cret-pass1", "device-a");
     MvcResult second = login("alice", "s3cret-pass1", "device-b");

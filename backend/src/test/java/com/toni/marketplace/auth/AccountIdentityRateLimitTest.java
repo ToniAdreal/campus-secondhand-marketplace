@@ -81,8 +81,17 @@ class AccountIdentityRateLimitTest {
     return jwt.createTokenPair(user).accessToken();
   }
 
-  private Cookie refreshCookie(User user) {
-    return new Cookie("refresh_token", jwt.createTokenPair(user).refreshToken());
+  /**
+   * One token pair for one session: the access token and the refresh
+   * cookie of the SAME pair. Backlog #42 binds the access token to its
+   * refresh-token family, so presenting a bearer with a cookie minted
+   * from a different pair would have revoke-others revoke the bearer's
+   * own family — the intended #42 behavior, not a bucket effect. Use
+   * this wherever a test presents a bearer and a refresh cookie
+   * together, so the pair reads as one session the way the SPA sends it.
+   */
+  private JwtTokenService.TokenPair pair(User user) {
+    return jwt.createTokenPair(user);
   }
 
   private static RequestPostProcessor fromIp(String clientIp) {
@@ -254,8 +263,9 @@ class AccountIdentityRateLimitTest {
   @Test
   void accountIdentityBucketExhaustionLeavesSessionRevocationIntact() throws Exception {
     User user = freshUser();
-    String token = bearer(user);
-    Cookie cookie = refreshCookie(user);
+    JwtTokenService.TokenPair pair = pair(user);
+    String token = pair.accessToken();
+    Cookie cookie = new Cookie("refresh_token", pair.refreshToken());
     renameOnce(token, "rename-one", 200);
     renameOnce(token, "rename-two", 200);
     renameOnce(token, "rename-three", 200);
@@ -267,11 +277,13 @@ class AccountIdentityRateLimitTest {
   @Test
   void sessionRevocationBucketExhaustionLeavesAccountIdentityIntact() throws Exception {
     User user = freshUser();
-    String token = bearer(user);
-    Cookie cookie = refreshCookie(user);
+    JwtTokenService.TokenPair pair = pair(user);
+    String token = pair.accessToken();
+    Cookie cookie = new Cookie("refresh_token", pair.refreshToken());
     // Revoke-others is repeatable with a single session (nothing else
-    // to revoke), so the burst can repeat one shape without tripping a
-    // state guard.
+    // to revoke — the matched pair keeps the caller's own family, so
+    // the bearer survives each call), so the burst can repeat one
+    // shape without tripping a state guard.
     for (int i = 0; i < 3; i++) {
       revokeOthersOnce(token, cookie, 200);
     }

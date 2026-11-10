@@ -29,13 +29,25 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li>Access token: 15 min, carries sub (user id), username, roles — plus a
- *       {@code tver} claim (the user's {@code token_version} at issuance).
- *       The authentication filter compares it against the row on every
- *       request, so a password change (which bumps the row) kills all
- *       pre-change tokens immediately instead of leaving them valid for
- *       their full TTL. Tokens minted before this field existed carry no
- *       claim and parse as 0 — they survive only until the account's next
- *       password change.</li>
+ *       {@code tver} claim (the user's {@code token_version} at issuance)
+ *       and a {@code fam} claim (backlog #42: the refresh-token family
+ *       root jti — the login-time token's {@code jti} — so the filter can
+ *       tell which session issued it). The authentication filter compares
+ *       the version against the row on every request, so a password change
+ *       (which bumps the row) kills all pre-change tokens immediately
+ *       instead of leaving them valid for their full TTL. Tokens minted
+ *       before this field existed carry no claim and parse as 0 — they
+ *       survive only until the account's next password change.</li>
+ *   <li>Session-bound access tokens (backlog #42): the filter also checks
+ *       that the {@code fam} family still holds a live refresh row, so
+ *       revoking ONE session (single-session delete, revoke-others,
+ *       oldest-family eviction, refresh-token theft) kills that session's
+ *       already-issued access tokens at once — the scoped counterpart of
+ *       the global {@code tver} bump, which is logout's and the password
+ *       flows' kill-everything. A family whose rows are gone reads as
+ *       dead; the surviving session's tokens keep working. Tokens without
+ *       the claim (pre-#42, or the step-up endpoint's session-less
+ *       access token) skip the check.</li>
  *   <li>Refresh token: 7 days, single-use, rotating. Each successful rotation
  *       revokes the consumed token and issues a new pair; replaying an old
  *       refresh token revokes the whole family (theft detection) and logs
@@ -126,6 +138,20 @@ public class JwtTokenService {
    * before this claim existed carry none and read as stale.
    */
   private static final String CLAIM_AUTH_TIME = "auth_time";
+
+  /**
+   * Refresh-token family the access token belongs to (backlog #42): the
+   * family root jti — the {@code jti} of the login-time refresh token
+   * that founded the session. The authentication filter checks that the
+   * family still holds a live refresh row, so revoking one session
+   * (single-session delete, revoke-others, oldest-family eviction,
+   * refresh-token theft) kills that session's already-issued access
+   * tokens at once instead of letting them live out their 15-minute
+   * TTL. Tokens minted before this claim existed carry none and skip
+   * the check (like the pre-#218 {@code auth_time} absence); step-up
+   * access tokens carry none either — they are not a session.
+   */
+  private static final String CLAIM_FAMILY = "fam";
 
   /** Default {@code kid} for the signing key when none is configured. */
   public static final String DEFAULT_CURRENT_KID = "current";
@@ -254,7 +280,7 @@ public class JwtTokenService {
 
   /** Claims extracted from a validated access token. */
   public record AccessClaims(long userId, String username, List<String> roles, long tokenVersion,
-                             Instant authTime) {}
+                             Instant authTime, String familyJti) {}
 
   /**
    * Mints an access token that proves a fresh credential event — the
@@ -300,19 +326,22 @@ public class JwtTokenService {
 
     List<String> roles = user.getRoles().stream().map(Role::name).sorted().toList();
 
+    // The refresh token's jti is the family's root — the access token
+    // binds to it (backlog #42) so the family check can find the session.
+    String jti = UUID.randomUUID().toString();
     String accessToken = Jwts.builder()
         .subject(String.valueOf(user.getId()))
         .claim("username", user.getUsername())
         .claim("roles", roles)
         .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
         .claim(CLAIM_AUTH_TIME, now.getEpochSecond())
+        .claim(CLAIM_FAMILY, jti)
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp))
         .header().keyId(currentKid).and().signWith(key)
         .compact();
 
-    String jti = UUID.randomUUID().toString();
     String refreshToken = Jwts.builder()
         .subject(String.valueOf(user.getId()))
         .claim("type", TYPE_REFRESH)
@@ -346,8 +375,11 @@ public class JwtTokenService {
     // Backlog #218: tokens minted before the auth-time claim existed carry
     // none — they parse as null and read as stale to StepUpPolicy.
     Long authTimeSeconds = claims.get(CLAIM_AUTH_TIME, Long.class);
+    // Backlog #42: tokens minted before the family claim existed carry
+    // none — they parse as null and skip the family-liveness check.
+    String familyJti = claims.get(CLAIM_FAMILY, String.class);
     return new AccessClaims(userId, username, roles, tokenVersion == null ? 0L : tokenVersion,
-        authTimeSeconds == null ? null : Instant.ofEpochSecond(authTimeSeconds));
+        authTimeSeconds == null ? null : Instant.ofEpochSecond(authTimeSeconds), familyJti);
   }
 
   /**
@@ -540,6 +572,7 @@ public class JwtTokenService {
         .claim("username", user.getUsername())
         .claim("roles", roles)
         .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
+        .claim(CLAIM_FAMILY, live.getFamilyJti())
         .claim("type", TYPE_ACCESS)
         .issuedAt(Date.from(now))
         .expiration(Date.from(accessExp));
@@ -565,6 +598,21 @@ public class JwtTokenService {
    */
   public List<RefreshToken> liveSessionTokens(long userId, Instant now) {
     return refreshTokens.findByUserIdAndRevokedFalseAndExpiresAtAfter(userId, now);
+  }
+
+  /**
+   * Whether the refresh-token family behind an access token's
+   * {@code fam} claim still holds a live row (backlog #42) — the
+   * authentication filter's per-request family check. A family whose
+   * rows were all deleted (single-session revoke, revoke-others,
+   * oldest-family eviction, refresh-token theft) or whose live row
+   * expired reads as dead, so that session's already-issued access
+   * tokens 401 at once instead of living out their 15-minute TTL.
+   * The check is scoped to the family: other sessions are untouched.
+   */
+  public boolean isFamilyLive(long userId, String familyJti) {
+    return refreshTokens.existsByFamilyJtiAndUserIdAndRevokedFalseAndExpiresAtAfter(
+        familyJti, userId, clock.instant());
   }
 
   /**

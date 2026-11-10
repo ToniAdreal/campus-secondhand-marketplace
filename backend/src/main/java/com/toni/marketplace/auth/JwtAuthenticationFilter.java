@@ -27,6 +27,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       unauthenticated, same 401. The row lookup costs one extra
  *       query per authenticated request; that is the price of server-side
  *       bearer revocation without a token denylist.</li>
+ *   <li>Dead family (backlog #42) → the token's {@code fam} claim names a
+ *       refresh-token family with no live row left (the session was
+ *       revoked one-at-a-time, via revoke-others, by oldest-family
+ *       eviction, or by refresh-token theft detection) → unauthenticated,
+ *       same 401. This is the scoped counterpart of the global
+ *       {@code tver} bump: logout and the password flows kill every
+ *       session at once, while a single-session revoke now kills only
+ *       that session's already-issued access tokens — immediately, instead
+ *       of letting them live out their 15-minute TTL. Tokens without the
+ *       claim (pre-#42, or the step-up endpoint's session-less token)
+ *       skip this check.</li>
  *   <li>Disabled account (backlog #88) → the user's {@code disabled} flag
  *       is set by an ADMIN → unauthenticated, same 401, whatever the token
  *       claims. (Disable also bumps {@code token_version}, so the token
@@ -123,7 +134,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private boolean isStale(JwtTokenService.AccessClaims claims) {
     return users.findById(claims.userId())
         .map(user -> user.isDisabled()
-            || user.getTokenVersion() != claims.tokenVersion())
+            || user.getTokenVersion() != claims.tokenVersion()
+            // Backlog #42: a token bound to a revoked family is dead even
+            // when the version still matches — the scoped revoke (one
+            // session, revoke-others, eviction, theft) kills only that
+            // session's access tokens. Tokens without the claim (pre-#42,
+            // step-up) skip the check.
+            || (claims.familyJti() != null
+                && !jwt.isFamilyLive(claims.userId(), claims.familyJti())))
         .orElse(true);
   }
 

@@ -63,7 +63,7 @@ class JwtAuthenticationFilterTest {
   @Test
   void validTokenInstallsAuthenticationWithRoleAuthorities() throws Exception {
     when(jwt.parseAccessToken("good-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null));
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null, null));
     when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(0)));
 
     filter.doFilter(requestWith("Bearer good-token"), new MockHttpServletResponse(), chain);
@@ -80,7 +80,7 @@ class JwtAuthenticationFilterTest {
   @Test
   void multipleRolesMapToMultipleRoleAuthorities() throws Exception {
     when(jwt.parseAccessToken("admin-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(7L, "root", List.of("ADMIN", "USER"), 0L, null));
+        .thenReturn(new JwtTokenService.AccessClaims(7L, "root", List.of("ADMIN", "USER"), 0L, null, null));
     User root = new User("root", "root@example.com", "$2a$12$hashed");
     ReflectionTestUtils.setField(root, "id", 7L);
     when(users.findById(7L)).thenReturn(Optional.of(root));
@@ -97,7 +97,7 @@ class JwtAuthenticationFilterTest {
     // The token was issued at version 0; a password change bumped the row
     // to 1 — the bearer token must die even though it is still unexpired.
     when(jwt.parseAccessToken("stale-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null));
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null, null));
     when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(1)));
 
     filter.doFilter(requestWith("Bearer stale-token"), new MockHttpServletResponse(), chain);
@@ -106,9 +106,41 @@ class JwtAuthenticationFilterTest {
   }
 
   @Test
+  void tokenBoundToRevokedFamilyLeavesRequestUnauthenticated() throws Exception {
+    // Backlog #42: the session behind this token was revoked (single-session
+    // delete / revoke-others / eviction / theft) — the version still
+    // matches, but the family holds no live refresh row, so the bearer
+    // token dies at once instead of living out its 15-minute TTL.
+    when(jwt.parseAccessToken("revoked-family-token"))
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null,
+            "fam-1"));
+    when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(0)));
+    when(jwt.isFamilyLive(42L, "fam-1")).thenReturn(false);
+
+    filter.doFilter(requestWith("Bearer " + "revoked-family-token"), new MockHttpServletResponse(), chain);
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+  }
+
+  @Test
+  void tokenBoundToLiveFamilyInstallsAuthentication() throws Exception {
+    when(jwt.parseAccessToken("live-family-token"))
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null,
+            "fam-1"));
+    when(users.findById(42L)).thenReturn(Optional.of(userWithVersion(0)));
+    when(jwt.isFamilyLive(42L, "fam-1")).thenReturn(true);
+
+    filter.doFilter(requestWith("Bearer " + "live-family-token"), new MockHttpServletResponse(), chain);
+
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    assertThat(auth).isNotNull();
+    assertThat(auth.getPrincipal()).isEqualTo(42L);
+  }
+
+  @Test
   void tokenForDeletedUserLeavesRequestUnauthenticated() throws Exception {
     when(jwt.parseAccessToken("orphan-token"))
-        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null));
+        .thenReturn(new JwtTokenService.AccessClaims(42L, "alice", List.of("USER"), 0L, null, null));
     when(users.findById(42L)).thenReturn(Optional.empty());
 
     filter.doFilter(requestWith("Bearer orphan-token"), new MockHttpServletResponse(), chain);

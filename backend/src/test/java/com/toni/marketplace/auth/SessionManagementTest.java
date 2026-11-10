@@ -130,6 +130,32 @@ class SessionManagementTest {
   }
 
   @Test
+  void deleteKillsTheRevokedSessionsAccessTokenImmediately() throws Exception {
+    // Backlog #42: revoking one session now kills that session's
+    // already-issued access token at once — it no longer lives out its
+    // 15-minute TTL while only its refresh cookie 401s.
+    MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
+    MvcResult loggedIn = login("alice", "s3cret-pass1", "device-b");
+    Cookie cookieA = refreshCookie(registered);
+    String accessA = accessToken(registered);
+    String accessB = accessToken(loggedIn);
+
+    String otherFamily = otherSessionId(accessA, cookieA);
+    mockMvc.perform(delete("/api/auth/sessions/" + otherFamily)
+            .header("Authorization", "Bearer " + accessA))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessB))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+    // The caller's own access token still works.
+    mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + accessA))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(0));
+  }
+
+  @Test
   void deleteOwnCurrentSessionKillsItsNextRefresh() throws Exception {
     MvcResult registered = register("alice", "alice@example.com", "s3cret-pass1", "device-a");
     Cookie cookieA = refreshCookie(registered);

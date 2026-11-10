@@ -23,6 +23,17 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
   /** Every row of one refresh-token family (for ownership checks / family revoke). */
   List<RefreshToken> findByFamilyJti(String familyJti);
 
+  /**
+   * Whether one refresh-token family still has a live row for this user —
+   * the access-token family check (backlog #42): an access token bound to
+   * a family (its {@code fam} claim) authenticates only while the family
+   * holds a non-revoked, unexpired row, so revoking a session kills its
+   * already-issued access tokens at once instead of letting them live
+   * out their 15-minute TTL.
+   */
+  boolean existsByFamilyJtiAndUserIdAndRevokedFalseAndExpiresAtAfter(
+      String familyJti, Long userId, Instant now);
+
   /** Hard-delete the whole family (logout / refresh-token theft detected). */
   void deleteByUserId(Long userId);
 

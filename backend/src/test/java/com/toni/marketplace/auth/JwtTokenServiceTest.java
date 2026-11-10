@@ -80,6 +80,11 @@ class JwtTokenServiceTest {
     assertThat(stored.getTokenHash()).hasSize(64);
     assertThat(stored.isRevoked()).isFalse();
     assertThat(stored.getUserId()).isEqualTo(42L);
+    // Backlog #42: the access token binds to the session it was issued
+    // for — its fam claim is the family's root jti (the stored row's
+    // familyJti, which for a fresh login is the refresh token's own jti).
+    assertThat(claims.familyJti()).isEqualTo(stored.getFamilyJti());
+    assertThat(claims.familyJti()).isNotNull();
   }
 
   @Test
@@ -118,6 +123,9 @@ class JwtTokenServiceTest {
     JwtTokenService.AccessClaims claims = service.parseAccessToken(legacyToken);
     assertThat(claims.userId()).isEqualTo(42L);
     assertThat(claims.tokenVersion()).isEqualTo(0L);
+    // Backlog #42: a token minted before the fam claim existed carries
+    // none — it parses as null and skips the family-liveness check.
+    assertThat(claims.familyJti()).isNull();
   }
 
   @Test
@@ -271,6 +279,38 @@ class JwtTokenServiceTest {
     RefreshToken newRow = captor.getAllValues().get(2);
     assertThat(newRow.getFamilyIssuedAt()).isEqualTo(NOW.minus(Duration.ofDays(5)));
     assertThat(newRow.getFamilyJti()).isEqualTo("root-family");
+  }
+
+  @Test
+  void rotate_preservesAccessTokenFamily() {
+    // Backlog #42: rotation re-issues the access token for the SAME
+    // session, so the fam claim must stay the family root — a rotated
+    // token for a revoked family must still read as dead at the filter.
+    JwtTokenService.TokenPair pair = service.createTokenPair(alice);
+    RefreshToken oldRow = new RefreshToken(
+        JwtTokenService.sha256Hex(pair.refreshToken()), "old-jti", 42L,
+        NOW.plus(Duration.ofDays(7)), NOW.minus(Duration.ofDays(5)), "root-family");
+    when(refreshTokens.findByTokenHash(oldRow.getTokenHash()))
+        .thenReturn(Optional.of(oldRow));
+    when(users.findById(42L)).thenReturn(Optional.of(alice));
+
+    JwtTokenService.TokenPair rotated = service.rotateRefreshToken(pair.refreshToken());
+
+    JwtTokenService.AccessClaims claims = service.parseAccessToken(rotated.accessToken());
+    assertThat(claims.familyJti()).isEqualTo("root-family");
+  }
+
+  @Test
+  void isFamilyLive_readsTheLiveRow() {
+    // Backlog #42: the filter's per-request family check — a live row
+    // means the session is alive; no live row means the family is dead.
+    when(refreshTokens.existsByFamilyJtiAndUserIdAndRevokedFalseAndExpiresAtAfter(
+        "fam-1", 42L, NOW)).thenReturn(true);
+    when(refreshTokens.existsByFamilyJtiAndUserIdAndRevokedFalseAndExpiresAtAfter(
+        "fam-2", 42L, NOW)).thenReturn(false);
+
+    assertThat(service.isFamilyLive(42L, "fam-1")).isTrue();
+    assertThat(service.isFamilyLive(42L, "fam-2")).isFalse();
   }
 
   @Test

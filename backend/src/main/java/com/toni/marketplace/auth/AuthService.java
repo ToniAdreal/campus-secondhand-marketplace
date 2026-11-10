@@ -288,9 +288,10 @@ public class AuthService {
    * (default 5), the OLDEST families are revoked until the cap holds
    * again, through the same family-scoped {@link
    * JwtTokenService#revokeFamily} seam as {@link #revokeOtherSessions}
-   * — deliberately no {@code tokenVersion} bump, so the evicted
-   * sessions' already-issued access tokens live out their remaining
-   * &le;15-minute TTL while their refresh cookies 401 at once.
+   * — deliberately no {@code tokenVersion} bump, so the current session's
+   * access token keeps working; the evicted families' already-issued
+   * access tokens 401 at once (backlog #42: the filter's family check
+   * reads the family as dead) while their refresh cookies 401 too.
    *
    * <p>Families are ordered by their founding instant
    * ({@code familyIssuedAt}, carried across rotations), with the live
@@ -2443,9 +2444,11 @@ public class AuthService {
   /**
    * Revokes one session (its refresh-token family) without touching the
    * caller's other sessions. An unknown session id — or one belonging to
-   * another user — is 404 (no cross-user oracle). Revoking the caller's own
-   * current session takes effect on the next refresh: the dead cookie 401s
-   * and the SPA re-logs-in.
+   * another user — is 404 (no cross-user oracle). Backlog #42: the
+   * revoked session's already-issued access token 401s at once (the
+   * filter's family check reads the family as dead), so revoking the
+   * caller's own current session signs it out immediately — the dead
+   * refresh cookie 401s and the SPA re-logs-in.
    */
   @Transactional
   public void revokeSession(long userId, String familyJti) {
@@ -2469,9 +2472,11 @@ public class AuthService {
    * <p>Deliberately does NOT bump tokenVersion: the bump is logout's
    * global semantics (backlog #148 — no session is meant to survive a
    * logout), while this action is scoped — the current session's access
-   * token must keep working. The honest limit, mirroring #62's caveat:
-   * the revoked sessions' already-issued access tokens live out their
-   * remaining ≤15-minute TTL; their refresh cookies 401 immediately.
+   * token must keep working. Backlog #42 closed the old honest limit
+   * (the revoked sessions' access tokens used to live out their
+   * remaining ≤15-minute TTL): the filter's family check reads a revoked
+   * family as dead, so the revoked sessions' already-issued access
+   * tokens 401 at once, exactly like their refresh cookies.
    *
    * @return how many families were revoked (the current one never counts)
    */
