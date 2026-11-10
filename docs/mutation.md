@@ -80,19 +80,24 @@ unit suites themselves pass locally). All numbers below are read from
 the `pit-reports` artifact (`mutations.xml`, PIT 1.15.3) of real CI
 runs — never estimated.
 
-### Latest measured run (backlog #212)
+### Latest measured run (backlog #355)
 
-GitHub Actions run **39735286602**, 2026-10-22T06:39:14Z, head
-**41c334d** (backlog #211); the `backend-mutation` job succeeded.
+GitHub Actions run **42434347952**, 2026-11-08T01:27:44Z, head
+**099aba0** (backlog #353); the `backend-mutation` job succeeded.
+(The run's overall conclusion is failure — other jobs failed for
+unrelated reasons; the `pit-reports` artifact is the mutation job's
+output.)
 
 | Scope | Line coverage | Mutation coverage | Test strength |
 |---|---|---|---|
-| Project (3 classes) | 55% (296/536) | 28% (81/291) | 63% (81/129) |
-| `auth` — `JwtTokenService` | 82% (153/186) | 54% (41/76) | 76% (41/54) |
-| `order` — `OrderService` + `OrderCreationService` | 41% (143/350) | 19% (40/215) | 53% (40/75) |
+| Project (8 classes) | 87% (805/928) | 80% (477/599) | 88% (477/542) |
+| `auth` — 4 classes | 89% (385/434) | 85% (249/294) | 90% (249/277) |
+| `order` — 4 classes | 85% (420/494) | 75% (228/305) | 86% (228/265) |
 
-Mutant statuses, project-wide: **KILLED 81, SURVIVED 48, NO_COVERAGE
-162**.
+Mutant statuses, project-wide: **KILLED 476, SURVIVED 65,
+NO_COVERAGE 57, TIMED_OUT 1** (the timed-out mutant counts as
+detected: 477 detected / 599). The displayed 80% is the rounded
+figure; the exact score is 477/599 = 79.6%.
 
 ### Widened scope, unmeasured (backlog #269, 2026-10-29)
 

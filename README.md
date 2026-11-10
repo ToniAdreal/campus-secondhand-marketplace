@@ -378,11 +378,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   `OrderDisputeTest`, `OrderShipmentTest`, `OrderReadTest`,
   `OrderHandoverCodeTest`, `OrderPaymentTest`)), in the CI-only `mutation` Maven profile /
   `backend-mutation` job — never in the default local `mvn test` path.
-  The floor is a ratchet set from the first real CI run's measured
+  The floor is a ratchet set from the latest real CI run's measured
   score, recorded in docs/mutation.md; the score covers those eight
   classes, not the codebase. The #269, #285, #320, #333, #338 and #345
-  widenings are unmeasured pending the next CI backend-mutation run —
-  the floor stays 27 until then (docs/mutation.md).
+  widenings are measured: CI run 42434347952 (2026-11-08) scored
+  477/599 = 79.6% on the 8-class scope, and the floor is now 79
+  (docs/mutation.md).
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   twelve flows (register lands on browse signed in; browse → listing detail
   renders; login → create listing → it appears in My listings; buy-now →
