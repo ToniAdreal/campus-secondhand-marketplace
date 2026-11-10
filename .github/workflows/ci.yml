@@ -281,6 +281,10 @@ jobs:
     # profile, and the mock-PSP webhook path (backlog #366: signed
     # capture.succeeded delivery → MATCHED, replay → duplicate, tampered
     # signature → 401, ledger row in the ADMIN webhook-events viewer).
+    # Compose secrets (backlog #372): the job generates APP_JWT_SECRET,
+    # APP_TOTP_ENCRYPTION_KEY and APP_PAYMENTS_WEBHOOK_SECRET fresh per
+    # run — docker-compose.yml requires all three via ${VAR:?}, and the
+    # teardown `docker compose down` interpolates the file too.
     # Manual version: docs/smoke-test.md
     # Email-verification gate (backlog #325): the compose file forwards
     # APP_AUTH_EMAIL_VERIFICATION_ENABLED with default true, and this job
@@ -292,8 +296,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Generate the mock-PSP webhook secret (backlog #366)
-        run: echo "APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Generate the compose secrets (backlog #366, #372)
+        # docker-compose.yml requires all three secrets via ${VAR:?}
+        # interpolation, and the backend refuses to boot on the mysql
+        # profile with any committed dev placeholder
+        # (JwtSecretStartupCheck, TotpEncryptionKeyStartupCheck,
+        # WebhookSecretStartupCheck) — so each CI run generates fresh
+        # random values. They go to $GITHUB_ENV so every later step in
+        # the job — `docker compose up`, the smoke steps, and the
+        # always-run teardown `docker compose down` — sees the same
+        # values (backlog #372: the teardown failed at interpolation
+        # too, before this fix). ::add-mask:: keeps the throwaway
+        # values out of the step env dumps in the job log.
+        run: |
+          JWT_SECRET="$(openssl rand -base64 32)"
+          TOTP_KEY="$(openssl rand -base64 32)"
+          WEBHOOK_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$JWT_SECRET"
+          echo "::add-mask::$TOTP_KEY"
+          echo "::add-mask::$WEBHOOK_SECRET"
+          echo "APP_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+          echo "APP_TOTP_ENCRYPTION_KEY=$TOTP_KEY" >> "$GITHUB_ENV"
+          echo "APP_PAYMENTS_WEBHOOK_SECRET=$WEBHOOK_SECRET" >> "$GITHUB_ENV"
       - run: docker compose up --build -d
         env:
           APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
@@ -442,11 +466,28 @@ jobs:
     # boot on the committed dev placeholder), so this job generates one
     # like the smoke job does — otherwise its own `docker compose up`
     # would fail at interpolation.
+    # Compose secrets (backlog #372): the same generation step now also
+    # covers APP_JWT_SECRET and APP_TOTP_ENCRYPTION_KEY — both compose
+    # jobs failed at `docker compose up` interpolation (and at the
+    # teardown `down`) with APP_JWT_SECRET missing before this fix.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Generate the mock-PSP webhook secret (backlog #366)
-        run: echo "APP_PAYMENTS_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Generate the compose secrets (backlog #366, #372)
+        # Same three generated secrets as the smoke job (see its step
+        # comment): docker-compose.yml requires them via ${VAR:?}
+        # interpolation, and the teardown `docker compose down` needs
+        # them too.
+        run: |
+          JWT_SECRET="$(openssl rand -base64 32)"
+          TOTP_KEY="$(openssl rand -base64 32)"
+          WEBHOOK_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$JWT_SECRET"
+          echo "::add-mask::$TOTP_KEY"
+          echo "::add-mask::$WEBHOOK_SECRET"
+          echo "APP_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+          echo "APP_TOTP_ENCRYPTION_KEY=$TOTP_KEY" >> "$GITHUB_ENV"
+          echo "APP_PAYMENTS_WEBHOOK_SECRET=$WEBHOOK_SECRET" >> "$GITHUB_ENV"
       - run: docker compose up --build -d
         env:
           APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false'
