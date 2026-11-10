@@ -66,27 +66,53 @@ item is the Testcontainers *IT, #10); the decline path (`tok_decline` ->
 handover code is asserted present but never consumed — completion is a
 seller step, #179).
 
-## Thresholds — deliberately unset (backlog #212 discipline)
+## Thresholds — set from the first clean CI measurement (backlog #365)
 
-The script carries NO performance thresholds. The first CI run's
-measured p95 / error rate are recorded below with the run id, and only
-then are thresholds set at or below the measured floor — never guessed.
+Measured in CI run 42785916434 (head `a4ce162`, `load-smoke` SUCCESS,
+2026-11-10): 4417 requests, 0% failed (`http_req_failed` value 0),
+checks 8838/8838 passed, aggregate `http_req_duration` p95 8.51 ms
+(p90 7.06, avg 4.67, med 3.73, max 726.92). Thresholds in
+`load/k6-read-smoke.js` are set from those numbers, rounded one step
+in the lenient direction per the #212 precedent (the mutation floor
+was set to 27 from a measured 27.8% — rounded to be slightly easier
+than measured; for latency the easier direction is up):
 
-The CI job DOES fail on failed k6 checks: a non-200 on a seeded read or
-a failed write step is a correctness defect, not a performance variance.
-That gate is not a performance threshold and needs no measurement.
+- `http_req_duration`: `p(95) < 10` ms (measured aggregate p95 8.51 ms)
+- `http_req_failed`: `rate < 0.01` (measured 0)
 
-## First CI measurement — reads (to be filled in after the first `load-smoke` run)
+One honest limitation of this run: the summary carries only the
+AGGREGATE `http_req_duration` — the script recorded no per-endpoint
+durations, so the per-endpoint p95 columns below cannot be filled from
+this run and read "not measured". This commit adds per-endpoint Trend
+metrics (`list_duration`, `detail_duration`, `order_create_duration`,
+`pay_duration`) to the script, so the next `load-smoke` run's summary
+carries them and a follow-up fills these cells. The aggregate
+threshold above is the gate until then.
+
+The CI job still fails on failed k6 checks: a non-200 on a seeded read
+or a failed write step is a correctness defect, not a performance
+variance. That gate is not a performance threshold and needs no
+measurement.
+
+## First CI measurement — reads (run 42785916434)
 
 | Run | Commit | p95 (list) | p95 (detail) | Error rate | Thresholds set |
 | --- | ------ | ---------- | ------------ | ---------- | -------------- |
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | No — follow-up item sets them from this row |
+| 42785916434 | a4ce162 | not measured* | not measured* | 0% (0 failed / 4417 requests) | Yes — aggregate p95 < 10 ms + error rate < 1% |
 
-## First CI measurement — order write path (to be filled in after the first run with the #360 script)
+## First CI measurement — order write path (run 42785916434, #360 script)
 
 | Run | Commit | p95 (order create) | p95 (pay) | Pairs completed | Error rate | Thresholds set |
 | --- | ------ | ------------------ | --------- | --------------- | ---------- | -------------- |
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ (max 8) | _pending_ | No — follow-up item sets them from this row |
+| 42785916434 | a4ce162 | not measured* | not measured* | 8/8 | 0% | Yes — aggregate p95 < 10 ms + error rate < 1% |
+
+\* Per-endpoint p95 was not measurable from run 42785916434's summary:
+k6 exports only the aggregate `http_req_duration` when the script
+records no per-endpoint Trends. The Trends landed with this commit;
+the next `load-smoke` run's summary carries them, and these cells are
+filled then. The aggregate p95 for that run was 8.51 ms across all
+4417 requests (2620 list + 1771 detail checks passed, 8/8 order+pay
+pairs, 8838 checks passed, 0 failed).
 
 ## Honest limits
 

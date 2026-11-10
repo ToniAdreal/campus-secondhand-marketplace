@@ -66,13 +66,18 @@
  *   bucket. If a future item throttles reads, this profile must be
  *   re-derived against the new bucket first.
  *
- * Thresholds: NONE — deliberately (backlog #212 discipline). The first
- * CI run's measured p95 / error rate are recorded in docs/load-smoke.md
- * with the run id, and only then are thresholds set at or below the
- * measured floor — never guessed in this script. The CI job does fail
- * on failed checks (a non-200 on a seeded read or a failed write step
- * is a correctness defect, not a performance variance); that gate is
- * not a performance threshold and needs no measurement.
+ * Thresholds: set from CI run 42785916434 (head a4ce162, backlog #365):
+ * http_req_duration p(95) < 10 ms (measured aggregate p95 8.51 ms) and
+ * http_req_failed rate < 0.01 (measured 0) — rounded one step in the
+ * lenient direction per the #212 precedent (the mutation floor was set
+ * to 27 from a measured 27.8%). Per-endpoint Trends below record
+ * list/detail/order-create/pay durations separately: run 42785916434's
+ * summary carried only the aggregate http_req_duration, so the
+ * per-endpoint p95s in docs/load-smoke.md are filled from the next
+ * run. The CI job does fail on failed checks (a non-200 on a seeded
+ * read or a failed write step is a correctness defect, not a
+ * performance variance); that gate is not a performance threshold and
+ * needs no measurement.
  *
  * Local limitation, stated honestly: this repo's sandbox cannot run k6
  * against the backend (the java binary cannot open TCP sockets here,
@@ -86,8 +91,27 @@
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import { Trend } from 'k6/metrics';
+
+// Per-endpoint duration Trends (backlog #365): the summary of the first
+// measured run (42785916434) carried only the aggregate
+// http_req_duration, so the docs' per-endpoint p95 cells could not be
+// filled from it. These Trends make the next run's summary carry
+// list/detail/order-create/pay p95s separately.
+const listDuration = new Trend('list_duration');
+const detailDuration = new Trend('detail_duration');
+const orderCreateDuration = new Trend('order_create_duration');
+const payDuration = new Trend('pay_duration');
 
 export const options = {
+  // Thresholds set from CI run 42785916434 (head a4ce162, backlog #365):
+  // aggregate http_req_duration p95 8.51 ms -> p(95) < 10 ms, and
+  // http_req_failed 0 -> rate < 0.01. Rounded one step in the lenient
+  // direction per the #212 precedent (mutation floor 27 from 27.8%).
+  thresholds: {
+    http_req_duration: ['p(95)<10'],
+    http_req_failed: ['rate<0.01'],
+  },
   scenarios: {
     reads: {
       executor: 'ramping-vus',
@@ -169,6 +193,7 @@ export default function (data) {
   const headers = { Authorization: `Bearer ${data.token}` };
   if (Math.random() < LIST_WEIGHT) {
     const res = http.get(`${BASE_URL}/api/items?page=0&size=20`, { headers });
+    listDuration.add(res.timings.duration);
     check(res, {
       'list 200 + envelope ok': (r) => r.status === 200 && r.json('code') === 0,
       'list returns a page': (r) => Array.isArray(r.json('data.content')),
@@ -176,6 +201,7 @@ export default function (data) {
   } else {
     const id = data.ids[Math.floor(Math.random() * data.ids.length)];
     const res = http.get(`${BASE_URL}/api/items/${id}`, { headers });
+    detailDuration.add(res.timings.duration);
     check(res, {
       'detail 200 + envelope ok': (r) => r.status === 200 && r.json('code') === 0,
       'detail returns the requested listing': (r) => r.json('data.id') === id,
@@ -210,6 +236,7 @@ export function writeOrders(data) {
     JSON.stringify({ itemId }),
     { headers },
   );
+  orderCreateDuration.add(orderRes.timings.duration);
   const orderOk = check(orderRes, {
     'order 200 + envelope ok': (r) => r.status === 200 && r.json('code') === 0,
     'order is PENDING': (r) => r.json('data.status') === 'PENDING',
@@ -230,6 +257,7 @@ export function writeOrders(data) {
     JSON.stringify({}),
     { headers },
   );
+  payDuration.add(payRes.timings.duration);
   check(payRes, {
     'pay 200 + envelope ok': (r) => r.status === 200 && r.json('code') === 0,
     'pay flips order to PAID': (r) => r.json('data.status') === 'PAID',
