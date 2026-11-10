@@ -203,7 +203,7 @@ export default function LoginPage() {
                   autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
                 />
               </div>
             </>
@@ -271,7 +271,7 @@ export default function LoginPage() {
                   autoComplete="username"
                   value={usernameOrEmail}
                   onChange={(e) => setUsernameOrEmail(e.target.value)}
-                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
                 />
               </div>
             </div>
@@ -286,7 +286,7 @@ export default function LoginPage() {
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+                  className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
                 />
               </div>
             </div>

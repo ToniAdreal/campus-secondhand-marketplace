@@ -33,7 +33,7 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly twelve flows (the seven in smoke.e2e.ts — register,
+ * - Exactly twelve flows plus the color-contrast pass (the seven in smoke.e2e.ts — register,
  *   browse→detail, login→create→my-listings, plus the money path from
  *   backlog #194: buy→pay→handover code→PAID, and seller completes with
  *   the code→buyer sees COMPLETED; plus the two money paths from
@@ -58,7 +58,12 @@ import { defineConfig, devices } from '@playwright/test';
  *   a keyword → saves the search → it appears in the saved-searches
  *   section on /favorites with its match count → running it lands
  *   back on the exact browse URL → deleting it removes it, and a
- *   browse page with no filter active offers no save control).
+ *   browse page with no filter active offers no save control — plus
+ *   the color-contrast pass from backlog #369 in
+ *   colorContrast.e2e.ts: axe runs the color-contrast rule only over
+ *   nine key pages in both themes (light + dark). The pass is a pass,
+ *   not a thirteenth flow — the mailed-sale journey in #370 is the
+ *   thirteenth — and it proves contrast, not journeys).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
  *   retried into green, and the twelve flows share one backend (one H2
@@ -70,7 +75,8 @@ import { defineConfig, devices } from '@playwright/test';
  *   the moderation flow's runs in the header of e2e/moderation.e2e.ts,
  *   and the favorites + seller-follow flow's runs in the header of
  *   e2e/favorites.e2e.ts, and the saved-searches flow's runs in the
- *   header of e2e/savedSearches.e2e.ts.
+ *   header of e2e/savedSearches.e2e.ts, and the color-contrast pass's
+ *   runs in the header of e2e/colorContrast.e2e.ts.
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.

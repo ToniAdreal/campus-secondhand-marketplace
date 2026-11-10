@@ -190,7 +190,7 @@ export default function App() {
         </ErrorBoundary>
       </main>
       <footer className="relative border-t border-black/[0.08] py-6 dark:border-white/10">
-        <p className="mx-auto max-w-6xl px-4 text-center text-xs text-apple-muted">
+        <p className="mx-auto max-w-6xl px-4 text-center text-xs text-apple-muted dark:text-neutral-400">
           Campus Marketplace — a portfolio project. Demo only: no real orders or payments.
         </p>
       </footer>

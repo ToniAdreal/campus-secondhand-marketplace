@@ -162,7 +162,7 @@ export default function RegisterPage() {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>
@@ -177,7 +177,7 @@ export default function RegisterPage() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>
@@ -192,7 +192,7 @@ export default function RegisterPage() {
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] outline-none transition focus:border-apple-focus"
+              className="w-full rounded-[10px] border border-apple-hairline bg-white px-3.5 py-3 text-[17px] text-apple-ink outline-none transition focus:border-apple-focus"
             />
           </div>
         </div>

@@ -64,7 +64,7 @@ export default function ForgotPasswordPage() {
   if (submitted) {
     return (
       <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
-        <h1 className="mb-4 text-xl font-bold">Check for your reset link</h1>
+        <h1 className="mb-4 text-xl font-bold text-apple-ink">Check for your reset link</h1>
         <p role="status" className="rounded bg-green-50 px-3 py-2 text-sm text-green-800">
           If an account exists for that username or email, a reset link was issued. In this
           demo the default mail sender is log-only, so no email is actually delivered.
@@ -80,7 +80,7 @@ export default function ForgotPasswordPage() {
 
   return (
     <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-sm">
-      <h1 className="mb-4 text-xl font-bold">Forgot password</h1>
+      <h1 className="mb-4 text-xl font-bold text-apple-ink">Forgot password</h1>
       {error && (
         <p role="alert" className="mb-4 rounded bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -88,7 +88,7 @@ export default function ForgotPasswordPage() {
       )}
       <form onSubmit={onSubmit} className="space-y-3">
         <div>
-          <label htmlFor="forgot-identifier" className="mb-1 block text-sm font-medium">
+          <label htmlFor="forgot-identifier" className="mb-1 block text-sm font-medium text-apple-ink">
             Username or email
           </label>
           <input
@@ -97,7 +97,7 @@ export default function ForgotPasswordPage() {
             autoComplete="username"
             value={usernameOrEmail}
             onChange={(e) => setUsernameOrEmail(e.target.value)}
-            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm text-apple-ink"
           />
         </div>
         <button
