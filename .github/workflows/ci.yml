@@ -101,12 +101,17 @@ jobs:
     # guessed. Stryker never runs in the default local `npm test` path.
     # The report is uploaded on every run so the measured score and
     # the surviving mutants are retrievable, not just pass/fail.
+    # Node 22, not 20: @stryker-mutator/core 10.1.1 requires Node
+    # >= 22.0.0 and its CLI refuses to start on 20 (main run
+    # 42734704718 failed with "Node.js version v20.20.2 detected.
+    # StrykerJS requires version to match >=22.0.0"). The other jobs
+    # stay on 20 — they pass there and need no change.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package.json
       - run: npm ci --prefix frontend
