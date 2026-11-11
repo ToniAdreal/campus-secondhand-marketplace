@@ -60,6 +60,10 @@ public class PasskeyCredential {
    * credential ids are authenticator-defined and can run long (the
    * webauthn4j test authenticator emits ~270 chars) — a 256 column
    * turned real enrolments into 500s (caught by PasskeyCeremonyTest).
+   * The DDL pins the column to CHARACTER SET ascii on MySQL (backlog
+   * #372, vendor V64): ids are base64url, ASCII-only, and a utf8mb4
+   * UNIQUE key on 1024 chars would exceed MySQL's 3072-byte limit and
+   * fail the migration; the H2 variant of V64 keeps the plain column.
    */
   @Column(name = "credential_id", nullable = false, unique = true, length = 1024)
   private String credentialId;

@@ -1,5 +1,20 @@
--- V64: WebAuthn passkey tables (backlog #220). Runs on both MySQL 8
--- (prod/CI) and H2 in MySQL-compatibility mode (local dev).
+-- V64 (MySQL vendor variant): WebAuthn passkey tables (backlog #220).
+-- Vendor-split by backlog #372 — see the h2 variant of this same
+-- version for the other half. The split exists because the two
+-- databases disagree on the credential_id column (below): MySQL 8's
+-- utf8mb4 default makes a 1024-char UNIQUE key 4096 bytes, past
+-- InnoDB's 3072-byte limit, so the shared V64 failed the compose
+-- smoke with "Specified key was too long" (CI run 42842365028, both
+-- docker-compose-smoke and backup-restore-drill). Credential ids are
+-- base64url, ASCII-only by construction, so this variant pins the
+-- column to CHARACTER SET ascii and the key stays 1024 bytes with no
+-- data loss. The h2 variant keeps the plain column: plain H2 (the
+-- @DataJpaTest embedded database, which runs without MODE=MySQL)
+-- rejects CHARACTER SET after a column type. Moving V64 out of
+-- db/migration in place is safe: it never applied on any MySQL
+-- database (the compose jobs failed at V64 on every run), and local
+-- H2 databases are in-memory and recreated per run — no Flyway
+-- checksum row exists to contradict.
 --
 -- passkey_credential: one row per enrolled passkey — the server's half
 -- of the credential (the private key never leaves the authenticator).
@@ -32,7 +47,7 @@
 CREATE TABLE passkey_credential (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
-  credential_id VARCHAR(1024) NOT NULL,
+  credential_id VARCHAR(1024) CHARACTER SET ascii NOT NULL,
   public_key_cose BLOB NOT NULL,
   aaguid BINARY(16) NULL,
   sign_count BIGINT NOT NULL DEFAULT 0,
