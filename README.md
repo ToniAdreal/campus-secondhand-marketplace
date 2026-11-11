@@ -400,7 +400,12 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   on its H2 profile, started by `frontend/playwright.config.ts`. The e2e
   stack stubs the email-verification gate off via its documented env knob
   (`APP_AUTH_EMAIL_VERIFICATION_ENABLED=false`) — the default mail sender
-  is log-only, so no test pretends a mailbox exists — and seeds its ADMIN
+  is log-only, so no test pretends a mailbox exists — and lifts the
+  credential rate limit via its documented env knob
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373 — the thirteen flows
+  share one backend and one client IP, so their register/login bursts exhaust
+  the production 5/minute bucket mid-suite; login, register and refresh ride
+  the bypass together, every other limiter keeps its own bucket) — and seeds its ADMIN
   through the backend's opt-in first-admin bootstrap
   (`APP_BOOTSTRAP_ADMIN_*`, backlog #213; the dispute flow's admin signs
   in with exactly those throwaway credentials, which live only in the

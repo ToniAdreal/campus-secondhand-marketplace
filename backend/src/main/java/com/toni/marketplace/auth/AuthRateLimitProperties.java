@@ -18,7 +18,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * profile disables the limiter ({@code src/test/resources/application.properties})
  * because the suite hammers these endpoints from a single test IP; the
  * dedicated {@code AuthRateLimitTest} / {@code AuthRefreshRateLimitTest} /
- * {@code MessageRateLimitTest} re-enable it explicitly.
+ * {@code MessageRateLimitTest} re-enable it explicitly. The e2e bypass
+ * ({@link #isE2eBypass}) is separate from the master switch: it lifts only
+ * the credential bucket for a throwaway e2e backend, never the other
+ * limiters, and it is off by default.
  */
 @ConfigurationProperties(prefix = "app.auth.rate-limit")
 public class AuthRateLimitProperties {
@@ -64,6 +67,40 @@ public class AuthRateLimitProperties {
 
   public void setRefreshAttemptsPerMinute(int refreshAttemptsPerMinute) {
     this.refreshAttemptsPerMinute = refreshAttemptsPerMinute;
+  }
+
+  /**
+   * Test-only bypass for the credential bucket (backlog #373). When true,
+   * the credential limiter is built disabled, so {@code POST
+   * /api/auth/login} and {@code POST /api/auth/register} are never
+   * throttled — and {@code POST /api/auth/refresh} rides along, because
+   * the filter's should-not-filter gate for all three paths reads the
+   * credential limiter's enabled flag. Every other limiter (messages,
+   * orders, exports, admin actions, …) keeps its own bucket.
+   *
+   * <p>Default false; enable only where the backend is a throwaway test
+   * fixture — the Playwright e2e stack sets it via
+   * {@code APP_AUTH_RATE_LIMIT_E2E_BYPASS=true} in
+   * {@code frontend/playwright.config.ts}. The thirteen e2e flows share
+   * one backend and one client IP (127.0.0.1), so their register/login
+   * bursts exhaust the production 5/minute bucket mid-suite (main run
+   * 42734704718: register expected 200, got 429) even though each flow
+   * on its own stays under the ceiling — the per-flow worst case of 3
+   * of 5 between successful-login resets does not survive thirteen
+   * flows back to back on a 1-token-per-12-seconds refill. The bypass
+   * removes that fragility at the test seam instead of weakening the
+   * production bucket or serialising the suite with sleeps. It must
+   * never be set on a real deployment: with it on, the login endpoint
+   * has no brute-force throttle at all.
+   */
+  private boolean e2eBypass = false;
+
+  public boolean isE2eBypass() {
+    return e2eBypass;
+  }
+
+  public void setE2eBypass(boolean e2eBypass) {
+    this.e2eBypass = e2eBypass;
   }
 
   /**

@@ -37,7 +37,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * unauthenticated (cookie-presented) and is otherwise a token-guessing
  * surface; it needs throttling of its own, but must neither share the tight
  * credential bucket (legitimate multi-tab clients refresh routinely) nor
- * consume it.
+ * consume it. The one exception is the e2e bypass (backlog #373,
+ * {@code app.auth.rate-limit.e2e-bypass}): when it is on, the credential
+ * limiter is built disabled, so login, register <em>and</em> refresh all
+ * pass the filter unthrottled — the should-not-filter gate for the three
+ * paths reads the credential limiter's enabled flag. The bypass is off by
+ * default and is set only on the throwaway Playwright backend; it must
+ * never be enabled on a real deployment.
  *
  * <p>The password-reset endpoints ({@code POST /api/auth/password-reset}
  * and {@code POST /api/auth/password-reset/confirm}, backlog #90) share a

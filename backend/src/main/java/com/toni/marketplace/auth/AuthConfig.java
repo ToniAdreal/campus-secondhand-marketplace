@@ -51,10 +51,23 @@ public class AuthConfig {
   /**
    * Token bucket for the credential endpoints
    * ({@code POST /api/auth/login}, {@code POST /api/auth/register}) —
-   * default 5 attempts/minute per client IP.
+   * default 5 attempts/minute per client IP. When the e2e bypass
+   * ({@link AuthRateLimitProperties#isE2eBypass}) is on, the bucket is
+   * built disabled instead — the Playwright e2e stack's thirteen flows
+   * share one backend and one client IP, so their register/login bursts
+   * exhaust the production bucket mid-suite (backlog #373). The bypass
+   * lifts login, register and refresh together (the filter's
+   * should-not-filter gate for all three reads this limiter's enabled
+   * flag); every other limiter keeps its own bucket.
    */
   @Bean
   public AuthRateLimiter credentialRateLimiter(Clock clock, AuthRateLimitProperties props) {
+    if (props.isE2eBypass()) {
+      AuthRateLimitProperties bypassProps = new AuthRateLimitProperties();
+      bypassProps.setEnabled(false);
+      bypassProps.setAttemptsPerMinute(props.getAttemptsPerMinute());
+      return new AuthRateLimiter(clock, bypassProps);
+    }
     return new AuthRateLimiter(clock, props);
   }
 

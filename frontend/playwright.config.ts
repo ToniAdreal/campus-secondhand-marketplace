@@ -26,6 +26,19 @@ import { defineConfig, devices } from '@playwright/test';
  *   env values, the spec signs in with the same credentials, and nothing
  *   about the mechanism is e2e-specific — it is the supported way to seed
  *   a real deployment's first admin too.
+ * - The backend also runs with the credential rate-limit bypass ON
+ *   (APP_AUTH_RATE_LIMIT_E2E_BYPASS=true, backlog #373). The thirteen
+ *   flows share one backend and one client IP (127.0.0.1), so their
+ *   register/login bursts exhaust the production 5/minute credential
+ *   bucket mid-suite (main run 42734704718: register expected 200, got
+ *   429) even though each flow on its own stays under the ceiling — the
+ *   per-flow worst case of 3 of 5 between successful-login resets does
+ *   not survive thirteen flows back to back on a 1-token-per-12-seconds
+ *   refill. The bypass lifts login, register and refresh together (they
+ *   share the filter's credential-bucket gate); every other limiter
+ *   keeps its own bucket, and the production bucket is unchanged. The
+ *   bypass is set only on this throwaway e2e backend, never on a real
+ *   deployment.
  * - Browsers are downloaded in CI only (`npx playwright install`). This
  *   repo's local sandbox has no Docker and no browsers, so locally the
  *   config + test list are checked (`npx playwright test --list`) and the
@@ -71,17 +84,10 @@ import { defineConfig, devices } from '@playwright/test';
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
  *   retried into green, and the thirteen flows share one backend (one H2
- *   database, per-IP auth rate-limit buckets), so they run serially. The
- *   credential-bucket arithmetic for the seven smoke flows is re-derived in the
- *   header of e2e/smoke.e2e.ts (worst run between login resets: 3 of 5),
- *   and the checkout journey's runs in the header of e2e/checkout.e2e.ts,
- *   and the messaging flow's runs in the header of e2e/messaging.e2e.ts,
- *   the moderation flow's runs in the header of e2e/moderation.e2e.ts,
- *   and the favorites + seller-follow flow's runs in the header of
- *   e2e/favorites.e2e.ts, and the saved-searches flow's runs in the
- *   header of e2e/savedSearches.e2e.ts, and the color-contrast pass's
- *   runs in the header of e2e/colorContrast.e2e.ts, and the mailed-sale
- *   flow's runs in the header of e2e/mailedSale.e2e.ts.
+ *   database), so they run serially. The credential-bucket arithmetic in
+ *   the per-spec headers is pre-bypass history (backlog #373): the
+ *   bypass, not the 3-of-5 arithmetic, is what keeps register/login from
+ *   429ing now.
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.
@@ -121,6 +127,8 @@ export default defineConfig({
       env: {
         // Verification stubbed off for the e2e stack only — see header.
         APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false',
+        // Credential rate-limit bypass for the e2e stack only — see header.
+        APP_AUTH_RATE_LIMIT_E2E_BYPASS: 'true',
         // First-admin bootstrap for the dispute flow — see header. These
         // must match ADMIN_ACCOUNT in e2e/smoke.e2e.ts; the account lives
         // only in this stack's in-memory H2 database.

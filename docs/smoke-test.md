@@ -359,10 +359,21 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   mints USER accounts, and the bootstrap is the supported way to create
   a deployment's first admin — the e2e stack points it at a throwaway
   account that lives only in the job's in-memory H2.
+- The backend also runs with the credential rate-limit bypass on
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the thirteen
+  flows share one backend and one client IP, so their register/login
+  bursts exhaust the production 5/minute credential bucket mid-suite
+  (main run 42734704718: register expected 200, got 429). The bypass
+  lifts login, register and refresh together; every other limiter
+  keeps its own bucket, and the production bucket is unchanged. It is
+  set only on this throwaway e2e backend, never on a real deployment.
 - `retries: 0`, `workers: 1` (the flows share one backend and its
-  per-IP auth rate-limit buckets). A flaky flow is fixed or deleted,
+  in-memory H2 database). A flaky flow is fixed or deleted,
   never retried into green; traces/screenshots are kept on failure and
-  uploaded by the CI job.
+  uploaded by the CI job. The credential-bucket arithmetic in the
+  per-spec headers is pre-bypass history (backlog #373): the bypass,
+  not the 3-of-5 arithmetic, is what keeps register/login from 429ing
+  now.
 
 Which layer proves what: backend behaviour — unit + Testcontainers IT;
 SPA components/routes in isolation — Vitest + RTL; API-through-proxy —
