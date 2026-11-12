@@ -372,17 +372,21 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   #320, driven by `AuthRateLimiterTest` — `SellerPayoutTransitions` —
   added by backlog #333, driven by `SellerPayoutTransitionsTest` — and
   `OrderReceiptService` — added by backlog #338, driven by
-  `OrderReceiptServiceTest` — and, since backlog #345, the eight
+  `OrderReceiptServiceTest` — and `AuditService` — added by backlog
+  #377, driven by `AuditServiceTest` — and, since backlog #345, the eight
   MockMvc suites driving the `OrderService` methods no pure suite
   reaches (`OrderCancelTest`, `OrderCompleteTest`, `OrderRefundTest`,
   `OrderDisputeTest`, `OrderShipmentTest`, `OrderReadTest`,
   `OrderHandoverCodeTest`, `OrderPaymentTest`)), in the CI-only `mutation` Maven profile /
   `backend-mutation` job — never in the default local `mvn test` path.
   The floor is a ratchet set from the latest real CI run's measured
-  score, recorded in docs/mutation.md; the score covers those eight
-  classes, not the codebase. The #269, #285, #320, #333, #338 and #345
-  widenings are measured: CI run 42434347952 (2026-11-08) scored
-  477/599 = 79.6% on the 8-class scope, and the floor is now 79
+  score, recorded in docs/mutation.md; the measured score covers the
+  eight classes it was run on, not the codebase. The #269, #285, #320,
+  #333, #338 and #345 widenings are measured: CI run 42434347952
+  (2026-11-08) scored 477/599 = 79.6% on the 8-class scope, and the
+  floor is now 79. Backlog #377 widens the scope to nine classes
+  (`AuditService`); its score is unmeasured until the next CI
+  backend-mutation run, and the floor stays 79 until then
   (docs/mutation.md).
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   thirteen flows (register lands on browse signed in; browse → listing detail

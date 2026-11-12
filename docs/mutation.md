@@ -30,12 +30,17 @@ units in the codebase and measures exactly that:
   disjunction, the zero-refunded-total → null map, the
   RESOLVED_REFUND-only dispute note, the latest-refunded-attempt
   reason, and the `"unknown"` username for a deleted account.
+- `com.toni.marketplace.audit.AuditService` (backlog #377)
+  — the append-only audit trail: the record/noop contract, the
+  ADMIN read projection, and the bounded CSV export with its
+  truncation flag.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
 `PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
 `TotpServiceTest`, `AuthRateLimiterTest`,
-`SellerPayoutTransitionsTest`, `OrderReceiptServiceTest`) — no
+`SellerPayoutTransitionsTest`, `OrderReceiptServiceTest`,
+`AuditServiceTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
 suites (recovery-code flow, lockout, encryption at rest) exercise
@@ -553,6 +558,48 @@ session-family methods (`createTotpChallenge`,
 in its eviction lambda. These are not survivors — no driving test
 reaches them at all — and closing them is a future widening item,
 not this one.
+
+### Widened scope, unmeasured (backlog #377, 2026-11-12)
+
+Backlog #377 adds exactly one more class to the PIT scope —
+`audit.AuditService` — driven by its pure unit suite
+`AuditServiceTest` (4 tests before this round, 8 after). The suite
+pinned the record/noop contract and the ADMIN read projection
+already; the round closes the one method the pure suite never
+reached — the bounded CSV export (`exportAuditLog`, backlog #232)
+— so the widened scope does not ship known unkilled mutants with
+it:
+
+- the `noop()` instance answers an empty, untruncated export and
+  never touches the repository;
+- a trail that fits the cap returns its rows with `truncated`
+  false, and the export asks for exactly one page of
+  `EXPORT_ROW_CAP` rows, newest first (`createdAt` DESC, `id` DESC
+  as tie-break) — the page shape is captured and pinned, not just
+  the returned rows;
+- a trail longer than the cap returns exactly the cap's rows with
+  `truncated` true;
+- a trail of exactly the cap's rows is *not* truncated — the
+  boundary of the `>` comparison, so the `>=` mutant dies here.
+
+The MockMvc export suites (`AuditLogExportTest`,
+`AuditLogExportRateLimitTest`) exercise the export through the
+controller and stay out of `targetTests` deliberately: every
+mutant would pay a Spring context boot for no new service branch,
+the same exclusion the TOTP, filter, payout and receipt suites
+already carry.
+
+The floor is **held at 79, not raised and not lowered**, on the same
+terms as #269/#285/#320/#333/#338: PIT cannot run in this sandbox —
+the measure-first step, an AuditService-only run at threshold 0 on
+2026-11-12, reproduced the sandbox failure in 41 s (1 mutation
+test unit created in the pre-scan, then the coverage minion died
+with `EOFException` reading its socket, `MINION_DIED`,
+`BUILD FAILURE`; log `hidden_files/pit-377-measure-first.log`), so
+no local 9-class score exists and none is claimed; the next CI
+`backend-mutation` run measures the widened scope, and the round
+that reads its `pit-reports` artifact re-ratchets the floor from
+that measured score, rounded down.
 
 ### First run, for contrast (backlog #192)
 

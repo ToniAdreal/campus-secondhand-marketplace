@@ -284,8 +284,9 @@
          policy (PasswordStrengthValidator, backlog #269), the TOTP
          service (TotpService, backlog #285) and the auth token bucket
          (AuthRateLimiter, backlog #320), the payout transitions
-         (SellerPayoutTransitions, backlog #333) and the order receipt
-         builder (OrderReceiptService, backlog #338), driven by
+         (SellerPayoutTransitions, backlog #333), the order receipt
+         builder (OrderReceiptService, backlog #338) and the audit
+         trail (AuditService, backlog #377), driven by
          their pure unit tests — plus, since backlog #345, the eight
          MockMvc suites that drive the OrderService methods no pure
          suite reaches (cancel / complete / refund / dispute /
@@ -327,7 +328,11 @@
          through the controller, but every mutant would pay a Spring
          context boot, and the pure suite already pins the service's
          own branches directly (same rationale as the TOTP MockMvc
-         exclusion in docs/mutation.md). The Spring/MockMvc filter suite
+         exclusion in docs/mutation.md). Backlog #377 widens the scope
+         once more (9 classes: AuditService, driven by its pure unit
+         suite AuditServiceTest) on the same terms: PIT cannot run in
+         this sandbox, so no local 9-class score exists and the floor
+         stays 79. The Spring/MockMvc filter suite
          AuthRateLimitTest is likewise NOT in targetTests: it exercises
          the limiter through the filter, but every mutant would pay a
          Spring context boot, and the pure suite already pins the
@@ -368,6 +373,7 @@
                 <param>com.toni.marketplace.auth.AuthRateLimiter</param>
                 <param>com.toni.marketplace.order.SellerPayoutTransitions</param>
                 <param>com.toni.marketplace.order.OrderReceiptService</param>
+                <param>com.toni.marketplace.audit.AuditService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -379,6 +385,7 @@
                 <param>com.toni.marketplace.auth.AuthRateLimiterTest</param>
                 <param>com.toni.marketplace.order.SellerPayoutTransitionsTest</param>
                 <param>com.toni.marketplace.order.OrderReceiptServiceTest</param>
+                <param>com.toni.marketplace.audit.AuditServiceTest</param>
                 <!-- Backlog #345: the eight MockMvc suites that drive the OrderService methods
                      no pure suite reaches (cancel / complete / refund / dispute / handover /
                      read paths) — the only drivers of the 162 NO_COVERAGE mutants from run

@@ -85,4 +85,105 @@ class AuditServiceTest {
         AuditTargetType.USER, 1L)).doesNotThrowAnyException();
     verifyNoInteractions(auditLog);
   }
+
+  @Test
+  void exportNoopInstanceReturnsEmptyUntruncatedExport() {
+    AuditService noop = AuditService.noop();
+
+    AuditService.ExportResult result = noop.exportAuditLog(null, null, null, null);
+
+    assertThat(result.rows()).isEmpty();
+    assertThat(result.truncated()).isFalse();
+    verifyNoInteractions(auditLog);
+  }
+
+  @Test
+  void exportReturnsRowsAndReportsNotTruncatedWhenTrailFitsCap() {
+    AuditLog row = new AuditLog(7L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER, 42L, NOW);
+    org.springframework.test.util.ReflectionTestUtils.setField(row, "id", 99L);
+    org.springframework.data.domain.PageRequest expectedPage =
+        org.springframework.data.domain.PageRequest.of(0, AuditService.EXPORT_ROW_CAP,
+            org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "createdAt", "id"));
+    org.mockito.Mockito.when(auditLog.searchAuditLog(7L, AuditAction.ORDER_REFUNDED,
+            AuditTargetType.ORDER, 42L, expectedPage))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(
+            java.util.List.of(row, row), expectedPage, 2));
+    AuditService service = new AuditService(auditLog, Clock.fixed(NOW, ZoneOffset.UTC));
+
+    AuditService.ExportResult result = service.exportAuditLog(7L, AuditAction.ORDER_REFUNDED,
+        AuditTargetType.ORDER, 42L);
+
+    assertThat(result.rows()).hasSize(2);
+    assertThat(result.rows().get(0).action()).isEqualTo(AuditAction.ORDER_REFUNDED);
+    assertThat(result.rows().get(0).targetId()).isEqualTo(42L);
+    assertThat(result.truncated()).isFalse();
+    assertThat(result.exportedAt()).isEqualTo(NOW);
+    org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pageableCaptor =
+        ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+    org.mockito.Mockito.verify(auditLog).searchAuditLog(
+        org.mockito.ArgumentMatchers.eq(7L),
+        org.mockito.ArgumentMatchers.eq(AuditAction.ORDER_REFUNDED),
+        org.mockito.ArgumentMatchers.eq(AuditTargetType.ORDER),
+        org.mockito.ArgumentMatchers.eq(42L),
+        pageableCaptor.capture());
+    assertThat(pageableCaptor.getValue().getPageNumber()).isZero();
+    assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(AuditService.EXPORT_ROW_CAP);
+    assertThat(pageableCaptor.getValue().getSort().getOrderFor("createdAt").getDirection())
+        .isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
+    assertThat(pageableCaptor.getValue().getSort().getOrderFor("id").getDirection())
+        .isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
+  }
+
+  @Test
+  void exportReportsTruncatedWhenTrailExceedsCap() {
+    java.util.List<AuditLog> rows = new java.util.ArrayList<>();
+    for (int i = 0; i < AuditService.EXPORT_ROW_CAP; i++) {
+      AuditLog row = new AuditLog(7L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER,
+          (long) i, NOW);
+      org.springframework.test.util.ReflectionTestUtils.setField(row, "id", (long) i + 1);
+      rows.add(row);
+    }
+    org.springframework.data.domain.PageRequest expectedPage =
+        org.springframework.data.domain.PageRequest.of(0, AuditService.EXPORT_ROW_CAP,
+            org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "createdAt", "id"));
+    org.mockito.Mockito.when(auditLog.searchAuditLog(7L, AuditAction.ORDER_REFUNDED,
+            AuditTargetType.ORDER, 42L, expectedPage))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(
+            rows, expectedPage, AuditService.EXPORT_ROW_CAP + 1));
+    AuditService service = new AuditService(auditLog, Clock.fixed(NOW, ZoneOffset.UTC));
+
+    AuditService.ExportResult result = service.exportAuditLog(7L, AuditAction.ORDER_REFUNDED,
+        AuditTargetType.ORDER, 42L);
+
+    assertThat(result.rows()).hasSize(AuditService.EXPORT_ROW_CAP);
+    assertThat(result.truncated()).isTrue();
+  }
+
+  @Test
+  void exportAtExactlyTheCapIsNotTruncated() {
+    java.util.List<AuditLog> rows = new java.util.ArrayList<>();
+    for (int i = 0; i < AuditService.EXPORT_ROW_CAP; i++) {
+      AuditLog row = new AuditLog(7L, AuditAction.ORDER_REFUNDED, AuditTargetType.ORDER,
+          (long) i, NOW);
+      org.springframework.test.util.ReflectionTestUtils.setField(row, "id", (long) i + 1);
+      rows.add(row);
+    }
+    org.springframework.data.domain.PageRequest expectedPage =
+        org.springframework.data.domain.PageRequest.of(0, AuditService.EXPORT_ROW_CAP,
+            org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "createdAt", "id"));
+    org.mockito.Mockito.when(auditLog.searchAuditLog(7L, AuditAction.ORDER_REFUNDED,
+            AuditTargetType.ORDER, 42L, expectedPage))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(
+            rows, expectedPage, AuditService.EXPORT_ROW_CAP));
+    AuditService service = new AuditService(auditLog, Clock.fixed(NOW, ZoneOffset.UTC));
+
+    AuditService.ExportResult result = service.exportAuditLog(7L, AuditAction.ORDER_REFUNDED,
+        AuditTargetType.ORDER, 42L);
+
+    assertThat(result.rows()).hasSize(AuditService.EXPORT_ROW_CAP);
+    assertThat(result.truncated()).isFalse();
+  }
 }
