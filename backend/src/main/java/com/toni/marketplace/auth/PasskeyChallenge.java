@@ -10,6 +10,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Server-side record of one issued WebAuthn challenge (backlog #220),
@@ -41,7 +43,15 @@ public class PasskeyChallenge {
   @Column(name = "user_id", nullable = false)
   private Long userId;
 
+  // @JdbcTypeCode(VARCHAR) is load-bearing, not style (backlog #384): a bare
+  // @Enumerated(STRING) makes Hibernate map this column to MySQL ENUM, and
+  // schema validation (ddl-auto: validate) then fails the boot against the
+  // VARCHAR(16) Flyway V64 column — every *IT errored 36/36 and the compose
+  // backend died at boot on main run 43051043443. Every other STRING enum in
+  // the codebase carries this annotation; this field was the only one missing
+  // it. The ArchUnit rule in ArchitectureTest pins the convention.
   @Enumerated(EnumType.STRING)
+  @JdbcTypeCode(SqlTypes.VARCHAR)
   @Column(name = "purpose", nullable = false, length = 16)
   private PasskeyChallengePurpose purpose;
 

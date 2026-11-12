@@ -1,6 +1,7 @@
 package com.toni.marketplace;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.toni.marketplace.audit.AuditAction;
@@ -8,6 +9,7 @@ import com.toni.marketplace.audit.AuditService;
 import com.toni.marketplace.audit.AuditTargetType;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaField;
 import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -16,10 +18,14 @@ import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -80,6 +86,9 @@ import org.springframework.web.bind.annotation.RestController;
  *       the item/ store. DisputeService is the single documented exception:
  *       dispute resolution refunds the order and releases the listing in one
  *       transition, so it writes dispute/ + order/ + item/ together.
+ * <li>STRING-mapped enum fields carry {@code @JdbcTypeCode(SqlTypes.VARCHAR)}
+ *     (backlog #384): a bare {@code @Enumerated(STRING)} maps to MySQL ENUM and
+ *     fails schema validation against the VARCHAR Flyway column.
  * </ul>
  */
 @AnalyzeClasses(
@@ -226,6 +235,49 @@ class ArchitectureTest {
                   + " documented exception — dispute resolution refunds the order and"
                   + " releases the listing in a single transition, so it writes dispute/ +"
                   + " order/ + item/ together");
+
+  @ArchTest
+  static final ArchRule string_enums_map_to_varchar =
+      fields()
+          .that()
+          .areAnnotatedWith(Enumerated.class)
+          .should(beVarcharWhenStringMapped())
+          .because(
+              "a bare @Enumerated(STRING) makes Hibernate map the column to MySQL ENUM, and"
+                  + " schema validation (ddl-auto: validate) then fails the boot against the"
+                  + " VARCHAR Flyway column — PasskeyChallenge.purpose did exactly this"
+                  + " (backlog #384): every *IT errored 36/36 and the compose backend died at"
+                  + " boot on main run 43051043443, while H2 stayed green because it maps"
+                  + " the enum to VARCHAR. Every STRING-mapped enum field carries"
+                  + " @JdbcTypeCode(SqlTypes.VARCHAR); ORDINAL-mapped fields are out of scope");
+
+  /**
+   * STRING-mapped enum fields must carry {@code @JdbcTypeCode(SqlTypes.VARCHAR)}; a field
+   * mapped any other way (e.g. ORDINAL) passes unchecked.
+   */
+  private static ArchCondition<JavaField> beVarcharWhenStringMapped() {
+    return new ArchCondition<JavaField>("carry @JdbcTypeCode(SqlTypes.VARCHAR) when STRING-mapped") {
+      @Override
+      public void check(JavaField field, ConditionEvents events) {
+        Enumerated enumerated = field.getAnnotationOfType(Enumerated.class);
+        if (enumerated == null || enumerated.value() != EnumType.STRING) {
+          return;
+        }
+        JdbcTypeCode jdbcTypeCode = field.getAnnotationOfType(JdbcTypeCode.class);
+        if (jdbcTypeCode == null || jdbcTypeCode.value() != SqlTypes.VARCHAR) {
+          events.add(
+              SimpleConditionEvent.violated(
+                  field,
+                  field.getOwner().getName()
+                      + "."
+                      + field.getName()
+                      + " is @Enumerated(STRING) without @JdbcTypeCode(SqlTypes.VARCHAR)"
+                      + " — Hibernate maps it to MySQL ENUM and schema validation fails"
+                      + " against the VARCHAR Flyway column (backlog #384)"));
+        }
+      }
+    };
+  }
 
   private static DescribedPredicate<JavaClass> notDisputeService() {
     return new DescribedPredicate<JavaClass>("not DisputeService") {
