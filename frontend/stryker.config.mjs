@@ -19,9 +19,12 @@
  * mutation range (`file:startLine-endLine`) covering exactly one
  * `describe*Error` mapper function, so the hooks, queries and
  * mutations that share those api modules are never mutated — only
- * the 34 pure error-copy mappers (messages, categories, orders ×9,
- * items ×4, admin ×6, reports ×2, offers, disputes ×3, appeals ×2,
- * reviews ×3, auth step-up, client request) are in scope. The ranges
+ * the 36 pure error-copy mapper ranges (messages, categories,
+ * orders ×9, items ×4, admin ×8, reports ×2, offers, disputes ×3,
+ * appeals ×2, reviews ×3, auth step-up, client request) are in
+ * scope. (The admin ×8 is ranges, not mappers: 7 `describe*Error`
+ * mappers plus the pre-existing 475-490 `useAdminPaymentAttempts`
+ * hook range.) The ranges
  * were taken from the TypeScript AST (function start/end lines), not
  * hand-counted, so a mapper that moves lines must have its range
  * re-derived. Widening the scope further still requires
@@ -112,6 +115,20 @@
  * re-derived ranges above are a LANDED scope (see
  * docs/mutation-frontend.md, "Ninth measured run"). The #322
  * survivors the killing tests targeted are all dead.
+ * #376 adds the two admin mapper ranges the #287 scope missed
+ * (`describePaymentAttemptsError` 497-512 and
+ * `describeDashboardError` 637-652, to EOF), both driven by the
+ * existing `admin.test.tsx` mapper suites, and re-scopes the
+ * settlement range 562-577 to the exact `describeSettlementError`
+ * span 550-565: the old range tail-covered only 562-565 of the
+ * function and spilled into `formatCents` plus the dashboard
+ * constants (the #351 wrong-code failure mode). Admin ranges are
+ * now 8 (7 mappers + the pre-existing 475-490
+ * `useAdminPaymentAttempts` hook range); the mapper-range total
+ * above is 36. Unmeasured locally — Stryker cannot run in this
+ * sandbox — the next CI `frontend-mutation` run measures the
+ * widened scope; the floor stays 91 until a measured run says
+ * otherwise. No production-code change.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -147,7 +164,9 @@ export default {
     'src/api/admin.ts:358-373',
     'src/api/admin.ts:422-437',
     'src/api/admin.ts:475-490',
-    'src/api/admin.ts:562-577',
+    'src/api/admin.ts:497-512',
+    'src/api/admin.ts:550-565',
+    'src/api/admin.ts:637-652',
     'src/api/reports.ts:52-73',
     'src/api/reports.ts:146-167',
     'src/api/offers.ts:183-207',

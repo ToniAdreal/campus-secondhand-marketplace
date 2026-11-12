@@ -16,9 +16,11 @@ PIT pilot (backlog #192, docs/mutation.md):
   remaining zustand store: the preference initialised from storage
   at creation, `setPreference` persisting + applying in one step.
   With it, every zustand store in the codebase is now in scope.
-- The 34 `describe*Error` mapper functions in the api modules
+- The 36 `describe*Error` mapper ranges in the api modules
   (measured by #287, landed in the combined run — see "Fifth
-  measured run" below; the ranges are in the gate) — as Stryker
+  measured run" below; #376 added the two admin mappers the #287
+  scope missed and re-scoped the settlement range — see "Tenth
+  scope change" below; the ranges are in the gate) — as Stryker
   mutation ranges, one per function
   (see `frontend/stryker.config.mjs` for the exact ranges): the
   error-copy mappers only, never the hooks, queries or mutations
@@ -469,6 +471,28 @@ material — they do not block the landing, because the gate is
 the combined score, not any single file. Backlog #351 is done; a
 future widening still requires re-measuring first, per the #263
 method.
+
+### Tenth scope change (backlog #376) — admin mapper ranges, unmeasured
+
+The #287 scope missed two admin mappers and mis-scoped a third.
+`frontend/stryker.config.mjs` now also mutates
+`describePaymentAttemptsError` (497-512) and `describeDashboardError`
+(637-652, to EOF), both driven by the existing `admin.test.tsx`
+mapper suites, and the settlement range moves 562-577 → 550-565:
+the old range covered only the tail of `describeSettlementError`
+(550-565 — the backlog spec's 550-567 overshoots by the blank line
+plus the `formatCents` JSDoc) and spilled into `formatCents` and
+the dashboard constants, the #351 wrong-code failure mode. Admin
+ranges are now 8 (7 mappers + the pre-existing 475-490
+`useAdminPaymentAttempts` hook range); the mapper-range total is
+36. Unmeasured locally (Stryker cannot run in this sandbox); the
+next CI `frontend-mutation` run measures the widened scope, and
+the floor stays 91 until a measured run says otherwise. No
+production-code change. Follow-up material: the 358-373 and
+422-437 ranges show the same partial-coverage pattern
+(`describeWebhookEventsError` spans 363-378,
+`describeWebhookReplayError` spans 430-448) and are left for a
+later item.
 
 ## Surviving mutants
 
