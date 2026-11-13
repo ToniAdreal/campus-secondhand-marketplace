@@ -54,6 +54,7 @@ class AdminPaymentController {
    * in the JSON envelope.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "settlement summary (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "inverted date window — from must be before to (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)")})
@@ -79,6 +80,7 @@ class AdminPaymentController {
    * or signature is stored, so none can leak).
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "webhook events, newest first (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "unknown outcome filter (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)")})
@@ -102,6 +104,7 @@ class AdminPaymentController {
    * payment token is never stored in the ledger, so none can leak).
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "payment attempts, newest first (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "unknown outcome filter (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)")})
@@ -124,6 +127,7 @@ class AdminPaymentController {
    * principal — there is no actor parameter anywhere.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "replay acknowledgement — duplicate no-op or newly applied (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "unauthenticated (envelope), or the recorded event is outside the freshness window (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "not an ADMIN (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "unknown webhook event id (envelope)")})

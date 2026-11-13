@@ -44,6 +44,8 @@ class AdminAppealController {
    * oversized sizes.
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "appeals, newest first (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
           description = "unauthenticated (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",

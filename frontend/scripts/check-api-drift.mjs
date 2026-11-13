@@ -10,14 +10,15 @@
 //
 // Honest scope (backlog #258 extends #205, #264 extends #258, #271
 // types the last blind spots, #274 adds the third tranche, #281 adds
-// the fourth): paths +
+// the fourth, #378 adds the fifth): paths +
 // methods for every frontend api call, PLUS request/response shapes
 // for the pinned tranches in api-shape-pins.mjs (auth session core +
 // orders surface + items/messages/notifications/reviews surfaces +
 // offers/payouts/disputes surfaces + favorites/follows/blocks/
-// saved-searches/recently-viewed surfaces). A renamed request/response field
-// on a pinned operation fails this gate; unpinned surfaces
-// (2FA/passkey/session/device auth) stay path+method-only.
+// saved-searches/recently-viewed surfaces + admin surfaces). A renamed
+// request/response field on a pinned operation fails this gate;
+// unpinned surfaces (2FA/passkey/session/device auth) stay
+// path+method-only.
 // Register/login success bodies are pinned per status since #271
 // (the two success variants each carry a typed envelope now); see
 // the pins file header for the full mechanism. Two operations in the

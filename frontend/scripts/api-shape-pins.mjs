@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274 and #281).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274, #281 and #378).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -50,9 +50,18 @@
 // the refresh endpoint's typed return generates, while the 201/202
 // carry inline envelopes whose data is the RegisterResponse /
 // TotpChallengeResponse — no envelope component for those exists
-// anywhere else to reference. A pin entry without a `response` (or
-// `responseByStatus`) key is reported in the gate's summary as
-// response-unpinned, never silently passed as checked.
+// anywhere else to reference. Backlog #378 extends the #274 fix to
+// the admin payments/appeals/dashboard surfaces: the settlement,
+// webhook-viewer and payment-attempts lists, the webhook replay, the
+// appeals queue list and the dashboard all carried error-only
+// @ApiResponses, so their typed success bodies were invisible to the
+// gate; each now carries a bare 200 entry and is pinned against it,
+// never against an error carrier. The remaining admin operations
+// (users list/writes, reports list/transitions, appeals resolutions,
+// audit-log list) already carried a content-bearing 200 from their
+// return types and needed no annotation change. A pin entry without
+// a `response` (or `responseByStatus`) key is reported in the gate's
+// summary as response-unpinned, never silently passed as checked.
 //   POST /api/auth/logout pins the envelope only (response: {}) — the
 //   ApiResponseVoid data payload is untyped by design.
 //   POST /api/orders/{id}/pay pins no request: the SPA posts an empty
@@ -106,6 +115,25 @@
 // min/max price) are pinned as their base types, required, per the
 // #264 nullable rule, and the create request pins all five filter
 // fields as required: false, mirroring SavedSearchInput's optionality.
+//
+// Fifth tranche (backlog #378): the admin surfaces — every operation
+// the AdminUserController, AdminPaymentController,
+// AdminReportController, AdminAppealController,
+// AdminDashboardController and AuditLogController expose that the
+// SPA calls. The audit-log CSV export (GET
+// /api/admin/audit-log/export) carries no JSON body and stays
+// path+method-only, like the SSE stream in #264, so it has no pin
+// entry. Two deliberate omissions inside pinned rows: WebhookEventDto
+// gained replayCount/lastReplayAt in #170 but the SPA's
+// WebhookEventEntry type never picked them up, so the pins mirror the
+// SPA type and do not pin them; the audit-log row's action/targetType
+// are plain `string` in the SPA's AuditLogEntry type (the document
+// declares no enum on them either), so they pin as strings, not
+// against the AUDIT_ACTIONS / AUDIT_TARGET_TYPES allowlists, which
+// are filter values, not row fields. Nullable row fields
+// (pspReference, idempotencyKey, refundReason, note, listingRestored,
+// resolvedAt) pin as their base types, required, per the #264
+// nullable rule.
 
 const AUTH_USER_FIELDS = {
   id: 'integer',
@@ -470,6 +498,163 @@ const SAVED_SEARCH_FIELDS = {
   sort: 'string',
   matchCount: 'integer',
   createdAt: 'string',
+};
+
+// Fifth tranche (backlog #378): the admin surfaces. Field sets mirror
+// the frontend's admin.ts / reports.ts / appeals.ts types.
+const ADMIN_USER_FIELDS = {
+  id: 'integer',
+  username: 'string',
+  email: 'string',
+  roles: { type: 'array', items: 'string' },
+  disabled: 'boolean',
+  totpEnabled: 'boolean',
+  createdAt: 'string',
+};
+
+const PAGE_ADMIN_USER_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: ADMIN_USER_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const AUDIT_LOG_FIELDS = {
+  id: 'integer',
+  actorUserId: 'integer',
+  // Plain strings in the SPA's AuditLogEntry type (see header): the
+  // allowlist consts are filter values, not row fields.
+  action: 'string',
+  targetType: 'string',
+  targetId: 'integer',
+  createdAt: 'string',
+};
+
+const PAGE_AUDIT_LOG_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: AUDIT_LOG_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const SETTLEMENT_SUMMARY_FIELDS = {
+  capturedCents: 'integer',
+  refundedCents: 'integer',
+  netCents: 'integer',
+  totalOrders: 'integer',
+  pendingCount: 'integer',
+  paidCount: 'integer',
+  completedCount: 'integer',
+  cancelledCount: 'integer',
+  refundedCount: 'integer',
+};
+
+const WEBHOOK_EVENT_FIELDS = {
+  id: 'integer',
+  eventId: 'string',
+  eventType: 'string',
+  // Nullable in the SPA type (null when the event carries no order
+  // reference): pinned as the base type, required, per the #264 rule.
+  pspReference: 'string',
+  outcome: { type: 'string', enum: ['MATCHED', 'MISMATCH'] },
+  createdAt: 'string',
+};
+
+const PAGE_WEBHOOK_EVENT_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: WEBHOOK_EVENT_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const PAYMENT_ATTEMPT_FIELDS = {
+  id: 'integer',
+  orderId: 'integer',
+  outcome: { type: 'string', enum: ['SUCCEEDED', 'DECLINED', 'REFUNDED'] },
+  // Nullable in the SPA type: pinned as the base type, required, per
+  // the #264 nullable rule.
+  idempotencyKey: 'string',
+  refundReason: 'string',
+  createdAt: 'string',
+};
+
+const PAGE_PAYMENT_ATTEMPT_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: PAYMENT_ATTEMPT_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const WEBHOOK_REPLAY_ACK_FIELDS = {
+  id: 'integer',
+  eventId: 'string',
+  outcome: 'string',
+  duplicate: 'boolean',
+  applied: 'boolean',
+  replayCount: 'integer',
+  lastReplayAt: 'string',
+};
+
+const LISTING_REPORT_FIELDS = {
+  id: 'integer',
+  reporterId: 'integer',
+  itemId: 'integer',
+  reason: { type: 'string', enum: ['SPAM', 'SCAM', 'PROHIBITED', 'OTHER'] },
+  // Nullable in the SPA type (the reporter may file without a note):
+  // pinned as the base type, required, per the #264 rule.
+  note: 'string',
+  status: { type: 'string', enum: ['OPEN', 'DISMISSED', 'ACTIONED'] },
+  createdAt: 'string',
+};
+
+const PAGE_LISTING_REPORT_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: LISTING_REPORT_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const REPORT_APPEAL_FIELDS = {
+  id: 'integer',
+  reportId: 'integer',
+  itemId: 'integer',
+  sellerId: 'integer',
+  reason: 'string',
+  status: { type: 'string', enum: ['OPEN', 'UPHELD', 'REJECTED'] },
+  // Nullable in the SPA type (null until a resolution writes it):
+  // pinned as the base type, required, per the #264 rule.
+  listingRestored: 'boolean',
+  createdAt: 'string',
+  resolvedAt: 'string',
+};
+
+const PAGE_REPORT_APPEAL_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: REPORT_APPEAL_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const ADMIN_DASHBOARD_FIELDS = {
+  window: 'string',
+  windowStart: 'string',
+  usersRegistered: 'integer',
+  listingsCreated: 'integer',
+  listingsAvailableNow: 'integer',
+  listingsExpiredInWindow: 'integer',
+  ordersTotalInWindow: 'integer',
+  ordersPending: 'integer',
+  ordersPaid: 'integer',
+  ordersCompleted: 'integer',
+  ordersCancelled: 'integer',
+  ordersRefunded: 'integer',
+  ordersDisputed: 'integer',
+  captures: 'integer',
+  refunds: 'integer',
+  openReports: 'integer',
+  openDisputes: 'integer',
+  webhooksMatched: 'integer',
+  webhooksMismatched: 'integer',
 };
 
 export const API_SHAPE_PINS = [
@@ -944,5 +1129,92 @@ export const API_SHAPE_PINS = [
     method: 'GET',
     path: '/api/users/me/recently-viewed',
     response: { type: 'array', items: { type: 'object', fields: ITEM_FIELDS } },
+  },
+  // Admin surfaces (fifth tranche, backlog #378). The action POSTs
+  // carry no request pin: the SPA posts an empty body (disable /
+  // enable / totp-reset / dismiss / action / uphold / reject /
+  // replay), exactly like POST /api/orders/{id}/pay in the first
+  // tranche. The audit-log CSV export carries no JSON body and stays
+  // path+method-only, like the SSE stream in #264 — it has no entry
+  // here, and the gate's path+method check still covers it.
+  {
+    method: 'GET',
+    path: '/api/admin/users',
+    response: PAGE_ADMIN_USER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/users/{id}/disable',
+    response: ADMIN_USER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/users/{id}/enable',
+    response: ADMIN_USER_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/users/{id}/totp-reset',
+    response: ADMIN_USER_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/audit-log',
+    response: PAGE_AUDIT_LOG_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/payments/settlement',
+    response: SETTLEMENT_SUMMARY_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/payments/webhooks',
+    response: PAGE_WEBHOOK_EVENT_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/payments/attempts',
+    response: PAGE_PAYMENT_ATTEMPT_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/payments/webhooks/{id}/replay',
+    response: WEBHOOK_REPLAY_ACK_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/reports',
+    response: PAGE_LISTING_REPORT_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/reports/{id}/dismiss',
+    response: LISTING_REPORT_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/reports/{id}/action',
+    response: LISTING_REPORT_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/appeals',
+    response: PAGE_REPORT_APPEAL_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/appeals/{id}/uphold',
+    response: REPORT_APPEAL_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/admin/appeals/{id}/reject',
+    response: REPORT_APPEAL_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/admin/dashboard',
+    response: ADMIN_DASHBOARD_FIELDS,
   },
 ];

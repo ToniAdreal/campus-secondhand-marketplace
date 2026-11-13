@@ -336,9 +336,10 @@ class OpenApiContractTest {
     assertThat(responseCodes(docs, "/api/seller/sales/export.csv", "get"))
         .contains("400", "401");
     // ADMIN operations dashboard (#196) pins its unknown-window 400
-    // alongside the standard ADMIN 401/403 pair.
+    // alongside the standard ADMIN 401/403 pair. Backlog #378 adds the
+    // bare success 200 (fifth shape-pins tranche).
     assertThat(responseCodes(docs, "/api/admin/dashboard", "get"))
-        .contains("400", "401", "403");
+        .contains("200", "400", "401", "403");
     // Listing reports (#160): creation pins its own-listing 422 and its
     // per-user rate-limit 429; the ADMIN transitions pin unknown-id 404
     // and the cross-terminal 422.
@@ -498,18 +499,29 @@ class OpenApiContractTest {
         .contains("204", "400", "413", "429");
     // Webhook replay (#170): pins the ADMIN matrix plus the stale
     // event's 401 (the freshness re-check shares the unauthenticated
-    // code, as on the live receiver) and the unknown-id 404.
+    // code, as on the live receiver) and the unknown-id 404. Backlog
+    // #378 adds the bare success 200 (fifth shape-pins tranche), and
+    // the same tranche pins the settlement / webhook-viewer /
+    // payment-attempts lists' success 200 alongside their unknown-
+    // filter 400 and the ADMIN 401/403 pair.
+    assertThat(responseCodes(docs, "/api/admin/payments/settlement", "get"))
+        .contains("200", "400", "401", "403");
+    assertThat(responseCodes(docs, "/api/admin/payments/webhooks", "get"))
+        .contains("200", "400", "401", "403");
+    assertThat(responseCodes(docs, "/api/admin/payments/attempts", "get"))
+        .contains("200", "400", "401", "403");
     assertThat(responseCodes(docs, "/api/admin/payments/webhooks/{id}/replay", "post"))
-        .contains("401", "403", "404");
+        .contains("200", "401", "403", "404");
     // Report appeals (#190): filing pins its seller-only 403, unknown
     // report 404 and the not-ACTIONED / already-resolved 422; the ADMIN
     // queue pins 403 for non-admins and the resolutions pin the
     // unknown-appeal 404, the version-conflict 409 and the
-    // cross-resolution 422.
+    // cross-resolution 422. Backlog #378 adds the bare success 200 to
+    // the queue list (fifth shape-pins tranche).
     assertThat(responseCodes(docs, "/api/seller/reports/{id}/appeal", "post"))
         .contains("400", "401", "403", "404", "422");
     assertThat(responseCodes(docs, "/api/admin/appeals", "get"))
-        .contains("401", "403");
+        .contains("200", "401", "403");
     assertThat(responseCodes(docs, "/api/admin/appeals/{id}/uphold", "post"))
         .contains("401", "403", "404", "409", "422");
     assertThat(responseCodes(docs, "/api/admin/appeals/{id}/reject", "post"))

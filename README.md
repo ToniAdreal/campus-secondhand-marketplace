@@ -479,7 +479,8 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   surface, extended by backlog #264 to items/messages/notifications/
   reviews, by backlog #274 to offers/seller payouts/disputes, and by
   backlog #281 to favorites/follows/blocks/saved-searches/
-  recently-viewed)
+  recently-viewed, and by backlog #378 to the admin surfaces (users,
+  audit-log, payments, reports, appeals, dashboard))
   and fails when a field the SPA reads or sends disappears
   from the document or changes type. Since backlog #271 the gate
   prefers the 2xx carriers (a success-only field disappearing from
@@ -493,7 +494,13 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   no typed success body for the gate to pin. Backlog #281 pins the
   social graph the same way (the blocks writes pin the paths the SPA
   actually calls, `/api/users/{id}/block`, not the backlog's
-  `/api/users/me/blocks/{id}` shorthand). Honest scope:
+  `/api/users/me/blocks/{id}` shorthand). Backlog #378 extends that
+  annotation fix to the admin payments/appeals/dashboard surfaces,
+  whose settlement, webhook-viewer and payment-attempts lists, webhook
+  replay, appeals queue and dashboard carried error-only
+  `@ApiResponses` and therefore no typed success body for the gate to
+  pin (the remaining admin operations already carried a content-bearing
+  200 from their return types). Honest scope:
   unpinned surfaces (2FA/passkey/session/device auth) stay
   path+method-only, and the SSE stream, the notification row
   delete and the dispute evidence delete carry no pinnable body (the

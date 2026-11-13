@@ -39,6 +39,8 @@ class AdminDashboardController {
    */
   @io.swagger.v3.oas.annotations.responses.ApiResponses({
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
+          responseCode = "200", description = "dashboard counts for the window (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "400", description = "unknown window — must be 24h, 7d or 30d (envelope)"),
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "401", description = "unauthenticated (envelope)"),
