@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274, #281, #378 and #379).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274, #281, #378, #379 and #380).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -155,8 +155,26 @@
 // backlog's list names only its DELETE — it is the same device
 // surface's sibling read, called from the same module. DELETE
 // /api/auth/me (account closure, #158) is a different surface and
-// stays path+method-only, as do the export pair (CSV download and its
-// confirm, backlog #380's tranche).
+// stays path+method-only, as does the CSV export download (GET
+// /api/users/me/export — no JSON body); its confirm is pinned by the
+// seventh tranche (backlog #380), below.
+//
+// Seventh tranche (backlog #380): the straggler JSON surfaces —
+// GET /api/categories + its ADMIN writes, POST
+// /api/items/{itemId}/report, GET /api/messages/search and POST
+// /api/users/me/export/confirm. Like #379 it needed no backend
+// annotation change: every one of these operations already carries a
+// content-bearing 2xx envelope in the document (springdoc fills it
+// from the method's typed return). The category DELETE answers 204
+// and the SPA reads no body, so it carries a responseNote only, like
+// the void writes above. The CSV downloads (GET /api/users/me/export,
+// /api/seller/sales/export.csv, /api/admin/audit-log/export) carry no
+// JSON body and stay path+method-only, like the SSE stream in #264.
+// Two deliberate scope notes: the report-create response reuses
+// LISTING_REPORT_FIELDS (the same ListingReportDto the ADMIN queue
+// pins in #378), and the pin path names {itemId} as the frontend call
+// does — the controller's {id} is the same segment, and the gate
+// matches parameter names insensitively.
 
 const TOTP_SETUP_FIELDS = {
   secret: 'string',
@@ -633,6 +651,20 @@ const SAVED_SEARCH_FIELDS = {
   sort: 'string',
   matchCount: 'integer',
   createdAt: 'string',
+};
+
+// Seventh tranche (backlog #380): the straggler JSON surfaces. Field
+// sets mirror the frontend's categories.ts / reports.ts / messages.ts
+// (search) / auth.ts (export confirm) types.
+const CATEGORY_FIELDS = {
+  id: 'integer',
+  name: 'string',
+  slug: 'string',
+};
+
+const DATA_EXPORT_GRANT_FIELDS = {
+  grant: 'string',
+  expiresAt: 'string',
 };
 
 // Fifth tranche (backlog #378): the admin surfaces. Field sets mirror
@@ -1510,5 +1542,70 @@ export const API_SHAPE_PINS = [
     method: 'GET',
     path: '/api/admin/dashboard',
     response: ADMIN_DASHBOARD_FIELDS,
+  },
+  // Straggler JSON surfaces (seventh tranche, backlog #380). The
+  // category DELETE answers 204 and the SPA reads no body, so it
+  // carries a responseNote only (see header). The CSV downloads carry
+  // no JSON body and stay path+method-only — they have no entry here,
+  // and the gate's path+method check still covers them.
+  {
+    method: 'GET',
+    path: '/api/categories',
+    response: { type: 'array', items: { type: 'object', fields: CATEGORY_FIELDS } },
+  },
+  {
+    method: 'POST',
+    path: '/api/categories',
+    request: {
+      name: 'string',
+      // Optional in the SPA type (a blank slug is omitted from the
+      // body — the backend derives it on create): type-checked when
+      // present.
+      slug: { type: 'string', required: false },
+    },
+    response: CATEGORY_FIELDS,
+  },
+  {
+    method: 'PATCH',
+    path: '/api/categories/{id}',
+    request: {
+      name: 'string',
+      // Optional in the SPA type (omitting it keeps the current slug
+      // on rename): type-checked when present.
+      slug: { type: 'string', required: false },
+    },
+    response: CATEGORY_FIELDS,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/categories/{id}',
+    responseNote: '204 — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/items/{itemId}/report',
+    request: {
+      reason: { type: 'string', enum: ['SPAM', 'SCAM', 'PROHIBITED', 'OTHER'] },
+      // Optional in the SPA type (sent only when the reporter writes
+      // a note): type-checked when present.
+      note: { type: 'string', required: false },
+    },
+    response: LISTING_REPORT_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/messages/search',
+    response: PAGE_MESSAGE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/users/me/export/confirm',
+    request: {
+      currentPassword: 'string',
+      // Optional in the SPA type (only sent when 2FA is on):
+      // type-checked when present.
+      code: { type: 'string', required: false },
+    },
+    response: DATA_EXPORT_GRANT_FIELDS,
   },
 ];

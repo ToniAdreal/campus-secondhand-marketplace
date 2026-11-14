@@ -145,7 +145,7 @@ jobs:
 
   api-drift:
     # API drift gate (backlog #205, shapes pinned by #258, #264,
-    # #271, #274, #281, #378 and #379): the frontend api modules are hand-written against the
+    # #271, #274, #281, #378, #379 and #380): the frontend api modules are hand-written against the
     # backend with no codegen, so this job exports the OpenAPI
     # document from the backend contract-test path (the env-gated
     # OpenApiExportTest fetches /v3/api-docs exactly as
@@ -154,12 +154,14 @@ jobs:
     # request/response field on the auth + orders + items + messages
     # + notifications + reviews + offers + payouts + disputes
     # + favorites + follows + blocks + saved-searches + recently-viewed
-    # + admin + auth 2FA/passkey/session/device surfaces disappears or changes type (offers/payouts/disputes
+    # + admin + auth 2FA/passkey/session/device + categories/report-create/message-search/export-confirm
+    # surfaces disappears or changes type (offers/payouts/disputes
     # pinned by backlog #274; the dispute evidence delete stays
     # explicitly response-unpinned, as do the seven social-graph void
     # writes pinned by backlog #281; the admin surfaces pinned by
     # backlog #378; the auth 2FA/passkey/session/device surfaces
-    # pinned by backlog #379)
+    # pinned by backlog #379; the straggler JSON surfaces pinned by
+    # backlog #380)
     # (pins in frontend/scripts/api-shape-pins.mjs; since #271 the
     # gate prefers the 2xx carriers and register/login pin one
     # variant per success status — see the pins file header).

@@ -481,7 +481,9 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   backlog #281 to favorites/follows/blocks/saved-searches/
   recently-viewed, and by backlog #378 to the admin surfaces (users,
   audit-log, payments, reports, appeals, dashboard), and by backlog
-  #379 to the auth 2FA/passkey/session/device surfaces)
+  #379 to the auth 2FA/passkey/session/device surfaces, and by backlog
+  #380 to the straggler JSON surfaces (categories, report create,
+  message search, export confirm))
   and fails when a field the SPA reads or sends disappears
   from the document or changes type. Since backlog #271 the gate
   prefers the 2xx carriers (a success-only field disappearing from
@@ -506,16 +508,23 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   and #378 it needed no backend annotation change, because every one
   of those operations already carried a content-bearing 200 from its
   typed return; the ten ApiResponseVoid auth writes stay explicitly
-  response-unpinned like the social-graph ones. Honest scope:
-  the account-closure DELETE and the export pair stay
-  path+method-only (the former is a different surface, the latter is
-  backlog #380's tranche), and the SSE stream, the notification row
+  response-unpinned like the social-graph ones. Backlog #380 pins the
+  straggler JSON surfaces the same way — GET /api/categories and its
+  ADMIN writes, the report create, the message search and the export
+  confirm — and like #379 it needed no backend annotation change; the
+  category DELETE (204, no body read) stays explicitly
+  response-unpinned, and the CSV downloads stay path+method-only.
+  Honest scope:
+  the account-closure DELETE and the CSV export download stay
+  path+method-only (the former is a different surface, the latter
+  carries no JSON body), and the SSE stream, the notification row
   delete and the dispute evidence delete carry no pinnable body (the
   evidence delete is listed explicitly as response-unpinned in the
   gate summary — see the pins file header, as are the seven
   social-graph void writes: favorite save/unsave, follow/unfollow,
   block/unblock and saved-search delete, all ApiResponseVoid, and the
-  ten auth void writes pinned by backlog #379).
+  ten auth void writes pinned by backlog #379, and the category
+  delete pinned by backlog #380).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
