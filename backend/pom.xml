@@ -24,7 +24,7 @@
     <testcontainers.version>1.19.7</testcontainers.version>
     <springdoc.version>2.5.0</springdoc.version>
     <jacoco.version>0.8.12</jacoco.version>
-    <pitest.version>1.15.3</pitest.version>
+    <pitest.version>1.30.1</pitest.version>
     <pitest-junit5.version>1.2.1</pitest-junit5.version>
     <logstash-encoder.version>7.4</logstash-encoder.version>
     <webauthn4j.version>0.31.11.RELEASE</webauthn4j.version>
