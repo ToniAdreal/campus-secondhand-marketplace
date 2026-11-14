@@ -1,4 +1,4 @@
-// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274, #281 and #378).
+// Pinned request/response shapes for the api-drift gate (backlogs #258, #264, #271, #274, #281, #378 and #379).
 //
 // First tranche: the auth session core + the whole orders surface the
 // frontend api modules call (19 operations). The pins mirror the
@@ -87,7 +87,7 @@
 // lists the property whether or not a given row carries null, and a
 // renamed or retyped property is exactly the drift this gate catches.
 // The auth 2FA/passkey/session/device surfaces stay path+method-only
-// until a later tranche pins them.
+// until backlog #379 pins them (sixth tranche, below).
 //
 // Third tranche (backlog #274): the offers + seller payouts +
 // disputes surfaces — every operation those three api modules call,
@@ -134,6 +134,141 @@
 // (pspReference, idempotencyKey, refundReason, note, listingRestored,
 // resolvedAt) pin as their base types, required, per the #264
 // nullable rule.
+//
+// Sixth tranche (backlog #379): the auth 2FA/passkey/session/device
+// surfaces — every operation auth.ts and webauthn.ts call on them.
+// Unlike #274/#378 no backend annotation change was needed: every one
+// of these operations already carries a content-bearing 200 envelope
+// in the document (springdoc fills it from the method's typed
+// ApiResponse<...> return), so the pins check against the 2xx
+// carriers directly. The ten ApiResponseVoid writes (disable,
+// passkey delete, session delete, trusted-device delete, the two
+// password-reset calls, the two email-verification calls and the two
+// email-change calls) carry a responseNote only — the SPA reads no
+// body from any of them, exactly like the #274 evidence delete and
+// the #281 social-graph void writes. Two deliberate scope notes:
+// POST /api/auth/2fa/recovery-codes/regenerate is NOT pinned — no
+// frontend api module calls it (the SettingsPage regenerates codes
+// by re-running setup+enable, the #91 discipline), so there is no
+// frontend type to mirror and the gate's path+method check never sees
+// it either; and GET /api/auth/trusted-devices IS pinned although the
+// backlog's list names only its DELETE — it is the same device
+// surface's sibling read, called from the same module. DELETE
+// /api/auth/me (account closure, #158) is a different surface and
+// stays path+method-only, as do the export pair (CSV download and its
+// confirm, backlog #380's tranche).
+
+const TOTP_SETUP_FIELDS = {
+  secret: 'string',
+  otpauthUri: 'string',
+};
+
+const TOTP_ENABLE_FIELDS = {
+  recoveryCodes: { type: 'array', items: 'string' },
+};
+
+const TOTP_RECOVERY_COUNT_FIELDS = {
+  remaining: 'integer',
+};
+
+const PASSKEY_REGISTRATION_OPTIONS_FIELDS = {
+  challenge: 'string',
+  rpId: 'string',
+  rpName: 'string',
+  user: {
+    type: 'object',
+    fields: { id: 'string', name: 'string', displayName: 'string' },
+  },
+  excludeCredentials: { type: 'array', items: 'string' },
+  timeout: 'integer',
+  attestation: 'string',
+};
+
+const PASSKEY_REGISTRATION_RESULT_FIELDS = {
+  credentialId: 'string',
+};
+
+const PASSKEY_ASSERTION_OPTIONS_FIELDS = {
+  challenge: 'string',
+  rpId: 'string',
+  allowCredentials: { type: 'array', items: 'string' },
+  timeout: 'integer',
+  userVerification: 'string',
+};
+
+const PASSKEY_INFO_FIELDS = {
+  id: 'integer',
+  credentialId: 'string',
+  createdAt: 'string',
+  signCount: 'integer',
+  // Nullable in the SPA type (null for rows enrolled before #241 and
+  // for rows never used — see webauthn.ts): pinned as the base type,
+  // required, per the #264 nullable rule.
+  name: 'string',
+  lastUsedAt: 'string',
+};
+
+const SESSION_FIELDS = {
+  id: 'string',
+  // Nullable in the SPA type (null for sessions that predate the
+  // capture or clients that sent no User-Agent — see auth.ts):
+  // pinned as the base type, required, per the #264 nullable rule.
+  userAgent: 'string',
+  ipAddress: 'string',
+  createdAt: 'string',
+  lastActiveAt: 'string',
+  current: 'boolean',
+};
+
+const REVOKE_OTHER_SESSIONS_FIELDS = {
+  revokedCount: 'integer',
+};
+
+const TRUSTED_DEVICE_FIELDS = {
+  id: 'integer',
+  // Nullable in the SPA type, same rule as the session fields above.
+  userAgent: 'string',
+  ipAddress: 'string',
+  createdAt: 'string',
+  lastUsedAt: 'string',
+  expiresAt: 'string',
+};
+
+const LOGIN_EVENT_FIELDS = {
+  id: 'integer',
+  outcome: {
+    type: 'string',
+    enum: [
+      'SUCCESS',
+      'BAD_PASSWORD',
+      'UNKNOWN_USER',
+      'LOCKED',
+      'TOTP_REQUIRED',
+      'TOTP_FAILED',
+      'EMAIL_UNVERIFIED',
+    ],
+  },
+  identifier: 'string',
+  // Nullable in the SPA type (null when the client sent no
+  // User-Agent / the address was unknown): pinned as the base type,
+  // required, per the #264 nullable rule.
+  ipAddress: 'string',
+  userAgent: 'string',
+  createdAt: 'string',
+};
+
+const PAGE_LOGIN_EVENT_FIELDS = {
+  content: { type: 'array', items: { type: 'object', fields: LOGIN_EVENT_FIELDS } },
+  totalElements: 'integer',
+  totalPages: 'integer',
+  number: 'integer',
+};
+
+const STEP_UP_RESPONSE_FIELDS = {
+  accessToken: 'string',
+  tokenType: 'string',
+  expiresInSeconds: 'integer',
+};
 
 const AUTH_USER_FIELDS = {
   id: 'integer',
@@ -698,6 +833,165 @@ export const API_SHAPE_PINS = [
     path: '/api/auth/username',
     request: { username: 'string' },
     response: AUTH_USER_FIELDS,
+  },
+  // Auth 2FA/passkey/session/device surfaces (sixth tranche, backlog
+  // #379). The ten ApiResponseVoid writes carry a responseNote only
+  // (see header): the SPA reads no body from any of them.
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/setup',
+    response: TOTP_SETUP_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/enable',
+    request: { code: 'string' },
+    response: TOTP_ENABLE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/disable',
+    request: { currentPassword: 'string', code: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/2fa/recovery-codes/count',
+    response: TOTP_RECOVERY_COUNT_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/authenticate',
+    request: {
+      challenge: 'string',
+      code: 'string',
+      // Optional in the SPA type (only the passkey path sends it, only
+      // the trusted-device opt-in sends it): type-checked when present.
+      assertion: { type: 'string', required: false },
+      rememberDevice: { type: 'boolean', required: false },
+    },
+    response: AUTH_RESPONSE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/passkeys/registration/options',
+    response: PASSKEY_REGISTRATION_OPTIONS_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/passkeys/registration/verify',
+    request: {
+      credential: 'string',
+      // Optional in the SPA type (a blank name is omitted from the
+      // body): type-checked when present.
+      name: { type: 'string', required: false },
+    },
+    response: PASSKEY_REGISTRATION_RESULT_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/2fa/passkeys/assertion/options',
+    request: { challenge: 'string' },
+    response: PASSKEY_ASSERTION_OPTIONS_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/2fa/passkeys',
+    response: { type: 'array', items: { type: 'object', fields: PASSKEY_INFO_FIELDS } },
+  },
+  {
+    method: 'DELETE',
+    path: '/api/auth/2fa/passkeys/{id}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'PATCH',
+    path: '/api/auth/2fa/passkeys/{id}',
+    request: { name: 'string' },
+    response: PASSKEY_INFO_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/sessions',
+    response: { type: 'array', items: { type: 'object', fields: SESSION_FIELDS } },
+  },
+  {
+    method: 'DELETE',
+    path: '/api/auth/sessions/{id}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/sessions/revoke-others',
+    response: REVOKE_OTHER_SESSIONS_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/trusted-devices',
+    response: { type: 'array', items: { type: 'object', fields: TRUSTED_DEVICE_FIELDS } },
+  },
+  {
+    method: 'DELETE',
+    path: '/api/auth/trusted-devices/{id}',
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/password-reset',
+    request: { usernameOrEmail: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/password-reset/confirm',
+    request: { token: 'string', newPassword: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/email-verification/resend',
+    request: { email: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/email-verification/confirm',
+    request: { token: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/email-change',
+    request: { currentPassword: 'string', newEmail: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/email-change/confirm',
+    request: { token: 'string' },
+    responseNote: 'ApiResponseVoid — the SPA reads no body from this call',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/step-up',
+    request: {
+      currentPassword: 'string',
+      // Optional in the SPA type (only sent when 2FA is on):
+      // type-checked when present.
+      code: { type: 'string', required: false },
+    },
+    response: STEP_UP_RESPONSE_FIELDS,
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/password',
+    request: { currentPassword: 'string', newPassword: 'string' },
+    response: AUTH_RESPONSE_FIELDS,
+  },
+  {
+    method: 'GET',
+    path: '/api/auth/login-history',
+    response: PAGE_LOGIN_EVENT_FIELDS,
   },
   // Orders surface (every operation the api modules call).
   {

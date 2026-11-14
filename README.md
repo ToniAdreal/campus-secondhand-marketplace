@@ -480,7 +480,8 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   reviews, by backlog #274 to offers/seller payouts/disputes, and by
   backlog #281 to favorites/follows/blocks/saved-searches/
   recently-viewed, and by backlog #378 to the admin surfaces (users,
-  audit-log, payments, reports, appeals, dashboard))
+  audit-log, payments, reports, appeals, dashboard), and by backlog
+  #379 to the auth 2FA/passkey/session/device surfaces)
   and fails when a field the SPA reads or sends disappears
   from the document or changes type. Since backlog #271 the gate
   prefers the 2xx carriers (a success-only field disappearing from
@@ -500,14 +501,21 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   replay, appeals queue and dashboard carried error-only
   `@ApiResponses` and therefore no typed success body for the gate to
   pin (the remaining admin operations already carried a content-bearing
-  200 from their return types). Honest scope:
-  unpinned surfaces (2FA/passkey/session/device auth) stay
-  path+method-only, and the SSE stream, the notification row
+  200 from their return types). Backlog #379 pins the auth
+  2FA/passkey/session/device surfaces the same way — and unlike #274
+  and #378 it needed no backend annotation change, because every one
+  of those operations already carried a content-bearing 200 from its
+  typed return; the ten ApiResponseVoid auth writes stay explicitly
+  response-unpinned like the social-graph ones. Honest scope:
+  the account-closure DELETE and the export pair stay
+  path+method-only (the former is a different surface, the latter is
+  backlog #380's tranche), and the SSE stream, the notification row
   delete and the dispute evidence delete carry no pinnable body (the
   evidence delete is listed explicitly as response-unpinned in the
   gate summary — see the pins file header, as are the seven
   social-graph void writes: favorite save/unsave, follow/unfollow,
-  block/unblock and saved-search delete, all ApiResponseVoid).
+  block/unblock and saved-search delete, all ApiResponseVoid, and the
+  ten auth void writes pinned by backlog #379).
 - API docs: with the backend running, `GET /v3/api-docs` (OpenAPI JSON) and
   `/swagger-ui.html` — both require a Bearer access token (same rule as
   `/actuator/metrics`; the route map is not public in this demo's threat
