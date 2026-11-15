@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -38,6 +39,15 @@ import org.springframework.test.web.servlet.MvcResult;
  * <p>Deliberately NOT {@code @Transactional}, mirroring
  * {@link NotificationTest}: preference writes and notification records
  * must be committed by the calls themselves to be asserted here.
+ *
+ * <p>Notification assertions are scoped per recipient (backlog #381):
+ * the notification table is shared across every test class in one
+ * Surefire fork (in-memory H2, {@code DB_CLOSE_DELAY=-1}) and carries
+ * no foreign keys, so rows written by order-transition tests in other
+ * classes survive their cleanups and a global {@code findAll()} would
+ * fail this class for another class's rows. {@link #rowsFor} reads only
+ * the user under test, which is exactly what the preference seam
+ * promises.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -84,6 +94,17 @@ class NotificationPreferenceTest {
 
   private String token(User user) {
     return jwt.createTokenPair(user).accessToken();
+  }
+
+  /**
+   * The recipient-scoped notification read (backlog #381): the
+   * preference seam promises rows for one user, never for the table as
+   * a whole — see the class javadoc. The page cap (50) is far above
+   * anything one test records.
+   */
+  private List<Notification> rowsFor(User user) {
+    return notifications
+        .findByRecipientId(user.getId(), PageRequest.of(0, 50)).getContent();
   }
 
   @SuppressWarnings("unchecked")
@@ -159,7 +180,7 @@ class NotificationPreferenceTest {
     // Direct service call: no ambient transaction, so a publish would
     // fire immediately — a muted type must publish nothing at all.
     notificationService.record(user.getId(), NotificationType.ORDER_PAID, 4242L);
-    assertThat(notifications.findAll()).isEmpty();
+    assertThat(rowsFor(user)).isEmpty();
 
     assertThat(streamService.completeStreamsForUser(user.getId())).isEqualTo(1);
     String body = mockMvc.perform(asyncDispatch(stream))
@@ -168,7 +189,7 @@ class NotificationPreferenceTest {
 
     // The seam is selective: an unmuted type for the same user records.
     notificationService.record(user.getId(), NotificationType.ORDER_COMPLETED, 4242L);
-    assertThat(notifications.findAll())
+    assertThat(rowsFor(user))
         .extracting(Notification::getType)
         .containsExactly(NotificationType.ORDER_COMPLETED);
   }
@@ -182,7 +203,7 @@ class NotificationPreferenceTest {
 
     assertThat(preferences.findByUserId(user.getId())).hasSize(1);
     notificationService.record(user.getId(), NotificationType.ORDER_PAID, 4242L);
-    assertThat(notifications.findAll()).hasSize(1);
+    assertThat(rowsFor(user)).hasSize(1);
   }
 
   @Test
@@ -199,7 +220,7 @@ class NotificationPreferenceTest {
         user.getId(), NotificationType.LOGIN_NEW_DEVICE, false, Instant.now()));
     assertThat(catalogueRow(user, "LOGIN_NEW_DEVICE").get("enabled")).isEqualTo(true);
     notificationService.record(user.getId(), NotificationType.LOGIN_NEW_DEVICE, null);
-    assertThat(notifications.findAll())
+    assertThat(rowsFor(user))
         .extracting(Notification::getType)
         .containsExactly(NotificationType.LOGIN_NEW_DEVICE);
   }
@@ -225,6 +246,7 @@ class NotificationPreferenceTest {
 
     assertThat(catalogueRow(other, "ORDER_PAID").get("enabled")).isEqualTo(true);
     notificationService.record(other.getId(), NotificationType.ORDER_PAID, 4242L);
-    assertThat(notifications.findAll()).hasSize(1);
+    assertThat(rowsFor(other)).hasSize(1);
+    assertThat(rowsFor(muted)).isEmpty();
   }
 }

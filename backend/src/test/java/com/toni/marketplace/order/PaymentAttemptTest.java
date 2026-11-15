@@ -16,6 +16,7 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationRepository;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -66,6 +67,9 @@ class PaymentAttemptTest {
   private OrderRepository orders;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private PaymentAttemptRepository attempts;
 
   @Autowired
@@ -85,6 +89,11 @@ class PaymentAttemptTest {
 
   @AfterEach
   void cleanUp() {
+    // Backlog #381: this class drives transitions that record
+    // notification rows, and the notification table has no FKs —
+    // without this wipe the rows survive into the next class in
+    // the same fork and break its empty-table assertions.
+    notifications.deleteAll();
     attempts.deleteAll();
     keys.deleteAll();
     orders.deleteAll();

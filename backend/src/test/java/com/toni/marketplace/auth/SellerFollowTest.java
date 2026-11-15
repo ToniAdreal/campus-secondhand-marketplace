@@ -9,8 +9,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.toni.marketplace.item.ItemRepository;
+import com.toni.marketplace.notification.Notification;
 import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.notification.NotificationType;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -32,6 +35,14 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p>Deliberately NOT {@code @Transactional}, mirroring
  * {@code UserBlockTest}: each test owns its rows via unique usernames
  * and wipes the touched tables afterwards.
+ *
+ * <p>Notification assertions are scoped per recipient (backlog #381):
+ * the notification table is shared across every test class in one
+ * Surefire fork (in-memory H2, {@code DB_CLOSE_DELAY=-1}) and carries
+ * no foreign keys, so rows written by order-transition tests in other
+ * classes survive their cleanups and a global {@code findAll()} would
+ * fail this class for another class's rows. {@link #rowsFor} reads only
+ * the user under test, which is exactly what the fan-out promises.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -88,6 +99,17 @@ class SellerFollowTest {
 
   private String token(User user) {
     return jwt.createTokenPair(user).accessToken();
+  }
+
+  /**
+   * The recipient-scoped notification read (backlog #381): the fan-out
+   * promises rows for one follower, never for the table as a whole —
+   * see the class javadoc. The page cap (50) is far above anything one
+   * test publishes.
+   */
+  private List<Notification> rowsFor(User user) {
+    return notifications
+        .findByRecipientId(user.getId(), PageRequest.of(0, 50)).getContent();
   }
 
   private void follow(User follower, long sellerId) throws Exception {
@@ -232,7 +254,7 @@ class SellerFollowTest {
     // and publishing after the block notifies nobody.
     assertThat(follows.findAll()).isEmpty();
     publishListing(seller, "after the block");
-    assertThat(notifications.findAll()).isEmpty();
+    assertThat(rowsFor(caller)).isEmpty();
   }
 
   // --- Publish fan-out ---
@@ -260,13 +282,22 @@ class SellerFollowTest {
     }
     // The seller and a non-follower get nothing; the rows carry the
     // listing id and no order id.
-    assertThat(notifications.findAll()).hasSize(2);
+    assertThat(rowsFor(followerA)).hasSize(1);
+    assertThat(rowsFor(followerB)).hasSize(1);
+    assertThat(rowsFor(seller)).isEmpty();
+    assertThat(rowsFor(stranger)).isEmpty();
 
     // A second publish notifies again — no per-listing dedupe across
     // publishes.
     publishListing(seller, "campus bike 2");
-    assertThat(notifications.findAll()).hasSize(4);
-    assertThat(notifications.findAll()).allMatch(
+    assertThat(rowsFor(followerA)).hasSize(2);
+    assertThat(rowsFor(followerB)).hasSize(2);
+    assertThat(rowsFor(seller)).isEmpty();
+    assertThat(rowsFor(stranger)).isEmpty();
+    assertThat(rowsFor(followerA)).allMatch(
+        n -> n.getType() == NotificationType.SELLER_NEW_LISTING
+            && n.getOrderId() == null && n.getItemId() != null);
+    assertThat(rowsFor(followerB)).allMatch(
         n -> n.getType() == NotificationType.SELLER_NEW_LISTING
             && n.getOrderId() == null && n.getItemId() != null);
   }
@@ -285,7 +316,8 @@ class SellerFollowTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("DRAFT"))
         .andReturn().getResponse().getContentAsString();
-    assertThat(notifications.findAll()).isEmpty();
+    assertThat(rowsFor(follower)).isEmpty();
+    assertThat(rowsFor(seller)).isEmpty();
 
     long itemId = ((Number) com.jayway.jsonpath.JsonPath.read(draftId, "$.data.id")).longValue();
     mockMvc.perform(post("/api/items/{id}/publish", itemId)
@@ -293,10 +325,11 @@ class SellerFollowTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
 
-    assertThat(notifications.findAll()).hasSize(1);
-    assertThat(notifications.findAll().get(0).getType())
+    assertThat(rowsFor(follower)).hasSize(1);
+    assertThat(rowsFor(follower).get(0).getType())
         .isEqualTo(NotificationType.SELLER_NEW_LISTING);
-    assertThat(notifications.findAll().get(0).getItemId()).isEqualTo(itemId);
+    assertThat(rowsFor(follower).get(0).getItemId()).isEqualTo(itemId);
+    assertThat(rowsFor(seller)).isEmpty();
   }
 
   @Test
@@ -313,7 +346,7 @@ class SellerFollowTest {
         .andExpect(status().isOk());
 
     publishListing(seller, "muted bike");
-    assertThat(notifications.findAll()).isEmpty();
+    assertThat(rowsFor(follower)).isEmpty();
   }
 
   @Test

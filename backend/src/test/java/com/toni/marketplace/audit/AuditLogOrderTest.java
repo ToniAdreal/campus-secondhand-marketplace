@@ -16,6 +16,7 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationRepository;
 import com.toni.marketplace.order.IdempotencyKeyRepository;
 import com.toni.marketplace.order.OrderRepository;
 import java.util.EnumSet;
@@ -69,6 +70,9 @@ class AuditLogOrderTest {
   private OrderRepository orders;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private IdempotencyKeyRepository keys;
 
   @Autowired
@@ -82,6 +86,11 @@ class AuditLogOrderTest {
 
   @AfterEach
   void cleanUp() {
+    // Backlog #381: this class drives transitions that record
+    // notification rows, and the notification table has no FKs —
+    // without this wipe the rows survive into the next class in
+    // the same fork and break its empty-table assertions.
+    notifications.deleteAll();
     auditLog.deleteAll();
     keys.deleteAll();
     orders.deleteAll();

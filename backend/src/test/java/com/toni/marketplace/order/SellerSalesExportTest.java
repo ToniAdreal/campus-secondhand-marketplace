@@ -16,6 +16,7 @@ import com.toni.marketplace.auth.User;
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
+import com.toni.marketplace.notification.NotificationRepository;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
@@ -73,6 +74,9 @@ class SellerSalesExportTest {
   private OrderRepository orders;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private IdempotencyKeyRepository keys;
 
   @Autowired
@@ -89,6 +93,11 @@ class SellerSalesExportTest {
 
   @AfterEach
   void cleanUp() {
+    // Backlog #381: this class drives transitions that record
+    // notification rows, and the notification table has no FKs —
+    // without this wipe the rows survive into the next class in
+    // the same fork and break its empty-table assertions.
+    notifications.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
     refreshTokens.deleteAll();

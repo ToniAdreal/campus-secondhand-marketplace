@@ -15,6 +15,7 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationRepository;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -61,6 +62,9 @@ class OrderExpiryTest {
   private OrderRepository orders;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private IdempotencyKeyRepository keys;
 
   @Autowired
@@ -77,6 +81,11 @@ class OrderExpiryTest {
 
   @AfterEach
   void cleanUp() {
+    // Backlog #381: this class drives transitions that record
+    // notification rows, and the notification table has no FKs —
+    // without this wipe the rows survive into the next class in
+    // the same fork and break its empty-table assertions.
+    notifications.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
     refreshTokens.deleteAll();

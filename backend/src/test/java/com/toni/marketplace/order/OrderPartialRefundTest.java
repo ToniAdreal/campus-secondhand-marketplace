@@ -16,6 +16,7 @@ import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import com.toni.marketplace.notification.NotificationRepository;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -71,6 +72,9 @@ class OrderPartialRefundTest {
   private OrderRepository orders;
 
   @Autowired
+  private NotificationRepository notifications;
+
+  @Autowired
   private IdempotencyKeyRepository keys;
 
   @Autowired
@@ -90,6 +94,11 @@ class OrderPartialRefundTest {
 
   @AfterEach
   void cleanUp() {
+    // Backlog #381: this class drives transitions that record
+    // notification rows, and the notification table has no FKs —
+    // without this wipe the rows survive into the next class in
+    // the same fork and break its empty-table assertions.
+    notifications.deleteAll();
     keys.deleteAll();
     orders.deleteAll();
     refreshTokens.deleteAll();
