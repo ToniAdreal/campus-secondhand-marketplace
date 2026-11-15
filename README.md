@@ -71,7 +71,7 @@ docker-compose.yml        mysql + backend jar + nginx (serves frontend, proxies 
 
 ```
 Browser ──(compose)──▶ nginx :80 ── /api ──▶ Spring Boot :8080 ──▶ MySQL 8 :3306
-                      ├─ / (SPA)                            │        (Flyway V1–V75)
+                      ├─ / (SPA)                            │        (Flyway V1–V76)
 Browser ──(local dev)──▶ Vite :5173 ── /api ──▶ Spring Boot :8080 ──▶ H2 (in-memory)
 ```
 
@@ -531,7 +531,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   model). Honest scope: the contract is generated from the controllers by
   springdoc; response codes springdoc cannot infer (402/409/422/423/202/429)
   are annotated by hand, and `OpenApiContractTest` pins the exact controller
-  path set (131 paths — a new endpoint fails the test until the contract is
+  path set (132 paths — a new endpoint fails the test until the contract is
   extended deliberately) plus those codes (402 on pay only), and sampled live
   error responses across controllers pin the `{code, message, data}` envelope
   shape (code equals the HTTP status, message non-blank, data null).
@@ -598,7 +598,7 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
 - [x] Webhook receiver MySQL race IT (backlog #161 — `PaymentWebhookMySqlIT` (Testcontainers MySQL 8, CI only): concurrent duplicate deliveries of one event id apply exactly once — one `webhook_event` row, both deliveries answered 200, the loser with the deduped `duplicate=true` ack carrying the stored outcome, never a 5xx or a leaked constraint error; a stale-timestamp (#149) delivery writes no row on the real engine; the race exposed the pre-#161 in-transaction duplicate-key catch answering the loser with a rollback-only 500, fixed by splitting the ledger insert into `WebhookEventRecorder` (`REQUIRES_NEW`, the `IdempotencyKeyService` pattern) with the dedupe re-read outside the failed transaction, and pinned on H2 by `PaymentWebhookConcurrencyTest`)
 - [x] X-Request-ID correlation filter (echo + MDC, JVM-local)
 - [x] OpenAPI contract via springdoc — `/v3/api-docs` + Swagger UI (both behind Bearer auth, like `/actuator/metrics`; the {code,message,data} envelope and the non-inferrable codes — login 202/423, pay 402/409, transitions 422 — are annotated on the controllers)
-- [x] Anonymous-access sweep (backlog #151 — `AnonymousAccessSweepTest` enumerates every operation in the OpenAPI document (148 operations over 131 paths) and calls each one without credentials: the operation set must equal the test's declared classification or the test fails, every authenticated operation must answer exactly 401 (never 200, never 5xx — the #127 fall-through class, where a new authenticated path without a SecurityConfig matcher slipped into the public `/api/auth/**` rule and 500'd on the null principal), and every public operation (the credential-carrying `/api/auth/**` flows + the HMAC-signed webhook + the browser-sent CSP report intake, #204) must answer its declared probe status; the actuator health/info probes (public 200) and metrics/docs (401) are pinned alongside. Classification follows the built chain, verified: `GET /api/categories` and `GET /api/items` are authenticated today, not public)
+- [x] Anonymous-access sweep (backlog #151 — `AnonymousAccessSweepTest` enumerates every operation in the OpenAPI document (149 operations over 132 paths) and calls each one without credentials: the operation set must equal the test's declared classification or the test fails, every authenticated operation must answer exactly 401 (never 200, never 5xx — the #127 fall-through class, where a new authenticated path without a SecurityConfig matcher slipped into the public `/api/auth/**` rule and 500'd on the null principal), and every public operation (the credential-carrying `/api/auth/**` flows + the HMAC-signed webhook + the browser-sent CSP report intake, #204) must answer its declared probe status; the actuator health/info probes (public 200) and metrics/docs (401) are pinned alongside. Classification follows the built chain, verified: `GET /api/categories` and `GET /api/items` are authenticated today, not public)
 - [x] Prometheus metrics export on /actuator/prometheus (behind auth)
 - [x] Auth security counters (login success/failure, lockout triggered, refresh theft detected, password changed) on /actuator/prometheus
 - [x] Order/payment counters (created, paid, cancelled, completed, refunded, expired, shipped, disputed, handover_confirmed — transitions only, idempotent replays excluded; plus payments.declined for declined captures) on /actuator/prometheus
