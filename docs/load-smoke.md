@@ -82,12 +82,16 @@ than measured; for latency the easier direction is up):
 
 One honest limitation of this run: the summary carries only the
 AGGREGATE `http_req_duration` — the script recorded no per-endpoint
-durations, so the per-endpoint p95 columns below cannot be filled from
-this run and read "not measured". This commit adds per-endpoint Trend
-metrics (`list_duration`, `detail_duration`, `order_create_duration`,
-`pay_duration`) to the script, so the next `load-smoke` run's summary
-carries them and a follow-up fills these cells. The aggregate
-threshold above is the gate until then.
+durations, so the per-endpoint p95 columns for run 42785916434 below
+cannot be filled from that run and read "not measured". This commit
+adds per-endpoint Trend metrics (`list_duration`, `detail_duration`,
+`order_create_duration`, `pay_duration`) to the script, so the next
+`load-smoke` run's summary carries them. That next run —
+42806090782, head `b41cd9e` (the very commit that added the Trends),
+2026-11-10 — is recorded in the second measurement section below
+with all four cells filled. The aggregate threshold above stays the
+gate until a follow-up considers per-endpoint thresholds from that
+measurement.
 
 The CI job still fails on failed k6 checks: a non-200 on a seeded read
 or a failed write step is a correctness defect, not a performance
@@ -110,9 +114,40 @@ measurement.
 k6 exports only the aggregate `http_req_duration` when the script
 records no per-endpoint Trends. The Trends landed with this commit;
 the next `load-smoke` run's summary carries them, and these cells are
-filled then. The aggregate p95 for that run was 8.51 ms across all
-4417 requests (2620 list + 1771 detail checks passed, 8/8 order+pay
-pairs, 8838 checks passed, 0 failed).
+filled in the second measurement section below. The aggregate p95 for
+that run was 8.51 ms across all 4417 requests (2620 list + 1771
+detail checks passed, 8/8 order+pay pairs, 8838 checks passed,
+0 failed).
+
+## Second CI measurement — per-endpoint p95 (run 42806090782, backlog #382)
+
+The first `load-smoke` run on main whose summary carries the
+per-endpoint Trends: CI run 42806090782 (head `b41cd9e`, the #365
+commit that added the Trends, `load-smoke` SUCCESS, 2026-11-10).
+Numbers below are read from that run's k6 summary, both the job
+log's `CUSTOM` section and the `k6-load-smoke-summary` artifact's
+`k6-summary.json` (they agree to the digit): 4424 requests, 0%
+failed (`http_req_failed` 0 out of 4424), checks 8852/8852 passed,
+aggregate `http_req_duration` p95 7.66 ms (p90 6.27, avg 4.26, med
+3.61, max 662.79), thresholds `p(95)<10` and `rate<0.01` both met.
+Reads: 2625 list + 1773 detail; order write path: 8/8 pairs (every
+order and pay check passed 8/8).
+
+| Run | Commit | p95 (list) | p95 (detail) | Error rate | Thresholds set |
+| --- | ------ | ---------- | ------------ | ---------- | -------------- |
+| 42806090782 | b41cd9e | 7.68 ms | 6.94 ms | 0% (0 failed / 4424 requests) | No — aggregate p95 < 10 ms gate stays |
+
+| Run | Commit | p95 (order create) | p95 (pay) | Pairs completed | Error rate | Thresholds set |
+| --- | ------ | ------------------ | --------- | --------------- | ---------- | -------------- |
+| 42806090782 | b41cd9e | 37.46 ms | 20.48 ms | 8/8 | 0% | No — aggregate p95 < 10 ms gate stays |
+
+Note the write-path p95s (37.46 ms create, 20.48 ms pay) sit well
+above the aggregate 10 ms gate: the aggregate is dominated by the
+fast reads (2625 + 1773 of 4424 requests), so the aggregate gate
+does not constrain the write path at all. A per-endpoint threshold
+would need its own measurement basis — one run is not enough to set
+one — so no per-endpoint thresholds are set here; the aggregate gate
+stays, and a follow-up may set them once more runs accumulate.
 
 ## Honest limits
 
