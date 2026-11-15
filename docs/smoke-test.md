@@ -57,6 +57,20 @@ export APP_BOOTSTRAP_ADMIN_EMAIL=smokeadmin@example.com
 export APP_BOOTSTRAP_ADMIN_PASSWORD=SmokeAdmin1234
 ```
 
+The same fail-fast applies to the refresh cookie's `Secure` flag (backlog
+#130): the backend refuses to boot on the `mysql` profile with
+`app.auth.cookie-secure=false` unless the operator sets the explicit
+local-only opt-out `app.auth.allow-insecure-cookie=true`
+(`RefreshCookieSecureStartupCheck`) — a 7-day httpOnly credential must
+never be served without `Secure` on an HTTPS deployment. This stack is
+plain HTTP on localhost only (nginx :80, no TLS), so a `Secure` cookie
+could never be stored here; `docker-compose.yml` therefore defaults the
+opt-out to `true` for this stack only (backlog #385 — the default is what
+unblocked the CI `docker-compose-smoke` and `backup-restore-drill` jobs,
+which died at boot on this check). An HTTPS deployment must set
+`APP_AUTH_COOKIE_SECURE=true` and leave the opt-out false instead — never
+copy this compose file to production as-is.
+
 ## Prerequisites
 
 - Docker Engine + Compose v2 (`docker compose`)
