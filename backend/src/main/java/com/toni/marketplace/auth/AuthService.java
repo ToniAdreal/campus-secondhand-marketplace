@@ -10,8 +10,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.server.ResponseStatusException;
 import com.toni.marketplace.audit.AuditAction;
 import com.toni.marketplace.audit.AuditService;
@@ -1885,8 +1887,22 @@ public class AuthService {
    * Consumes a refresh token and issues a fresh pair. The old token is
    * revoked by rotation; replaying it is treated as possible theft and
    * revokes the whole family — see {@link JwtTokenService#rotateRefreshToken}.
+   *
+   * <p>{@code noRollbackFor}: the theft / lifetime-cap revocation must
+   * survive the {@link InvalidRefreshTokenException} that follows it —
+   * the default rollback-on-{@link RuntimeException} would erase the
+   * delete with the transaction, so the "revoked" family lives on with
+   * every row intact (backlog #386: the H2 grace/lifetime suites never
+   * caught this because their own {@code @Transactional} reads the
+   * uncommitted delete, while the MySQL *IT exposed the surviving
+   * rows). Both overloads carry it: the one-arg form delegates by
+   * self-invocation, so the inner form's annotation alone would not
+   * govern the call, and a participating transaction marked
+   * rollback-only by the inner interceptor cannot be un-marked by the
+   * outer one. The failure paths mutate nothing else, so committing
+   * them is safe.
    */
-  @Transactional
+  @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
   public AuthResult refresh(String refreshToken) {
     return refresh(refreshToken, SessionMeta.unknown());
   }
@@ -1895,7 +1911,7 @@ public class AuthService {
    * Rotation variant that records the caller's device info
    * ({@link SessionMeta}) on the newly issued row (backlog #62).
    */
-  @Transactional
+  @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
   public AuthResult refresh(String refreshToken, SessionMeta meta) {
     // Backlog #153: exactly one auth.refresh.duration sample per call —
     // success on a completed rotation, failure when rotation throws.
@@ -1904,6 +1920,21 @@ public class AuthService {
       AuthResult result = refreshAttempt(refreshToken, meta);
       metrics().stopRefreshTimer(sample, true);
       return result;
+    } catch (ObjectOptimisticLockingFailureException e) {
+      // A rotation whose target row vanished mid-flight — a concurrent
+      // theft revocation deleted the family while this rotation was
+      // in progress — is a revoked session, not a 500: the session the
+      // caller presented is dead, so answer the same 401 as the theft
+      // path. The flush in JwtTokenService.rotateLive surfaces the
+      // conflict here (inside the method) instead of at commit, where
+      // it could not be translated. Mark rollback-only explicitly: the
+      // failed flush leaves the session unusable, so the transaction
+      // cannot commit; without the mark the noRollbackFor above would
+      // make the interceptor attempt a commit and rethrow the flush
+      // failure instead of this 401.
+      metrics().stopRefreshTimer(sample, false);
+      TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+      throw new InvalidRefreshTokenException("refresh token reused or expired; session revoked");
     } catch (RuntimeException e) {
       metrics().stopRefreshTimer(sample, false);
       throw e;

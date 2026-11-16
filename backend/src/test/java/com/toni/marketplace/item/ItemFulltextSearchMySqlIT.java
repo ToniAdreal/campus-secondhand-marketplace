@@ -2,13 +2,13 @@ package com.toni.marketplace.item;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -24,6 +24,19 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * the full-text path (relevance-ordered), not the H2 LIKE path (which would
  * return plain id order). Requires Docker; runs in CI via
  * {@code mvn verify -Pintegration}, not in the default unit-test phase.
+ *
+ * <p>Backlog #386 triage: the two search tests failed with zero matches
+ * not because of the mode, the index, or {@code ft_min_word_len} — the
+ * matcher *IT ({@code SavedSearchMatchMySqlIT}) passes under the same
+ * natural-language mode with its keyword in 3 of 4 rows — but because
+ * these tests seeded inside a {@code @Transactional} method: the MySQL
+ * 8.0 manual (§17.6.2.4, "InnoDB Full-Text Index Transaction
+ * Handling") states that full-text index updates "are processed at
+ * transaction commit time, which means that a full-text search can only
+ * see committed data", so the uncommitted seeds were invisible to
+ * {@code MATCH}. The tests therefore seed without an outer transaction
+ * (each save commits at once) and clean up in {@code @AfterEach},
+ * mirroring {@code OrderDisputeTest} / {@code SavedSearchMatchMySqlIT}.
  */
 @Testcontainers
 @SpringBootTest
@@ -42,6 +55,14 @@ class ItemFulltextSearchMySqlIT {
   @Autowired
   private CategoryRepository categories;
 
+  @AfterEach
+  void cleanUp() {
+    // No @Transactional rollback here (see the class javadoc): the seeds
+    // commit at once, so they are deleted explicitly. Categories are
+    // Flyway-seeded and untouched by these tests.
+    items.deleteAll();
+  }
+
   private Item listing(String title, String description, Long categoryId) {
     Item item = new Item(title, description, 1000L, 7L);
     if (categoryId != null) {
@@ -52,7 +73,6 @@ class ItemFulltextSearchMySqlIT {
   }
 
   @Test
-  @Transactional
   void fulltextSearch_returnsRelevanceOrderedMatches() {
     // "bike" occurs twice in the first listing (title + description) vs once
     // in the second: natural-language scoring ranks it first. The textbook
@@ -69,7 +89,6 @@ class ItemFulltextSearchMySqlIT {
   }
 
   @Test
-  @Transactional
   void fulltextSearch_composesWithCategoryFilter() {
     Long electronics = categories.findBySlug("electronics")
         .orElseThrow(() -> new IllegalStateException("Flyway V3 did not seed categories"))
@@ -85,7 +104,6 @@ class ItemFulltextSearchMySqlIT {
   }
 
   @Test
-  @Transactional
   void fulltextSearch_blankKeyword_fallsBackToUnfilteredList() {
     listing("Vintage road bike", "Lightweight road bike for commuting", null);
 

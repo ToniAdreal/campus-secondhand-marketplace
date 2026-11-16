@@ -78,7 +78,12 @@ import org.springframework.web.server.ResponseStatusException;
  *       (generated here if the seller never refunded, the #65 pattern),
  *       so the PSP replay guarantee is the same one
  *       {@code OrderService.refund} relies on — and the order goes to
- *       REFUNDED. The listing flips RESERVED → AVAILABLE only when it
+ *       REFUNDED. The claim (order REFUNDED + dispute RESOLVED_REFUND)
+ *       is flushed <em>before</em> the PSP seam is called, so a racing
+ *       resolution loses with 409 before any money moves (backlog #386:
+ *       the old order called the PSP first and a losing racer's refund
+ *       was counted by the mock, which no rollback can undo). The
+ *       listing flips RESERVED → AVAILABLE only when it
  *       is actually RESERVED (a PAID or SHIPPED dispute); a COMPLETED dispute's
  *       listing is already SOLD and stays SOLD. Which case applied is
  *       recorded on the dispute row ({@code listingRestored}).</li>
@@ -300,18 +305,18 @@ public class DisputeService {
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
             "dispute points at a missing order"));
     try {
-      // The mock refund seam, exactly once: the order-scoped refund key
-      // is generated once and stored on the order row (#65), so this
-      // call replays — never duplicates — if a crash retried it, and
-      // the idempotent re-resolve above returns before reaching here.
+      // Claim first (backlog #386): the order + dispute transition is
+      // flushed BEFORE the PSP seam is touched, so a racing resolution
+      // loses here with 409 before any money moves. The old order
+      // called the PSP first: the loser's refund was already counted
+      // by the mock — a non-transactional side effect no rollback can
+      // undo — and the race *IT saw phantom refunds for release wins.
       String refundKey = refundKeyFor(order);
       // Backlog #210: a dispute refund settles whatever is still
       // refundable — if the seller already made a partial refund while
       // the order was PAID, the dispute refunds only the remainder, and
       // the cumulative total lands exactly on the order amount.
       long remaining = order.getAmountCents() - order.getRefundedAmountCents();
-      PaymentService.RefundResult refund = payments.refund(order, refundKey, remaining);
-      order.setRefundId(refund.refundId());
       order.setRefundedAmountCents(order.getAmountCents());
       order.setRefundCount(order.getRefundCount() + 1);
       order.setStatus(OrderStatus.REFUNDED);
@@ -324,6 +329,21 @@ public class DisputeService {
         items.save(item);
         restored = true;
       }
+      orders.save(order);
+      orders.flush();
+      dispute.setStatus(DisputeStatus.RESOLVED_REFUND);
+      dispute.setListingRestored(restored);
+      dispute.setResolutionNote(resolutionNote);
+      dispute.setResolvedAt(clock().instant());
+      disputes.save(dispute);
+      disputes.flush();
+      // Only now, with the claim durable in this transaction, call the
+      // PSP: the order-scoped refund key is generated once and stored
+      // on the order row (#65), so this call replays — never
+      // duplicates — if a crash retried it, and the idempotent
+      // re-resolve above returns before reaching here.
+      PaymentService.RefundResult refund = payments.refund(order, refundKey, remaining);
+      order.setRefundId(refund.refundId());
       orders.save(order);
       orders.flush();
       // Mirror OrderService.refund's forget: the refund id is durable
@@ -339,12 +359,7 @@ public class DisputeService {
       if (payouts != null) {
         payouts.recordRefundAdjustment(order.getId(), remaining, "DISPUTE_REFUND");
       }
-      dispute.setStatus(DisputeStatus.RESOLVED_REFUND);
-      dispute.setListingRestored(restored);
-      dispute.setResolutionNote(resolutionNote);
-      dispute.setResolvedAt(clock().instant());
-      DisputeDto dto = DisputeDto.from(disputes.save(dispute));
-      disputes.flush();
+      DisputeDto dto = DisputeDto.from(dispute);
       audit().record(adminId, AuditAction.ORDER_DISPUTE_RESOLVED_REFUND,
           AuditTargetType.ORDER, dispute.getOrderId());
       notifications().record(dispute.getBuyerId(),

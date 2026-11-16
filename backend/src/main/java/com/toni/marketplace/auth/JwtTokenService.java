@@ -566,6 +566,13 @@ public class JwtTokenService {
     next.setUserAgent(meta.userAgent() != null ? meta.userAgent() : live.getUserAgent());
     next.setIpAddress(meta.ipAddress() != null ? meta.ipAddress() : live.getIpAddress());
     refreshTokens.save(next);
+    // Flush here, not at commit (backlog #386): if a concurrent theft
+    // revocation deleted this chain's rows after this rotation read
+    // them, the update of the vanished row fails here — inside the
+    // method, where AuthService.refresh can translate it to the same
+    // 401 as the theft path — instead of at commit, where the caller
+    // would see a 5xx for a session that is simply already dead.
+    refreshTokens.flush();
 
     JwtBuilder accessBuilder = Jwts.builder()
         .subject(subject)
