@@ -33,7 +33,11 @@ import org.springframework.transaction.annotation.Transactional;
  * and {@code DATA_EXPORTED} from {@code AccountDataExportService}
  * (backlog #172 — the one audited READ: the export hands the caller
  * every section of their own data, so the read itself is recorded,
- * actor = target = the account holder).
+ * actor = target = the account holder), and the offer lifecycle
+ * (backlog #389): {@code OFFER_ACCEPTED} / {@code OFFER_DECLINED} /
+ * {@code OFFER_COUNTERED} / {@code OFFER_COUNTER_ACCEPTED} /
+ * {@code OFFER_EXPIRED} from {@code OfferService} — actor is the
+ * acting side (the lapsing party on expiry), target is the offer row.
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}, and the
  * CSV export in backlog #232 ({@link #exportAuditLog} behind

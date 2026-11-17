@@ -150,6 +150,11 @@ describe('admin query keys', () => {
       'ORDER_SHIPPED',
       'ORDER_RECEIPT_CONFIRMED',
       'ORDER_REFUNDED',
+      'OFFER_ACCEPTED',
+      'OFFER_DECLINED',
+      'OFFER_COUNTERED',
+      'OFFER_COUNTER_ACCEPTED',
+      'OFFER_EXPIRED',
       'USER_DISABLED',
       'USER_ENABLED',
       'CATEGORY_CREATED',
@@ -157,7 +162,7 @@ describe('admin query keys', () => {
       'CATEGORY_DELETED',
       'WEBHOOK_EVENT_REPLAYED',
     ]);
-    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT']);
+    expect(AUDIT_TARGET_TYPES).toEqual(['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT', 'OFFER']);
   });
 });
 

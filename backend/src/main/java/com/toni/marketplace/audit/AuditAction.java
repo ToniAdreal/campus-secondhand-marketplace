@@ -170,6 +170,58 @@ public enum AuditAction {
    */
   ORDER_DISPUTE_RESOLVED_RELEASE,
   /**
+   * A seller accepted a PENDING price offer ({@code OfferService.accept},
+   * backlog #389). Actor is the accepting seller; target is the offer.
+   * The order is created at the AGREED price through
+   * {@code OrderCreationService} in the same transaction, so the row and
+   * the order commit or roll back together. A sequential re-accept is
+   * 422 before reaching the record call and writes no second row.
+   */
+  OFFER_ACCEPTED,
+  /**
+   * A price offer (or its counter) was declined ({@code
+   * OfferService.decline} for a seller declining a PENDING offer,
+   * {@code OfferService.counterDecline} for a buyer declining the
+   * seller's counter, backlog #389). Actor is the declining side — the
+   * seller on a PENDING decline, the buyer on a counter-decline — which
+   * is what tells the two apart, since both end the negotiation
+   * DECLINED. No order is created and the listing is untouched.
+   */
+  OFFER_DECLINED,
+  /**
+   * A seller countered a PENDING price offer ({@code OfferService.counter},
+   * backlog #389). Actor is the countering seller; target is the offer.
+   * The counter price is carried on the row as negotiation history.
+   */
+  OFFER_COUNTERED,
+  /**
+   * A buyer accepted the seller's counter price ({@code
+   * OfferService.counterAccept}, backlog #389). Actor is the accepting
+   * buyer; target is the offer. The order is created at the COUNTER
+   * price through {@code OrderCreationService} in the same transaction,
+   * so the row and the order commit or roll back together. A sequential
+   * re-accept is 422 before reaching the record call and writes no
+   * second row.
+   */
+  OFFER_COUNTER_ACCEPTED,
+  /**
+   * The expiry job flipped a stale PENDING or COUNTERED offer to
+   * EXPIRED ({@code OfferService.expireStaleOffer}, backlog #389).
+   * Actor is the party whose answer was awaited and never came — the
+   * seller on a PENDING expiry, the buyer on a COUNTERED expiry — so
+   * the row attributes the lapse to the side that let the deadline
+   * pass; the waiting party is the notification recipient, not the
+   * actor. Deliberately distinct from the #122 stale-order rule (an
+   * order expiry writes no row at all): an offer expiry is the end of
+   * a negotiation the trail is meant to show, and the action name
+   * itself says the system expired the row — the actor identifies whose
+   * unanswered deadline it was, never someone who performed an expiry.
+   * The lazy flip in the decision endpoints writes no row: it rolls
+   * back with the rejected decision, and the job's flip is the audited
+   * one. A sweep re-run finds the row EXPIRED and writes no second row.
+   */
+  OFFER_EXPIRED,
+  /**
    * The listing's seller appealed an ACTIONED report
    * ({@code ReportAppealService.createAppeal}, backlog #190). Actor is
    * the appealing seller. An idempotent re-file (returning the open

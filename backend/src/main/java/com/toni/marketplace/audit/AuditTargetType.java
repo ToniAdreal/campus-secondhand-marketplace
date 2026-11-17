@@ -15,5 +15,7 @@ public enum AuditTargetType {
   /** A {@code webhook_event} ledger row (ADMIN replay, backlog #170). */
   WEBHOOK_EVENT,
   /** A {@code report_appeal} row (seller appeal of an ACTIONED report, backlog #190). */
-  REPORT_APPEAL
+  REPORT_APPEAL,
+  /** A {@code price_offer} row (offer-lifecycle audit, backlog #389). */
+  OFFER
 }
