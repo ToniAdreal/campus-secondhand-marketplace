@@ -1,13 +1,17 @@
 package com.toni.marketplace.order;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.toni.marketplace.auth.MutableClock;
+import com.toni.marketplace.job.JobLockGuard;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -36,6 +40,9 @@ class PendingOrderExpiryServiceTest {
 
   @Mock
   private OrderService orderService;
+
+  @Mock
+  private JobLockGuard jobLock;
 
   private MutableClock clock;
   private OrderExpiryProperties props;
@@ -130,5 +137,67 @@ class PendingOrderExpiryServiceTest {
         .findIdsByStatusAndCreatedAtBefore(eq(OrderStatus.PENDING), any(), any(Pageable.class));
     assertThat(counts).isEqualTo(
         new PendingOrderExpiryService.ExpiryCounts(PendingOrderExpiryService.BATCH_SIZE, 0));
+  }
+
+  @Test
+  void lockHeld_returnsZeroCountsWithoutTouchingRepositories() {
+    when(jobLock.tryAcquire(PendingOrderExpiryService.LOCK_NAME)).thenReturn(false);
+    PendingOrderExpiryService locked =
+        new PendingOrderExpiryService(orders, orderService, props, clock, jobLock);
+
+    PendingOrderExpiryService.ExpiryCounts counts = locked.expireStalePendingOrders();
+
+    assertThat(counts).isEqualTo(new PendingOrderExpiryService.ExpiryCounts(0, 0));
+    verify(jobLock).tryAcquire(PendingOrderExpiryService.LOCK_NAME);
+    verifyNoInteractions(orders, orderService);
+    // A lease never held is never released.
+    verify(jobLock, never()).release(any());
+  }
+
+  @Test
+  void happyPath_releasesTheLease() {
+    when(jobLock.tryAcquire(PendingOrderExpiryService.LOCK_NAME)).thenReturn(true);
+    when(orders.findIdsByStatusAndCreatedAtBefore(any(), any(), any()))
+        .thenReturn(List.of(1L, 2L));
+    when(orderService.expireStaleOrder(eq(1L), any())).thenReturn(true);
+    when(orderService.expireStaleOrder(eq(2L), any())).thenReturn(true);
+    PendingOrderExpiryService guarded =
+        new PendingOrderExpiryService(orders, orderService, props, clock, jobLock);
+
+    clock.advance(Duration.ofMinutes(40));
+    PendingOrderExpiryService.ExpiryCounts counts = guarded.expireStalePendingOrders();
+
+    assertThat(counts).isEqualTo(new PendingOrderExpiryService.ExpiryCounts(2, 0));
+    verify(jobLock).release(PendingOrderExpiryService.LOCK_NAME);
+  }
+
+  @Test
+  void scanFailure_stillReleasesTheLease() {
+    when(jobLock.tryAcquire(PendingOrderExpiryService.LOCK_NAME)).thenReturn(true);
+    when(orders.findIdsByStatusAndCreatedAtBefore(any(), any(), any()))
+        .thenThrow(new IllegalStateException("db down"));
+    PendingOrderExpiryService guarded =
+        new PendingOrderExpiryService(orders, orderService, props, clock, jobLock);
+
+    assertThrows(IllegalStateException.class, guarded::expireStalePendingOrders);
+    verify(jobLock).release(PendingOrderExpiryService.LOCK_NAME);
+  }
+
+  @Test
+  void unexpectedFailureOnOneRow_skipsItAndContinuesTheBatch() {
+    when(orders.findIdsByStatusAndCreatedAtBefore(any(), any(), any()))
+        .thenReturn(List.of(1L, 2L));
+    // Row 1 blows up in its row transaction with something that is neither
+    // an answered row nor an optimistic-lock loss: the defensive catch
+    // skips it and the batch still expires row 2.
+    when(orderService.expireStaleOrder(eq(1L), any()))
+        .thenThrow(new IllegalStateException("row 1 broken"));
+    when(orderService.expireStaleOrder(eq(2L), any())).thenReturn(true);
+
+    clock.advance(Duration.ofMinutes(40));
+    PendingOrderExpiryService.ExpiryCounts counts = expiry.expireStalePendingOrders();
+
+    assertThat(counts).isEqualTo(new PendingOrderExpiryService.ExpiryCounts(1, 1));
+    verify(orderService, times(1)).expireStaleOrder(eq(2L), any());
   }
 }

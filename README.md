@@ -373,7 +373,10 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   added by backlog #333, driven by `SellerPayoutTransitionsTest` — and
   `OrderReceiptService` — added by backlog #338, driven by
   `OrderReceiptServiceTest` — and `AuditService` — added by backlog
-  #377, driven by `AuditServiceTest` — and, since backlog #345, the eight
+  #377, driven by `AuditServiceTest` — and `OfferExpiryService` —
+  added by backlog #387, driven by `OfferExpiryServiceTest` — and
+  `PendingOrderExpiryService` — added by backlog #387, driven by
+  `PendingOrderExpiryServiceTest` — and, since backlog #345, the eight
   MockMvc suites driving the `OrderService` methods no pure suite
   reaches (`OrderCancelTest`, `OrderCompleteTest`, `OrderRefundTest`,
   `OrderDisputeTest`, `OrderShipmentTest`, `OrderReadTest`,
@@ -384,10 +387,11 @@ Step-by-step smoke test: [docs/smoke-test.md](docs/smoke-test.md).
   eight classes it was run on, not the codebase. The #269, #285, #320,
   #333, #338 and #345 widenings are measured: CI run 42434347952
   (2026-11-08) scored 477/599 = 79.6% on the 8-class scope, and the
-  floor is now 79. Backlog #377 widens the scope to nine classes
-  (`AuditService`); its score is unmeasured until the next CI
-  backend-mutation run, and the floor stays 79 until then
-  (docs/mutation.md).
+  floor is now 79. Backlog #377 widened the scope to nine classes
+  (`AuditService`) and backlog #387 to eleven
+  (`OfferExpiryService`, `PendingOrderExpiryService`); their scores
+  are unmeasured until the next CI backend-mutation run, and the
+  floor stays 79 until then (docs/mutation.md).
 - `cd frontend && npm run e2e` — Playwright browser smoke (backlog #181):
   thirteen flows (register lands on browse signed in; browse → listing detail
   renders; login → create listing → it appears in My listings; buy-now →

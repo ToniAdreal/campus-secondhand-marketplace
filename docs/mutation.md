@@ -34,13 +34,19 @@ units in the codebase and measures exactly that:
   — the append-only audit trail: the record/noop contract, the
   ADMIN read projection, and the bounded CSV export with its
   truncation flag.
+- `com.toni.marketplace.offer.OfferExpiryService` +
+  `com.toni.marketplace.order.PendingOrderExpiryService` (backlog
+  #387) — the two 5-minute expiry sweeps: stale PENDING/COUNTERED
+  offers lapse, stale PENDING orders cancel and release their
+  listings, one row at a time behind the single-instance job lease.
 
 The driving tests are the pure unit suites for those classes
 (`JwtTokenServiceTest`, `JwtKeyRotationTest`, `OrderServiceTest`,
 `PasswordStrengthValidatorTest`, `BreachedPasswordCheckerTest`,
 `TotpServiceTest`, `AuthRateLimiterTest`,
 `SellerPayoutTransitionsTest`, `OrderReceiptServiceTest`,
-`AuditServiceTest`) — no
+`AuditServiceTest`, `OfferExpiryServiceTest`,
+`PendingOrderExpiryServiceTest`) — no
 Spring context, no database — so a mutant is killed by an assertion about
 behaviour, not by a context failing to boot. The Spring/MockMvc TOTP
 suites (recovery-code flow, lockout, encryption at rest) exercise
@@ -597,6 +603,42 @@ test unit created in the pre-scan, then the coverage minion died
 with `EOFException` reading its socket, `MINION_DIED`,
 `BUILD FAILURE`; log `hidden_files/pit-377-measure-first.log`), so
 no local 9-class score exists and none is claimed; the next CI
+`backend-mutation` run measures the widened scope, and the round
+that reads its `pit-reports` artifact re-ratchets the floor from
+that measured score, rounded down.
+
+### Widened scope, unmeasured (backlog #387, 2026-11-16)
+
+Backlog #387 adds two more classes to the PIT scope —
+`offer.OfferExpiryService` and `order.PendingOrderExpiryService` —
+driven by their pure unit suites (`OfferExpiryServiceTest`, 4 tests
+before this round, 9 after; `PendingOrderExpiryServiceTest`, 6
+before, 10 after). The suites already pinned the TTL arithmetic,
+the worklist query arguments, the batch counting and the per-row
+skip semantics; the round closes the branches they never reached,
+so the widened scope does not ship known unkilled mutants with it:
+
+- the lock-held path: a sweep that cannot take its single-instance
+  lease returns (0, 0) and touches neither the repository nor the
+  row service, and never releases a lease it never held;
+- the lease is released on the happy path and on a scan failure —
+  the `finally` holds in both directions;
+- a row whose transaction fails with an unexpected
+  `RuntimeException` (neither an answered row nor an optimistic-lock
+  loss) is skipped and the batch still expires the next row;
+- the offer sweep's full-page boundary: a full `BATCH_SIZE` page
+  re-scans, a partial page stops (the order sweep already pinned
+  this in
+  `PendingOrderExpiryServiceTest.fullPage_triggersAnotherScan_partialPageStops`).
+
+The floor is **held at 79, not raised and not lowered**, on the same
+terms as #269/#285/#320/#333/#338/#377: PIT cannot run in this
+sandbox — the measure-first step, an expiry-services-only run at
+threshold 0 on 2026-11-16, reproduced the sandbox failure in 26 s
+(2 mutation test units created in the pre-scan, then the coverage
+minion died with `EOFException` reading its socket, `MINION_DIED`,
+`BUILD FAILURE`; log `hidden_files/pit-387-measure-first.log`), so
+no local 11-class score exists and none is claimed; the next CI
 `backend-mutation` run measures the widened scope, and the round
 that reads its `pit-reports` artifact re-ratchets the floor from
 that measured score, rounded down.

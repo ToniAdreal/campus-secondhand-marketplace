@@ -374,6 +374,8 @@
                 <param>com.toni.marketplace.order.SellerPayoutTransitions</param>
                 <param>com.toni.marketplace.order.OrderReceiptService</param>
                 <param>com.toni.marketplace.audit.AuditService</param>
+                <param>com.toni.marketplace.offer.OfferExpiryService</param>
+                <param>com.toni.marketplace.order.PendingOrderExpiryService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -386,6 +388,8 @@
                 <param>com.toni.marketplace.order.SellerPayoutTransitionsTest</param>
                 <param>com.toni.marketplace.order.OrderReceiptServiceTest</param>
                 <param>com.toni.marketplace.audit.AuditServiceTest</param>
+                <param>com.toni.marketplace.offer.OfferExpiryServiceTest</param>
+                <param>com.toni.marketplace.order.PendingOrderExpiryServiceTest</param>
                 <!-- Backlog #345: the eight MockMvc suites that drive the OrderService methods
                      no pure suite reaches (cancel / complete / refund / dispute / handover /
                      read paths) — the only drivers of the 162 NO_COVERAGE mutants from run

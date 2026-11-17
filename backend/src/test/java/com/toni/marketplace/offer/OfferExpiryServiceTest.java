@@ -1,16 +1,21 @@
 package com.toni.marketplace.offer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.toni.marketplace.auth.MutableClock;
+import com.toni.marketplace.job.JobLockGuard;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.LongStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +39,9 @@ class OfferExpiryServiceTest {
 
   @Mock
   private OfferService offerService;
+
+  @Mock
+  private JobLockGuard jobLock;
 
   private MutableClock clock;
   private OfferProperties props;
@@ -101,5 +109,84 @@ class OfferExpiryServiceTest {
 
     assertThat(counts.expired()).isEqualTo(1);
     assertThat(counts.skipped()).isEqualTo(2);
+  }
+
+  @Test
+  void lockHeld_returnsZeroCountsWithoutTouchingRepositories() {
+    when(jobLock.tryAcquire(OfferExpiryService.LOCK_NAME)).thenReturn(false);
+    OfferExpiryService locked = new OfferExpiryService(offers, offerService, clock, jobLock);
+
+    OfferExpiryService.ExpiryCounts counts = locked.expireStaleOffers();
+
+    assertThat(counts).isEqualTo(new OfferExpiryService.ExpiryCounts(0, 0));
+    verify(jobLock).tryAcquire(OfferExpiryService.LOCK_NAME);
+    verifyNoInteractions(offers, offerService);
+    // A lease never held is never released.
+    verify(jobLock, never()).release(any());
+  }
+
+  @Test
+  void happyPath_releasesTheLease() {
+    when(jobLock.tryAcquire(OfferExpiryService.LOCK_NAME)).thenReturn(true);
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.PENDING), any(), any()))
+        .thenReturn(List.of(1L));
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.COUNTERED), any(), any()))
+        .thenReturn(List.of(2L));
+    when(offerService.expireStaleOffer(eq(1L), any())).thenReturn(true);
+    when(offerService.expireStaleOffer(eq(2L), any())).thenReturn(true);
+    OfferExpiryService guarded = new OfferExpiryService(offers, offerService, clock, jobLock);
+
+    OfferExpiryService.ExpiryCounts counts = guarded.expireStaleOffers();
+
+    assertThat(counts).isEqualTo(new OfferExpiryService.ExpiryCounts(2, 0));
+    verify(jobLock).release(OfferExpiryService.LOCK_NAME);
+  }
+
+  @Test
+  void scanFailure_stillReleasesTheLease() {
+    when(jobLock.tryAcquire(OfferExpiryService.LOCK_NAME)).thenReturn(true);
+    when(offers.findIdsByStatusAndExpiresAtBefore(any(), any(), any()))
+        .thenThrow(new IllegalStateException("db down"));
+    OfferExpiryService guarded = new OfferExpiryService(offers, offerService, clock, jobLock);
+
+    assertThrows(IllegalStateException.class, guarded::expireStaleOffers);
+    verify(jobLock).release(OfferExpiryService.LOCK_NAME);
+  }
+
+  @Test
+  void unexpectedFailureOnOneRow_skipsItAndContinuesTheBatch() {
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.PENDING), any(), any()))
+        .thenReturn(List.of(1L, 2L));
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.COUNTERED), any(), any()))
+        .thenReturn(List.of());
+    // Row 1 blows up in its row transaction with something that is neither
+    // an answered row nor an optimistic-lock loss: the defensive catch
+    // skips it and the batch still expires row 2.
+    when(offerService.expireStaleOffer(eq(1L), any()))
+        .thenThrow(new IllegalStateException("row 1 broken"));
+    when(offerService.expireStaleOffer(eq(2L), any())).thenReturn(true);
+
+    OfferExpiryService.ExpiryCounts counts = expiry.expireStaleOffers();
+
+    assertThat(counts).isEqualTo(new OfferExpiryService.ExpiryCounts(1, 1));
+  }
+
+  @Test
+  void fullPage_triggersAnotherScan_partialPageStops() {
+    List<Long> fullPage = LongStream.rangeClosed(1, OfferExpiryService.BATCH_SIZE)
+        .boxed().toList();
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.PENDING), any(), any()))
+        .thenReturn(fullPage)   // first scan: full page → scan again
+        .thenReturn(List.of()); // second scan: empty → stop
+    when(offers.findIdsByStatusAndExpiresAtBefore(eq(OfferStatus.COUNTERED), any(), any()))
+        .thenReturn(List.of());
+    when(offerService.expireStaleOffer(any(), any())).thenReturn(true);
+
+    OfferExpiryService.ExpiryCounts counts = expiry.expireStaleOffers();
+
+    verify(offers, times(2)).findIdsByStatusAndExpiresAtBefore(
+        eq(OfferStatus.PENDING), any(), any(Pageable.class));
+    assertThat(counts).isEqualTo(
+        new OfferExpiryService.ExpiryCounts(OfferExpiryService.BATCH_SIZE, 0));
   }
 }
