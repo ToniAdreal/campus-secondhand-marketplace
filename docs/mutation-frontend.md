@@ -494,6 +494,63 @@ production-code change. Follow-up material: the 358-373 and
 `describeWebhookReplayError` spans 430-448) and are left for a
 later item.
 
+### Eleventh measured run (backlog #388) — #347 survivors dead, one equivalent
+
+The #388 killing tests (10 new cases in
+`frontend/src/api/notifications.test.tsx`, no production-code
+change) close the #347 gap in the already-landed notifications +
+recently-viewed scope: the exact-delay pins for the reconnect
+backoff (1s/2s/4s, advanced 1ms short first), the ticket-failure
+retry ladder counted to the cap, the `EventSource`-undefined guard
+(stubbed away), the unmount-before-ticket race, the stale second
+error on a torn-down source, the leaked reconnect timer after
+unmount, the pending-timer count on cleanup, the enabled-flip
+re-render, the no-argument default, and the preference-toggle
+invalidation asserted at the hook level (exact query key plus the
+resolved preference data, which kills the mutationFn
+ArrowFunction mutant). Two fixes landed inside the tests while
+measuring: a leaked `mockRejectedValueOnce` from the
+EventSource-unavailable test was silently consumed by the next
+test's first POST (it vacated the unmount-before-ticket test's
+deferred ticket, so the ticket-resolution `.then` never ran), and
+the unmount-before-ticket test now calls `mockReset` first.
+
+The scope was re-measured separately first, with the temporary
+ranges-only config at break 0 (measure first, floor second — the
+same discipline as #252, #263, #280, #287, #322, #327 and #347;
+the temporary config was deleted after the run, never committed;
+full report copy:
+`goals/github-engineering-profile-building/hidden_files/stryker-388-measure-notifications.json`).
+Local run, 2026-11-17, head **c4dd144** plus the #388 tests
+(landed in this commit), 3 minutes 25 seconds, dry run 218 tests in 34
+seconds, 4 workers:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 9 hook ranges (106 mutants) | 99.06% (105/106) | 99.06% (105/106) |
+
+Mutant statuses: **KILLED 105, SURVIVED 1, NO_COVERAGE 0,
+TIMEOUT 0, ERROR 0.** Per-file scores: notifications 98.99%
+(98/99), recentlyViewed 100.00% (7/7). The one survivor is
+`useNotificationStream` L307 ConditionalExpression
+(`reconnectTimer !== null` → `true`), labelled equivalent: the
+guard only skips a `clearTimeout(null)` call, and clearing a null
+timer is a no-op in browsers, Node, jsdom and Vitest fake timers,
+so no behaviour test can distinguish the mutant; it is covered by
+8 tests. The #347 gap is otherwise closed: 18 of the 19 gap
+mutants are dead, the nineteenth is equivalent (the 2 timeouts
+from the #347 run are killed as well).
+
+### Floor decision
+
+`thresholds.break` stays **91**: the floor is unchanged. A chunk
+re-measurement does not earn a floor change — only a combined
+run re-derives the combined score, per the #263 method — and the
+#376 admin ranges are still unmeasured, so no combined number is
+claimed here. The #347 ranges stay a landed scope, and the CI
+`frontend-mutation` job measures the combined score on every run.
+Backlog #388 is done.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -631,6 +688,23 @@ all in telemetry except the webauthn environment guards:
   valid base64), or the same observability caveat.
 
 ### Notifications + recently-viewed hooks — 16 survived + 3 no-coverage (#347)
+
+**18 DEAD by #388** (break-0 re-measurement of the scope found
+105/106 killed, 0 no-coverage, the chunk report copy is
+`goals/github-engineering-profile-building/hidden_files/stryker-388-measure-notifications.json`):
+the 10 new tests in `frontend/src/api/notifications.test.tsx`
+pin the exact reconnect delays, the ticket-failure retry ladder
+to the cap, the `EventSource`-undefined guard, the
+unmount-before-ticket race, the stale second error, the leaked
+reconnect timer, the pending-timer count on cleanup, the
+enabled-flip re-render, the no-argument default, and the
+preference-toggle invalidation at the hook level. **1 LABELLED
+EQUIVALENT**: L307 ConditionalExpression (`reconnectTimer !==
+null` → `true`) — the guard only skips a `clearTimeout(null)`
+call, and clearing a null timer is a no-op in browsers, Node,
+jsdom and Vitest fake timers, so no behaviour test can
+distinguish the mutant; covered by 8 tests. The entries below are
+kept as the record of what the tests close.
 
 None is labelled equivalent. The survivors cluster in two themes:
 

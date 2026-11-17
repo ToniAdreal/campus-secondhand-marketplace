@@ -13,6 +13,7 @@ import {
   useMarkNotificationRead,
   useNotificationStream,
   useNotifications,
+  useSetNotificationPreference,
   useUnreadNotificationCount,
   type Notification,
 } from './notifications';
@@ -20,6 +21,7 @@ import type { Page } from './items';
 
 const getSpy = vi.spyOn(api, 'get');
 const postSpy = vi.spyOn(api, 'post');
+const putSpy = vi.spyOn(api, 'put');
 const deleteSpy = vi.spyOn(api, 'delete');
 
 function envelope(data: unknown) {
@@ -145,6 +147,41 @@ describe('notifications api hooks (#157)', () => {
 
     expect(deleteSpy).toHaveBeenCalledWith('/notifications/11');
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+  });
+
+  it('a successful preference toggle invalidates the preferences catalogue (#388)', async () => {
+    // #347 left two survivors in useSetNotificationPreference's
+    // onSuccess: the invalidation was driven by the Settings toggle
+    // test but never asserted at the hook level. Pin the exact
+    // invalidateQueries argument — invalidating everything ({}) would
+    // still refetch the catalogue, so only the exact-key assertion
+    // kills the ObjectLiteral mutant.
+    putSpy.mockResolvedValueOnce(
+      envelope({ type: 'ORDER_PAID', label: 'Paid', security: false, enabled: false }),
+    );
+    const client = makeClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+
+    const { result } = renderHook(() => useSetNotificationPreference(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({ type: 'ORDER_PAID', enabled: false });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(putSpy).toHaveBeenCalledWith('/notifications/preferences/ORDER_PAID', {
+      enabled: false,
+    });
+    // The mutation resolves with the saved preference: assert the
+    // data, not just success — the mutationFn `.then((res) =>
+    // res.data.data)` ArrowFunction mutant survives on isSuccess
+    // alone (it resolves with undefined instead).
+    expect(result.current.data).toEqual({
+      type: 'ORDER_PAID',
+      label: 'Paid',
+      security: false,
+      enabled: false,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: notificationKeys.preferences });
   });
 
   it('describes every notification type in words', () => {
@@ -405,5 +442,276 @@ describe('useNotificationStream (#203)', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins the second reconnect delay exactly — the backoff is 1s, 2s, 4s, not shorter (#388)', async () => {
+    // #347 survivor: the delay arithmetic `* 2 ** (nextAttempt - 1)`
+    // -> `/` survived because the cap test advances the full nominal
+    // delay each time, so a shorter mutant delay still lands inside
+    // the advance. Advance 1ms short of the second delay and assert
+    // no reconnect yet, then the last millisecond opens it.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy
+      .mockResolvedValueOnce(envelope({ ticket: 'ticket-1' }))
+      .mockResolvedValueOnce(envelope({ ticket: 'ticket-2' }))
+      .mockResolvedValue(envelope({ ticket: 'ticket-3' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), { wrapper: wrapperFor(queryClient) });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const first = FakeEventSource.instances[0];
+    first.onerror?.();
+    await vi.advanceTimersByTimeAsync(NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(FakeEventSource.instances).toHaveLength(2);
+
+    const second = FakeEventSource.instances[1];
+    second.onerror?.();
+    await vi.advanceTimersByTimeAsync(2 * NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS - 1);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(FakeEventSource.instances).toHaveLength(3);
+  });
+
+  it('a failed ticket request retries with the exact backoff and stops at the cap (#388)', async () => {
+    // #347 survivor: the catch-path retry step `attempt + 1` ->
+    // `attempt - 1` survived because the single retry test asserts a
+    // retry happens, never the attempt value. The mutant's first
+    // retry lands at 250ms (1000 / 2 ** 2), so pin the 1s boundary
+    // first, then count the retries through the ladder to the cap.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockRejectedValue(new Error('ticket failed'));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), { wrapper: wrapperFor(queryClient) });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(2 * NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(4 * NOTIFICATION_STREAM_RECONNECT_BASE_DELAY_MS);
+    expect(postSpy).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(postSpy).toHaveBeenCalledTimes(4);
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('does not open the stream when EventSource is unavailable, even while enabled (#388)', async () => {
+    // #347 survivors: the `typeof EventSource === 'undefined'` guard
+    // (StringLiteral -> "" and ConditionalExpression -> false) survived
+    // because every stream test runs with EventSource stubbed in. The
+    // disabled test cannot kill them — `!enabled` short-circuits the
+    // `||` before the mutated side. Remove EventSource and assert no
+    // ticket request while enabled.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', undefined);
+    // Base implementation, deliberately not mockRejectedValueOnce:
+    // on the original code no ticket request ever happens, so a Once
+    // would stay queued and be consumed by the NEXT test's first
+    // POST instead (#388 leak — it silently vacated the
+    // unmount-before-ticket test's deferred ticket).
+    postSpy.mockRejectedValue(new Error('ticket unavailable'));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(true), { wrapper: wrapperFor(queryClient) });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('unmount before the ticket resolves opens no stream (#388)', async () => {
+    // #347 survivors: the cleanup `cancelled = true` (BooleanLiteral
+    // -> false) and the ticket-resolution cancelled guard
+    // (ConditionalExpression -> false, BlockStatement -> {}) survived
+    // because no test races cancellation against the ticket
+    // resolution. Resolve the ticket after unmount and assert the
+    // stream never opens.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    let resolveTicket!: (value: unknown) => void;
+    const ticketPromise = new Promise((resolve) => {
+      resolveTicket = resolve;
+    });
+    // mockReset first: an unconsumed Once queued by an earlier test
+    // would be consumed by this POST instead of the deferred ticket
+    // below, and the .then under test would never run.
+    postSpy.mockReset();
+    postSpy.mockImplementationOnce(() => ticketPromise as never);
+    const queryClient = makeClient();
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    unmount();
+    resolveTicket(envelope({ ticket: 'ticket-late' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale second error on a torn-down source is a no-op, not a crash (#388)', async () => {
+    // #347 survivor: the onerror `source?.close()` (OptionalChaining
+    // -> `source.close`) survived because the source is non-null on
+    // the first error. After the first error the source is nulled, so
+    // a second (stale) error event on the same instance must not
+    // throw — the `?.` is the defence for exactly this.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const first = FakeEventSource.instances[0];
+    first.onerror?.();
+    expect(first.closed).toBe(true);
+    expect(() => first.onerror?.()).not.toThrow();
+    // No reconnect yet — both timers (the leaked first one and the
+    // re-scheduled one) fire at the 1s backoff.
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    unmount();
+  });
+
+  it('a leaked reconnect timer must not reopen the stream after unmount (#388)', async () => {
+    // #347 survivors: the openStream-entry cancelled guard
+    // (ConditionalExpression -> false, BlockStatement -> {}) survived
+    // because no test races cancellation against the openStream entry.
+    // The stale second error re-schedules a reconnect and overwrites
+    // reconnectTimer, so the first timer is leaked past cleanup and
+    // only the entry guard stops it from reopening the stream.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const first = FakeEventSource.instances[0];
+    first.onerror?.();
+    first.onerror?.();
+
+    unmount();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('unmount with a pending reconnect clears the timer (#388)', async () => {
+    // #347 survivors: the cleanup `reconnectTimer !== null` branch
+    // (ConditionalExpression -> false, EqualityOperator -> ===,
+    // BlockStatement -> {}) and the `clearTimeout` call
+    // (CallExpression -> ;) survived because the two cleanup steps
+    // are redundant defences — mutating either one alone still
+    // suppresses the reconnect through the cancelled guard, so the
+    // unmount test cannot tell which step ran. The pending-timer
+    // count is the observable that separates them.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    const { unmount } = renderHook(() => useNotificationStream(true), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const source = FakeEventSource.instances[0];
+    source.onerror?.();
+    expect(source.closed).toBe(true);
+
+    const pendingBefore = vi.getTimerCount();
+    expect(pendingBefore).toBeGreaterThanOrEqual(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(pendingBefore - 1);
+    expect(source.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-rendering with enabled flipping re-opens and closes the stream (#388)', async () => {
+    // #347 survivor: the effect dependency array (ArrayDeclaration
+    // -> []) survived because no test re-renders with changed
+    // `enabled`/`queryClient`. Flip both ways and assert the stream
+    // follows.
+    vi.useFakeTimers();
+    postSpy.mockClear();
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    const { rerender, unmount } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useNotificationStream(enabled),
+      { initialProps: { enabled: false }, wrapper: wrapperFor(queryClient) },
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    rerender({ enabled: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).toHaveBeenCalledWith('/notifications/stream-ticket');
+    expect(FakeEventSource.instances).toHaveLength(1);
+    const source = FakeEventSource.instances[0];
+
+    rerender({ enabled: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(source.closed).toBe(true);
+
+    unmount();
+  });
+
+  it('the stream opens by default with no argument (#388)', async () => {
+    // #347 no-coverage: the default `enabled = true` param
+    // (BooleanLiteral -> false) survived because every stream test
+    // passes an explicit arg. Render with no argument and assert the
+    // stream opens.
+    vi.stubGlobal('EventSource', FakeEventSource);
+    postSpy.mockResolvedValue(envelope({ ticket: 'ticket-abc' }));
+    const queryClient = makeClient();
+
+    renderHook(() => useNotificationStream(), { wrapper: wrapperFor(queryClient) });
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(postSpy).toHaveBeenCalledWith('/notifications/stream-ticket');
   });
 });
