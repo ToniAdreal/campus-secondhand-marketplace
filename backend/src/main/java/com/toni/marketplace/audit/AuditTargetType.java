@@ -17,5 +17,9 @@ public enum AuditTargetType {
   /** A {@code report_appeal} row (seller appeal of an ACTIONED report, backlog #190). */
   REPORT_APPEAL,
   /** A {@code price_offer} row (offer-lifecycle audit, backlog #389). */
-  OFFER
+  OFFER,
+  /** A {@code seller_review} row (review audit, backlog #390). */
+  REVIEW,
+  /** A {@code seller_payout} row (ADMIN mark-paid audit, backlog #390). */
+  PAYOUT
 }

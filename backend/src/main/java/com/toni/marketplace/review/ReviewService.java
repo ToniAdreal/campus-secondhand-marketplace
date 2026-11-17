@@ -1,5 +1,8 @@
 package com.toni.marketplace.review;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.auth.User;
 import com.toni.marketplace.auth.UserRepository;
 import com.toni.marketplace.order.Order;
@@ -9,6 +12,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -69,6 +74,15 @@ import org.springframework.web.server.ResponseStatusException;
  * window — a response must never end up answering a changed review.
  * The window and the response guard are both 422; the response guard
  * is checked first, mirroring #206's deleted-before-window order.
+ *
+ * <p>Audit (backlog #390): create, edit and respond each write one row
+ * to the append-only trail from inside the transition's own
+ * transaction ({@code REVIEW_CREATED} / {@code REVIEW_EDITED} /
+ * {@code REVIEW_RESPONDED}, actor is the acting buyer/seller, target
+ * is the review row) — a review is public reputation content, so the
+ * trail is the record of who said what about whom and when. An
+ * identical re-response writes no second row: the PUT is idempotent
+ * by design, so the same text twice is no transition at all.
  */
 @Service
 public class ReviewService {
@@ -78,15 +92,30 @@ public class ReviewService {
   private final UserRepository users;
   private final ReviewProperties reviewProps;
   private final Clock clock;
+  private final AuditService audit;
 
+  @Autowired
   public ReviewService(SellerReviewRepository reviews, OrderRepository orders,
                        UserRepository users, ReviewProperties reviewProps,
-                       Clock clock) {
+                       Clock clock, AuditService audit) {
     this.reviews = reviews;
     this.orders = orders;
     this.users = users;
     this.reviewProps = reviewProps;
     this.clock = clock;
+    this.audit = audit;
+  }
+
+  /** Direct-construction constructor for body-logic unit tests (no audit trail). */
+  public ReviewService(SellerReviewRepository reviews, OrderRepository orders,
+                       UserRepository users, ReviewProperties reviewProps,
+                       Clock clock) {
+    this(reviews, orders, users, reviewProps, clock, AuditService.noop());
+  }
+
+  /** The audit trail, or the no-op instance for direct-construction tests. */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /** Clock with a system fallback, mirroring MessageService's pattern. */
@@ -124,6 +153,11 @@ public class ReviewService {
           order.getItem().getSellerId(), rating, text);
       SellerReviewDto dto = SellerReviewDto.from(reviews.save(review), usernameOf(buyerId));
       reviews.flush();
+      // Audit inside the same transaction (backlog #390): the row and
+      // the review commit or roll back together, and the 409 guard
+      // above means a second create never reaches this call.
+      audit().record(buyerId, AuditAction.REVIEW_CREATED, AuditTargetType.REVIEW,
+          review.getId());
       return dto;
     } catch (DataIntegrityViolationException e) {
       // Lost the uq_review_order race: a concurrent create inserted the
@@ -149,8 +183,21 @@ public class ReviewService {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN,
           "only the seller can respond to this review");
     }
-    review.setSellerResponse(response == null ? null : response.trim());
-    return SellerReviewDto.from(reviews.save(review), usernameOf(review.getBuyerId()));
+    String trimmed = response == null ? null : response.trim();
+    if (Objects.equals(trimmed, review.getSellerResponse())) {
+      // Identical re-response (backlog #390): the response is a single
+      // column and the PUT is idempotent by design, so the same text
+      // twice is no transition and writes no second audit row.
+      return SellerReviewDto.from(review, usernameOf(review.getBuyerId()));
+    }
+    review.setSellerResponse(trimmed);
+    SellerReviewDto dto = SellerReviewDto.from(reviews.save(review),
+        usernameOf(review.getBuyerId()));
+    // Audit inside the same transaction (backlog #390): a response with
+    // different text is a new transition and writes a row.
+    audit().record(sellerId, AuditAction.REVIEW_RESPONDED, AuditTargetType.REVIEW,
+        review.getId());
+    return dto;
   }
 
   /**
@@ -196,7 +243,14 @@ public class ReviewService {
     }
     review.setRating(rating);
     review.setBody(body == null || body.isBlank() ? null : body.trim());
-    return SellerReviewDto.from(reviews.save(review), usernameOf(review.getBuyerId()));
+    SellerReviewDto dto = SellerReviewDto.from(reviews.save(review),
+        usernameOf(review.getBuyerId()));
+    // Audit inside the same transaction (backlog #390): every successful
+    // edit writes a row — the row itself carries no edit history, so the
+    // trail is the only record that an earlier version existed.
+    audit().record(buyerId, AuditAction.REVIEW_EDITED, AuditTargetType.REVIEW,
+        review.getId());
+    return dto;
   }
 
   /** One seller's reviews, paginated (the controller supplies newest-first). */

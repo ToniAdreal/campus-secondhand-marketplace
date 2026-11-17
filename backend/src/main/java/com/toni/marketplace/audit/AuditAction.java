@@ -147,6 +147,19 @@ public enum AuditAction {
   /** A seller (or ADMIN) refunded a PAID order ({@code OrderService.refund}). */
   ORDER_REFUNDED,
   /**
+   * An ADMIN marked a PAYABLE seller payout PAID
+   * ({@code SellerPayoutService.markPaidByAdmin}, backlog #390). Actor is
+   * the acting ADMIN; target is the payout row. The hourly sweep's own
+   * PAYABLE → PAID flip ({@code SellerPayoutTransitions.markPaid}) writes
+   * no row: it is a system transition with no actor, and stamping the
+   * seller as its actor would falsify the trail (the #122 stale-order
+   * rule) — the audited mark-paid is the human ADMIN action, and the
+   * sweep's flip is visible instead through the PAYOUT_PAID notification
+   * and the payouts.paid counter. An idempotent re-mark of an already
+   * PAID row writes no second row.
+   */
+  PAYOUT_MARKED_PAID,
+  /**
    * A party opened a dispute on a PAID/COMPLETED order
    * ({@code DisputeService.openDispute}, backlog #169; seller-opened
    * since backlog #255). Actor is the disputing party. An idempotent
@@ -221,6 +234,34 @@ public enum AuditAction {
    * one. A sweep re-run finds the row EXPIRED and writes no second row.
    */
   OFFER_EXPIRED,
+  /**
+   * The buyer left a review on a COMPLETED order
+   * ({@code ReviewService.createReview}, backlog #390). Actor is the
+   * reviewing buyer; target is the review row. The one-review-per-order
+   * guard (409 on a second create) means a second row for the same order
+   * can never be written through this action.
+   */
+  REVIEW_CREATED,
+  /**
+   * The buyer edited their own review inside the edit window
+   * ({@code ReviewService.editReview}, backlog #390). Actor is the
+   * editing buyer; target is the review row. Every successful edit
+   * writes a row — the edit replaces the rating and body in place and
+   * there is no edit history on the row itself, so the trail is the
+   * only record that an earlier version existed. A 422 (window closed
+   * or seller already responded) writes none.
+   */
+  REVIEW_EDITED,
+  /**
+   * The seller set or replaced the public response on one of their
+   * reviews ({@code ReviewService.respondToReview}, backlog #390).
+   * Actor is the responding seller; target is the review row. A second
+   * response with identical text writes no second row: the response is
+   * a single-column overwrite and the PUT is idempotent by design, so
+   * an identical re-PUT is no transition at all. A response with
+   * different text is a new transition and writes a row.
+   */
+  REVIEW_RESPONDED,
   /**
    * The listing's seller appealed an ACTIONED report
    * ({@code ReportAppealService.createAppeal}, backlog #190). Actor is

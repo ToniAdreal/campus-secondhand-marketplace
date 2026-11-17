@@ -37,7 +37,14 @@ import org.springframework.transaction.annotation.Transactional;
  * (backlog #389): {@code OFFER_ACCEPTED} / {@code OFFER_DECLINED} /
  * {@code OFFER_COUNTERED} / {@code OFFER_COUNTER_ACCEPTED} /
  * {@code OFFER_EXPIRED} from {@code OfferService} — actor is the
- * acting side (the lapsing party on expiry), target is the offer row.
+ * acting side (the lapsing party on expiry), target is the offer row,
+ * and the review lifecycle (backlog #390): {@code REVIEW_CREATED} /
+ * {@code REVIEW_EDITED} / {@code REVIEW_RESPONDED} from
+ * {@code ReviewService} — actor is the buyer on create/edit and the
+ * seller on respond, target is the review row — plus the ADMIN
+ * payout mark-paid (backlog #390): {@code PAYOUT_MARKED_PAID} from
+ * {@code SellerPayoutService.markPaidByAdmin}, actor is the acting
+ * ADMIN, target is the payout row.
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}, and the
  * CSV export in backlog #232 ({@link #exportAuditLog} behind
@@ -48,7 +55,11 @@ import org.springframework.transaction.annotation.Transactional;
  * ({@code OrderService.expireStaleOrder}). Expiry is a system transition
  * with no actor — stamping the buyer as the actor of an
  * {@code ORDER_CANCELLED} row for an expiry would falsify the trail, so
- * expiries write no row at all.
+ * expiries write no row at all. The same rule keeps the hourly payout
+ * sweep's PAYABLE → PAID flip (backlog #390) off the trail: the sweep
+ * has no human actor, so its flips are visible through the PAYOUT_PAID
+ * notification and the payouts.paid counter instead — only the ADMIN
+ * mark-paid endpoint writes {@code PAYOUT_MARKED_PAID}.
  *
  * <p>Transaction contract: {@link #record} carries no {@code @Transactional}
  * of its own, so the repository save joins the caller's transaction — an

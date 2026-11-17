@@ -89,6 +89,7 @@ class OpenApiContractTest {
       "/api/admin/payments/settlement",
       "/api/admin/payments/webhooks",
       "/api/admin/payments/webhooks/{id}/replay",
+      "/api/admin/payouts/{id}/mark-paid",
       "/api/payments/webhooks/mock-psp",
       "/api/security/csp-report",
       "/api/telemetry/errors",

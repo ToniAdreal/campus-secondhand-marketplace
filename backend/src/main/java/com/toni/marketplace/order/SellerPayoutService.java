@@ -1,5 +1,8 @@
 package com.toni.marketplace.order;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.job.JobLockGuard;
 import java.time.Clock;
 import java.time.Instant;
@@ -11,10 +14,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * The seller payout ledger (backlog #221): one settlement row per
@@ -43,7 +48,11 @@ import org.springframework.transaction.annotation.Transactional;
  *       observable state. Honest scope, stated in the README row too:
  *       PAID is a ledger state — the mock PSP moves no real money, so
  *       no bank transfer, payout provider call, or fee settlement
- *       exists behind it.</li>
+ *       exists behind it. An ADMIN can also mark a PAYABLE row PAID
+ *       by hand ({@link #markPaidByAdmin}, backlog #390) — same
+ *       guards, same notification, plus one {@code PAYOUT_MARKED_PAID}
+ *       audit row with the ADMIN as actor; the sweep's own flip
+ *       writes no audit row (a system transition with no actor).</li>
  *   <li><b>Seller-account hold</b> — backlog #266: neither transition
  *       advances a row while its seller's account is disabled (#88) or
  *       closed (the closure tombstone sets {@code disabled}, so one
@@ -75,6 +84,7 @@ public class SellerPayoutService {
   private final Clock clock;
   private final JobLockGuard jobLock;
   private final OrderMetrics metrics;
+  private final AuditService audit;
 
   @Autowired
   public SellerPayoutService(SellerPayoutRepository payouts,
@@ -82,13 +92,25 @@ public class SellerPayoutService {
                              SellerPayoutTransitions transitions,
                              Clock clock,
                              JobLockGuard jobLock,
-                             OrderMetrics metrics) {
+                             OrderMetrics metrics,
+                             AuditService audit) {
     this.payouts = payouts;
     this.adjustments = adjustments;
     this.transitions = transitions;
     this.clock = clock;
     this.jobLock = jobLock;
     this.metrics = metrics != null ? metrics : OrderMetrics.noop();
+    this.audit = audit;
+  }
+
+  /** Direct-construction constructor for job tests (no lease, no audit trail). */
+  public SellerPayoutService(SellerPayoutRepository payouts,
+                             SellerPayoutAdjustmentRepository adjustments,
+                             SellerPayoutTransitions transitions,
+                             Clock clock,
+                             JobLockGuard jobLock,
+                             OrderMetrics metrics) {
+    this(payouts, adjustments, transitions, clock, jobLock, metrics, AuditService.noop());
   }
 
   /** Direct-construction constructor for body-logic unit tests (no lease). */
@@ -106,6 +128,11 @@ public class SellerPayoutService {
                              Clock clock,
                              OrderMetrics metrics) {
     this(payouts, adjustments, transitions, clock, JobLockGuard.disabled(), metrics);
+  }
+
+  /** The audit trail, or the no-op instance for direct-construction tests. */
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /** How many rows one sweep run promoted, paid, skipped — and held for seller-account state. */
@@ -128,6 +155,53 @@ public class SellerPayoutService {
     }
     return Optional.of(payouts.save(
         new SellerPayout(order.getId(), order.getItem().getSellerId(), amount)));
+  }
+
+  /**
+   * ADMIN mark-paid (backlog #390): marks a PAYABLE row PAID outside the
+   * hourly sweep, for an operator settling a payout by hand. Reuses
+   * {@link SellerPayoutTransitions#markPaid} through the Spring proxy,
+   * so the same guards apply as in the sweep (PAYABLE status, order
+   * still COMPLETED, no open dispute, seller not held) and the same
+   * PAYOUT_PAID notification is recorded for the seller in the same
+   * transaction.
+   *
+   * <ul>
+   *   <li>Unknown payout → 404.</li>
+   *   <li>Already PAID → 200 with the row, idempotent: no second audit
+   *       row, mirroring the idempotent re-pay.</li>
+   *   <li>Any other unpayable state (still PENDING, held, disputed,
+   *       order moved) → 422, and no row is written.</li>
+   *   <li>On success one {@code PAYOUT_MARKED_PAID} row is recorded
+   *       inside this same transaction — actor is the acting ADMIN,
+   *       target is the payout row — so the pay and the row commit or
+   *       roll back together.</li>
+   * </ul>
+   *
+   * <p>The sweep's own PAYABLE → PAID flip deliberately writes no audit
+   * row: it is a system transition with no actor (the #122 rule).
+   */
+  @Transactional
+  public SellerPayoutDto markPaidByAdmin(Long adminId, Long payoutId) {
+    SellerPayout payout = payouts.findById(payoutId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "payout not found"));
+    if (payout.getStatus() == PayoutStatus.PAID) {
+      return dto(payout);
+    }
+    if (!transitions.markPaid(payoutId, clock.instant())) {
+      throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+          "payout cannot be marked paid in its current state");
+    }
+    audit().record(adminId, AuditAction.PAYOUT_MARKED_PAID, AuditTargetType.PAYOUT,
+        payoutId);
+    return dto(payout);
+  }
+
+  /** One payout row as a DTO, with its adjustment sum attached. */
+  private SellerPayoutDto dto(SellerPayout payout) {
+    return SellerPayoutDto.from(payout,
+        adjustments.sumAmountByPayoutId(payout.getId()));
   }
 
   /**
