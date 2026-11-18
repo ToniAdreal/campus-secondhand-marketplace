@@ -282,6 +282,25 @@ public enum AuditAction {
    */
   REPORT_APPEAL_REJECTED,
   /**
+   * An ADMIN dismissed a report without acting on its listing
+   * ({@code ListingReportService.dismiss}, backlog #397). Actor is the
+   * resolving ADMIN; target is the report row. An idempotent
+   * re-dismiss writes no second row.
+   */
+  REPORT_DISMISSED,
+  /**
+   * An ADMIN actioned a report and hid its listing
+   * ({@code ListingReportService.action}, backlog #397). Actor is the
+   * resolving ADMIN; target is the listing (item row). The row is
+   * evidence of the ADMIN's decision: when the listing was RESERVED or
+   * SOLD the withdrawal itself is skipped by the #160 rule (a live
+   * order is protected, a sold listing has nothing left to withdraw),
+   * so the row does not by itself prove the listing's bytes flipped —
+   * the item row is the source of truth for listing state. An
+   * idempotent re-action writes no second row.
+   */
+  LISTING_HIDDEN,
+  /**
    * The account holder downloaded their self-service data export
    * ({@code AccountDataExportService.export}, backlog #172). Actor and
    * target are both the account holder, mirroring

@@ -189,7 +189,8 @@ audit/       AuditService — append-only trail (Flyway V22 audit_log:
              complete / refund, review create / edit / respond, ADMIN
              payout mark-paid (backlog #390; the hourly sweep's own
              PAYABLE → PAID flip writes no row — a system transition
-             with no actor) — so a
+             with no actor), report dismiss / listing hide (backlog
+             #397) — so a
              rolled-back transition leaves no row and idempotent no-op
              repeats write none. Read side (backlog #109):
              GET /api/admin/audit-log (ADMIN-only, paginated, exact-match

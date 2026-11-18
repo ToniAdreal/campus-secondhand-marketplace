@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,7 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
  * (class-level {@code @PreAuthorize}, mirroring {@code AdminUserController}
  * and {@code AuditLogController}); anonymous callers get the JSON 401
  * envelope and non-admin callers the JSON 403 envelope. Rows are
- * {@link ListingReportDto} projections — never the entity.
+ * {@link ListingReportDto} projections — never the entity. The resolving
+ * ADMIN's id is taken from the JWT principal for the audit trail
+ * (backlog #397).
  */
 @RestController
 @io.swagger.v3.oas.annotations.tags.Tag(name = "admin", description = "ADMIN moderation queue")
@@ -66,7 +69,7 @@ class AdminReportController {
           description = "report already actioned (envelope)")})
   @PostMapping("/{id}/dismiss")
   public ApiResponse<ListingReportDto> dismiss(@PathVariable Long id) {
-    return ApiResponse.ok(reportService.dismiss(id));
+    return ApiResponse.ok(reportService.dismiss(currentUserId(), id));
   }
 
   /**
@@ -87,6 +90,10 @@ class AdminReportController {
           description = "report already dismissed (envelope)")})
   @PostMapping("/{id}/action")
   public ApiResponse<ListingReportDto> action(@PathVariable Long id) {
-    return ApiResponse.ok(reportService.action(id));
+    return ApiResponse.ok(reportService.action(currentUserId(), id));
+  }
+
+  private static Long currentUserId() {
+    return (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
   }
 }

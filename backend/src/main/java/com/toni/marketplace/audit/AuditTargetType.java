@@ -21,5 +21,9 @@ public enum AuditTargetType {
   /** A {@code seller_review} row (review audit, backlog #390). */
   REVIEW,
   /** A {@code seller_payout} row (ADMIN mark-paid audit, backlog #390). */
-  PAYOUT
+  PAYOUT,
+  /** A {@code listing_report} row (moderation report resolution, backlog #397). */
+  REPORT,
+  /** An {@code item} row (listing hidden by a moderation action, backlog #397). */
+  ITEM
 }

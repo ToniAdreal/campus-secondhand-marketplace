@@ -150,6 +150,8 @@ export const AUDIT_ACTIONS = [
   'REVIEW_CREATED',
   'REVIEW_EDITED',
   'REVIEW_RESPONDED',
+  'REPORT_DISMISSED',
+  'LISTING_HIDDEN',
   'PAYOUT_MARKED_PAID',
   'USER_DISABLED',
   'USER_ENABLED',
@@ -160,7 +162,7 @@ export const AUDIT_ACTIONS = [
 ] as const;
 
 /** Allowlisted AuditTargetType values (backend enum, source of truth). */
-export const AUDIT_TARGET_TYPES = ['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT', 'OFFER', 'REVIEW', 'PAYOUT'] as const;
+export const AUDIT_TARGET_TYPES = ['USER', 'ORDER', 'CATEGORY', 'WEBHOOK_EVENT', 'OFFER', 'REVIEW', 'PAYOUT', 'REPORT', 'ITEM'] as const;
 
 export interface AuditLogFilters {
   actorUserId?: number | null;

@@ -44,7 +44,11 @@ import org.springframework.transaction.annotation.Transactional;
  * seller on respond, target is the review row — plus the ADMIN
  * payout mark-paid (backlog #390): {@code PAYOUT_MARKED_PAID} from
  * {@code SellerPayoutService.markPaidByAdmin}, actor is the acting
- * ADMIN, target is the payout row.
+ * ADMIN, target is the payout row, and the moderation report
+ * resolutions (backlog #397): {@code REPORT_DISMISSED} /
+ * {@code LISTING_HIDDEN} from {@code ListingReportService} — actor
+ * is the resolving ADMIN, target is the report row on dismiss and
+ * the listing on action.
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}, and the
  * CSV export in backlog #232 ({@link #exportAuditLog} behind

@@ -1,8 +1,12 @@
 package com.toni.marketplace.moderation;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.Item;
 import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -39,16 +43,37 @@ import org.springframework.web.server.ResponseStatusException;
  * <p>Honest scope: no auto-hide. A listing stays fully visible until a
  * human ADMIN acts on a report, however many reports it collects — v1
  * has no "N reports hide the listing" rule.
+ *
+ * <p>Audit (backlog #397): each resolution writes exactly one row from
+ * inside its own transaction — {@code REPORT_DISMISSED} (actor = the
+ * resolving ADMIN, target = the report row) on {@link #dismiss} and
+ * {@code LISTING_HIDDEN} (actor = the resolving ADMIN, target = the
+ * listing) on {@link #action}. The idempotent replays return before
+ * reaching the record call and write none, and a rolled-back
+ * transition writes none, mirroring the #98 contract.
  */
 @Service
 public class ListingReportService {
 
   private final ListingReportRepository reports;
   private final ItemRepository items;
+  private final AuditService audit;
 
-  public ListingReportService(ListingReportRepository reports, ItemRepository items) {
+  @Autowired
+  public ListingReportService(ListingReportRepository reports, ItemRepository items,
+                              AuditService audit) {
     this.reports = reports;
     this.items = items;
+    this.audit = audit;
+  }
+
+  /** Constructor for direct unit tests that do not assert on audit. */
+  public ListingReportService(ListingReportRepository reports, ItemRepository items) {
+    this(reports, items, AuditService.noop());
+  }
+
+  private AuditService audit() {
+    return audit != null ? audit : AuditService.noop();
   }
 
   /**
@@ -82,10 +107,10 @@ public class ListingReportService {
   /**
    * Resolves a report without acting on the listing. Re-dismissing a
    * DISMISSED report is idempotent; dismissing an ACTIONED one is 422.
-   * Unknown id → 404.
+   * Unknown id → 404. {@code adminId} is the audit actor.
    */
   @Transactional
-  public ListingReportDto dismiss(Long reportId) {
+  public ListingReportDto dismiss(Long adminId, Long reportId) {
     ListingReport report = requireReport(reportId);
     if (report.getStatus() == ReportStatus.DISMISSED) {
       return ListingReportDto.from(report);
@@ -95,7 +120,10 @@ public class ListingReportService {
           "report already actioned");
     }
     report.setStatus(ReportStatus.DISMISSED);
-    return ListingReportDto.from(reports.save(report));
+    ListingReportDto dto = ListingReportDto.from(reports.save(report));
+    reports.flush();
+    audit().record(adminId, AuditAction.REPORT_DISMISSED, AuditTargetType.REPORT, reportId);
+    return dto;
   }
 
   /**
@@ -104,10 +132,10 @@ public class ListingReportService {
    * the report never reads ACTIONED while its listing is still on sale
    * as AVAILABLE. Re-actioning an ACTIONED report is idempotent (the
    * withdrawal already happened); actioning a DISMISSED one is 422.
-   * Unknown id → 404.
+   * Unknown id → 404. {@code adminId} is the audit actor.
    */
   @Transactional
-  public ListingReportDto action(Long reportId) {
+  public ListingReportDto action(Long adminId, Long reportId) {
     ListingReport report = requireReport(reportId);
     if (report.getStatus() == ReportStatus.ACTIONED) {
       return ListingReportDto.from(report);
@@ -123,7 +151,10 @@ public class ListingReportService {
       }
     });
     report.setStatus(ReportStatus.ACTIONED);
-    return ListingReportDto.from(reports.save(report));
+    ListingReportDto dto = ListingReportDto.from(reports.save(report));
+    reports.flush();
+    audit().record(adminId, AuditAction.LISTING_HIDDEN, AuditTargetType.ITEM, report.getItemId());
+    return dto;
   }
 
   private ListingReport requireReport(Long reportId) {
