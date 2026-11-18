@@ -40,6 +40,14 @@ PIT pilot (backlog #192, docs/mutation.md):
   onSuccess invalidation. Key constants, interfaces and the
   saved-searches pure helpers are out of scope — they are not hook
   paths.
+- The 6 auth session hooks (measured by #395, landed in the
+  combined run — see "Twelfth measured run" below; the ranges are
+  in the gate): one range per exported hook (`useLoginHistory`,
+  `useSessions`, `useRevokeSession`, `useTrustedDevices`,
+  `useRevokeTrustedDevice`, `useRevokeOtherSessions`), covering
+  the queryFn / mutationFn / onSuccess shapes. Key constants
+  (`sessionKeys`, the step-up message) and the plain async API
+  functions are out of scope — they are not hook paths.
 
 The driving tests are the cart-store unit suite plus the page suites
 that exercise the store through the cart page (`useCartStore.test.ts`,
@@ -550,6 +558,89 @@ run re-derives the combined score, per the #263 method — and the
 claimed here. The #347 ranges stay a landed scope, and the CI
 `frontend-mutation` job measures the combined score on every run.
 Backlog #388 is done.
+
+### Twelfth measured run (backlog #395) — auth session hooks
+
+The 6 hook ranges were measured separately first, with a
+temporary ranges-only config at break 0 (measure first, floor
+second — the same discipline as #252, #263, #280, #287, #322,
+#327, #347 and #388; the temporary config was deleted after the
+run, never committed; full report copy for the re-measure:
+`goals/github-engineering-profile-building/hidden_files/stryker-395-measure-report.json` —
+the first-measure report was overwritten by the re-measure
+runner, which copies to the same path, so the first measure is
+recorded from its run log below).
+Local run, 2026-11-18, head **dcced47** (backlog #394) plus the
+#395 killing tests (test file only, no production-code change),
+isolated clone, 4 workers. The ranges were taken from the current
+TypeScript AST (function start/end lines), and the derivation
+also re-pins the landed `describeStepUpError` range 934-950
+exactly, which validates the method.
+
+First measure (before the killing tests), 2 minutes 44 seconds:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 6 hook ranges (43 mutants) | 48.84% (21/43) | 48.84% (21/43) |
+
+Mutant statuses: **KILLED 21, SURVIVED 19, NO_COVERAGE 3,
+TIMEOUT 0, ERROR 0.** The gap is concentrated, not diffuse: all
+19 survivors sit in the two onSuccess cache-update callbacks —
+the `setQueryData` filter and the `invalidateQueries` call in
+`useRevokeSession` (8 mutants) and `useRevokeTrustedDevice` (8
+mutants), plus the `invalidateQueries` options object in
+`useRevokeOtherSessions` (1 mutant) — because the page tests
+that drive these hooks (`SessionsPage.test.tsx`) assert the
+post-revoke refetch, never the optimistic cache drop. The 3
+no-coverage mutants are the `enabled = true` default params of
+the three query hooks: the only production caller
+(`SessionsPage`) passes an explicit argument, so no test ever
+exercised the default. None is labelled equivalent here.
+
+Killing tests added in this round (9 new cases in the new file
+`frontend/src/api/authHooks.test.tsx` — a `.tsx` file because
+`auth.test.ts` cannot hold the `renderHook` JSX wrapper; no
+production-code change): the three default-enabled loads (which
+kill the default-param mutants), the three disabled no-fetch
+pins (mirroring the notifications pattern), the two optimistic
+drops (the exact `setQueryData` updater the hook registered is
+captured and applied to the seeded list and to `undefined`, so
+the filter, the equality and the optional chain are all
+asserted — not just the refetch), and the revoke-others count
+plus its invalidation (exact query key asserted). The three
+previously-surviving onSuccess mutants in each revoke hook were
+killed by the corresponding new test.
+
+Re-measure (same temporary config, after the killing tests),
+3 minutes 26 seconds:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 6 hook ranges (43 mutants) | 100.00% (43/43) | 100.00% (43/43) |
+
+Mutant statuses: **KILLED 43, SURVIVED 0, NO_COVERAGE 0,
+TIMEOUT 0, ERROR 0.**
+
+### Floor decision (widened scope, eighth widening — LANDED)
+
+`thresholds.break` stays **91**: the floor is unchanged, not
+lowered to fit the new scope. The new scope is disjoint from the
+landed scope and no source file in either scope changed in this
+round, so the combined score is the arithmetic sum of the
+measured runs: (1684 + 43) / (1843 + 43) = 1727/1886 =
+**91.57%**, which clears the 91 floor (91 <= 91.57) — the #395
+ranges are now a landed scope, and the CI `frontend-mutation`
+job measures the combined score on every run. One honest caveat
+on the arithmetic: its baseline is the #351 ninth run (1684/
+1843); the #376 admin ranges are still unmeasured locally, so
+their mutants are not in either side of the sum — but the CI
+`frontend-mutation` job was green on the #392 tree with those
+ranges in scope, so the true combined score is at least the
+floor, and the next CI run on this commit measures the widened
+scope directly. The floor itself does not move — only a combined
+run re-derives it, per the #263 method. Backlog #395 is done; a
+future widening still requires re-measuring first, per the #263
+method.
 
 ## Surviving mutants
 

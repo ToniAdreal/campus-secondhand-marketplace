@@ -129,6 +129,25 @@
  * sandbox — the next CI `frontend-mutation` run measures the
  * widened scope; the floor stays 91 until a measured run says
  * otherwise. No production-code change.
+ * #395 extends the same discipline to the auth session hooks:
+ * the six exported hooks in `src/api/auth.ts` (`useLoginHistory`,
+ * `useSessions`, `useRevokeSession`, `useTrustedDevices`,
+ * `useRevokeTrustedDevice`, `useRevokeOtherSessions`), one range
+ * per hook from the current TypeScript AST (the derivation also
+ * re-pins `describeStepUpError` 934-950 exactly, validating the
+ * method). Key constants (`sessionKeys`, the step-up message) and
+ * the plain async API functions are not in scope. Measured
+ * separately first at break 0 (see docs/mutation-frontend.md,
+ * "Twelfth measured run"): the first measure was 48.84% (21/43 —
+ * all 19 survivors sat in the two onSuccess cache-update
+ * callbacks plus the revoke-others invalidation, and the 3
+ * no-coverage mutants were the `enabled = true` defaults, never
+ * exercised because the only production caller passes an explicit
+ * argument); 9 killing tests in the new
+ * `src/api/authHooks.test.tsx` (renderHook, the notifications
+ * pattern) closed the gap to 100.00% (43/43) on re-measurement,
+ * so the combined arithmetic (1684+43)/(1843+43) = 91.57% still
+ * clears the break-91 floor. No production-code change.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -179,6 +198,12 @@ export default {
     'src/api/reviews.ts:151-175',
     'src/api/reviews.ts:178-196',
     'src/api/auth.ts:934-950',
+    'src/api/auth.ts:794-800',
+    'src/api/auth.ts:803-809',
+    'src/api/auth.ts:817-828',
+    'src/api/auth.ts:831-837',
+    'src/api/auth.ts:845-856',
+    'src/api/auth.ts:864-872',
     'src/api/client.ts:151-166',
     'src/api/favorites.ts:19-29',
     'src/api/favorites.ts:38-49',

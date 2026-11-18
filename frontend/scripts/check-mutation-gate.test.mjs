@@ -49,7 +49,7 @@ describe('check-mutation-gate', () => {
     expect(job).toMatch(/check-mutation-gate\.mjs/);
   });
 
-  it('real config: mutates the cart, auth and theme stores plus the #287 mapper ranges plus the #322 hook ranges plus the #327 payouts/sellers/telemetry/webauthn ranges plus the #347 notifications/recently-viewed ranges plus the #376 admin mapper ranges and declares a numeric break floor', () => {
+  it('real config: mutates the cart, auth and theme stores plus the #287 mapper ranges plus the #322 hook ranges plus the #327 payouts/sellers/telemetry/webauthn ranges plus the #347 notifications/recently-viewed ranges plus the #376 admin mapper ranges plus the #395 auth session-hook ranges and declares a numeric break floor', () => {
     const config = readRepo('frontend/stryker.config.mjs');
     const { mutate, breakThreshold } = parseStrykerConfig(config);
     expect(mutate).toEqual([
@@ -91,6 +91,12 @@ describe('check-mutation-gate', () => {
       'src/api/reviews.ts:151-175',
       'src/api/reviews.ts:178-196',
       'src/api/auth.ts:934-950',
+      'src/api/auth.ts:794-800',
+      'src/api/auth.ts:803-809',
+      'src/api/auth.ts:817-828',
+      'src/api/auth.ts:831-837',
+      'src/api/auth.ts:845-856',
+      'src/api/auth.ts:864-872',
       'src/api/client.ts:151-166',
       'src/api/favorites.ts:19-29',
       'src/api/favorites.ts:38-49',
