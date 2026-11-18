@@ -219,7 +219,24 @@ jobs:
       - run: npm ci --prefix frontend
       - name: Install Chromium for Playwright
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        # Bounded retry (backlog #391): the install downloads the browser
+        # plus apt system deps, and a transient apt DNS failure killed the
+        # e2e job on 2026-11-12 (exit 100, "Temporary failure resolving
+        # 'archive.ubuntu.com'"). Three attempts with a 30 s pause; the
+        # retry covers the install ONLY — the test run itself stays at
+        # retries: 0 in playwright.config.ts, so a genuinely failing
+        # suite still fails fast.
+        run: |
+          for attempt in 1 2 3; do
+            echo "Playwright install attempt $attempt/3..."
+            if npx playwright install --with-deps chromium; then
+              echo "Playwright install succeeded on attempt $attempt"
+              exit 0
+            fi
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          echo "::error::Playwright install failed after 3 attempts"
+          exit 1
       - name: Run browser e2e smoke
         working-directory: frontend
         run: npm run e2e

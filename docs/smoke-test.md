@@ -388,6 +388,14 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   per-spec headers is pre-bypass history (backlog #373): the bypass,
   not the 3-of-5 arithmetic, is what keeps register/login from 429ing
   now.
+- The Chromium install step (`npx playwright install --with-deps
+  chromium`) retries up to 3 times with a 30 s pause between attempts
+  (backlog #391): the install downloads the browser plus apt system
+  dependencies, and a transient apt DNS failure killed the e2e job on
+  2026-11-12 (exit 100, "Temporary failure resolving
+  'archive.ubuntu.com'"). The retry covers the install only — the test
+  run itself stays at `retries: 0`, so a genuinely failing suite still
+  fails fast.
 
 Which layer proves what: backend behaviour — unit + Testcontainers IT;
 SPA components/routes in isolation — Vitest + RTL; API-through-proxy —
