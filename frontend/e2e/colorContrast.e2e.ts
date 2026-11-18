@@ -10,8 +10,9 @@ import {
 } from './helpers';
 
 /**
- * The color-contrast pass (backlog #369) — NOT a thirteenth flow (the
- * mailed-sale journey in #370 is the thirteenth): a real-Chromium axe
+ * The color-contrast pass (backlog #369) — NOT a fifteenth flow (the
+ * mailed-sale journey in #370 is the thirteenth and the seller-appeal
+ * journey in #394 is the fourteenth): a real-Chromium axe
  * run with the `color-contrast` rule only, over nine key pages in both
  * themes (light + dark). The Vitest axe suite (#183) runs the same
  * pages in jsdom and cannot compute contrast — axe reports the rule
@@ -43,13 +44,13 @@ import {
  * the empty-state coverage is not mistaken for more than it is.
  *
  * Credential-bucket arithmetic (the bucket is shared per IP with the
- * other seven spec files, but the files run serially and every login
+ * other eight spec files, but the files run serially and every login
  * resets it): each test registers at most once and ends with the
  * bucket full — the guest-page tests log in at the end, the signed-in
  * tests log in before the checks and consume nothing after — so the
  * worst run between resets is 1 of 5.
  *
- * Stack note: like the thirteen flows, this pass runs in the existing
+ * Stack note: like the fourteen flows, this pass runs in the existing
  * CI `e2e` job (vite preview + backend jar on H2, picked up
  * automatically by the config's `**\/*.e2e.ts` match) — no new job,
  * no second stack.

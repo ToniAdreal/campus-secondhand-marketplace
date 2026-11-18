@@ -322,7 +322,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly thirteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
+- Exactly fourteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -352,12 +352,18 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   offers no save control (backlog #359);
   (13) buy-now → pay → the seller ships with a carrier + tracking
   number → the buyer confirms receipt → the order reads COMPLETED
-  and the listing flips to SOLD, pinned via the API (backlog #370).
-  Alongside the thirteen flows, the color-contrast pass (backlog #369,
+  and the listing flips to SOLD, pinned via the API (backlog #370);
+  (14) buyer reports a listing → the ADMIN withdraws it in
+  /admin/reports → the seller appeals from the listing's card on My
+  listings → the ADMIN upholds the appeal in /admin/appeals and the
+  listing returns to AVAILABLE, pinned via the API and confirmed by
+  the buyer seeing "Buy now" again, and a rejected appeal leaves its
+  listing WITHDRAWN with no purchase offered (backlog #394).
+  Alongside the fourteen flows, the color-contrast pass (backlog #369,
   `frontend/e2e/colorContrast.e2e.ts`) runs axe with the
   `color-contrast` rule only over nine key pages in both themes — the
   jsdom axe suite cannot compute contrast, so this pass is where
-  contrast is actually audited. It is a pass, not a fourteenth flow.
+  contrast is actually audited. It is a pass, not a fifteenth flow.
   Its first CI run is the measurement; genuine failures are fixed or
   filed as follow-ups, never worked around by disabling the rule.
   Flows 5 and 7 seed their PAID orders through the real API (the pay
@@ -374,7 +380,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   a deployment's first admin — the e2e stack points it at a throwaway
   account that lives only in the job's in-memory H2.
 - The backend also runs with the credential rate-limit bypass on
-  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the thirteen
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the fourteen
   flows share one backend and one client IP, so their register/login
   bursts exhaust the production 5/minute credential bucket mid-suite
   (main run 42734704718: register expected 200, got 429). The bypass
