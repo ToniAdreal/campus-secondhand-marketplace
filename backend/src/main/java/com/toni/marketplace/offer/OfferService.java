@@ -115,6 +115,17 @@ import org.springframework.web.server.ResponseStatusException;
  * flip in the decision endpoints writes no row either — it rolls back
  * with the rejected decision; the expiry job's flip is the audited one.
  *
+ * <p>Metrics (backlog #393): every transition above increments
+ * exactly one {@link OfferMetrics} counter, after the
+ * in-transaction flush that surfaces a lost {@code @Version} race —
+ * so a rolled-back or race-lost transition is never counted. The
+ * counters are {@code offers.created} / {@code offers.accepted} /
+ * {@code offers.declined} / {@code offers.countered} /
+ * {@code offers.counter_accepted} / {@code offers.expired}; withdraw
+ * and the lazy deadline flip count nothing (the same discipline as
+ * the audit rows). Alert rules over them are a separate follow-up
+ * (backlog #400).
+ *
  * <p>Honest scope: at most one counter per offer (backlog #193) — there
  * is no back-and-forth chain; a declined offer (original or countered)
  * is final and the buyer may submit a fresh offer afterwards.
@@ -130,12 +141,13 @@ public class OfferService {
   private final OfferProperties props;
   private final Clock clock;
   private final UserBlockRepository blocks;
+  private final OfferMetrics metrics;
 
   @Autowired
   public OfferService(PriceOfferRepository offers, ItemRepository items,
                       OrderCreationService creation, NotificationService notifications,
                       AuditService audit, OfferProperties props, Clock clock,
-                      UserBlockRepository blocks) {
+                      UserBlockRepository blocks, OfferMetrics metrics) {
     this.offers = offers;
     this.items = items;
     this.creation = creation;
@@ -144,13 +156,22 @@ public class OfferService {
     this.props = props;
     this.clock = clock;
     this.blocks = blocks;
+    this.metrics = metrics;
   }
 
   /** Constructor for direct unit tests that do not assert on notifications. */
   public OfferService(PriceOfferRepository offers, ItemRepository items,
                       OrderCreationService creation, OfferProperties props, Clock clock) {
     this(offers, items, creation, NotificationService.noop(), AuditService.noop(), props, clock,
-        null);
+        null, OfferMetrics.noop());
+  }
+
+  /** Constructor for direct unit tests that assert on metrics. */
+  public OfferService(PriceOfferRepository offers, ItemRepository items,
+                      OrderCreationService creation, OfferProperties props, Clock clock,
+                      OfferMetrics metrics) {
+    this(offers, items, creation, NotificationService.noop(), AuditService.noop(), props, clock,
+        null, metrics);
   }
 
   private Clock clock() {
@@ -163,6 +184,10 @@ public class OfferService {
 
   private NotificationService notifications() {
     return notifications != null ? notifications : NotificationService.noop();
+  }
+
+  private OfferMetrics metrics() {
+    return metrics != null ? metrics : OfferMetrics.noop();
   }
 
   /**
@@ -203,8 +228,11 @@ public class OfferService {
       OfferDto dto = OfferDto.from(offers.save(offer));
       // Flush inside the transaction, mirroring OrderCreationService: a
       // live-pair constraint violation from a racing create surfaces
-      // here and maps to 409, not at commit as a 500.
+      // here and maps to 409, not at commit as a 500. The counter
+      // moves only after the flush (backlog #393), so a lost race
+      // is never counted.
       offers.flush();
+      metrics().created();
       return dto;
     } catch (DataIntegrityViolationException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -267,9 +295,11 @@ public class OfferService {
       offers.flush();
       // Audit joins this transaction (backlog #389): the flush above
       // throws on a lost @Version race, before the record call, so a
-      // concurrent loser writes no row.
+      // concurrent loser writes no row. The counter (backlog #393)
+      // moves on the same discipline — after the flush, never before.
       audit().record(sellerId, AuditAction.OFFER_ACCEPTED, AuditTargetType.OFFER,
           offer.getId());
+      metrics().accepted();
       notifications().recordOffer(offer.getBuyerId(), NotificationType.OFFER_ACCEPTED,
           offer.getId(), order.id());
       return dto;
@@ -298,6 +328,7 @@ public class OfferService {
       offers.flush();
       audit().record(sellerId, AuditAction.OFFER_DECLINED, AuditTargetType.OFFER,
           offer.getId());
+      metrics().declined();
       notifications().recordOffer(offer.getBuyerId(), NotificationType.OFFER_DECLINED,
           offer.getId(), null);
       return dto;
@@ -343,6 +374,7 @@ public class OfferService {
       offers.flush();
       audit().record(sellerId, AuditAction.OFFER_COUNTERED, AuditTargetType.OFFER,
           offer.getId());
+      metrics().countered();
       notifications().recordOffer(offer.getBuyerId(), NotificationType.OFFER_COUNTERED,
           offer.getId(), null);
       return dto;
@@ -386,9 +418,11 @@ public class OfferService {
       offers.flush();
       // Audit joins this transaction (backlog #389): the flush above
       // throws on a lost @Version race, before the record call, so a
-      // concurrent loser writes no row.
+      // concurrent loser writes no row. The counter (backlog #393)
+      // moves on the same discipline — after the flush, never before.
       audit().record(buyerId, AuditAction.OFFER_COUNTER_ACCEPTED, AuditTargetType.OFFER,
           offer.getId());
+      metrics().counterAccepted();
       notifications().recordOffer(offer.getSellerId(), NotificationType.OFFER_COUNTER_ACCEPTED,
           offer.getId(), order.id());
       return dto;
@@ -421,8 +455,10 @@ public class OfferService {
       offers.flush();
       // A counter-decline is a decline: same action as the seller's
       // decline, told apart by the actor (buyer here, seller there).
+      // The counter moves on the same rule (backlog #393).
       audit().record(buyerId, AuditAction.OFFER_DECLINED, AuditTargetType.OFFER,
           offer.getId());
+      metrics().declined();
       notifications().recordOffer(offer.getSellerId(), NotificationType.OFFER_COUNTER_DECLINED,
           offer.getId(), null);
       return dto;
@@ -450,6 +486,9 @@ public class OfferService {
       offer.setStatus(OfferStatus.WITHDRAWN);
       OfferDto dto = OfferDto.from(offers.save(offer));
       offers.flush();
+      // No counter moves here (backlog #393): a withdraw is the buyer
+      // retracting their own offer, and the audit trail writes no row
+      // for it either — it is visible in the acting party's own list.
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
       throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -498,10 +537,13 @@ public class OfferService {
     // offer lapse, the buyer let a COUNTERED counter lapse — while the
     // waiting party below is the notification recipient, not the actor.
     // A sweep re-run finds the row EXPIRED and returns false above, so
-    // the row is written exactly once.
+    // the row is written exactly once. The counter (backlog #393) moves
+    // on the same discipline — after the flush, and only on the job's
+    // flip, never on the lazy deadline flip in the decision endpoints.
     Long lapsingParty = was == OfferStatus.PENDING ? offer.getSellerId() : offer.getBuyerId();
     audit().record(lapsingParty, AuditAction.OFFER_EXPIRED, AuditTargetType.OFFER,
         offer.getId());
+    metrics().expired();
     Long waitingParty = was == OfferStatus.PENDING ? offer.getBuyerId() : offer.getSellerId();
     notifications().recordOffer(waitingParty, NotificationType.OFFER_EXPIRED,
         offer.getId(), null);
