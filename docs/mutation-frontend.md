@@ -642,6 +642,40 @@ run re-derives it, per the #263 method. Backlog #395 is done; a
 future widening still requires re-measuring first, per the #263
 method.
 
+### Thirteenth scope change (backlog #396) — admin webhook mapper ranges, unmeasured
+
+The #376 follow-up, landed here. `frontend/stryker.config.mjs`
+re-scopes the two admin webhook mapper ranges to the full
+function spans, re-derived from the current TypeScript AST:
+`describeWebhookEventsError` 363-378 → 372-387 and
+`describeWebhookReplayError` 430-448 → 439-457 (the #389/#390
+audit-row additions moved both functions down the file). The old
+ranges were the #351 wrong-code failure mode in miniature: the
+old 358-373 range tail-covered only the first two lines of the
+events mapper (its signature plus the `response` extraction) and
+spilled into `useAdminWebhookEvents`, while the old 422-437
+range covered none of the replay mapper at all — it spanned the
+tail of `useReplayWebhookEvent` plus the mapper's JSDoc, which
+carries no mutants. Both mappers are driven by the existing
+`admin.test.tsx` mapper suites, which cover every branch
+(403/401/400/500-with-message/no-envelope for the events mapper;
+404/401-stale/401/403/500-with-message/no-message for the replay
+mapper), so no new tests were needed. The
+`check-mutation-gate.test.mjs` pin list is updated to match.
+Unmeasured locally (Stryker cannot run in this sandbox); the
+next CI `frontend-mutation` run measures the re-scoped ranges,
+and the floor stays 91 until a measured run says otherwise. No
+production-code change. Follow-up material: the same audit-row
+shift moved the other six admin ranges off their functions too
+(verified against the current AST: `describeAuditLogError`
+223-238, `describeAdminUserError` 250-282,
+`useAdminPaymentAttempts` 487-503,
+`describePaymentAttemptsError` 506-521,
+`describeSettlementError` 559-574, `describeDashboardError`
+646-661, against the pinned 214-229, 241-273, 475-490, 497-512,
+550-565, 637-652) — same partial-coverage pattern, left for a
+later item.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.

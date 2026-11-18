@@ -148,6 +148,30 @@
  * pattern) closed the gap to 100.00% (43/43) on re-measurement,
  * so the combined arithmetic (1684+43)/(1843+43) = 91.57% still
  * clears the break-91 floor. No production-code change.
+ * #396 re-scopes the two admin webhook mapper ranges the #376
+ * follow-up left behind, re-derived from the current TypeScript
+ * AST (`describeWebhookEventsError` 363-378 -> 372-387 and
+ * `describeWebhookReplayError` 430-448 -> 439-457; the #389/#390
+ * audit-row additions moved the functions down the file): the old
+ * 358-373 range tail-covered only the first two lines of the
+ * events mapper and spilled into `useAdminWebhookEvents`, and the
+ * old 422-437 range covered none of the replay mapper at all —
+ * it spanned the tail of `useReplayWebhookEvent` plus the
+ * mapper's JSDoc (the #351 wrong-code failure mode). Both
+ * mappers are driven by the existing `admin.test.tsx` mapper
+ * suites, which cover every branch (403/401/400/default; 404/
+ * 401-stale/401/403/default). Unmeasured locally — Stryker
+ * cannot run in this sandbox — the next CI `frontend-mutation`
+ * run measures the re-scoped ranges; the floor stays 91 until a
+ * measured run says otherwise. No production-code change.
+ * Follow-up material: the same audit-row shift moved the other
+ * six admin ranges off their functions too (verified against the
+ * current AST: `describeAuditLogError` 223-238,
+ * `describeAdminUserError` 250-282, `useAdminPaymentAttempts`
+ * 487-503, `describePaymentAttemptsError` 506-521,
+ * `describeSettlementError` 559-574, `describeDashboardError`
+ * 646-661, against the pinned 214-229, 241-273, 475-490,
+ * 497-512, 550-565, 637-652), and they are left for a later item.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -180,8 +204,8 @@ export default {
     'src/api/items.ts:482-500',
     'src/api/admin.ts:214-229',
     'src/api/admin.ts:241-273',
-    'src/api/admin.ts:358-373',
-    'src/api/admin.ts:422-437',
+    'src/api/admin.ts:372-387',
+    'src/api/admin.ts:439-457',
     'src/api/admin.ts:475-490',
     'src/api/admin.ts:497-512',
     'src/api/admin.ts:550-565',
