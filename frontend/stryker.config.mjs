@@ -23,7 +23,7 @@
  * orders ×9, items ×4, admin ×8, reports ×2, offers, disputes ×3,
  * appeals ×2, reviews ×3, auth step-up, client request) are in
  * scope. (The admin ×8 is ranges, not mappers: 7 `describe*Error`
- * mappers plus the pre-existing 475-490 `useAdminPaymentAttempts`
+ * mappers plus the pre-existing 489-505 `useAdminPaymentAttempts`
  * hook range.) The ranges
  * were taken from the TypeScript AST (function start/end lines), not
  * hand-counted, so a mapper that moves lines must have its range
@@ -164,14 +164,29 @@
  * cannot run in this sandbox — the next CI `frontend-mutation`
  * run measures the re-scoped ranges; the floor stays 91 until a
  * measured run says otherwise. No production-code change.
- * Follow-up material: the same audit-row shift moved the other
- * six admin ranges off their functions too (verified against the
- * current AST: `describeAuditLogError` 223-238,
- * `describeAdminUserError` 250-282, `useAdminPaymentAttempts`
- * 487-503, `describePaymentAttemptsError` 506-521,
- * `describeSettlementError` 559-574, `describeDashboardError`
- * 646-661, against the pinned 214-229, 241-273, 475-490,
- * 497-512, 550-565, 637-652), and they are left for a later item.
+ * #401 re-derives the five remaining stale admin mapper ranges
+ * from the current TypeScript AST (`describeAuditLogError`
+ * 223-238 -> 225-240, `describeAdminUserError` 250-282 ->
+ * 252-284, `describePaymentAttemptsError` 506-521 -> 508-523,
+ * `describeSettlementError` 559-574 -> 561-576,
+ * `describeDashboardError` 646-661 -> 648-663): a uniform +2
+ * line shift, same line counts, caused by #397 adding two
+ * `AUDIT_ACTIONS` entries (`REPORT_DISMISSED`,
+ * `LISTING_HIDDEN`) above the mappers. The same +2 shift had
+ * also re-staled #396's two webhook mapper ranges
+ * (372-387 -> 374-389, 439-457 -> 441-459) and the
+ * `useAdminPaymentAttempts` hook range (487-503 -> 489-505),
+ * so this commit re-pins all eight admin ranges in one
+ * mechanical correction rather than leaving three known-stale
+ * ranges behind; the five mappers are the #401 item, the other
+ * three are the same shift from the same cause, same files,
+ * same discipline. All eight are driven by the existing
+ * `admin.test.tsx` mapper suites, which cover every branch, so
+ * no new tests were needed. The `check-mutation-gate.test.mjs`
+ * pin list is updated to match. Unmeasured locally — Stryker
+ * cannot run in this sandbox — the next CI `frontend-mutation`
+ * run measures the re-scoped ranges; the floor stays 91 until
+ * a measured run says otherwise. No production-code change.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -202,14 +217,14 @@ export default {
     'src/api/items.ts:391-409',
     'src/api/items.ts:438-456',
     'src/api/items.ts:482-500',
-    'src/api/admin.ts:214-229',
-    'src/api/admin.ts:241-273',
-    'src/api/admin.ts:372-387',
-    'src/api/admin.ts:439-457',
-    'src/api/admin.ts:475-490',
-    'src/api/admin.ts:497-512',
-    'src/api/admin.ts:550-565',
-    'src/api/admin.ts:637-652',
+    'src/api/admin.ts:225-240',
+    'src/api/admin.ts:252-284',
+    'src/api/admin.ts:374-389',
+    'src/api/admin.ts:441-459',
+    'src/api/admin.ts:489-505',
+    'src/api/admin.ts:508-523',
+    'src/api/admin.ts:561-576',
+    'src/api/admin.ts:648-663',
     'src/api/reports.ts:52-73',
     'src/api/reports.ts:146-167',
     'src/api/offers.ts:183-207',

@@ -676,6 +676,34 @@ shift moved the other six admin ranges off their functions too
 550-565, 637-652) — same partial-coverage pattern, left for a
 later item.
 
+### Fourteenth scope change (backlog #401) — remaining admin mapper ranges, unmeasured
+
+The later item the thirteenth section left behind, landed here.
+`frontend/stryker.config.mjs` re-derives the five remaining stale
+admin mapper ranges from the current TypeScript AST:
+`describeAuditLogError` 223-238 → 225-240,
+`describeAdminUserError` 250-282 → 252-284,
+`describePaymentAttemptsError` 506-521 → 508-523,
+`describeSettlementError` 559-574 → 561-576,
+`describeDashboardError` 646-661 → 648-663. A uniform +2 line
+shift with identical line counts, caused by #397 adding two
+`AUDIT_ACTIONS` entries (`REPORT_DISMISSED`, `LISTING_HIDDEN`)
+above the mappers in `src/api/admin.ts`. The same +2 shift had
+also re-staled #396's two webhook mapper ranges (372-387 →
+374-389, 439-457 → 441-459) and the `useAdminPaymentAttempts`
+hook range (487-503 → 489-505), so this commit re-pins all eight
+admin ranges in one mechanical correction rather than leaving
+three known-stale ranges behind; the five mappers are the #401
+item, the other three are the same shift from the same cause,
+same files, same discipline. All eight are driven by the
+existing `admin.test.tsx` mapper suites, which cover every
+branch, so no new tests were needed. The
+`check-mutation-gate.test.mjs` pin list is updated to match.
+Unmeasured locally (Stryker cannot run in this sandbox); the
+next CI `frontend-mutation` run measures the re-scoped ranges,
+and the floor stays 91 until a measured run says otherwise. No
+production-code change.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
