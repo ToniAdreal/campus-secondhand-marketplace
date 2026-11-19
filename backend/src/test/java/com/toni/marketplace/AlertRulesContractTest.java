@@ -31,7 +31,9 @@ import org.yaml.snakeyaml.Yaml;
  * Backlog #350 added the two payout-sweep alerts (PayoutHeldGrowing,
  * PayoutSweepPaysNothing) over the #341 counters. Backlog #353 added
  * the two order-lifecycle alerts (OrderDisputeRateHigh,
- * PaidOrdersNeverHandoverConfirmed) over the #348 counters.
+ * PaidOrdersNeverHandoverConfirmed) over the #348 counters. Backlog
+ * #400 added the two offer-lifecycle alerts (OfferAcceptanceRateLow,
+ * OfferExpiryOutrunningAccepted) over the #393 counters.
  */
 class AlertRulesContractTest {
 
@@ -65,6 +67,12 @@ class AlertRulesContractTest {
         Set.of("orders_disputed_total", "orders_paid_total"));
     EXPECTED_ALERTS.put("PaidOrdersNeverHandoverConfirmed",
         Set.of("orders_paid_total", "orders_handover_confirmed_total"));
+    EXPECTED_ALERTS.put("OfferAcceptanceRateLow",
+        Set.of("offers_accepted_total", "offers_counter_accepted_total",
+            "offers_declined_total"));
+    EXPECTED_ALERTS.put("OfferExpiryOutrunningAccepted",
+        Set.of("offers_expired_total", "offers_accepted_total",
+            "offers_counter_accepted_total"));
   }
 
   /** Prometheus series → the Micrometer builder name that defines it. */
@@ -84,6 +92,10 @@ class AlertRulesContractTest {
     BUILDER_NAMES.put("payouts_paid_total", "payouts.paid");
     BUILDER_NAMES.put("orders_disputed_total", "orders.disputed");
     BUILDER_NAMES.put("orders_handover_confirmed_total", "orders.handover_confirmed");
+    BUILDER_NAMES.put("offers_accepted_total", "offers.accepted");
+    BUILDER_NAMES.put("offers_counter_accepted_total", "offers.counter_accepted");
+    BUILDER_NAMES.put("offers_declined_total", "offers.declined");
+    BUILDER_NAMES.put("offers_expired_total", "offers.expired");
   }
 
   /** The Metrics class each builder name must be found in. */
@@ -103,6 +115,10 @@ class AlertRulesContractTest {
     BUILDER_SOURCES.put("payouts.paid", "order/OrderMetrics.java");
     BUILDER_SOURCES.put("orders.disputed", "order/OrderMetrics.java");
     BUILDER_SOURCES.put("orders.handover_confirmed", "order/OrderMetrics.java");
+    BUILDER_SOURCES.put("offers.accepted", "offer/OfferMetrics.java");
+    BUILDER_SOURCES.put("offers.counter_accepted", "offer/OfferMetrics.java");
+    BUILDER_SOURCES.put("offers.declined", "offer/OfferMetrics.java");
+    BUILDER_SOURCES.put("offers.expired", "offer/OfferMetrics.java");
   }
 
   private static Path repoRoot() {

@@ -8,10 +8,11 @@
 # file into their own Prometheus.
 #
 # Every metric referenced below is one this application actually emits:
-# - auth_* / orders_* / payments_* / payouts_* counters are defined in
-#   AuthMetrics / OrderMetrics / WebhookMetrics (backend, Micrometer);
-#   dots in the Micrometer names become underscores in the Prometheus
-#   export and counters carry the _total suffix.
+# - auth_* / orders_* / payments_* / payouts_* / offers_* counters are
+#   defined in AuthMetrics / OrderMetrics / WebhookMetrics / OfferMetrics
+#   (backend, Micrometer); dots in the Micrometer names become
+#   underscores in the Prometheus export and counters carry the _total
+#   suffix.
 # - http_server_requests_seconds_count is Spring Boot's http.server.requests
 #   timer, part of the same export (documented in docs/smoke-test.md).
 # AlertRulesContractTest pins this list: a rule that references a metric
@@ -140,3 +141,34 @@ groups:
           summary: "Paid orders are not reaching handover confirmation"
           description: "Orders were paid in the last 7 days but none was completed by a seller presenting the buyer's handover code (orders.handover_confirmed). Handover normally lags payment by the shipping time, so the rule watches a full week; a paid order completed by ADMIN override or by the shipped-path receipt confirmation counts on orders.completed, not here."
           runbook_url: "docs/runbook.md#paidordersneverhandoverconfirmed"
+      - alert: OfferAcceptanceRateLow
+        expr: |
+          (sum(rate(offers_accepted_total[1d]))
+             + sum(rate(offers_counter_accepted_total[1d])))
+            / clamp_min(sum(rate(offers_accepted_total[1d]))
+                        + sum(rate(offers_counter_accepted_total[1d]))
+                        + sum(rate(offers_declined_total[1d])), 0.001)
+          < 0.1
+            and (sum(increase(offers_accepted_total[1d]))
+                 + sum(increase(offers_counter_accepted_total[1d]))
+                 + sum(increase(offers_declined_total[1d]))) >= 10
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fewer than 1 in 10 decided offers is being accepted"
+          description: "Over the last day, accepted offers (offers.accepted plus offers.counter_accepted — both paths create an order) are under 10% of all decided offers (accepted + counter-accepted + declined), with at least 10 decisions in the day. Offers are being declined — or countered and then declined — far more often than they close. Offers move slowly (48 h TTL), so the rule watches a full day, not minutes."
+          runbook_url: "docs/runbook.md#offeracceptanceratelow"
+      - alert: OfferExpiryOutrunningAccepted
+        expr: |
+          sum(increase(offers_expired_total[1d]))
+            > sum(increase(offers_accepted_total[1d]))
+              + sum(increase(offers_counter_accepted_total[1d]))
+            and sum(increase(offers_expired_total[1d])) >= 3
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "More offers are expiring unanswered than are being accepted"
+          description: "Over the last day, offers.expired outnumbered offers.accepted plus offers.counter_accepted, with at least 3 expiries in the day. Offers are dying unanswered — sellers are not responding before the 48 h deadline, or the deadline is too short for how often sellers check in."
+          runbook_url: "docs/runbook.md#offerexpiryoutrunningaccepted"

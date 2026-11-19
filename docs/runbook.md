@@ -262,6 +262,70 @@ be completing by ADMIN override or receipt confirmation. It is also
 not a payment failure: the mock capture already happened at pay time.
 And a quiet week with zero paid orders cannot fire this rule at all.
 
+## OfferAcceptanceRateLow
+
+Fewer than 1 in 10 decided offers was accepted over the last day
+(`offers.accepted` plus `offers.counter_accepted` under 10% of
+accepted + counter-accepted + declined), with at least 10 decisions
+in the day. Both accept paths count because both create an order —
+the seller accepting outright, or the buyer accepting the seller's
+counter price. `offers.declined` covers both a seller declining a
+PENDING offer and a buyer declining the seller's counter. Offers move
+slowly (48 h TTL by default), so the rule watches a full day.
+
+First three checks:
+
+1. Look at `offers.countered` in the same window: if sellers are
+   countering instead of accepting outright, the flow is
+   negotiating, not dying — and a counter-heavy flow that closes
+   still reads healthy here, because counter-accepts count as
+   accepts. If counters are also flat, sellers are not engaging at
+   all.
+2. Compare the declined offers' prices with the listing prices: are
+   buyers lowballing (declines are then the healthy answer) or are
+   sellers declining reasonable offers (a pricing or trust problem
+   on those listings)?
+3. Check whether a recent change touched the offer endpoints, the
+   expiry sweep, or the social-write rate-limit bucket — a broken
+   accept path shows up as 4xx/5xx on the offer transitions, not as
+   declines, so a spike in declines with clean accept traffic points
+   at behaviour, not code.
+
+What it is NOT: it is not proof sellers are unreasonable — a low
+acceptance rate can be healthy when buyers are lowballing, and the
+rule says nothing about order volume (direct buys bypass offers
+entirely). A single declined offer can never fire this rule: the
+10-decision minimum means a quiet day stays quiet.
+
+## OfferExpiryOutrunningAccepted
+
+Over the last day more offers expired unanswered than were accepted
+(`offers.expired` outnumbered `offers.accepted` plus
+`offers.counter_accepted`), with at least 3 expiries in the day. An
+expiry means the 48 h deadline passed with the offer still live —
+the seller never answered, or answered only after the deadline.
+
+First three checks:
+
+1. Check the offer deadline (`app.offers.pending-ttl`, 48 h by
+   default) and the ages of the expired offers: are sellers getting
+   the notification in time (the notification stream) or is the
+   deadline too short for how often sellers check in?
+2. Compare with `offers.created` in the same window: a burst of new
+   offers against a short deadline manufactures expiries, while a
+   steady flow with zero accepts is a response problem.
+3. Check the expiry sweep itself: it runs every 5 minutes, so a
+   pile-up of expiries in one sweep means the job stalled, not that
+   sellers suddenly stopped answering — look for the sweep's log
+   line (`offer expiry expired N offers, skipped M`) and the
+   scheduler skip counter.
+
+What it is NOT: it is not proof the accept path is broken — an
+accept that fails is a 4xx/5xx, never an expiry. A single expiry can
+never fire this rule (minimum 3 in the day), and an expired offer is
+not a lost sale by itself: the live pair frees up and the buyer can
+re-offer.
+
 ## Backup and restore drill (backlog #225)
 
 The compose stack's MySQL data (`mysql-data` volume) and listing photos
