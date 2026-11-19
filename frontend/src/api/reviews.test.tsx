@@ -233,3 +233,65 @@ describe('describeReviewError', () => {
     expect(describeReviewError(error)).toBe(expected);
   });
 });
+
+describe('describeReviewEditError', () => {
+  // Backlog #402 follow-up: describeReviewEditError (src/api/
+  // reviews.ts 113-134) carried 12 survived + 10 no-coverage
+  // mutants in the 2026-11-07 combined report (#351) — the same
+  // shape as describeReviewError before its #287 matrix. The
+  // existing #254 test pins only the five branches with an empty
+  // message, so the fallback path, the optional-chain and ??
+  // edges, and the envelope-shape edges were unreached. This
+  // matrix mirrors the describeReviewError one: every branch plus
+  // a response without data, data without a message, a message
+  // without a code, and no envelope at all.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['window closed', envelopeError(422, 'raw'), 'This review can no longer be edited — the edit window has closed or the seller has already responded.'],
+    ['bad rating', envelopeError(400, 'raw'), 'Please pick a rating from 1 to 5 (text up to 500 characters).'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the buyer of this order can edit it.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to edit your review.'],
+    ['gone', envelopeError(404, 'raw'), 'This review no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeReviewEditError(error)).toBe(expected);
+  });
+});
+
+describe('describeReviewResponseError', () => {
+  // Backlog #402 follow-up: describeReviewResponseError (src/api/
+  // reviews.ts 178-196) carried the same gap shape as its two
+  // siblings in the 2026-11-07 combined report (#351): the
+  // existing #246 test pins only the four branches with an empty
+  // message, so the fallback path, the optional-chain and ??
+  // edges, and the envelope-shape edges were unreached. Same
+  // mirror matrix as describeReviewEditError above.
+  function envelopeError(code: number, message: string) {
+    return { response: { data: { code, message } } };
+  }
+
+  it.each([
+    ['bad response', envelopeError(400, 'raw'), 'Please write a response up to 1000 characters.'],
+    ['forbidden', envelopeError(403, 'raw'), 'Only the seller can respond to this review.'],
+    ['anonymous', envelopeError(401, 'raw'), 'Please log in to respond.'],
+    ['gone', envelopeError(404, 'raw'), 'This review no longer exists.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeReviewResponseError(error)).toBe(expected);
+  });
+});

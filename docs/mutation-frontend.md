@@ -704,6 +704,64 @@ next CI `frontend-mutation` run measures the re-scoped ranges,
 and the floor stays 91 until a measured run says otherwise. No
 production-code change.
 
+### Fifteenth measured run (backlog #402) — reviews + disputes survivors dead
+
+The #402 killing tests (42 new cases in
+`frontend/src/api/reviews.test.tsx` and
+`frontend/src/api/disputes.test.tsx`, no production-code change)
+close the #351 gap in the already-landed reviews + disputes
+mapper scope: two new mirror matrices for
+`describeReviewEditError` (12 rows) and
+`describeReviewResponseError` (11 rows) in the #287 pattern —
+every branch plus a response without data, data without a
+message, a message without a code, and no envelope at all — and
+six added edge rows in each of the three disputes matrices
+(`describeDisputeError`, `describeDisputeEvidenceError`,
+`describeAdminDisputesError`: unknown code keeping the server
+message, unknown code with an empty message, message without a
+code, response without data, data without a message, no envelope
+/ empty object). The ranges are already in the gate (in scope
+since #287); the first measure attempt (2026-11-19 12:16 UTC)
+died after the dry run when its round ended, and was restarted
+in the next round.
+
+The scope was re-measured separately first, with a temporary
+ranges-only config at break 0 (measure first, floor second —
+the same discipline as #252, #263, #280, #287, #322, #327,
+#347 and #388; the temporary config was deleted after the run,
+never committed; full report copy:
+`goals/github-engineering-profile-building/hidden_files/stryker-402-measure-report.json`).
+Local run, 2026-11-19, head **d5a79b9** (backlog #401) plus the
+#402 killing tests (test files only, no production-code change),
+isolated clone, 4 workers, 4 minutes 55 seconds, dry run 225
+tests in 27 seconds:
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| 6 mapper ranges (234 mutants) | 100.00% (234/234) | 100.00% (234/234) |
+
+Mutant statuses: **KILLED 234, SURVIVED 0, NO_COVERAGE 0,
+TIMEOUT 0, ERROR 0.** Per-file: reviews 100.00% (108/108),
+disputes 100.00% (126/126). The ninth run left 12 survived +
+10 no-coverage in reviews and 11 survived + 5 no-coverage in
+disputes; all 38 are dead, none labelled equivalent.
+
+### Floor decision
+
+`thresholds.break` stays **91**: the floor is unchanged. This is
+a chunk re-measurement of an already-landed scope, and per the
+#388 precedent a chunk re-measurement does not earn a floor
+change — only a combined run re-derives the combined score. The
+arithmetic implication on the twelfth run's stated baseline
+(1727/1886 = 91.57%) is (1727 − 196 + 234)/1886 = 1765/1886 =
+**93.58%**, which clears the 91 floor — the landing condition in
+the #402 item — but no new combined number is claimed here: the
+baseline still carries the ninth-run notifications numbers,
+which #388 has since improved, and the #376 admin ranges are
+still unmeasured, so the true combined score is only measured by
+a full combined run or the CI `frontend-mutation` job, which
+measures the scope on every run. Backlog #402 is done.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.

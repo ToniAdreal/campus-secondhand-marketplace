@@ -58,6 +58,12 @@ function wrapperFor(queryClient: QueryClient) {
 }
 
 describe('describeDisputeError', () => {
+  // Backlog #402 follow-up: the 2026-11-07 combined report (#351)
+  // left 2 survived mutants in describeDisputeError (the
+  // response?.data.? chains, L185-186) — the branch pins plus the
+  // no-envelope case kill every other mutant, but no test passes
+  // a response without data or an unknown code with a server
+  // message. The six added rows close exactly those edges.
   it.each([
     ['window closed', envelopeError(422, 'the dispute window for this order has closed'), 'The dispute window for this order has closed.'],
     ['already resolved', envelopeError(422, 'this order was already disputed and the dispute was resolved'), 'This order was already disputed and resolved.'],
@@ -68,12 +74,24 @@ describe('describeDisputeError', () => {
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to dispute this order.'],
     ['unknown', envelopeError(404, 'order not found'), 'This order no longer exists.'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeDisputeError(error)).toBe(expected);
   });
 });
 
 describe('describeAdminDisputesError', () => {
+  // Backlog #402 follow-up: the 2026-11-07 combined report (#351)
+  // left 7 survived + 5 no-coverage mutants in
+  // describeAdminDisputesError (L300-301 chains, the 409 branch
+  // guard L317, the ?? '' edge and the whole fallback L320) — the
+  // branch pins never reach the fallback or the envelope-shape
+  // edges. The six added rows close exactly those edges.
   it.each([
     ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view the dispute queue.'],
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view the dispute queue.'],
@@ -81,6 +99,13 @@ describe('describeAdminDisputesError', () => {
     ['unknown', envelopeError(404, 'dispute not found'), 'That dispute no longer exists.'],
     ['cross resolution', envelopeError(422, 'already resolved'), 'That dispute has already been resolved the other way.'],
     ['race', envelopeError(409, 'concurrent'), 'Someone just resolved this dispute — please refresh.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAdminDisputesError(error)).toBe(expected);
   });
@@ -220,6 +245,12 @@ describe('dispute evidence hooks (backlog #200)', () => {
 });
 
 describe('describeDisputeEvidenceError', () => {
+  // Backlog #402 follow-up: the 2026-11-07 combined report (#351)
+  // left 3 survived mutants in describeDisputeEvidenceError (the
+  // response?.data.? chains and the ?? edge, L161-162) — the branch
+  // pins plus the no-envelope case kill every other mutant, but no
+  // test passes a response without data or an unknown code with a
+  // server message. The six added rows close exactly those edges.
   it.each([
     ['bad file', envelopeError(400, 'image content does not match declared type'), 'That file could not be accepted — please attach a PNG, JPEG, WebP or GIF image within the size limit.'],
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to manage dispute evidence.'],
@@ -227,6 +258,12 @@ describe('describeDisputeEvidenceError', () => {
     ['unknown', envelopeError(404, 'dispute not found'), 'This dispute no longer exists.'],
     ['resolved', envelopeError(422, 'evidence can only be added while the dispute is open'), 'This dispute has been resolved — evidence is closed.'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['unknown code keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['unknown code with an empty message falls back', envelopeError(500, ''), 'Something went wrong. Please try again.'],
+    ['message without a code keeps the server message', { response: { data: { message: 'database unavailable' } } }, 'database unavailable'],
+    ['response without data falls back', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message falls back', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeDisputeEvidenceError(error)).toBe(expected);
   });
