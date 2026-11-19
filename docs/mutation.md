@@ -643,6 +643,58 @@ no local 11-class score exists and none is claimed; the next CI
 that reads its `pit-reports` artifact re-ratchets the floor from
 that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #403, 2026-11-19)
+
+Backlog #403 adds one more class to the PIT scope —
+`order.PaymentWebhookService` — driven by its five webhook suites
+(`PaymentWebhookTest`, 10 tests before this round, 14 after;
+`PaymentWebhookSignatureTest`, 6 before, 9 after;
+`PaymentWebhookConcurrencyTest`; `AdminWebhookReplayTest`;
+`MockPspWebhookRateLimitTest`) plus `AdminWebhookEventsTest` for
+the ADMIN viewer path (`listWebhookEvents`, the #345 pattern — the
+*IT class stays out). The round closes the branches they never
+reached, so the widened scope does not ship known unkilled mutants
+with it:
+
+- the malformed-payload seam: an unparseable body after a valid
+  signature answers 400, and a delivery with an id but no type
+  answers 400 (the id half of that guard was already pinned);
+- the `text()` shape rules: the Stripe-shaped nesting
+  (`{data:{captureId:...}}`) reconciles identically to the flat
+  shape, and a non-textual capture id (a JSON number) mismatches
+  even when an order carries the same digits as its capture id;
+- the `signatureValid` fail-closed guard: a null/blank shared
+  secret or a null body can never verify (a mutant HMAC-ing with
+  the empty key would otherwise accept a delivery "signed" with
+  it), and a null `WebhookSignatureProperties` falls back to the
+  5-minute default;
+- the tolerance fallback: a zero or negative configured tolerance
+  is a misconfiguration, not a stricter window — a delivery 1
+  second old still verifies under it.
+
+Documented equivalents, not chased: the duplicate-`t` / duplicate
+-`v1` and `timestamp <= 0` checks (a mutant passes them but the
+digest or the freshness window still rejects the delivery, so the
+outcome is identical); the blank-presented / blank-key / blank-value
+header checks (the parse still fails without them); the
+`stored`-outcome fallback in the `handle()` race catch (not
+reachable deterministically — the winner's row is committed by the
+time the loser's insert fails); the `hmacHex`
+`IllegalStateException` (HmacSHA256 is always available); the
+`recordedAt == null` replay branch (ledger rows always carry a
+`createdAt`). The floor is **held at 79, not raised and not
+lowered**, on the same terms as #269/#285/#320/#333/#338/#377/#387:
+PIT cannot run in this sandbox — the measure-first step, a
+webhook-service-only run at threshold 0 on 2026-11-19, reproduced
+the sandbox failure in ~33 s (1 mutation test unit created in the
+pre-scan, then the coverage minion died — `MINION_DIED`,
+`SocketTimeoutException: Read timed out` on its socket — `BUILD
+FAILURE`; log `hidden_files/pit-403-measure-first.log`), so no local
+12-class score exists and none is claimed; the next CI
+`backend-mutation` run measures the widened scope, and the round
+that reads its `pit-reports` artifact re-ratchets the floor from
+that measured score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:

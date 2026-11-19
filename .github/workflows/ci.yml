@@ -17,14 +17,14 @@ jobs:
 
   backend-mutation:
     # Mutation pilot (backlog #192, widened by #269/#285/#320/#333/
-    # #338/#345/#377/#387 to eleven classes — see backend/pom.xml
+    # #338/#345/#377/#387/#403 to twelve classes — see backend/pom.xml
     # `mutation` profile + docs/mutation.md for the class list). The
     # job fails below the profile's mutationThreshold ratchet. The
     # floor is 79 (backlog #355): the measured mutation coverage on
     # run 42434347952 (2026-11-08, head 099aba0) is 477/599 = 79.6%,
     # floored to a whole percent so an identical rerun cannot fail on
     # rounding — never above the measured score (recorded in
-    # docs/mutation.md), never guessed. The #377/#387 widenings are
+    # docs/mutation.md), never guessed. The #377/#387/#403 widenings are
     # unmeasured; the floor stays 79 until a backend-mutation run
     # measures them.
     # PIT never runs in the default local `mvn -o test` path. The PIT

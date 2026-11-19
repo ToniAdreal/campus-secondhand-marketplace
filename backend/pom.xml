@@ -376,6 +376,13 @@
                 <param>com.toni.marketplace.audit.AuditService</param>
                 <param>com.toni.marketplace.offer.OfferExpiryService</param>
                 <param>com.toni.marketplace.order.PendingOrderExpiryService</param>
+                <!-- Backlog #403: the webhook MATCHED / MISMATCHED /
+                     duplicate decision is the money-in seam after the
+                     mock-PSP capture; its drivers are the five webhook
+                     suites below plus AdminWebhookEventsTest for the
+                     ADMIN viewer path (listWebhookEvents), the #345
+                     pattern — the *IT class stays out. -->
+                <param>com.toni.marketplace.order.PaymentWebhookService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -403,6 +410,16 @@
                 <param>com.toni.marketplace.order.OrderReadTest</param>
                 <param>com.toni.marketplace.order.OrderHandoverCodeTest</param>
                 <param>com.toni.marketplace.order.OrderPaymentTest</param>
+                <!-- Backlog #403: the PaymentWebhookService drivers —
+                     signature + delivery + race + replay + rate limit,
+                     plus AdminWebhookEventsTest for the ADMIN viewer
+                     path (listWebhookEvents, the #345 pattern). -->
+                <param>com.toni.marketplace.order.PaymentWebhookTest</param>
+                <param>com.toni.marketplace.order.PaymentWebhookSignatureTest</param>
+                <param>com.toni.marketplace.order.PaymentWebhookConcurrencyTest</param>
+                <param>com.toni.marketplace.order.AdminWebhookReplayTest</param>
+                <param>com.toni.marketplace.order.MockPspWebhookRateLimitTest</param>
+                <param>com.toni.marketplace.order.AdminWebhookEventsTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>

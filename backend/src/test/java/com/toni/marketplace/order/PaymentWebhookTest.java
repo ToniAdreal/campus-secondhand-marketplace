@@ -220,6 +220,58 @@ class PaymentWebhookTest {
   }
 
   @Test
+  void malformedJsonWithValidSignatureIs400() throws Exception {
+    // Backlog #403: an unparseable body is the sender's bug, not a 500 —
+    // the readTree catch in handle() answers 400 and records nothing.
+    String body = "{not json";
+    deliver(body, sign(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+    assertThat(events.count()).isEqualTo(0);
+  }
+
+  @Test
+  void missingTypeWithValidSignatureIs400() throws Exception {
+    // Backlog #403: pins the type half of the id/type guard (the id half
+    // is pinned above) — a delivery with an id but no type is a 400.
+    String body = "{\"id\":\"evt_no_type\"}";
+    deliver(body, sign(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+    assertThat(events.findByEventId("evt_no_type")).isEmpty();
+  }
+
+  @Test
+  void nestedDataShapeReconcilesLikeFlat() throws Exception {
+    // Backlog #403: the Stripe-shaped nesting ({data:{captureId:...}})
+    // reconciles identically to the flat shape — the text() fallback
+    // into the data object is what makes that true.
+    seedOrder(OrderStatus.PAID, "cap_mock_wh_nested", null);
+    String body = "{\"id\":\"evt_nested\",\"type\":\"capture.succeeded\","
+        + "\"data\":{\"captureId\":\"cap_mock_wh_nested\"}}";
+    deliver(body, sign(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.outcome").value("MATCHED"));
+    assertThat(events.findByEventId("evt_nested"))
+        .hasValueSatisfying(e -> assertThat(e.getOutcome())
+            .isEqualTo(WebhookEvent.Outcome.MATCHED));
+  }
+
+  @Test
+  void nonTextualCaptureIdIsMismatch() throws Exception {
+    // Backlog #403: a numeric captureId is not a string reference —
+    // text() returns null for it, so the delivery mismatches even
+    // though an order carries the same digits as its capture id.
+    Order order = seedOrder(OrderStatus.PAID, "123", null);
+    String body = "{\"id\":\"evt_num\",\"type\":\"capture.succeeded\",\"captureId\":123}";
+    deliver(body, sign(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.outcome").value("MISMATCH"));
+    assertThat(orders.findById(order.getId()).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.PAID);
+  }
+
+  @Test
   void staleTimestampIs401EvenWithValidHmacForThatTimestamp() throws Exception {
     // Backlog #149: signed 10 minutes ago (tolerance is the default
     // 5 min) with a cryptographically valid HMAC for that timestamp —

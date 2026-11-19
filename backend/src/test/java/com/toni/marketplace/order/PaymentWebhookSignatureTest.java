@@ -93,4 +93,54 @@ class PaymentWebhookSignatureTest {
     assertThat(service(Duration.ofMinutes(15)).signatureValid(tenMinutesOld, BODY)).isTrue();
     assertThat(service(Duration.ofMinutes(5)).signatureValid(tenMinutesOld, BODY)).isFalse();
   }
+
+  @Test
+  void nullAndBlankSecretsAndBodyAreInvalid() {
+    // Backlog #403: the fail-closed guard at the top of signatureValid —
+    // a null/blank presented header, a null body, or a null/blank shared
+    // secret can never verify. Without the secret checks a mutant would
+    // HMAC with the empty key and accept a delivery "signed" with it.
+    PaymentWebhookService svc = service(null);
+    String fresh = signAt(NOW);
+    assertThat(svc.signatureValid(null, BODY)).isFalse();
+    assertThat(svc.signatureValid("   ", BODY)).isFalse();
+    assertThat(svc.signatureValid(fresh, null)).isFalse();
+
+    WebhookProperties blankProps = new WebhookProperties();
+    blankProps.setWebhookSecret("   ");
+    PaymentWebhookService blankSvc = new PaymentWebhookService(null, null, blankProps,
+        new WebhookSignatureProperties(), WebhookMetrics.noop(), new ObjectMapper(),
+        Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThat(blankSvc.signatureValid(
+        PaymentWebhookService.sign("   ", NOW.getEpochSecond(), BODY), BODY)).isFalse();
+
+    WebhookProperties nullProps = new WebhookProperties();
+    PaymentWebhookService nullSvc = new PaymentWebhookService(null, null, nullProps,
+        new WebhookSignatureProperties(), WebhookMetrics.noop(), new ObjectMapper(),
+        Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThat(nullSvc.signatureValid(fresh, BODY)).isFalse();
+  }
+
+  @Test
+  void nullSignaturePropertiesFallsBackToDefaultTolerance() {
+    // Backlog #403: a null WebhookSignatureProperties is not a crash —
+    // signatureTolerance() falls back to the 5-minute default.
+    WebhookProperties props = new WebhookProperties();
+    props.setWebhookSecret(SECRET);
+    PaymentWebhookService svc = new PaymentWebhookService(null, null, props, null,
+        WebhookMetrics.noop(), new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThat(svc.signatureValid(signAt(NOW), BODY)).isTrue();
+    assertThat(svc.signatureValid(signAt(NOW.minusSeconds(360)), BODY)).isFalse();
+  }
+
+  @Test
+  void nonPositiveToleranceFallsBackToDefault() {
+    // Backlog #403: zero or negative configured tolerance is a
+    // misconfiguration, not a stricter window — signatureTolerance()
+    // falls back to the 5-minute default instead of rejecting every
+    // delivery, so a delivery 1 second old still verifies.
+    String oneSecondOld = signAt(NOW.minusSeconds(1));
+    assertThat(service(Duration.ZERO).signatureValid(oneSecondOld, BODY)).isTrue();
+    assertThat(service(Duration.ofMinutes(-1)).signatureValid(oneSecondOld, BODY)).isTrue();
+  }
 }
