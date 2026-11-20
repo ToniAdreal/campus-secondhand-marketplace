@@ -2,7 +2,6 @@ package com.toni.marketplace.auth;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
 /**
  * Default {@link PasswordResetMailSender} for this demo: there is no mail
@@ -12,8 +11,12 @@ import org.springframework.stereotype.Component;
  * token in a log file would be a live credential for anyone with log
  * access. A real deployment replaces this bean with an SMTP/SES sender
  * (see the interface javadoc).
+ *
+ * <p>Not a {@code @Component}: the bean is declared in {@link AuthConfig},
+ * which wires this logging sender unless the test-only capture knob
+ * ({@code app.auth.password-reset.e2e-token-capture-enabled}, backlog
+ * #407) selects {@link CapturingPasswordResetMailSender} instead.
  */
-@Component
 public class LoggingPasswordResetMailSender implements PasswordResetMailSender {
 
   private static final Logger log = LoggerFactory.getLogger(LoggingPasswordResetMailSender.class);

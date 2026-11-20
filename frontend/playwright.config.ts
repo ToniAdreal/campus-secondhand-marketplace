@@ -18,6 +18,16 @@ import { defineConfig, devices } from '@playwright/test';
  *   could ever read a verification link; the suite does not pretend a
  *   mailbox exists. With the gate off, registration returns a session —
  *   exactly the path the first flow exercises.
+ * - The password-reset flow (#399) needs its mailed token, and the
+ *   default sender logs with the token redacted, so no test could ever
+ *   read it — the backend therefore also runs with the test-only
+ *   reset-token capture ON (APP_AUTH_PASSWORD_RESET_E2E_TOKEN_CAPTURE_ENABLED=true,
+ *   backlog #407, step C1 unblocking #399): the capturing sender records
+ *   the latest raw token per user in memory and the test-only endpoint
+ *   GET /api/test/auth/password-reset-token serves it back. The knob is
+ *   set only on this throwaway e2e backend, never on a real deployment:
+ *   with it on, anyone who can reach the backend can read a live reset
+ *   token for any user id.
  * - The dispute flow (#213) needs an ADMIN, and registration only ever
  *   mints USER accounts. The backend therefore also runs with its opt-in
  *   first-admin bootstrap (APP_BOOTSTRAP_ADMIN_*, backlog #213) pointing
@@ -156,6 +166,9 @@ export default defineConfig({
         // the hourly sweep and the 7-day window.
         APP_PAYOUTS_SWEEP_CRON: '*/10 * * * * *',
         APP_DISPUTES_WINDOW: 'PT30S',
+        // Reset-token capture for the password-reset flow — see header
+        // (backlog #407, step C1 unblocking #399). E2e stack only.
+        APP_AUTH_PASSWORD_RESET_E2E_TOKEN_CAPTURE_ENABLED: 'true',
       },
     },
     {

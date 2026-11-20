@@ -257,6 +257,16 @@ app:
       # endpoints are rate-limited per IP (5/min, own bucket in
       # AuthRateLimitFilter).
       token-ttl: 30m
+      # Test-only reset-token capture (backlog #407, step C1 unblocking the
+      # #399 Playwright password-reset journey): when true, the capturing
+      # mail sender records the raw token in memory and the test-only read
+      # endpoint GET /api/test/auth/password-reset-token serves it back.
+      # Default false; set ONLY on the throwaway Playwright e2e backend
+      # (APP_AUTH_PASSWORD_RESET_E2E_TOKEN_CAPTURE_ENABLED=true in
+      # frontend/playwright.config.ts). Never set it on a real deployment:
+      # with it on, anyone who can reach the backend can read a live reset
+      # token for any user id and take over the account.
+      e2e-token-capture-enabled: ${APP_AUTH_PASSWORD_RESET_E2E_TOKEN_CAPTURE_ENABLED:false}
     data-export:
       # Data-export step-up grant lifetime (DataExportGrantService,
       # backlog #188): POST /api/users/me/export/confirm re-proves the

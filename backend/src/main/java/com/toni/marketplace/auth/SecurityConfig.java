@@ -262,6 +262,15 @@ public class SecurityConfig {
             // controller, its own per-IP bucket in AuthRateLimitFilter,
             // and the service logging/counting only sanitized fields.
             .requestMatchers(HttpMethod.POST, "/api/telemetry/errors").permitAll()
+            // Test-only reset-token read endpoint (backlog #407, step C1
+            // unblocking #399): public at the chain because the Playwright
+            // e2e spec reads it without a session — the gate is the
+            // opt-in knob, not a Bearer token: the controller bean exists
+            // only when app.auth.password-reset.e2e-token-capture-enabled
+            // is true, so with the knob off (the default, and every real
+            // deployment) the route does not exist and the request 404s.
+            .requestMatchers(HttpMethod.GET,
+                "/api/test/auth/password-reset-token").permitAll()
             // Notification SSE stream (backlog #203): public at the chain
             // because EventSource cannot send an Authorization header —
             // the controller consumes a one-time, 60-second ticket issued

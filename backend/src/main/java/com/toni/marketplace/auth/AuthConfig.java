@@ -2,6 +2,7 @@ package com.toni.marketplace.auth;
 
 import java.time.Clock;
 import javax.crypto.SecretKey;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -46,6 +47,37 @@ public class AuthConfig {
       return new HttpBreachedPasswordChecker(props.getBaseUrl(), props.getTimeout());
     }
     return new LocalDenylistBreachedPasswordChecker();
+  }
+
+  /**
+   * Password-reset mail sender (backlog #90, #407): the default bean logs
+   * the request with the token redacted and delivers nothing — this
+   * project has no mail server; a real deployment injects an SMTP/SES
+   * implementation of the interface. When the test-only capture knob
+   * ({@code app.auth.password-reset.e2e-token-capture-enabled}) is on,
+   * the capturing sender is the bean instead, recording the raw token
+   * in memory for the test-only read endpoint — the knob is set only on
+   * the throwaway Playwright e2e backend, never on a real deployment.
+   */
+  @Bean
+  @ConditionalOnProperty(prefix = "app.auth.password-reset",
+      name = "e2e-token-capture-enabled", havingValue = "false", matchIfMissing = true)
+  public PasswordResetMailSender loggingPasswordResetMailSender() {
+    return new LoggingPasswordResetMailSender();
+  }
+
+  /**
+   * Test-only capturing sender (backlog #407, step C1 unblocking #399):
+   * records the latest raw reset token per user id in memory, exposed by
+   * {@link E2ePasswordResetTokenController}. Exists only when the capture
+   * knob is on; see {@link #loggingPasswordResetMailSender()} for the
+   * default and the never-on-a-real-deployment warning.
+   */
+  @Bean
+  @ConditionalOnProperty(prefix = "app.auth.password-reset",
+      name = "e2e-token-capture-enabled", havingValue = "true")
+  public CapturingPasswordResetMailSender capturingPasswordResetMailSender() {
+    return new CapturingPasswordResetMailSender();
   }
 
   /**
