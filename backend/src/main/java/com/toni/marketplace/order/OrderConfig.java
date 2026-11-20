@@ -10,6 +10,6 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 @EnableConfigurationProperties({OrderExpiryProperties.class, HandoverProperties.class,
-    WebhookProperties.class, WebhookSignatureProperties.class})
+    WebhookProperties.class, WebhookSignatureProperties.class, PayoutProperties.class})
 public class OrderConfig {
 }

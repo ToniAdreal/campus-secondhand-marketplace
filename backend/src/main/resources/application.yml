@@ -479,6 +479,15 @@ app:
     # which for a PAID or COMPLETED order is exactly that transition.
     # Default 7 days.
     window: 7d
+  payouts:
+    # Seller-payout sweep cadence (SellerPayoutService, backlog #406):
+    # how often the sweep promotes PENDING payouts to PAYABLE once the
+    # #169 dispute window has passed and marks already-PAYABLE rows PAID.
+    # Default hourly. The e2e stack overrides it to every 10 s via
+    # APP_PAYOUTS_SWEEP_CRON (frontend/playwright.config.ts) so the #398
+    # payout flow can reach PAYABLE inside a 60 s test; production keeps
+    # the hourly default.
+    sweep-cron: 0 0 * * * *
   payments:
     # Mock-PSP webhook receiver (PaymentWebhookService, backlog #140):
     # POST /api/payments/webhooks/mock-psp is a public route authenticated

@@ -94,6 +94,16 @@ import { defineConfig, devices } from '@playwright/test';
  *   the per-spec headers is pre-bypass history (backlog #373): the
  *   bypass, not the 3-of-5 arithmetic, is what keeps register/login from
  *   429ing now.
+ * - The payout sweep runs every 10 seconds in this stack and the
+ *   dispute window is 30 seconds (APP_PAYOUTS_SWEEP_CRON +
+ *   APP_DISPUTES_WINDOW, backlog #406, step A1 unblocking the #398
+ *   payout flow): promotion needs completedAt + window <= now and the
+ *   only promoter is the sweep, so neither knob alone reaches PAYABLE
+ *   inside a 60 s test — the hourly sweep and the 7-day window are the
+ *   production defaults and stay untouched. The dispute flow (#213)
+ *   still passes: it opens its dispute seconds after pay, inside the
+ *   30 s window, and resolution is not window-gated; no other flow
+ *   asserts payout state, so mid-suite promotions are harmless.
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.
@@ -141,6 +151,11 @@ export default defineConfig({
         APP_BOOTSTRAP_ADMIN_USERNAME: 'e2eadmin',
         APP_BOOTSTRAP_ADMIN_EMAIL: 'e2eadmin@example.com',
         APP_BOOTSTRAP_ADMIN_PASSWORD: 'E2eSmoke1234',
+        // Payout sweep cadence + dispute window for the payout flow —
+        // see header (backlog #406). E2e stack only; production keeps
+        // the hourly sweep and the 7-day window.
+        APP_PAYOUTS_SWEEP_CRON: '*/10 * * * * *',
+        APP_DISPUTES_WINDOW: 'PT30S',
       },
     },
     {

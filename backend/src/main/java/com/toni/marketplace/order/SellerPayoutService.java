@@ -269,8 +269,11 @@ public class SellerPayoutService {
         adjustments.sumAmountBySellerId(sellerId));
   }
 
-  /** Runs every hour server-local. Also callable directly in tests. */
-  @Scheduled(cron = "0 0 * * * *")
+  /**
+   * Runs on the {@code app.payouts.sweep-cron} cadence (hourly by default,
+   * backlog #406). Also callable directly in tests.
+   */
+  @Scheduled(cron = "${app.payouts.sweep-cron:0 0 * * * *}")
   public PayoutSweepCounts runScheduledSweep() {
     return runSweep(clock.instant());
   }

@@ -387,6 +387,15 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   lifts login, register and refresh together; every other limiter
   keeps its own bucket, and the production bucket is unchanged. It is
   set only on this throwaway e2e backend, never on a real deployment.
+- The payout sweep runs every 10 seconds in this stack and the dispute
+  window is 30 seconds (`APP_PAYOUTS_SWEEP_CRON=*/10 * * * * *` +
+  `APP_DISPUTES_WINDOW=PT30S`, backlog #406, step A1 unblocking the #398
+  payout flow): promotion needs completedAt + window <= now and the
+  only promoter is the sweep, so a 60-second test cannot reach PAYABLE
+  on the production hourly cadence and 7-day window. The dispute flow
+  (#213) still passes — it opens its dispute seconds after pay, inside
+  the 30 s window, and resolution is not window-gated. Set only on
+  this throwaway e2e backend, never on a real deployment.
 - `retries: 0`, `workers: 1` (the flows share one backend and its
   in-memory H2 database). A flaky flow is fixed or deleted,
   never retried into green; traces/screenshots are kept on failure and
