@@ -75,12 +75,16 @@ id, or IP tag, by design.
 ### Latency timers (backlog #153)
 
 `auth.login.duration`, `auth.refresh.duration`,
-`orders.create.duration`, `orders.pay.duration` — each with a single
+`orders.create.duration`, `orders.pay.duration`,
+`orders.refund.duration` (backlog #404) — each with a single
 `outcome` tag (`success`/`failure`) and no username/id/IP tags. Login
 and refresh record exactly one sample per call; the order timers mirror
-the counters' rule — they time attempted creations/captures only, so
-idempotent replays (same Idempotency-Key, re-pay of a PAID order) and
-pre-attempt rejections record no sample.
+the counters' rule — they time attempted creations/captures/refunds only, so
+idempotent replays (same Idempotency-Key, re-pay of a PAID order, re-refund
+of a REFUNDED order) and pre-attempt rejections record no sample. A partial
+refund samples `success` on `orders.refund.duration` even though the order
+stays PAID (money moved); the dispute-resolved refund is a separate attempt
+surface and records no sample on this timer.
 
 ### Built-ins
 

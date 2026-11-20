@@ -91,11 +91,25 @@ import org.springframework.stereotype.Component;
  *       outcome=success} for a fresh PENDING → PAID transition,
  *       {@code outcome=failure} for a declined capture or a 409 race
  *       loss inside the attempt.</li>
+ *   <li>{@code orders.refund.duration} — timed from the moment a refund
+ *       is attempted in {@link OrderService#refund} (backlog #404):
+ *       {@code outcome=success} for an accepted refund, whether it
+ *       flips PAID → REFUNDED (full refund) or moves money while the
+ *       order stays PAID (partial refund), {@code outcome=failure}
+ *       for a PSP failure or a 409 race loss inside the attempt. The
+ *       dispute-resolved refund ({@link
+ *       com.toni.marketplace.dispute.DisputeService#resolveRefund}) is
+ *       a separate attempt surface — its claim-first shape (the order
+ *       + dispute transition is flushed before the PSP seam is
+ *       touched) is not this timer's attempt — so it moves
+ *       {@code orders.refunded} without recording a sample here.</li>
  * </ul>
  * Idempotent replays are treated exactly as the counters treat them —
  * they record NO timer sample: an Idempotency-Key replay returns the
- * original order before any creation is attempted, and a re-pay of an
- * already-PAID order returns before any capture is attempted.
+ * original order before any creation is attempted, a re-pay of an
+ * already-PAID order returns before any capture is attempted, and a
+ * re-refund of an already-REFUNDED order returns before any refund is
+ * attempted.
  * Pre-attempt rejections likewise record no sample (pay: unknown
  * order 404, non-buyer 403, terminal-state 422; create: an invalid
  * Idempotency-Key 400) — the timers measure the hot-path work, not the
@@ -138,6 +152,8 @@ public class OrderMetrics {
   private final Timer createFailureTimer;
   private final Timer paySuccessTimer;
   private final Timer payFailureTimer;
+  private final Timer refundSuccessTimer;
+  private final Timer refundFailureTimer;
 
   public OrderMetrics(MeterRegistry registry) {
     MeterRegistry reg = registry != null ? registry : new SimpleMeterRegistry();
@@ -199,6 +215,14 @@ public class OrderMetrics {
     this.payFailureTimer = Timer.builder("orders.pay.duration")
         .tag("outcome", "failure")
         .description("Order-pay capture attempt latency, declined or raced attempts")
+        .register(reg);
+    this.refundSuccessTimer = Timer.builder("orders.refund.duration")
+        .tag("outcome", "success")
+        .description("Order-refund attempt latency, accepted refunds (full or partial)")
+        .register(reg);
+    this.refundFailureTimer = Timer.builder("orders.refund.duration")
+        .tag("outcome", "failure")
+        .description("Order-refund attempt latency, failed attempts (PSP failure or race loss)")
         .register(reg);
   }
 
@@ -288,6 +312,18 @@ public class OrderMetrics {
   public void stopPayTimer(Timer.Sample sample, boolean success) {
     if (sample != null) {
       sample.stop(success ? paySuccessTimer : payFailureTimer);
+    }
+  }
+
+  /** Starts a refund timer sample; stop it exactly once via {@link #stopRefundTimer}. */
+  public Timer.Sample startRefundTimer() {
+    return Timer.start(registry);
+  }
+
+  /** Stops a refund sample on the success or failure timer, per {@code success}. */
+  public void stopRefundTimer(Timer.Sample sample, boolean success) {
+    if (sample != null) {
+      sample.stop(success ? refundSuccessTimer : refundFailureTimer);
     }
   }
 }

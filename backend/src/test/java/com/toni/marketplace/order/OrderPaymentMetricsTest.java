@@ -378,6 +378,53 @@ class OrderPaymentMetricsTest {
   }
 
   @Test
+  void refundTimer_freshSamplesOnce_replaySamplesNothing_preAttemptRejectionSamplesNothing()
+      throws Exception {
+    User seller = newUser("seller");
+    User buyer = newUser("buyer");
+    long orderId = createOrder(buyer, newItem(seller));
+    act(buyer, orderId, "pay");
+    long successBefore = timerCount("orders.refund.duration", "success");
+    long failureBefore = timerCount("orders.refund.duration", "failure");
+
+    act(seller, orderId, "refund");
+    assertThat(timerCount("orders.refund.duration", "success"))
+        .isEqualTo(successBefore + 1);
+
+    // Re-refund of an already-REFUNDED order: no refund is attempted,
+    // so no sample — exactly as orders.refunded does not move (#404).
+    act(seller, orderId, "refund");
+    assertThat(timerCount("orders.refund.duration", "success"))
+        .isEqualTo(successBefore + 1);
+    assertThat(timerCount("orders.refund.duration", "failure"))
+        .isEqualTo(failureBefore);
+
+    // Pre-attempt rejections record no sample either (documented in
+    // OrderMetrics): refunding an unknown order 404s before any refund.
+    mockMvc.perform(post("/api/orders/{id}/refund", 999999999L)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}"))
+        .andExpect(status().isNotFound());
+    assertThat(timerCount("orders.refund.duration", "failure"))
+        .isEqualTo(failureBefore);
+    assertThat(timerCount("orders.refund.duration", "success"))
+        .isEqualTo(successBefore + 1);
+
+    // And refunding a still-PENDING order 422s before any refund.
+    long pendingId = createOrder(buyer, newItem(seller));
+    mockMvc.perform(post("/api/orders/{id}/refund", pendingId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"item damaged\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(timerCount("orders.refund.duration", "failure"))
+        .isEqualTo(failureBefore);
+    assertThat(timerCount("orders.refund.duration", "success"))
+        .isEqualTo(successBefore + 1);
+  }
+
+  @Test
   void countersAreScrapeableViaPrometheusBehindAuth() throws Exception {
     User seller = newUser("seller");
     User buyer = newUser("buyer");

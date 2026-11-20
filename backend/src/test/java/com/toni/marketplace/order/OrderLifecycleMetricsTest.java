@@ -20,6 +20,7 @@ import com.toni.marketplace.item.ItemRepository;
 import com.toni.marketplace.item.ItemStatus;
 import com.toni.marketplace.notification.NotificationService;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -33,8 +34,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -47,6 +50,12 @@ import org.springframework.web.server.ResponseStatusException;
  * throwaway {@link SimpleMeterRegistry}, and every assertion reads the
  * counter itself — so a counter that forgets to move, or moves on the
  * wrong transition, fails here. No Spring context, no database.
+ *
+ * <p>Backlog #404 adds the {@code orders.refund.duration} timer tests
+ * here for the same reason: the refund attempt (success, partial,
+ * replay, pre-attempt rejection, race loss) is pinned against the
+ * throwaway registry, with the dispute-resolved refund's exclusion
+ * pinned alongside it.
  */
 @ExtendWith(MockitoExtension.class)
 class OrderLifecycleMetricsTest {
@@ -71,13 +80,14 @@ class OrderLifecycleMetricsTest {
   private PaymentService payments;
 
   private MeterRegistry registry;
+  private OrderMetrics metrics;
   private OrderService orderService;
   private DisputeService disputeService;
 
   @BeforeEach
   void setUp() {
     registry = new SimpleMeterRegistry();
-    OrderMetrics metrics = new OrderMetrics(registry);
+    metrics = new OrderMetrics(registry);
     orderService = new OrderService(orders, items, mock(IdempotencyKeyService.class),
         payments, mock(OrderCreationService.class), metrics, AuditService.noop(),
         Clock.fixed(NOW, ZoneOffset.UTC));
@@ -88,6 +98,28 @@ class OrderLifecycleMetricsTest {
 
   private double count(String name) {
     return registry.get(name).counter().count();
+  }
+
+  /** Current sample count for a timer outcome, 0 when never recorded. */
+  private long timerCount(String name, String outcome) {
+    Timer timer = registry.find(name).tag("outcome", outcome).timer();
+    return timer == null ? 0 : timer.count();
+  }
+
+  /**
+   * Backlog #404: the 8-arg service in {@link #setUp} has no
+   * {@link PaymentAttemptRecorder} bean — its refund path would NPE
+   * recording the REFUNDED attempt row — so refund tests build their
+   * own service on the same throwaway registry with a mocked
+   * recorder. Everything else (metrics, audit, notifications, clock)
+   * is the same as the set-up service.
+   */
+  private OrderService refundService() {
+    return new OrderService(orders, items, mock(IdempotencyKeyService.class),
+        payments, mock(OrderCreationService.class), metrics,
+        AuditService.noop(), NotificationService.noop(),
+        Clock.fixed(NOW, ZoneOffset.UTC), null, null,
+        mock(PaymentAttemptRecorder.class), null);
   }
 
   private static String sha256Hex(String input) {
@@ -249,5 +281,135 @@ class OrderLifecycleMetricsTest {
     assertThat(receipt.status()).isEqualTo(OrderStatus.COMPLETED);
     assertThat(count("orders.completed")).isEqualTo(2.0);
     assertThat(count("orders.handover_confirmed")).isZero();
+  }
+
+  @Test
+  void refundTimer_fullRefundSamplesSuccess() {
+    Order order = paidOrder();
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(order));
+    when(items.findById(ITEM_ID)).thenReturn(Optional.of(order.getItem()));
+    when(payments.refund(any(Order.class), anyString(), anyLong()))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 2500L));
+    stubOrderSave();
+    stubItemSave();
+
+    OrderDto dto = refundService().refund(SELLER_ID, false, ORDER_ID, null, "item damaged");
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.REFUNDED);
+    assertThat(timerCount("orders.refund.duration", "success")).isEqualTo(1);
+    assertThat(timerCount("orders.refund.duration", "failure")).isZero();
+    assertThat(count("orders.refunded")).isEqualTo(1.0);
+  }
+
+  @Test
+  void refundTimer_partialRefundSamplesSuccessWithoutRefundedCounter() {
+    Order order = paidOrder();
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(order));
+    when(payments.refund(any(Order.class), anyString(), anyLong()))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 500L));
+    stubOrderSave();
+
+    OrderDto dto = refundService().refund(SELLER_ID, false, ORDER_ID, 500L, "partial damage");
+
+    assertThat(dto.status()).isEqualTo(OrderStatus.PAID);
+    assertThat(timerCount("orders.refund.duration", "success")).isEqualTo(1);
+    assertThat(timerCount("orders.refund.duration", "failure")).isZero();
+    // A partial refund moves money but flips nothing: orders.refunded
+    // only moves on the completing flip.
+    assertThat(count("orders.refunded")).isZero();
+  }
+
+  @Test
+  void refundTimer_replayAndPreAttemptRejectionsSampleNothing() {
+    Order order = paidOrder();
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(order));
+    when(items.findById(ITEM_ID)).thenReturn(Optional.of(order.getItem()));
+    when(payments.refund(any(Order.class), anyString(), anyLong()))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 2500L));
+    stubOrderSave();
+    stubItemSave();
+
+    refundService().refund(SELLER_ID, false, ORDER_ID, null, "item damaged");
+    assertThat(timerCount("orders.refund.duration", "success")).isEqualTo(1);
+
+    // Re-refund of the now-REFUNDED order: idempotent, no fresh attempt.
+    refundService().refund(SELLER_ID, false, ORDER_ID, null, "item damaged");
+    assertThat(timerCount("orders.refund.duration", "success")).isEqualTo(1);
+    assertThat(timerCount("orders.refund.duration", "failure")).isZero();
+
+    // Pre-attempt rejections record no sample either: a PENDING order
+    // 422s, a missing reason 400s, a non-seller 403s — all before any
+    // refund is attempted.
+    Order pending = new Order(listing(), BUYER_ID, 2500L);
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(pending));
+    assertThatThrownBy(() -> refundService().refund(SELLER_ID, false, ORDER_ID, null, "item damaged"))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+
+    Order paid = paidOrder();
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(paid));
+    assertThatThrownBy(() -> refundService().refund(SELLER_ID, false, ORDER_ID, null, null))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.BAD_REQUEST));
+    assertThatThrownBy(() -> refundService().refund(BUYER_ID, false, ORDER_ID, null, "item damaged"))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.FORBIDDEN));
+
+    assertThat(timerCount("orders.refund.duration", "success")).isEqualTo(1);
+    assertThat(timerCount("orders.refund.duration", "failure")).isZero();
+  }
+
+  @Test
+  void refundTimer_raceLossSamplesFailure() {
+    Order order = paidOrder();
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(order));
+    when(items.findById(ITEM_ID)).thenReturn(Optional.of(order.getItem()));
+    when(payments.refund(any(Order.class), anyString(), anyLong()))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 2500L));
+    stubOrderSave();
+    stubItemSave();
+    Mockito.doThrow(new ObjectOptimisticLockingFailureException(Order.class, ORDER_ID))
+        .when(orders).flush();
+
+    assertThatThrownBy(() -> refundService().refund(SELLER_ID, false, ORDER_ID, null, "item damaged"))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
+            .isEqualTo(HttpStatus.CONFLICT));
+    assertThat(timerCount("orders.refund.duration", "failure")).isEqualTo(1);
+    assertThat(timerCount("orders.refund.duration", "success")).isZero();
+    assertThat(count("orders.refunded")).isZero();
+  }
+
+  @Test
+  void refundTimer_disputeResolvedRefundMovesCounterNotTimer() {
+    Order order = paidOrder();
+    ReflectionTestUtils.setField(order, "updatedAt", NOW);
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(order));
+    when(disputes.findByOrderId(ORDER_ID)).thenReturn(List.of());
+    when(items.findById(ITEM_ID)).thenReturn(Optional.of(order.getItem()));
+    stubOrderSave();
+    stubItemSave();
+    stubDisputeSave();
+
+    disputeService.openDispute(BUYER_ID, ORDER_ID, "arrived broken");
+
+    OrderDispute dispute = new OrderDispute(ORDER_ID, BUYER_ID, SELLER_ID,
+        "arrived broken", OrderStatus.PAID);
+    ReflectionTestUtils.setField(dispute, "id", DISPUTE_ID);
+    when(disputes.findById(DISPUTE_ID)).thenReturn(Optional.of(dispute));
+    when(payments.refund(any(Order.class), anyString(), anyLong()))
+        .thenReturn(new PaymentService.RefundResult("rfd_mock_1", 2500L));
+
+    DisputeDto resolved = disputeService.resolveRefund(99L, DISPUTE_ID, "item arrived broken");
+
+    assertThat(resolved.status()).isEqualTo(DisputeStatus.RESOLVED_REFUND);
+    assertThat(count("orders.refunded")).isEqualTo(1.0);
+    // The dispute-resolved refund is a separate attempt surface (#404):
+    // it moves the transition counter but records no refund-timer sample.
+    assertThat(timerCount("orders.refund.duration", "success")).isZero();
+    assertThat(timerCount("orders.refund.duration", "failure")).isZero();
   }
 }

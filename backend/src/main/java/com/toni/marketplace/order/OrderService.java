@@ -1400,6 +1400,9 @@ public class OrderService {
           "refund amount exceeds the remaining refundable amount");
     }
     boolean completesRefund = amount == remaining;
+    // Backlog #404: one orders.refund.duration sample per refund attempt.
+    Timer.Sample sample = metrics().startRefundTimer();
+    boolean timerStopped = false;
     try {
       String refundKey = nextRefundKeyFor(order);
       PaymentService.RefundResult refund =
@@ -1442,6 +1445,13 @@ public class OrderService {
       if (completesRefund) {
         metrics().refunded();
       }
+      // Backlog #404: the attempt succeeded (a partial refund counts
+      // here too — money moved — even though orders.refunded only
+      // moves on the completing flip above). Stopped before the audit
+      // and notification writes below, mirroring pay(): a later
+      // side-effect failure must not re-tag the attempt.
+      metrics().stopRefundTimer(sample, true);
+      timerStopped = true;
       // Backlog #98: audit after the flush, inside this transaction — a
       // version conflict (409) or any later rollback writes no row, and
       // the idempotent re-refund above returns before this point. A
@@ -1454,8 +1464,18 @@ public class OrderService {
           NotificationType.ORDER_REFUNDED, orderId);
       return dto;
     } catch (ObjectOptimisticLockingFailureException e) {
+      if (!timerStopped) {
+        metrics().stopRefundTimer(sample, false);
+      }
       throw new ResponseStatusException(HttpStatus.CONFLICT,
           "order was updated concurrently, please retry");
+    } catch (RuntimeException e) {
+      // Any other failure inside the refund attempt still records its
+      // one failure sample (#404) before propagating unchanged.
+      if (!timerStopped) {
+        metrics().stopRefundTimer(sample, false);
+      }
+      throw e;
     }
   }
 }
