@@ -26,4 +26,7 @@ public interface SellerPayoutRepository extends JpaRepository<SellerPayout, Long
   /** All payout ids currently in one status — the sweep's worklist. */
   @Query("select p.id from SellerPayout p where p.status = :status order by p.id asc")
   List<Long> findIdsByStatus(@Param("status") PayoutStatus status);
+
+  /** All payout rows currently in one status — the ADMIN ledger's filter. */
+  Page<SellerPayout> findByStatus(PayoutStatus status, Pageable pageable);
 }

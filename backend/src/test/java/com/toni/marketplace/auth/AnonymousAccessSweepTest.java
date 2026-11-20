@@ -103,6 +103,7 @@ class AnonymousAccessSweepTest {
       "GET /api/admin/payments/settlement",
       "GET /api/admin/payments/webhooks",
       "POST /api/admin/payments/webhooks/{id}/replay",
+      "GET /api/admin/payouts",
       "POST /api/admin/payouts/{id}/mark-paid",
       "POST /api/payments/webhooks/mock-psp",
       "POST /api/security/csp-report",

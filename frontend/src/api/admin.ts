@@ -324,6 +324,12 @@ export const adminPaymentKeys = {
     [...adminPaymentKeys.webhooksRoot, page, outcome] as const,
   attempts: (page: number, outcome: string) =>
     [...adminPaymentKeys.all, 'attempts', page, outcome] as const,
+  /** Prefix for every payout-ledger list variant (backlog #405): a
+   * mark-paid invalidates this prefix so every paginated/filtered list
+   * refetches. */
+  payoutsRoot: [...adminPaymentsRoot, 'payouts'] as const,
+  payouts: (page: number, status: string) =>
+    [...adminPaymentKeys.payoutsRoot, page, status] as const,
 };
 
 /** Allowlisted webhook outcomes (backend WebhookEvent.Outcome). */
@@ -518,6 +524,126 @@ export function describePaymentAttemptsError(error: unknown): string {
   }
   if (code === 400) {
     return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/** Allowlisted payout statuses (backend PayoutStatus, backlog #221). */
+export const PAYOUT_STATUSES = ['PENDING', 'PAYABLE', 'PAID'] as const;
+
+/**
+ * One row of the ADMIN payout ledger, mirroring the backend's
+ * SellerPayoutDto (GET /api/admin/payouts, backlog #405). The ledger
+ * view attaches the adjustment sum: `amountCents` is the settlement
+ * figure from completion, `adjustmentsCents` sums the compensating
+ * entries (negative or zero — a dispute refund after completion never
+ * mutates the settlement row), and `netCents` is what the seller is
+ * actually owed on that order. The seller is an id, not a username —
+ * the same "Seller #N" identification the seller-orders page uses for
+ * buyers — because the ledger carries no profile join.
+ */
+export interface AdminPayoutEntry {
+  id: number;
+  orderId: number;
+  sellerId: number;
+  amountCents: number;
+  adjustmentsCents: number;
+  netCents: number;
+  status: 'PENDING' | 'PAYABLE' | 'PAID';
+  createdAt: string;
+  payableAt: string | null;
+  paidAt: string | null;
+}
+
+/**
+ * GET /api/admin/payouts — ADMIN-only (the backend's @PreAuthorize is
+ * the real gate). Paginated, newest first; the status filter defaults
+ * to PAYABLE — the operator's worklist — and is always sent explicitly
+ * so the request matches the key. Callers must only pass allowlisted
+ * status values — anything else is a backend 400.
+ */
+export function useAdminPayouts(
+  page = 0,
+  status = 'PAYABLE',
+  enabled = true,
+  size = 20,
+) {
+  return useQuery({
+    queryKey: adminPaymentKeys.payouts(page, status),
+    queryFn: () =>
+      api
+        .get<ApiResponse<Page<AdminPayoutEntry>>>('/admin/payouts', {
+          params: { page, size, status },
+        })
+        .then((res) => res.data.data),
+    enabled,
+  });
+}
+
+/** Maps a failed payout-ledger call to user-facing copy. */
+export function describeAdminPayoutsError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 403) {
+    return 'You are not authorized to view the payout ledger.';
+  }
+  if (code === 401) {
+    return 'Please log in again to view the payout ledger.';
+  }
+  if (code === 400) {
+    return 'That filter is not valid.';
+  }
+  return message || 'Something went wrong. Please try again.';
+}
+
+/**
+ * POST /api/admin/payouts/{id}/mark-paid — ADMIN-only (the backend's
+ * @PreAuthorize is the real gate). Marks a PAYABLE row PAID by hand,
+ * outside the hourly sweep (backlog #390). Re-marking an already-PAID
+ * row is idempotent and answers 200, so a 422 here always means the
+ * row is not payable in its current state — still PENDING, held for a
+ * disabled seller account, or blocked by an open dispute. On success
+ * the whole payout-ledger subtree is invalidated so the list refetches
+ * the row's new status; the settlement, webhook and attempts subtrees
+ * are untouched.
+ */
+export function useMarkPayoutPaid() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api
+        .post<ApiResponse<AdminPayoutEntry>>(`/admin/payouts/${id}/mark-paid`, {})
+        .then((res) => res.data.data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminPaymentKeys.payoutsRoot });
+    },
+  });
+}
+
+/**
+ * Maps a failed mark-paid call to user-facing copy. The backend speaks
+ * the {code,message,data} envelope; the known cases get plain language.
+ * A 422 is never "already paid" — the re-mark answers 200 — so it can
+ * only be a row that is not payable yet.
+ */
+export function describeMarkPayoutPaidError(error: unknown): string {
+  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+    .response;
+  const code = response?.data?.code;
+  const message = response?.data?.message ?? '';
+  if (code === 404) {
+    return 'That payout no longer exists.';
+  }
+  if (code === 422) {
+    return 'That payout cannot be marked paid yet — it is still pending, held, or disputed.';
+  }
+  if (code === 403) {
+    return 'You are not authorized to mark payouts paid.';
+  }
+  if (code === 401) {
+    return 'Please log in again to mark payouts paid.';
   }
   return message || 'Something went wrong. Please try again.';
 }

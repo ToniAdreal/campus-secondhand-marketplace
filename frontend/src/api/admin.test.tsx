@@ -10,9 +10,11 @@ import {
   adminAuditLogKeys,
   adminPaymentKeys,
   adminUserKeys,
+  describeAdminPayoutsError,
   describeAdminUserError,
   describeAuditLogError,
   describeDashboardError,
+  describeMarkPayoutPaidError,
   describeSettlementError,
   describePaymentAttemptsError,
   describeWebhookEventsError,
@@ -22,12 +24,15 @@ import {
   useAdminAuditLog,
   useAdminPaymentAttempts,
   useAdminPaymentSettlement,
+  useAdminPayouts,
   useAdminWebhookEvents,
   useAdminUsers,
   useDisableAdminUser,
   useEnableAdminUser,
+  useMarkPayoutPaid,
   useReplayWebhookEvent,
   useResetAdminUserTotp,
+  type AdminPayoutEntry,
   type AdminUser,
   type AuditLogEntry,
   type PaymentAttemptEntry,
@@ -779,5 +784,164 @@ describe('isForbidden', () => {
     ['undefined', undefined, false],
   ])('%s', (_label, error, expected) => {
     expect(isForbidden(error)).toBe(expected);
+  });
+});
+
+const payoutPageFixture: Page<AdminPayoutEntry> = {
+  content: [
+    {
+      id: 11,
+      orderId: 42,
+      sellerId: 7,
+      amountCents: 5000,
+      adjustmentsCents: 0,
+      netCents: 5000,
+      status: 'PAYABLE',
+      createdAt: '2026-01-12T00:00:00Z',
+      payableAt: '2026-01-15T00:00:00Z',
+      paidAt: null,
+    },
+  ],
+  totalElements: 1,
+  totalPages: 1,
+  number: 0,
+};
+
+describe('useAdminPayouts', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('payout keys hang off the payments subtree', () => {
+    expect(adminPaymentKeys.payouts(0, 'PAYABLE')).toEqual([
+      'admin',
+      'payments',
+      'payouts',
+      0,
+      'PAYABLE',
+    ]);
+    expect(adminPaymentKeys.payouts(1, 'PAID')).toEqual([
+      'admin',
+      'payments',
+      'payouts',
+      1,
+      'PAID',
+    ]);
+    expect(adminPaymentKeys.payoutsRoot).toEqual(['admin', 'payments', 'payouts']);
+  });
+
+  it('GETs /admin/payouts defaulting to PAYABLE and unwraps the envelope', async () => {
+    getSpy.mockResolvedValueOnce(envelope(payoutPageFixture));
+
+    const { result } = renderHook(() => useAdminPayouts(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy).toHaveBeenCalledWith('/admin/payouts', {
+      params: { page: 0, size: 20, status: 'PAYABLE' },
+    });
+    expect(result.current.data).toEqual(payoutPageFixture);
+  });
+
+  it('stays idle when disabled (anonymous / non-admin page guard)', async () => {
+    const { result } = renderHook(() => useAdminPayouts(0, 'PAYABLE', false), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('propagates the failure shape so the page can render its error state', async () => {
+    const failure = {
+      isApiError: true,
+      response: { status: 403, data: { code: 403, message: 'forbidden', data: null } },
+    };
+    getSpy.mockRejectedValueOnce(failure);
+
+    const { result } = renderHook(() => useAdminPayouts(), {
+      wrapper: wrapperFor(makeClient()),
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(result.current.error).toBe(failure);
+    expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe('describeAdminPayoutsError', () => {
+  it.each([
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to view the payout ledger.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to view the payout ledger.'],
+    ['invalid filter', envelopeError(400, 'unknown status'), 'That filter is not valid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeAdminPayoutsError(error)).toBe(expected);
+  });
+});
+
+describe('useMarkPayoutPaid', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts an empty body to /mark-paid, unwraps the row, and invalidates the payouts prefix', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const paidRow: AdminPayoutEntry = {
+      ...payoutPageFixture.content[0],
+      status: 'PAID',
+      paidAt: '2026-01-16T00:00:00Z',
+    };
+    postSpy.mockResolvedValueOnce(envelope(paidRow));
+
+    const { result } = renderHook(() => useMarkPayoutPaid(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    const returned = await result.current.mutateAsync(11);
+
+    expect(postSpy).toHaveBeenCalledWith('/admin/payouts/11/mark-paid', {});
+    expect(returned).toEqual(paidRow);
+    // Prefix invalidation of the payouts subtree, exactly once — every
+    // paginated/filtered list variant refetches; settlement, webhooks
+    // and attempts are untouched.
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: adminPaymentKeys.payoutsRoot,
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: adminPaymentKeys.all });
+  });
+
+  it('a failed mark-paid invalidates nothing', async () => {
+    const queryClient = makeClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    postSpy.mockRejectedValueOnce(new Error('network down'));
+
+    const { result } = renderHook(() => useMarkPayoutPaid(), {
+      wrapper: wrapperFor(queryClient),
+    });
+    await expect(result.current.mutateAsync(11)).rejects.toThrow('network down');
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeMarkPayoutPaidError', () => {
+  it.each([
+    ['unknown payout', envelopeError(404, 'payout not found'), 'That payout no longer exists.'],
+    // A 422 is never "already paid" — the re-mark answers 200 — so it
+    // can only be a row that is not payable yet.
+    ['not payable yet', envelopeError(422, 'payout cannot be marked paid in its current state'), 'That payout cannot be marked paid yet — it is still pending, held, or disputed.'],
+    ['forbidden', envelopeError(403, 'forbidden'), 'You are not authorized to mark payouts paid.'],
+    ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in again to mark payouts paid.'],
+    ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
+    ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['empty object', {}, 'Something went wrong. Please try again.'],
+  ])('%s', (_label, error, expected) => {
+    expect(describeMarkPayoutPaidError(error)).toBe(expected);
   });
 });

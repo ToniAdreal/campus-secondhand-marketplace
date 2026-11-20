@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
+  PAYOUT_STATUSES,
   PAYMENT_ATTEMPT_OUTCOMES,
   WEBHOOK_OUTCOMES,
+  describeAdminPayoutsError,
+  describeMarkPayoutPaidError,
   describePaymentAttemptsError,
   describeSettlementError,
   describeWebhookEventsError,
@@ -11,8 +14,11 @@ import {
   isForbidden,
   useAdminPaymentAttempts,
   useAdminPaymentSettlement,
+  useAdminPayouts,
   useAdminWebhookEvents,
+  useMarkPayoutPaid,
   useReplayWebhookEvent,
+  type AdminPayoutEntry,
   type PaymentAttemptEntry,
   type SettlementSummary,
   type WebhookEventEntry,
@@ -56,6 +62,16 @@ import { useAuthStore } from '../store/useAuthStore';
  * order-scoped PSP idempotency key the attempt ran under and the
  * attempt time. The buyer's payment token is never stored in the
  * ledger, so the section can show none.
+ *
+ * The payout-ledger section (backlog #405) lists every seller's
+ * settlement rows from GET /api/admin/payouts, defaulting to PAYABLE —
+ * the operator's worklist. Each row shows the order, the seller, the
+ * net owed and the payable-at time; PAYABLE rows carry a "Mark paid"
+ * button (backlog #390) that settles the row by hand outside the
+ * hourly sweep, behind a confirm step, with 422 mapped to "not
+ * payable yet". Before #405 the mark-paid endpoint had no UI at all —
+ * the section exists because the endpoint alone gave an operator
+ * nothing to click.
  */
 export default function AdminPaymentsPage() {
   const user = useAuthStore((s) => s.user);
@@ -67,7 +83,11 @@ export default function AdminPaymentsPage() {
   // include, so it is sent as the following day's start (exclusive bound).
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const window = {
+  // Named dateWindow, not window: a local `window` would shadow the
+  // browser global, and the payout-ledger confirm below calls
+  // window.confirm — the shadow made that call throw (caught by the
+  // #405 page tests; the pre-#405 page never called window.confirm).
+  const dateWindow = {
     ...(fromDate !== '' ? { from: `${fromDate}T00:00:00Z` } : {}),
     ...(toDate !== ''
       ? {
@@ -80,7 +100,7 @@ export default function AdminPaymentsPage() {
       : {}),
   };
 
-  const settlement = useAdminPaymentSettlement(isAdmin, window);
+  const settlement = useAdminPaymentSettlement(isAdmin, dateWindow);
 
   // Webhook-event viewer (backlog #156): paginated newest first; a new
   // outcome filter restarts from the first page.
@@ -105,6 +125,23 @@ export default function AdminPaymentsPage() {
   const [attemptPage, setAttemptPage] = useState(0);
   const [attemptOutcome, setAttemptOutcome] = useState('DECLINED');
   const attempts = useAdminPaymentAttempts(attemptPage, attemptOutcome, isAdmin);
+
+  // Payout ledger (backlog #405): the ADMIN read of the seller payout
+  // ledger (GET /api/admin/payouts), defaulting to PAYABLE — the
+  // operator's worklist. A new status filter restarts from the first
+  // page, mirroring the viewers above. The mark-paid mutation (backlog
+  // #390) is one shared mutation; `markingId` pins the pending state
+  // to the clicked row, and `markPaidFeedback` carries the last outcome
+  // until the next attempt replaces it.
+  const [payoutPage, setPayoutPage] = useState(0);
+  const [payoutStatus, setPayoutStatus] = useState('PAYABLE');
+  const payouts = useAdminPayouts(payoutPage, payoutStatus, isAdmin);
+  const markPaid = useMarkPayoutPaid();
+  const [markingId, setMarkingId] = useState<number | null>(null);
+  const [markPaidFeedback, setMarkPaidFeedback] = useState<{
+    kind: 'ok' | 'error';
+    text: string;
+  } | null>(null);
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -137,6 +174,9 @@ export default function AdminPaymentsPage() {
 
   const attemptRows: PaymentAttemptEntry[] = attempts.data?.content ?? [];
   const attemptTotalPages = attempts.data?.totalPages ?? 0;
+
+  const payoutRows: AdminPayoutEntry[] = payouts.data?.content ?? [];
+  const payoutTotalPages = payouts.data?.totalPages ?? 0;
 
   const statusCounts: Array<{ label: string; count: number | undefined }> = [
     { label: 'Total orders', count: data?.totalOrders },
@@ -231,6 +271,171 @@ export default function AdminPaymentsPage() {
           </section>
         </>
       )}
+      <section aria-label="Payout ledger" className="mt-6">
+        <h2 className="mb-3 text-lg font-semibold">Payout ledger</h2>
+        <p className="mb-4 text-sm text-neutral-600">
+          Every seller&apos;s settlement rows, newest first — the operator&apos;s
+          view of the payout ledger the seller pages show one seller at a
+          time. PAYABLE is the worklist: a row the hourly sweep has not
+          paid yet. Marking one paid settles it by hand outside the sweep,
+          with the same guards and the same seller notification; a PAID row
+          is a ledger state — the mock pays nobody, so no bank transfer
+          sits behind it.
+        </p>
+        <div className="mb-4">
+          <label htmlFor="payout-status" className="sr-only">
+            Filter payouts by status
+          </label>
+          <select
+            id="payout-status"
+            aria-label="Filter payouts by status"
+            value={payoutStatus}
+            onChange={(e) => {
+              setPayoutStatus(e.target.value);
+              setPayoutPage(0);
+            }}
+            className="rounded-lg border border-neutral-300 bg-white px-4 py-2 shadow-sm focus:border-sky-500 focus:outline-none"
+          >
+            {PAYOUT_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </div>
+        {payouts.isLoading && <p>Loading payout ledger…</p>}
+        {payouts.isError && (
+          <p className="text-red-600">{describeAdminPayoutsError(payouts.error)}</p>
+        )}
+        {markPaidFeedback !== null &&
+          (markPaidFeedback.kind === 'ok' ? (
+            <p role="status" className="mb-4 text-sm text-emerald-700">
+              {markPaidFeedback.text}
+            </p>
+          ) : (
+            <p role="alert" className="mb-4 text-sm text-red-600">
+              {markPaidFeedback.text}
+            </p>
+          ))}
+        {payouts.isSuccess && payoutRows.length === 0 && (
+          <div className="rounded-lg bg-white p-6 text-center shadow-sm">
+            <p className="text-neutral-600">
+              {payoutStatus === 'PAYABLE'
+                ? 'No payable payouts yet.'
+                : 'No payouts match this filter.'}
+            </p>
+          </div>
+        )}
+        {payoutRows.length > 0 && (
+          <>
+            <div className="overflow-x-auto rounded-lg bg-white shadow-sm">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-neutral-500">
+                    <th scope="col" className="px-4 py-3 font-medium">Order</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Seller</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Net</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Status</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Payable at</th>
+                    <th scope="col" className="px-4 py-3 font-medium">
+                      <span className="sr-only">Mark paid</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payoutRows.map((row) => (
+                    <tr key={row.id} className="border-b border-neutral-100 last:border-0">
+                      <td className="px-4 py-3 font-medium">#{row.orderId}</td>
+                      <td className="px-4 py-3">Seller #{row.sellerId}</td>
+                      <td className="px-4 py-3">{formatCents(row.netCents)}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            row.status === 'PAID'
+                              ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800'
+                              : row.status === 'PAYABLE'
+                                ? 'rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800'
+                                : 'rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-700'
+                          }
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.payableAt !== null
+                          ? new Date(row.payableAt).toLocaleString()
+                          : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.status === 'PAYABLE' && (
+                          <button
+                            type="button"
+                            aria-label={`Mark payout ${row.id} paid`}
+                            disabled={markPaid.isLoading && markingId === row.id}
+                            onClick={() => {
+                              if (
+                                !window.confirm(
+                                  `Mark payout #${row.id} (order #${row.orderId}, ${formatCents(row.netCents)}) as paid?`,
+                                )
+                              ) {
+                                return;
+                              }
+                              setMarkingId(row.id);
+                              setMarkPaidFeedback(null);
+                              markPaid.mutate(row.id, {
+                                onSuccess: (ack) => {
+                                  setMarkPaidFeedback({
+                                    kind: 'ok',
+                                    text: `Marked payout #${ack.id} as paid.`,
+                                  });
+                                  setMarkingId(null);
+                                },
+                                onError: (error) => {
+                                  setMarkPaidFeedback({
+                                    kind: 'error',
+                                    text: describeMarkPayoutPaidError(error),
+                                  });
+                                  setMarkingId(null);
+                                },
+                              });
+                            }}
+                            className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                          >
+                            {markPaid.isLoading && markingId === row.id
+                              ? 'Marking…'
+                              : 'Mark paid'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setPayoutPage((p) => Math.max(0, p - 1))}
+                disabled={payoutPage <= 0 || payouts.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-neutral-600">
+                Page {payoutTotalPages === 0 ? 0 : payoutPage + 1} of {payoutTotalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPayoutPage((p) => p + 1)}
+                disabled={payoutPage + 1 >= payoutTotalPages || payouts.isFetching}
+                className="rounded bg-neutral-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </>
+        )}
+      </section>
       <section aria-label="Webhook events" className="mt-6">
         <h2 className="mb-3 text-lg font-semibold">Webhook events</h2>
         <p className="mb-4 text-sm text-neutral-600">

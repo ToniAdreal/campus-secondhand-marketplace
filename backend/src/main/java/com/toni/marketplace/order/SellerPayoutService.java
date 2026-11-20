@@ -225,7 +225,29 @@ public class SellerPayoutService {
   /** The seller's payout rows, newest first, with per-row adjustment sums. */
   @Transactional(readOnly = true)
   public Page<SellerPayoutDto> listForSeller(Long sellerId, org.springframework.data.domain.Pageable pageable) {
-    Page<SellerPayout> page = payouts.findBySellerId(sellerId, pageable);
+    return toDtoPage(payouts.findBySellerId(sellerId, pageable));
+  }
+
+  /**
+   * The ADMIN payout ledger (backlog #405): every seller's rows, newest
+   * first, with per-row adjustment sums — the read the AdminPaymentsPage
+   * ledger section needs so the mark-paid control (#390) has rows to act
+   * on. A null status lists all statuses; otherwise the page is filtered
+   * to exactly that status. No ADMIN bypass question arises here: the
+   * caller is ADMIN-only by the controller's class-level
+   * {@code @PreAuthorize}, and the seller-scoped read stays separate.
+   */
+  @Transactional(readOnly = true)
+  public Page<SellerPayoutDto> listForAdmin(PayoutStatus status,
+                                            org.springframework.data.domain.Pageable pageable) {
+    Page<SellerPayout> page = status == null
+        ? payouts.findAll(pageable)
+        : payouts.findByStatus(status, pageable);
+    return toDtoPage(page);
+  }
+
+  /** One page of payout rows as DTOs, with each row's adjustment sum attached. */
+  private Page<SellerPayoutDto> toDtoPage(Page<SellerPayout> page) {
     List<Long> ids = page.getContent().stream().map(SellerPayout::getId).toList();
     Map<Long, Long> byPayout = ids.isEmpty() ? Map.of()
         : adjustments.findByPayoutIdIn(ids).stream()

@@ -504,4 +504,164 @@ describe('AdminPaymentsPage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toContain('no longer exists');
   });
+
+  // Payout ledger (backlog #405): the section lists every seller's
+  // settlement rows from GET /api/admin/payouts, defaulting to PAYABLE,
+  // with a Mark paid button on PAYABLE rows only.
+  const payoutRowsFixture = [
+    {
+      id: 11,
+      orderId: 47,
+      sellerId: 7,
+      amountCents: 4200,
+      adjustmentsCents: 0,
+      netCents: 4200,
+      status: 'PAYABLE',
+      createdAt: '2026-01-12T00:00:00Z',
+      payableAt: '2026-01-15T00:00:00Z',
+      paidAt: null,
+    },
+    {
+      id: 10,
+      orderId: 46,
+      sellerId: 8,
+      amountCents: 9000,
+      adjustmentsCents: -1500,
+      netCents: 7500,
+      status: 'PAID',
+      createdAt: '2026-01-11T00:00:00Z',
+      payableAt: '2026-01-14T00:00:00Z',
+      paidAt: '2026-01-16T00:00:00Z',
+    },
+  ];
+
+  function mockAllPaymentsWithPayouts(payoutData: unknown) {
+    const emptyPage = {
+      content: [],
+      totalElements: 0,
+      totalPages: 0,
+      number: 0,
+    };
+    getSpy.mockImplementation(((url: string) =>
+      url === '/admin/payouts'
+        ? Promise.resolve({ data: { code: 0, message: 'ok', data: payoutData } })
+        : url === '/admin/payments/webhooks' || url === '/admin/payments/attempts'
+          ? Promise.resolve({ data: { code: 0, message: 'ok', data: emptyPage } })
+          : Promise.resolve(summaryEnvelope(summaryFixture))) as never);
+  }
+
+  function payoutPage(payoutData: unknown) {
+    return {
+      content: payoutData,
+      totalElements: (payoutData as unknown[]).length,
+      totalPages: 1,
+      number: 0,
+    };
+  }
+
+  it('renders the payout ledger defaulting to PAYABLE, Mark paid only on PAYABLE rows', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPaymentsWithPayouts(payoutPage(payoutRowsFixture));
+
+    renderAt('/admin/payments');
+
+    await waitFor(() => expect(screen.getByText('#47')).toBeTruthy());
+    expect(screen.getByText('#46')).toBeTruthy();
+    expect(screen.getByText('Seller #7')).toBeTruthy();
+    expect(screen.getByText('Seller #8')).toBeTruthy();
+    expect(screen.getByText('¥42.00')).toBeTruthy();
+    expect(screen.getByText('¥75.00')).toBeTruthy();
+    // One Mark paid button: the PAYABLE row has it, the PAID row does not.
+    expect(
+      screen.getAllByRole('button', { name: /Mark payout \d+ paid/ }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole('button', { name: 'Mark payout 11 paid' }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: 'Mark payout 10 paid' }),
+    ).toBeNull();
+    expect(getSpy).toHaveBeenCalledWith('/admin/payouts', {
+      params: { page: 0, size: 20, status: 'PAYABLE' },
+    });
+  });
+
+  it('payout status filter fires a filtered ledger request', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPaymentsWithPayouts(payoutPage(payoutRowsFixture));
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('#47')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Filter payouts by status'), {
+      target: { value: 'PAID' },
+    });
+
+    await waitFor(() =>
+      expect(getSpy).toHaveBeenCalledWith('/admin/payouts', {
+        params: { page: 0, size: 20, status: 'PAID' },
+      }),
+    );
+  });
+
+  it('mark-paid success confirms, posts, shows the copy, and refetches the ledger', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPaymentsWithPayouts(payoutPage(payoutRowsFixture));
+    postSpy.mockResolvedValueOnce(
+      replayAckEnvelope({ ...payoutRowsFixture[0], status: 'PAID', paidAt: '2026-01-16T00:00:00Z' }),
+    );
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('#47')).toBeTruthy());
+
+    // Mirror the AdminUsersPage confirm pattern: spy after render.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark payout 11 paid' }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByText('Marked payout #11 as paid.')).toBeTruthy(),
+    );
+    expect(postSpy).toHaveBeenCalledWith('/admin/payouts/11/mark-paid', {});
+    // The mutation invalidates the payouts prefix, so the list refetches
+    // after the mark-paid (initial load + refetch).
+    await waitFor(() =>
+      expect(
+        getSpy.mock.calls.filter(([url]) => url === '/admin/payouts').length,
+      ).toBeGreaterThan(1),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it('a 422 mark-paid surfaces the not-payable-yet copy', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPaymentsWithPayouts(payoutPage(payoutRowsFixture));
+    postSpy.mockRejectedValueOnce(
+      apiFailure(422, 'payout cannot be marked paid in its current state'),
+    );
+
+    renderAt('/admin/payments');
+    await waitFor(() => expect(screen.getByText('#47')).toBeTruthy());
+
+    // Mirror the AdminUsersPage confirm pattern: spy after render.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark payout 11 paid' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toContain(
+      'cannot be marked paid yet',
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it('renders the payout empty state when no payable payouts exist', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    mockAllPaymentsWithPayouts(payoutPage([]));
+
+    renderAt('/admin/payments');
+
+    await waitFor(() =>
+      expect(screen.getByText('No payable payouts yet.')).toBeTruthy(),
+    );
+  });
 });
