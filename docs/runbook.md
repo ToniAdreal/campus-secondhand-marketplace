@@ -326,6 +326,46 @@ never fire this rule (minimum 3 in the day), and an expired offer is
 not a lost sale by itself: the live pair frees up and the buyer can
 re-offer.
 
+## RefundFailureRateHigh
+
+More than 1 in 4 refund attempts failed over the last day
+(`orders.refund.duration` failure samples growing fast relative to
+all refund attempts), with at least 3 failed attempts in the day.
+A failed attempt is a PSP failure or a lost `@Version` race inside
+the refund — the order stays PAID and the listing stays RESERVED.
+Idempotent re-refunds and pre-attempt rejections record no sample,
+so they never feed this ratio. The denominator is the timer's own
+success samples, not `orders.refunded`: a dispute-resolved refund
+moves `orders.refunded` without recording a timer sample, while a
+partial refund records a success sample without moving
+`orders.refunded`, so the two surfaces count different refund kinds.
+
+First three checks:
+
+1. Look at the mock-PSP attempt trail for the failed orders (the
+   order confirmation page's "Show payment attempts" toggle) — are
+   the failures one seller's refunds (a broken refund path for one
+   flow) or spread across many? The audit log's ORDER_REFUNDED rows
+   show the successes in the same window.
+2. Check whether a recent change touched the refund path, the mock
+   PSP client, or the order `@Version` handling — a regression
+   there fails every refund at once, and a race-loss spike points
+   at concurrent complete/refund traffic on the same orders.
+3. Compare with `orders.refunded` in the same day: the two series
+   should move in the same direction but need not agree exactly —
+   a wide gap means the failures are concentrated on one of the
+   two refund surfaces (dispute-resolved vs direct refunds).
+
+What it is NOT: it is not proof that seller money is lost — a
+failed refund attempt moves no money and leaves the order PAID, so
+nothing was refunded twice or not at all; the seller can retry.
+It is also not a capture problem: captures are a different timer
+(`orders.pay.duration`) and a different alert
+(`PaymentDeclineRateHigh`). There is deliberately no refund-latency
+rule: the timer publishes count/sum/max only, no histogram buckets,
+so no p95 exists to alert on. A quiet day with fewer than 3 failed
+attempts can never fire this rule.
+
 ## Backup and restore drill (backlog #225)
 
 The compose stack's MySQL data (`mysql-data` volume) and listing photos

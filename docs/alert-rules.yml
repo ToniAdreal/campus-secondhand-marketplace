@@ -172,3 +172,17 @@ groups:
           summary: "More offers are expiring unanswered than are being accepted"
           description: "Over the last day, offers.expired outnumbered offers.accepted plus offers.counter_accepted, with at least 3 expiries in the day. Offers are dying unanswered — sellers are not responding before the 48 h deadline, or the deadline is too short for how often sellers check in."
           runbook_url: "docs/runbook.md#offerexpiryoutrunningaccepted"
+      - alert: RefundFailureRateHigh
+        expr: |
+          sum(rate(orders_refund_duration_seconds_count{outcome="failure"}[1d]))
+            / clamp_min(sum(rate(orders_refund_duration_seconds_count{outcome="failure"}[1d]))
+                        + sum(rate(orders_refund_duration_seconds_count{outcome="success"}[1d])), 0.001)
+          > 0.25
+            and sum(increase(orders_refund_duration_seconds_count{outcome="failure"}[1d])) >= 3
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 1 in 4 refund attempts are failing"
+          description: "orders.refund.duration failure samples are growing fast relative to all refund attempts (failure + success samples) over the last day: the ratio is failed attempts / attempted refunds. The rule also requires at least 3 failed attempts in the day, so a quiet day never pages. The denominator is the timer's own success samples, not orders.refunded: a dispute-resolved refund moves orders.refunded without recording a timer sample, while a partial refund records a success sample without moving orders.refunded, so the two surfaces count different refund kinds and must not be mixed. No latency rule: the timer publishes no histogram buckets, so no p95 exists to alert on."
+          runbook_url: "docs/runbook.md#refundfailureratehigh"

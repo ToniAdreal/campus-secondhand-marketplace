@@ -95,7 +95,7 @@ with no app code.
 
 ## Alerts
 
-[docs/alert-rules.yml](alert-rules.yml) defines twelve alerts over the
+[docs/alert-rules.yml](alert-rules.yml) defines thirteen alerts over the
 counters above plus the `http.server.requests` 5xx rate:
 
 - `AuthLoginFailureRateHigh`, `AuthLockoutSurge`,
@@ -105,6 +105,7 @@ counters above plus the `http.server.requests` 5xx rate:
 - `PayoutHeldGrowing`, `PayoutSweepPaysNothing`
 - `OrderDisputeRateHigh`, `PaidOrdersNeverHandoverConfirmed`
 - `OfferAcceptanceRateLow`, `OfferExpiryOutrunningAccepted`
+- `RefundFailureRateHigh`
 
 [docs/runbook.md](runbook.md) gives each alert a short section: what
 it means, the first three checks, and what it is **not**. The alerts

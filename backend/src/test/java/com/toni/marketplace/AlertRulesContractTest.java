@@ -33,7 +33,15 @@ import org.yaml.snakeyaml.Yaml;
  * the two order-lifecycle alerts (OrderDisputeRateHigh,
  * PaidOrdersNeverHandoverConfirmed) over the #348 counters. Backlog
  * #400 added the two offer-lifecycle alerts (OfferAcceptanceRateLow,
- * OfferExpiryOutrunningAccepted) over the #393 counters.
+ * OfferExpiryOutrunningAccepted) over the #393 counters. Backlog #412
+ * added RefundFailureRateHigh over the #404 refund timer
+ * ({@code orders.refund.duration} outcome-tagged samples): the
+ * failure share uses the timer's own success samples as the
+ * denominator, not {@code orders.refunded} — a dispute-resolved
+ * refund moves that counter without recording a timer sample, while
+ * a partial refund records a success sample without moving it, so
+ * the two surfaces count different refund kinds. No latency rule:
+ * the timer publishes no histogram buckets, so no p95 exists.
  */
 class AlertRulesContractTest {
 
@@ -73,6 +81,8 @@ class AlertRulesContractTest {
     EXPECTED_ALERTS.put("OfferExpiryOutrunningAccepted",
         Set.of("offers_expired_total", "offers_accepted_total",
             "offers_counter_accepted_total"));
+    EXPECTED_ALERTS.put("RefundFailureRateHigh",
+        Set.of("orders_refund_duration_seconds_count"));
   }
 
   /** Prometheus series → the Micrometer builder name that defines it. */
@@ -96,6 +106,7 @@ class AlertRulesContractTest {
     BUILDER_NAMES.put("offers_counter_accepted_total", "offers.counter_accepted");
     BUILDER_NAMES.put("offers_declined_total", "offers.declined");
     BUILDER_NAMES.put("offers_expired_total", "offers.expired");
+    BUILDER_NAMES.put("orders_refund_duration_seconds_count", "orders.refund.duration");
   }
 
   /** The Metrics class each builder name must be found in. */
@@ -119,6 +130,7 @@ class AlertRulesContractTest {
     BUILDER_SOURCES.put("offers.counter_accepted", "offer/OfferMetrics.java");
     BUILDER_SOURCES.put("offers.declined", "offer/OfferMetrics.java");
     BUILDER_SOURCES.put("offers.expired", "offer/OfferMetrics.java");
+    BUILDER_SOURCES.put("orders.refund.duration", "order/OrderMetrics.java");
   }
 
   private static Path repoRoot() {
