@@ -322,7 +322,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly sixteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
+- Exactly seventeen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -368,15 +368,19 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   the issued token from the test-only capture seam (backlog #407) →
   sets a new password on the reset page → logs in with it, pinned via
   the API — the pre-reset access token and the old password both 401
-  (backlog #399).
-  Alongside the sixteen flows, the color-contrast pass (backlog #369,
+  (backlog #399);
+  (17) pay → buyer disputes → the ADMIN releases the order in
+  /admin/disputes → the buyer sees the order back at PAID in their own
+  session, the pre-dispute status restored with no refund, pinned via
+  the API at each step (backlog #411).
+  Alongside the seventeen flows, the color-contrast pass (backlog #369,
   `frontend/e2e/colorContrast.e2e.ts`) runs axe with the
   `color-contrast` rule only over nine key pages in both themes — the
   jsdom axe suite cannot compute contrast, so this pass is where
-  contrast is actually audited. It is a pass, not a seventeenth flow.
+  contrast is actually audited. It is a pass, not an eighteenth flow.
   Its first CI run is the measurement; genuine failures are fixed or
   filed as follow-ups, never worked around by disabling the rule.
-  Flows 5 and 7 seed their PAID orders through the real API (the pay
+  Flows 5, 7 and 17 seed their PAID orders through the real API (the pay
   response is where the code is disclosed); the completions/resolutions
   themselves are driven in the browser. Selectors are role/label based.
 - The backend starts with the email-verification gate stubbed off via
@@ -400,7 +404,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   deployment: with it on, anyone who can reach the backend can read a
   live reset token for any user id.
 - The backend also runs with the credential rate-limit bypass on
-  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the sixteen
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the seventeen
   flows share one backend and one client IP, so their register/login
   bursts exhaust the production 5/minute credential bucket mid-suite
   (main run 42734704718: register expected 200, got 429). The bypass
@@ -412,9 +416,9 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `APP_DISPUTES_WINDOW=PT30S`, backlog #406, step A1 unblocking the #398
   payout flow): promotion needs completedAt + window <= now and the
   only promoter is the sweep, so a 60-second test cannot reach PAYABLE
-  on the production hourly cadence and 7-day window. The dispute flow
-  (#213) still passes — it opens its dispute seconds after pay, inside
-  the 30 s window, and resolution is not window-gated. The #398 flow
+  on the production hourly cadence and 7-day window. The dispute flows
+  (#213 and #411) still pass — each opens its dispute seconds after
+  pay, inside the 30 s window, and resolution is not window-gated. The #398 flow
   itself runs with a 120 s per-test timeout (its own `test.setTimeout`,
   the only spec that raises the 60 s default): the promotion wait is
   30 s of window plus up to 10 s of sweep cadence after completion, so

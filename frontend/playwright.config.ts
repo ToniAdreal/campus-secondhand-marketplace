@@ -37,13 +37,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   about the mechanism is e2e-specific — it is the supported way to seed
  *   a real deployment's first admin too.
  * - The backend also runs with the credential rate-limit bypass ON
- *   (APP_AUTH_RATE_LIMIT_E2E_BYPASS=true, backlog #373). The sixteen
+ *   (APP_AUTH_RATE_LIMIT_E2E_BYPASS=true, backlog #373). The seventeen
  *   flows share one backend and one client IP (127.0.0.1), so their
  *   register/login bursts exhaust the production 5/minute credential
  *   bucket mid-suite (main run 42734704718: register expected 200, got
  *   429) even though each flow on its own stays under the ceiling — the
  *   per-flow worst case of 3 of 5 between successful-login resets does
- *   not survive sixteen flows back to back on a 1-token-per-12-seconds
+ *   not survive seventeen flows back to back on a 1-token-per-12-seconds
  *   refill. The bypass lifts login, register and refresh together (they
  *   share the filter's credential-bucket gate); every other limiter
  *   keeps its own bucket, and the production bucket is unchanged. The
@@ -56,7 +56,7 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly sixteen flows plus the color-contrast pass (the seven in smoke.e2e.ts — register,
+ * - Exactly seventeen flows plus the color-contrast pass (the seven in smoke.e2e.ts — register,
  *   browse→detail, login→create→my-listings, plus the money path from
  *   backlog #194: buy→pay→handover code→PAID, and seller completes with
  *   the code→buyer sees COMPLETED; plus the two money paths from
@@ -100,17 +100,22 @@ import { defineConfig, devices } from '@playwright/test';
  *   passwordReset.e2e.ts: forgot-password → the token from the
  *   test-only capture seam → reset → login with the new password,
  *   pinned through the API (the pre-reset token and the old password
- *   both 401) — plus the color-contrast pass from backlog #369 in
+ *   both 401) — plus the dispute resolve-release flow from backlog
+ *   #411 in disputeRelease.e2e.ts: pay → buyer disputes → the ADMIN
+ *   releases the order in /admin/disputes → the buyer sees PAID again
+ *   in their own session, pinned through the API — plus the
+ *   color-contrast pass from backlog #369 in
  *   colorContrast.e2e.ts: axe runs the color-contrast rule only over
  *   nine key pages in both themes (light + dark). The pass is a pass,
- *   not a seventeenth flow — the mailed-sale journey in #370 is the
+ *   not an eighteenth flow — the mailed-sale journey in #370 is the
  *   thirteenth, the seller-appeal journey in #394 is the fourteenth,
- *   the seller-payout journey in #398 is the fifteenth, and the
- *   password-reset journey in #399 is the sixteenth — and it
+ *   the seller-payout journey in #398 is the fifteenth, the
+ *   password-reset journey in #399 is the sixteenth, and the dispute
+ *   resolve-release journey in #411 is the seventeenth — and it
  *   proves contrast, not journeys).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
- *   retried into green, and the sixteen flows share one backend (one H2
+ *   retried into green, and the seventeen flows share one backend (one H2
  *   database), so they run serially. The credential-bucket arithmetic in
  *   the per-spec headers is pre-bypass history (backlog #373): the
  *   bypass, not the 3-of-5 arithmetic, is what keeps register/login from
