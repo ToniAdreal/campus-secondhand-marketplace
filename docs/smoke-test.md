@@ -322,7 +322,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly fifteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
+- Exactly sixteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -363,12 +363,17 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   → the seller watches the payout row go PENDING → PAYABLE on
   /seller/payouts → the ADMIN marks it PAID in the payout ledger on
   /admin/payments → the seller's totals read 1 paid (¥19.99), pinned
-  via the API at each step (backlog #398).
-  Alongside the fifteen flows, the color-contrast pass (backlog #369,
+  via the API at each step (backlog #398);
+  (16) the user requests a password reset from the login page → reads
+  the issued token from the test-only capture seam (backlog #407) →
+  sets a new password on the reset page → logs in with it, pinned via
+  the API — the pre-reset access token and the old password both 401
+  (backlog #399).
+  Alongside the sixteen flows, the color-contrast pass (backlog #369,
   `frontend/e2e/colorContrast.e2e.ts`) runs axe with the
   `color-contrast` rule only over nine key pages in both themes — the
   jsdom axe suite cannot compute contrast, so this pass is where
-  contrast is actually audited. It is a pass, not a sixteenth flow.
+  contrast is actually audited. It is a pass, not a seventeenth flow.
   Its first CI run is the measurement; genuine failures are fixed or
   filed as follow-ups, never worked around by disabling the rule.
   Flows 5 and 7 seed their PAID orders through the real API (the pay
@@ -384,8 +389,18 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   mints USER accounts, and the bootstrap is the supported way to create
   a deployment's first admin — the e2e stack points it at a throwaway
   account that lives only in the job's in-memory H2.
+- The password-reset flow needs its mailed token, and the default
+  sender logs with the token redacted, so no test could ever read it —
+  the backend therefore also runs with the test-only reset-token
+  capture ON (`APP_AUTH_PASSWORD_RESET_E2E_TOKEN_CAPTURE_ENABLED=true`,
+  backlog #407, step C1 unblocking the #399 flow): the capturing sender
+  records the latest raw token per user in memory and the test-only
+  endpoint GET /api/test/auth/password-reset-token serves it back. The
+  knob is set only on this throwaway e2e backend, never on a real
+  deployment: with it on, anyone who can reach the backend can read a
+  live reset token for any user id.
 - The backend also runs with the credential rate-limit bypass on
-  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the fifteen
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the sixteen
   flows share one backend and one client IP, so their register/login
   bursts exhaust the production 5/minute credential bucket mid-suite
   (main run 42734704718: register expected 200, got 429). The bypass

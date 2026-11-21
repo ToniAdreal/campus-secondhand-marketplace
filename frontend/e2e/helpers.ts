@@ -6,7 +6,7 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test';
  * #346, favorites + seller-follow flow added by #352, saved-searches
  * flow added by #359, color-contrast pass added by #369, mailed-sale
  * flow added by #370, seller-appeal flow added by #394, payout flow
- * added by #398): smoke.e2e.ts holds the seven
+ * added by #398, password-reset flow added by #399): smoke.e2e.ts holds the seven
  * original flows, checkout.e2e.ts holds the cart checkout journey,
  * messaging.e2e.ts holds the buyer–seller messaging flow,
  * moderation.e2e.ts holds the listing report → admin action flow,
@@ -15,14 +15,15 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test';
  * colorContrast.e2e.ts holds the color-contrast pass,
  * mailedSale.e2e.ts holds the mailed-sale flow,
  * appeals.e2e.ts holds the seller-appeal flow,
- * payouts.e2e.ts holds the seller-payout flow, and all
- * ten import from here so the account/registration/login/row-status
+ * payouts.e2e.ts holds the seller-payout flow,
+ * passwordReset.e2e.ts holds the password-reset flow, and all
+ * eleven import from here so the account/registration/login/row-status
  * moulds stay identical. Nothing here seeds state through a back door
  * — registration and listing creation go through the public API,
  * exactly as the specs did when these helpers lived inline in
  * smoke.e2e.ts.
  *
- * Credential-bucket note (shared by the ten spec files, re-derived per
+ * Credential-bucket note (shared by the eleven spec files, re-derived per
  * file in its own header): login and register share ONE bucket
  * (capacity 5 per IP, refill 5/min, a successful login resets it to
  * full — see AuthRateLimitFilter). The specs run serially in one
