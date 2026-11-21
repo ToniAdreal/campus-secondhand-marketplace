@@ -37,13 +37,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   about the mechanism is e2e-specific — it is the supported way to seed
  *   a real deployment's first admin too.
  * - The backend also runs with the credential rate-limit bypass ON
- *   (APP_AUTH_RATE_LIMIT_E2E_BYPASS=true, backlog #373). The fourteen
+ *   (APP_AUTH_RATE_LIMIT_E2E_BYPASS=true, backlog #373). The fifteen
  *   flows share one backend and one client IP (127.0.0.1), so their
  *   register/login bursts exhaust the production 5/minute credential
  *   bucket mid-suite (main run 42734704718: register expected 200, got
  *   429) even though each flow on its own stays under the ceiling — the
  *   per-flow worst case of 3 of 5 between successful-login resets does
- *   not survive fourteen flows back to back on a 1-token-per-12-seconds
+ *   not survive fifteen flows back to back on a 1-token-per-12-seconds
  *   refill. The bypass lifts login, register and refresh together (they
  *   share the filter's credential-bucket gate); every other limiter
  *   keeps its own bucket, and the production bucket is unchanged. The
@@ -56,7 +56,7 @@ import { defineConfig, devices } from '@playwright/test';
  *   the CI `e2e` job.
  *
  * Discipline:
- * - Exactly fourteen flows plus the color-contrast pass (the seven in smoke.e2e.ts — register,
+ * - Exactly fifteen flows plus the color-contrast pass (the seven in smoke.e2e.ts — register,
  *   browse→detail, login→create→my-listings, plus the money path from
  *   backlog #194: buy→pay→handover code→PAID, and seller completes with
  *   the code→buyer sees COMPLETED; plus the two money paths from
@@ -91,15 +91,21 @@ import { defineConfig, devices } from '@playwright/test';
  *   the seller appeals from My listings → the admin upholds the
  *   appeal and the listing returns to AVAILABLE, and a rejected
  *   appeal leaves its listing WITHDRAWN, pinned through the API —
- *   plus the color-contrast pass from backlog #369 in
+ *   plus the seller-payout flow from backlog #398 in
+ *   payouts.e2e.ts: buy-now → pay → the seller completes with the
+ *   handover code → the seller watches the payout row go PENDING →
+ *   PAYABLE on /seller/payouts → the ADMIN marks it PAID on
+ *   /admin/payments → the seller's totals reflect it, pinned
+ *   through the API — plus the color-contrast pass from backlog #369 in
  *   colorContrast.e2e.ts: axe runs the color-contrast rule only over
  *   nine key pages in both themes (light + dark). The pass is a pass,
- *   not a fifteenth flow — the mailed-sale journey in #370 is the
- *   thirteenth and the seller-appeal journey in #394 is the
- *   fourteenth — and it proves contrast, not journeys).
+ *   not a sixteenth flow — the mailed-sale journey in #370 is the
+ *   thirteenth, the seller-appeal journey in #394 is the fourteenth,
+ *   and the seller-payout journey in #398 is the fifteenth — and it
+ *   proves contrast, not journeys).
  *   This is a smoke net, not a second unit suite.
  * - retries: 0 and workers: 1 — a flaky test is fixed or deleted, never
- *   retried into green, and the fourteen flows share one backend (one H2
+ *   retried into green, and the fifteen flows share one backend (one H2
  *   database), so they run serially. The credential-bucket arithmetic in
  *   the per-spec headers is pre-bypass history (backlog #373): the
  *   bypass, not the 3-of-5 arithmetic, is what keeps register/login from
@@ -113,7 +119,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   production defaults and stay untouched. The dispute flow (#213)
  *   still passes: it opens its dispute seconds after pay, inside the
  *   30 s window, and resolution is not window-gated; no other flow
- *   asserts payout state, so mid-suite promotions are harmless.
+ *   asserts payout state, so mid-suite promotions are harmless. The
+ *   #398 flow itself runs with a 120 s per-test timeout (its own
+ *   `test.setTimeout`, the only spec that raises the 60 s default):
+ *   the promotion wait is 30 s of window plus up to 10 s of sweep
+ *   cadence after completion, so the journey's floor is ~40 s after
+ *   the order completes and the ADMIN + seller tails do not fit in
+ *   60 s; the knobs stay as set here.
  * - The CI job builds the backend jar with tests skipped ON PURPOSE: the
  *   backend-unit / backend-integration jobs already gate the backend test
  *   suites on the same push; here the jar is only a fixture.
