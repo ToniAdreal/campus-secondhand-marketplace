@@ -242,6 +242,105 @@ class OrderDisputeTest {
   }
 
   @Test
+  void openOnShippedOrder_recordsPreviousShipped_releaseRestoresShipped() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    mockMvc.perform(post("/api/orders/{id}/ship", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"carrier\":\"SF Express\",\"trackingNumber\":\"SF123456789\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("SHIPPED"));
+
+    // Backlog #409: SHIPPED is a disputable state (#222) but no test
+    // ever opened a dispute on one — the `!= SHIPPED` guard branch
+    // was unexercised. A shipped order that never arrives is exactly
+    // the dispute case, and release must restore SHIPPED, not PAID.
+    long disputeId = openDispute(buyer, orderId, "the parcel never arrived");
+    assertThat(disputes.findById(disputeId).orElseThrow().getPreviousStatus())
+        .isEqualTo(OrderStatus.SHIPPED);
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.DISPUTED);
+
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Carrier shows it out for delivery.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("RESOLVED_RELEASE"));
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.SHIPPED);
+  }
+
+  @Test
+  void resolveRefundAfterRelease_422_keepsRelease() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    long disputeId = openDispute(buyer, orderId, "never arrived");
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Delivered late but intact.\"}"))
+        .andExpect(status().isOk());
+
+    // Backlog #409: the opposite-resolution guard on the refund path
+    // was never exercised (the release-after-refund direction was the
+    // only one pinned). Refunding an already-released dispute is 422
+    // and leaves the release verdict, its note and the order untouched.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-refund", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Changed my mind.\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findById(disputeId).orElseThrow().getStatus())
+        .isEqualTo(DisputeStatus.RESOLVED_RELEASE);
+    assertThat(disputes.findById(disputeId).orElseThrow().getResolutionNote())
+        .isEqualTo("Delivered late but intact.");
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.PAID);
+  }
+
+  @Test
+  void resolveReleaseTwice_idempotent_noSecondSideEffects() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    long disputeId = openDispute(buyer, orderId, "slow post, actually fine");
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"Delivered late but intact.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value(disputeId));
+
+    // Backlog #409: the idempotent re-release early return was never
+    // exercised (only re-refund was pinned). The second call answers
+    // 200 with the same dispute, keeps the first note, and writes no
+    // second audit row or notification.
+    mockMvc.perform(post("/api/admin/disputes/{id}/resolve-release", disputeId)
+            .header("Authorization", "Bearer " + token(admin))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"resolutionNote\":\"A different verdict.\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value(disputeId))
+        .andExpect(jsonPath("$.data.status").value("RESOLVED_RELEASE"))
+        .andExpect(jsonPath("$.data.resolutionNote").value("Delivered late but intact."));
+    assertThat(orders.findById(orderId).orElseThrow().getStatus())
+        .isEqualTo(OrderStatus.PAID);
+    assertThat(auditActionsFor(orderId).stream()
+        .filter(a -> a == AuditAction.ORDER_DISPUTE_RESOLVED_RELEASE).count())
+        .isEqualTo(1L);
+  }
+
+  @Test
   void openByStranger_forbidden_anonymous401_unknown404() throws Exception {
     // Backlog #255: the seller may now open a dispute on their own
     // order, so only a stranger is 403 here (the seller-opened path

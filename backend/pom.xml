@@ -383,6 +383,15 @@
                      ADMIN viewer path (listWebhookEvents), the #345
                      pattern — the *IT class stays out. -->
                 <param>com.toni.marketplace.order.PaymentWebhookService</param>
+                <!-- Backlog #409: the dispute open/resolve decision
+                     moves money (resolve-refund runs the mock refund
+                     seam, resolve-release restores the pre-dispute
+                     status); its drivers are OrderDisputeTest (already
+                     in targetTests via #345),
+                     DisputeRefundClaimOrderTest and the new
+                     DisputeServiceNullCollaboratorsTest below — the
+                     *IT class stays out. -->
+                <param>com.toni.marketplace.dispute.DisputeService</param>
               </targetClasses>
               <targetTests>
                 <param>com.toni.marketplace.auth.JwtTokenServiceTest</param>
@@ -420,6 +429,12 @@
                 <param>com.toni.marketplace.order.AdminWebhookReplayTest</param>
                 <param>com.toni.marketplace.order.MockPspWebhookRateLimitTest</param>
                 <param>com.toni.marketplace.order.AdminWebhookEventsTest</param>
+                <!-- Backlog #409: the DisputeService drivers — the
+                     claim-order pure suite plus the null-collaborator
+                     branch-closing suite (OrderDisputeTest is already
+                     above via #345; the *IT stays out). -->
+                <param>com.toni.marketplace.dispute.DisputeRefundClaimOrderTest</param>
+                <param>com.toni.marketplace.dispute.DisputeServiceNullCollaboratorsTest</param>
               </targetTests>
               <outputFormats>
                 <param>XML</param>

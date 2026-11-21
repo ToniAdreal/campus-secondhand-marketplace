@@ -695,6 +695,48 @@ FAILURE`; log `hidden_files/pit-403-measure-first.log`), so no local
 that reads its `pit-reports` artifact re-ratchets the floor from
 that measured score, rounded down.
 
+### Widened scope, unmeasured (backlog #409, 2026-11-20)
+
+Backlog #409 adds one more class to the PIT scope —
+`dispute.DisputeService` — driven by `OrderDisputeTest` (18 tests
+before this round, 21 after; already in targetTests via #345),
+`DisputeRefundClaimOrderTest` (the claim-order pure suite, 1 test)
+and the new `DisputeServiceNullCollaboratorsTest` (2 tests). The
+round closes the branches they never reached, so the widened scope
+does not ship known unkilled mutants with it:
+
+- the SHIPPED dispute: opening a dispute on a SHIPPED order records
+  SHIPPED as the previous status, and resolve-release restores
+  SHIPPED, not PAID;
+- the opposite-resolution guard on the refund path: resolving by
+  refund after a release answers 422 and leaves the release verdict,
+  its note and the order untouched (the release-after-refund
+  direction was already pinned);
+- the idempotent re-release: a second resolve-release answers 200
+  with the same dispute, keeps the first note, and writes no second
+  audit row or notification;
+- the null-collaborator fallbacks: the `clock()` / `audit()` /
+  `notifications()` / `metrics()` false sides and the
+  `payouts != null` guard in `resolveRefund`, pinned by constructing
+  the service with explicit nulls (the way a hand-built unit test
+  would) — the draft's `openDispute` case needed one repair before
+  it passed: a hand-built `Order` carries a null `updatedAt`
+  (`@PrePersist` only stamps persisted rows), so the test stamps it
+  via reflection like a just-paid row.
+
+The floor is **held at 79, not raised and not lowered**, on the same
+terms as #269/#285/#320/#333/#338/#377/#387/#403: PIT cannot run in
+this sandbox — the measure-first step, a dispute-service-only run at
+threshold 0 on 2026-11-20, reproduced the sandbox failure in ~37 s
+(1 mutation test unit created in the pre-scan, then the coverage
+minion died — `MINION_DIED`, `SocketTimeoutException: Read timed
+out` on its socket — `BUILD FAILURE`; log
+`hidden_files/pit-409-measure-first.log`), so no local 13-class
+score exists and none is claimed; the next CI `backend-mutation`
+run measures the widened scope, and the round that reads its
+`pit-reports` artifact re-ratchets the floor from that measured
+score, rounded down.
+
 ### First run, for contrast (backlog #192)
 
 GitHub Actions run 39194362544, 2026-10-19T03:22:13Z, head c5361e7:
