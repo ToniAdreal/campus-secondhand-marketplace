@@ -762,6 +762,118 @@ still unmeasured, so the true combined score is only measured by
 a full combined run or the CI `frontend-mutation` job, which
 measures the scope on every run. Backlog #402 is done.
 
+### Sixteenth measured run (backlog #410) — #322 + #327 re-measured, #327 survivors dispositioned
+
+The #410 killing tests (8 new cases in
+`frontend/src/api/telemetry.test.tsx` and
+`frontend/src/api/webauthn.test.ts`, no production-code change)
+close the killable part of the #327 gap: the telemetry typeof-guard
+pins (a non-string error name with a length still falls back to
+`Error`; a non-string pathname degrades to `unknown` and still
+sends), the install-guard pins (addEventListener shadowed to
+undefined returns a callable noop uninstall; window stubbed to
+undefined returns a callable noop uninstall), the hook pathname
+pins (error and unhandledrejection beacons route to `unknown`
+with window stubbed away, dispatched on the saved window
+reference), and the webauthnSupported pins (false with window
+stubbed away; false with navigator stubbed away, with
+PublicKeyCredential present so the check reaches the navigator
+conjunct). One test-writing lesson, kept here because the next
+person will hit it: `delete` does not reliably drop a
+`defineProperty`-created own property off the jsdom window, so
+the addEventListener-shadow test restores the saved method by
+re-defining it instead of deleting the shadow.
+
+Both scopes were measured separately first, with temporary
+ranges-only configs at break 0 (measure first, floor second —
+the same discipline as #252, #263, #280, #287, #322, #327,
+#347 and #388; the temporary configs were deleted after the run,
+never committed; first-measure report copies:
+`goals/github-engineering-profile-building/hidden_files/stryker-410-measure-322-first.json`
+and `stryker-410-measure-327-first.json`; re-measure report
+copies: `stryker-410-measure-322-report.json` and
+`stryker-410-measure-327-report.json`).
+Local runs, 2026-11-21, isolated clone, 4 workers. The first
+measure ran on head **9f85c93** (backlog #409) as committed; the
+re-measure ran on the same head plus the #410 killing tests
+(copied into the clone, uncommitted there). First measure:
+#322 5 minutes 7 seconds, #327 6 minutes 52 seconds.
+Re-measure: #322 3 minutes 43 seconds, #327 6 minutes 51
+seconds.
+
+First measure (before the killing tests):
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| #322 scope, 11 hook ranges (84 mutants) | 100.00% (84/84) | 100.00% (84/84) |
+| #327 scope, 14 ranges (219 mutants) | 78.54% (172/219, counting the 1 timeout as scored) | 78.90% (172/218) |
+
+#322: KILLED 80, SURVIVED 0, NO_COVERAGE 0, TIMEOUT 4 — the
+#351 kill still holds, nothing re-opened. #327: KILLED 171,
+SURVIVED 46, NO_COVERAGE 1, TIMEOUT 1 — byte-identical to the
+#327 landing measure, so the scope is unchanged since
+2026-11-04. Per-file: payouts 21/21, sellers 24/24, webauthn
+48 killed + 6 survived + 1 timeout, telemetry 78 killed + 40
+survived + 1 no-coverage.
+
+Re-measure (same temporary configs, after the killing tests):
+
+| Scope | Mutation score | Test strength (covered) |
+|---|---|---|
+| #322 scope, 11 hook ranges (84 mutants) | 100.00% (84/84) | 100.00% (84/84) |
+| #327 scope, 14 ranges (219 mutants) | 85.84% (188/219, counting the 6 timeouts as scored) | 85.84% (188/219) |
+
+#322: KILLED 83, SURVIVED 0, NO_COVERAGE 0, TIMEOUT 1.
+#327: KILLED 182, SURVIVED 31, NO_COVERAGE 0, TIMEOUT 6.
+Per-file: payouts 21/21, sellers 24/24, telemetry 90 killed +
+29 survived (12 more kills, exactly the telemetry killing
+tests), webauthn 47 killed + 2 survived + 6 timeout.
+
+Of the 47 #327 gap mutants, 16 are resolved, all 16 killed
+(telemetry L130, L132, the L174 guard cluster — the
+whole-condition, `||`→`&&`, both disjuncts and the
+`'undefined'` literal — plus the no-coverage early-return
+block; L180 ×2, L189 ×2; webauthn L19 ×2, L21 ×2). The other
+31 stay, all labelled equivalent (see the #327 subsection
+under "Surviving mutants") — no behaviour test through any
+public API can distinguish them, and the proofs are recorded
+there. (Correction to the first draft of this paragraph: it
+said 15 killed + 1 timed out, attributing the timeout to the
+L19 `typeof window` survivor. The mutant-id diff proves the
+survivor was killed; the mutant that timed out is a different,
+previously-killed L19 mutant — one of the 5 Killed → Timeout
+flips covered by the timeout note below, not a gap mutant.)
+
+Timeout note, stated plainly because the count moved: 5
+webauthnSupported mutants flipped Killed → Timeout between
+the two measures on the same tree (the only change is the 8
+new tests, which are fast unit cases), while the #322 scope
+flipped 3 timeouts → kills with no change at all to those
+files. Timeouts fluctuate run to run on this box, so a flip
+in either direction is a measurement flake, not a test
+regression: a timeout mutant does not survive, and it counts
+as scored under the established convention. The sixth timeout
+is the pre-existing `i--` infinite loop in
+`base64UrlDecodeToBytes` (L39), which also timed out in the
+first measure.
+
+### Floor decision
+
+`thresholds.break` stays **91**: the floor is unchanged. This
+is a chunk re-measurement of already-landed scopes, and per
+the #388 precedent a chunk re-measurement does not earn a
+floor change — only a combined run re-derives the combined
+score. The arithmetic implication of the two chunk
+re-measurements since the twelfth run is (1727 + 38 + 16)/1886
+= 1781/1886 = **94.43%** (#402's reviews+disputes +38, #410's
+#327 scope +16), which clears the 91 floor — but no new
+combined number is claimed here: the baseline still carries
+the ninth-run notifications numbers, which #388 has since
+improved, and the #376 admin ranges are still unmeasured, so
+the true combined score is only measured by a full combined
+run or the CI `frontend-mutation` job, which measures the
+scope on every run. Backlog #410 is done.
+
 ## Surviving mutants
 
 The 6 SURVIVED mutants of the first run, with the test each one needs.
@@ -836,8 +948,11 @@ the record of what the test closes.
 **ALL DEAD by #351** (commits `e946e44` + `a684262`; break-0
 re-measurement of the scope found 0 survivors, and the combined
 run shows blocks 25/25, favorites 14/14, follows 19/19,
-savedSearches 26/26 with no survivors and no no-coverage). The
-entries below are kept as the record of what the tests close.
+savedSearches 26/26 with no survivors and no no-coverage).
+**Re-measured by #410** (2026-11-21, head `9f85c93` plus the
+#410 tests, break 0): still 0 survivors — 100.00% (83 killed +
+1 timeout over 84 mutants; blocks 24+1, favorites 14, follows
+19, savedSearches 26). The entries below are kept as the record of what the tests close.
 
 None is labelled equivalent. Two test gaps explain all twelve:
 
@@ -860,43 +975,60 @@ None is labelled equivalent. Two test gaps explain all twelve:
 
 ### Payouts / sellers / telemetry / webauthn — 46 survived + 1 no-coverage (#327)
 
-None is labelled equivalent. The survivors cluster in four themes,
-all in telemetry except the webauthn environment guards:
+**16 RESOLVED by #410** (break-0 re-measurement of the scope:
+telemetry 90 killed + 29 survived, webauthn 47 killed + 2
+survived + 6 timeout): the telemetry typeof-guard pins (L130,
+L132), the whole install-guard cluster (L174: the
+whole-condition, `||`→`&&`, both disjuncts and the
+`'undefined'` literal, plus the no-coverage early-return
+block), the hook pathname guards (L180 ×2, L189 ×2), and
+all four webauthn environment guards (L19 ×2, L21 ×2).
+The entries below are kept as the record of what the tests
+close.
+
+**31 LABELLED EQUIVALENT by #410**: no behaviour test
+through any public API can distinguish them. The survivors
+cluster in five themes, all in telemetry except the two
+webauthn wire details:
 
 - Redundant normalization (telemetry routeTemplate L92, L95–96,
   12 mutants): the leading-slash add and trailing-slash strip never
   change a returned template, because the matcher splits on `/`
   and filters empty segments — `items/42` and `/items/42/` match
-  exactly like `/items/42`. Needs: no test through this API can
-  kill them; a follow-up must either assert the normalized path
-  itself (not exposed) or accept them as dead defensive code.
-- Redundant fallbacks (telemetry L98, L126, L130, L132, ~7
-  mutants): the root early-return falls through to the `/`
-  template with the same result; the fetch-availability guard is
-  backed by the outer try/catch, which already swallows the
-  throw; the empty-name and missing-pathname fallbacks return
-  the same value the fallback branch would. Needs: same as
-  above — these mutants are only killable if the fallback
-  branches are made observable.
-- Sort comparator (telemetry L102–105, 12 mutants): the templates
-  array already lists the only competing pair (`/items/new`
-  before `/items/:id`) static-first, so the most-static-first
-  sort never changes which template matches first. Needs: a
-  competing static/dynamic pair listed dynamic-first, or the
-  same observability caveat as above.
+  exactly like `/items/42` — and the only other consumer of the
+  normalized path is the `=== '/'` check, which the strip cannot
+  change either (`'//'` still matches the `/` template through
+  empty segments).
+- Redundant fallbacks (telemetry L98, L126, 5 mutants): the root
+  early-return falls through to the `/` template with the same
+  result (the matcher returns `/` for empty segments anyway, and
+  `path === ''` is unreachable — the empty input returns early
+  and the normalizer guarantees at least `/`); the
+  fetch-availability guard is backed by the outer try/catch, which
+  already swallows the throw, so with fetch undefined the mutant
+  sends nothing either way. The L130/L132 fallbacks in this theme
+  were killed by #410 (see above).
+- Sort comparator (telemetry L102–105, 12 mutants): the comparator
+  is unobservable through `routeTemplate`. Only two template pairs
+  compete for any path (`/items/new` vs `/items/:id`,
+  `/seller/orders` vs `/seller/:id`), the array already lists both
+  static templates first, and a Node probe running all 12 mutant
+  comparators over the real template list
+  (`goals/github-engineering-profile-building/hidden_files/stryker-410-sort-probe.cjs`)
+  shows both pairs keep their order and both paths resolve
+  identically under every mutant. The sort is redundant given the
+  array order — a design note, not a bug.
 - Environment-gated guards (telemetry L174, L180, L189, 9 mutants
-  + 1 no-coverage; webauthn L19, L21, 4 mutants): `typeof window`
-  / `addEventListener` / `navigator` checks cannot be falsified
-  in jsdom, where the window and navigator always exist. Needs:
-  a non-jsdom harness, or leave them as platform-guard
-  follow-up material.
+  + 1 no-coverage; webauthn L19, L21, 4 mutants): **ALL CLOSED
+  by #410** — the jsdom guards turned out to be falsifiable after
+  all: `vi.stubGlobal` hides `window`/`navigator`, and shadowing
+  `window.addEventListener` with undefined trips the install
+  guard. The old "needs a non-jsdom harness" note was wrong.
 - Webauthn wire details (L31, L39, 2 mutants): the base64url
   padding-strip `$` anchor (btoa emits `=` only as trailing
   padding, so stripping the first run is the same run) and the
   decode loop's `<=` bound (the fixed-size `Uint8Array` ignores
-  the out-of-range write). Needs: a byte input whose btoa
-  output carries `=` anywhere but the end (none exists for
-  valid base64), or the same observability caveat.
+  the out-of-range write).
 
 ### Notifications + recently-viewed hooks — 16 survived + 3 no-coverage (#347)
 

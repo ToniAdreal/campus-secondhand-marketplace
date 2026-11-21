@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assertionOptionsToRequestOptions,
   base64UrlDecodeToBytes,
@@ -45,6 +45,28 @@ describe('webauthnSupported', () => {
     delete (window.navigator as unknown as Record<string, unknown>).credentials;
     expect(webauthnSupported()).toBe(false);
     delete (window as unknown as Record<string, unknown>).PublicKeyCredential;
+  });
+
+  it('is false when window is unavailable', () => {
+    vi.stubGlobal('window', undefined);
+    try {
+      expect(webauthnSupported()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('is false when navigator is unavailable', () => {
+    // PublicKeyCredential must be present or the check short-circuits
+    // before it ever reads navigator.
+    (window as unknown as Record<string, unknown>).PublicKeyCredential = function () {};
+    vi.stubGlobal('navigator', undefined);
+    try {
+      expect(webauthnSupported()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      delete (window as unknown as Record<string, unknown>).PublicKeyCredential;
+    }
   });
 });
 

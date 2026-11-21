@@ -98,8 +98,28 @@ describe('telemetry beacons', () => {
     expect(fetchBody(fetchMock.mock.calls[0]).name).toBe('Error');
   });
 
+  it('falls back to the generic name for a non-string error name with a length', () => {
+    // The typeof guard is a runtime defence: a caller passing an
+    // array (or any non-string with a length) must still get the
+    // generic name, never the raw value in the beacon body.
+    reportFrontendError(['x'] as unknown as string, '/login');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchBody(fetchMock.mock.calls[0]).name).toBe('Error');
+  });
+
   it('reports an unknown route when no pathname is given', () => {
     reportFrontendError('Error');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('unknown');
+  });
+
+  it('reports an unknown route for a non-string pathname instead of dropping the beacon', () => {
+    // The typeof guard is a runtime defence: a non-string pathname
+    // must degrade to unknown, never throw inside routeTemplate and
+    // drop the beacon.
+    reportFrontendError('Error', 42 as unknown as string);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('unknown');
@@ -125,6 +145,48 @@ describe('telemetry beacons', () => {
     // Let the swallowed rejection settle so it cannot fail the run.
     await Promise.resolve();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('installs a noop uninstall when addEventListener is unavailable', () => {
+    // Shadow the prototype method with undefined so the install
+    // guard takes its early return; the uninstall must still be
+    // callable and nothing may beacon. Restore by re-defining the
+    // saved method: delete does not reliably drop an own property
+    // off the jsdom window, so the test restores it explicitly.
+    const originalAddEventListener = window.addEventListener;
+    Object.defineProperty(window, 'addEventListener', {
+      value: undefined,
+      configurable: true,
+    });
+    try {
+      let uninstall: () => void = () => {};
+      expect(() => {
+        uninstall = installFrontendErrorTelemetry();
+      }).not.toThrow();
+      expect(typeof uninstall).toBe('function');
+      expect(() => uninstall()).not.toThrow();
+    } finally {
+      Object.defineProperty(window, 'addEventListener', {
+        value: originalAddEventListener,
+        configurable: true,
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('installs a noop uninstall when window is unavailable', () => {
+    vi.stubGlobal('window', undefined);
+    try {
+      let uninstall: () => void = () => {};
+      expect(() => {
+        uninstall = installFrontendErrorTelemetry();
+      }).not.toThrow();
+      expect(typeof uninstall).toBe('function');
+      expect(() => uninstall()).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('sends one beacon per window error event', () => {
@@ -181,6 +243,43 @@ describe('telemetry beacons', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('/orders/:id');
     } finally {
+      uninstall();
+    }
+  });
+
+  it('routes the error-event beacon to unknown when window is unavailable', () => {
+    // Install first, then hide the global window: the hook must read
+    // the pathname defensively and beacon with an unknown route,
+    // never throw while reading window.location. The event is built
+    // before stubbing and dispatched on the saved window reference.
+    const uninstall = installFrontendErrorTelemetry();
+    const realWindow = window;
+    const event = new ErrorEvent('error', { error: new TypeError('boom') });
+    vi.stubGlobal('window', undefined);
+    try {
+      realWindow.dispatchEvent(event);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('unknown');
+    } finally {
+      vi.unstubAllGlobals();
+      uninstall();
+    }
+  });
+
+  it('routes the rejection beacon to unknown when window is unavailable', () => {
+    const uninstall = installFrontendErrorTelemetry();
+    const realWindow = window;
+    const event = new Event('unhandledrejection') as Event & {
+      reason?: unknown;
+    };
+    event.reason = new RangeError('too big');
+    vi.stubGlobal('window', undefined);
+    try {
+      realWindow.dispatchEvent(event);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchBody(fetchMock.mock.calls[0]).route).toBe('unknown');
+    } finally {
+      vi.unstubAllGlobals();
       uninstall();
     }
   });
