@@ -13,7 +13,7 @@ message sellers, and mark items sold. Monorepo with a Spring Boot backend and a 
 |----------|------------|
 | Backend  | Java 17, Spring Boot 3.2.5 (Maven), Spring Data JPA (Hibernate 6), Spring Security 6, Flyway, MapStruct 1.5.5, jjwt 0.12.6 |
 | Database | MySQL 8 (Flyway-managed schema); H2 for local dev + slice tests |
-| Frontend | React 18.3, TypeScript 5.6, Vite 5, React Router 6, TanStack Query 4, Zustand 4, Tailwind CSS 3 (fetch-based API client; axios removed in backlog #288) |
+| Frontend | React 18.3, TypeScript 5.6, Vite 6, React Router 6, TanStack Query 4, Zustand 4, Tailwind CSS 3 (fetch-based API client; axios removed in backlog #288) |
 | Testing  | JUnit 5 + Mockito (unit), Spring Boot `@DataJpaTest` slice tests, Testcontainers + MySQL 8 (integration, runs in CI), Vitest + React Testing Library, axe-core accessibility checks on the key pages, Playwright browser e2e smoke (seventeen flows + color-contrast pass, CI only) |
 | Delivery | GitHub Actions CI, Docker, docker-compose (jar + MySQL + Nginx) |
 
@@ -46,7 +46,7 @@ backend/                 Spring Boot 3.2 API (Java 17, Maven)
     application.yml      H2 by default for local dev; mysql profile for Docker
     db/migration/        Flyway migrations (schema is migration-managed, never hbm2ddl)
   src/test               @DataJpaTest slice tests (H2); *IT Testcontainers tests (CI only)
-frontend/                React 18 + Vite 5 + TypeScript
+frontend/                React 18 + Vite 6 + TypeScript
   src/api/               client.ts (fetch-based: in-memory access token, httpOnly refresh
                          cookie, single-flight 401 refresh with request queueing)
                          + one domain module per area: auth, admin, items, orders,

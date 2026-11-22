@@ -33,8 +33,9 @@ never reported as a pass.
   when the dependency is upgraded.
 
 The backend file is empty: at this tree the backend needs no suppression
-(see baselines below). The frontend file holds the 13 entries from the
-2026-11-18 triage (#392) — see "Triage 2026-11-18" below. An advisory
+(see baselines below). The frontend file held the 13 entries from the
+2026-11-18 triage (#392); the 2026-11-22 upgrade (#417) cleared all of
+them, so the file is empty now — see "Triage 2026-11-22" below. An advisory
 value is the GHSA id: the gate matches it against the trailing token of
 the advisory URL in the npm audit report, exactly as the fixture in
 `scripts/fixtures/npm-audit-vulnerable.json` shows.
@@ -112,10 +113,10 @@ Suppressions added (13, all reviewed 2026-11-18, reasons in
   (last_affected 4.0.7, the latest). Transitive build-time dep only;
   glob patterns come from the repo's own config, never user input.
 
-Follow-up (not done here): the coordinated vite 6 + vitest 3/4 major
-upgrade that would clear the vite/tinypool/vitest suppressions, and
-re-checking the moderate-only react-router advisories (GHSA-337j,
-GHSA-wrjc — SSR-only, fixed in 7.18.0) if the app ever gains SSR.
+Follow-up (not done here): re-checking the moderate-only react-router
+advisories (GHSA-337j, GHSA-wrjc — SSR-only, fixed in 7.18.0) if the app
+ever gains SSR. The coordinated vite 6 + vitest 3/4 major upgrade named
+here landed as backlog #417 on 2026-11-22 — see "Triage 2026-11-22" below.
 
 Expected post-change state, OSV cross-check at the new versions (npm
 audit itself cannot run in the local sandbox — proxy denies the audit
@@ -130,6 +131,64 @@ code injection via manual mock registration) affects @vitest/mocker
 2.1.9 only, so its package severity is moderate and the gate skips it;
 it is cleared by the same vitest 4.x follow-up (fixed in 4.1.12). The live verdict is the
 gate job on the next main run.
+
+## Triage 2026-11-22 (backlog #417, head e0d7b69 + this change)
+
+The coordinated vite 6 + vitest 4 major upgrade from the #392 follow-up,
+applied directly to main (Dependabot is configured to ignore majors, so
+this stays manual; no other dependency touched):
+
+| Package | From | To | Effect |
+| --- | --- | --- | --- |
+| vite | 5.4.21 | 6.4.6 | clears all 8 vite suppressions (fixed in 6.4.2–6.4.4) |
+| @vitejs/plugin-react | 4.3.2 | 5.2.0 | lockstep with vite 6 |
+| vitest | 2.1.9 | 4.1.12 | clears both vitest suppressions (GHSA-5xrq fixed in 3.2.6/4.1.0, GHSA-82fw fixed in 4.1.11) and GHSA-qxg6 (fixed in 4.1.12) |
+| @vitest/coverage-v8 | 2.1.9 | 4.1.12 | lockstep with vitest; 0 advisories at 4.1.12 |
+
+Suppressions removed (13 → 0, the file is empty now), re-derived against
+the OSV API on the new lockfile, not guessed:
+
+- vite × 8: OSV reports 0 vulnerabilities for vite 6.4.6; each of the 8
+  GHSAs carries a fix at or below 6.4.4 (verified per advisory, e.g.
+  GHSA-587h fixed in 6.4.4).
+- vitest × 2: OSV reports 0 vulnerabilities for vitest 4.1.12 and for
+  @vitest/mocker 4.1.12.
+- tinypool × 2: tinypool is gone from the tree entirely — vitest 4 no
+  longer depends on it (no tinypool entry in package-lock.json). The two
+  CRITICALs are fixed in tinypool 2.1.1/2.1.2 in any case, so the
+  suppressions are doubly obsolete.
+- picomatch × 1: GHSA-fc5q-39xc-vjpf was WITHDRAWN by GitHub on
+  2026-11-18T15:38:56Z (OSV record), which is also why OSV reports 0
+  vulnerabilities for picomatch 2.3.2 and 4.0.7. The entry is removed
+  because the advisory no longer exists, not because a fix shipped.
+
+Vitest 4 compat fix in the same commit: the OrderConfirmationPage
+cancel-block tests failed 4/21 under vitest 4 (`window.confirm` "Not
+implemented" — the describe-level spy was detached). Root cause, read
+from the installed `@vitest/spy` 4.1.12 source: `spyOn` returns the
+already-installed mock when a property is spied on twice, so the
+pay-flow test's `mockRestore()` on the same `window.confirm` restored
+the jsdom original and detached the cancel block's describe-level spy.
+Fix: the cancel block now owns its spy per test (created in `beforeEach`,
+restored in `afterEach`); no product code changed. A scratch repro
+(`src/spy-repro.test.ts`, two describes pinning the mechanism) was used
+for the diagnosis and deleted before the verification run.
+
+Compatibility re-checks: the Stryker vitest-runner stays at 10.1.1 — its
+peer range (`vitest >=2.0.0`) covers 4.1.12 and the runner module loads
+cleanly under the new tree (ESM import); a full Stryker run is out of
+scope here, it has its own follow-up items (#395/#396/#401/#402).
+Playwright stays at 1.64.1 (no vite dependency); `playwright test
+--list` enumerates the same 26 tests in 12 files as the #413 baseline.
+
+Verification on this tree (`npm ci` clean, 431 packages): full vitest
+1460/1460 across 94 files, `npm run build` green (vite 6.4.6, entry
+290,397 bytes), size gate green (entry ≤ 332,000, total ≤ 573,000).
+`npm audit` is still proxy-denied in this sandbox (403 `policy_denied`
+on the audit endpoint, same as the #392 honesty note), so the OSV
+cross-check above is the local evidence and the live verdict is the
+gate job on the next main run. Expected post-change state: 0 frontend
+suppressions, OSV 0 vulnerabilities at the new versions.
 
 ## Sandbox honesty note
 

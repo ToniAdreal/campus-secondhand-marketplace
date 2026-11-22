@@ -229,16 +229,21 @@ describe('OrderConfirmationPage pay-now (demo)', () => {
 });
 
 describe('OrderConfirmationPage cancel-order', () => {
-  const confirmSpy = vi.spyOn(window, 'confirm');
+  // Vitest 4 (backlog #417): spyOn returns the already-installed mock when
+  // a property is spied on twice, so a describe-level spy is detached by
+  // any other test's mockRestore() on the same property (the pay-flow test
+  // above restores window.confirm). Own the spy per test instead.
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     setAccessToken(null);
-    confirmSpy.mockReturnValue(true);
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     cleanup();
+    confirmSpy.mockRestore();
     vi.clearAllMocks();
   });
 
