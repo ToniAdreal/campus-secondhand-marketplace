@@ -149,6 +149,72 @@ would need its own measurement basis — one run is not enough to set
 one — so no per-endpoint thresholds are set here; the aggregate gate
 stays, and a follow-up may set them once more runs accumulate.
 
+## Third CI measurement — per-endpoint p95 across five runs (backlog #420)
+
+Four more `load-smoke` runs have accumulated since run 42806090782,
+so the per-endpoint p95s can now be compared across five runs
+instead of one. Every number below is read from that run's
+`k6-load-smoke-summary` artifact (`k6-summary.json`), cross-checked
+against the job log's end-of-run summary where it prints the same
+cells (run 45016958229's log agrees to the digit).
+
+| Run | Commit | p95 (list) | p95 (detail) | p95 (aggregate) | Requests | Checks | load-smoke |
+| --- | ------ | ---------- | ------------ | --------------- | -------- | ------ | ---------- |
+| 42806090782 | b41cd9e | 7.68 ms | 6.94 ms | 7.66 ms | 4424 | 8852/8852 | success |
+| 44882267360 | 9f85c93 | 7.71 ms | 7.63 ms | 7.86 ms | 4424 | 8852/8852 | success |
+| 44893515480 | 53d79b7 | 8.19 ms | 8.73 ms | 8.61 ms | 4423 | 8850/8850 | success |
+| 44999639304 | fd0d3aa | 8.22 ms | 7.76 ms | 8.20 ms | 4422 | 8848/8848 | success |
+| 45016958229 | cd0a1c3 | 10.36 ms | 10.26 ms | 10.57 ms | 4403 | 8810/8810 | failure — threshold only |
+
+| Run | Commit | p95 (order create) | p95 (pay) | Pairs completed | Error rate |
+| --- | ------ | ------------------ | --------- | --------------- | ---------- |
+| 42806090782 | b41cd9e | 37.46 ms | 20.48 ms | 8/8 | 0% |
+| 44882267360 | 9f85c93 | 48.27 ms | 23.46 ms | 8/8 | 0% |
+| 44893515480 | 53d79b7 | 51.84 ms | 42.88 ms | 8/8 | 0% |
+| 44999639304 | fd0d3aa | 50.49 ms | 29.38 ms | 8/8 | 0% |
+| 45016958229 | cd0a1c3 | 43.29 ms | 22.34 ms | 8/8 | 0% |
+
+Variance against the tolerance: the p95s count as agreeing only if
+max/min stays within 1.25x across the runs (spread at most 25% of
+the minimum) — a tolerance fixed here so a later round can reuse or
+tighten it instead of re-deciding silently. None of the four
+endpoints meets it: list 7.68–10.36 ms (1.35x), detail 6.94–10.26 ms
+(1.48x), order create 37.46–51.84 ms (1.38x), pay 20.48–42.88 ms
+(2.09x). Excluding the newest run does not save the decision: pay
+still spans 20.48–42.88 ms (2.09x), so the disagreement is not a
+single-run artifact.
+
+Two structural reasons the numbers move this much. First, the write
+path runs only eight pairs per run, so each write p95 is computed
+from eight samples — effectively the second-slowest of eight — not a
+stable statistic to pin a threshold on. Second, the read endpoints
+carry thousands of samples per run (about 2,600 list + 1,770 detail
+on the 60/40 split; exact counts read from run 42806090782) and
+still vary 35–48%, which is runner noise on GitHub-hosted runners,
+not code signal: the five trees span #382–#419 with no change to the
+list/detail read paths in that range (the newest tree, #419, adds
+only the dispute-evidence download route — `ItemController` and
+`ItemService` are untouched between `b41cd9e` and `cd0a1c3`), and the
+newest run's medians rose too (list med 3.65 → 4.19 ms) while its
+write-path p95s stayed mid-range.
+
+Decision: NO per-endpoint thresholds are set. The runs disagree, so
+this item reports the numbers, not a guess. `load/k6-read-smoke.js`
+is unchanged, and the aggregate p95 < 10 ms gate stays as the
+backstop.
+
+Aggregate-gate breach on the newest run (new finding, tracked as
+supplemented backlog #61): run 45016958229 (head `cd0a1c3`, #419
+tree, 2026-11-22) measured an aggregate p95 of 10.57 ms, breaching
+the `p(95)<10` gate, so its `load-smoke` job failed with k6 exit
+code 99 (`thresholds on metrics 'http_req_duration' have been
+crossed`). All 8810 checks passed and 0 requests failed — the
+failure is the gate, not a correctness defect. The gate is NOT
+changed here: whether it needs a runner-noise-aware re-baseline
+(per the #212/#365 discipline, from the maximum observed) or the
+occasional noise failure is accepted is the #61 triage decision,
+not a silent edit in this commit.
+
 ## Honest limits
 
 - Local proof is syntax only: this repo's sandbox cannot run k6
