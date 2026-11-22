@@ -203,6 +203,73 @@ describe('SettingsPage', () => {
     }
   });
 
+  it('opens the re-auth dialog on a TOTP setup step-up 403 and retries exactly once after proving (backlog #415)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockResolvedValueOnce(
+        envelope({
+          secret: 'JBSWY3DPEHPK3PXP',
+          otpauthUri: 'otpauth://totp/CampusMarketplace:toni?secret=JBSWY3DPEHPK3PXP',
+        }),
+      );
+    renderAt('/settings');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Set up two-factor authentication' }),
+    );
+
+    // the step-up dialog opens instead of an error banner, and no secret
+    // is minted by the refused attempt
+    const dialog = await screen.findByRole('dialog');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('JBSWY3DPEHPK3PXP')).toBeNull();
+
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // proof posted, token swapped, the setup retried exactly once
+    await waitFor(() =>
+      expect(postSpy).toHaveBeenCalledWith('/auth/step-up', { currentPassword: 'pw' }),
+    );
+    expect(getAccessToken()).toBe('fresh-token');
+    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeTruthy();
+    expect(postSpy).toHaveBeenCalledTimes(3); // attempt + proof + the single retry
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a second step-up 403 on the TOTP setup retry surfaces as an error instead of reopening the dialog (backlog #415)', async () => {
+    const stepUpMessage =
+      'Sensitive action requires re-authentication: re-authentication required';
+    postSpy
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage))
+      .mockResolvedValueOnce(
+        envelope({ accessToken: 'fresh-token', tokenType: 'Bearer', expiresInSeconds: 900 }),
+      )
+      .mockRejectedValueOnce(apiFailure(403, stepUpMessage));
+    renderAt('/settings');
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Set up two-factor authentication' }),
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Current password'), {
+      target: { value: 'pw' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    // exactly one retry happened; its 403 surfaces verbatim, no dialog loop
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('re-authentication required');
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('disable flow: confirm step first, then posts password + code and shows the off note (backlog #121)', async () => {
     getSpy.mockReset();
     getSpy.mockResolvedValue(envelope({ remaining: 7 }));

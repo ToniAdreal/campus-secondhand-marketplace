@@ -230,6 +230,13 @@ export default function SettingsPage() {
   const [remainingCodes, setRemainingCodes] = useState<number | null>(null);
   const [totpError, setTotpError] = useState<string | null>(null);
   const [totpPending, setTotpPending] = useState(false);
+  // Step-up re-auth (backlog #415, the username form's #261 pattern):
+  // the setup button holds no proof form, so a stale token answers the
+  // dedicated 403 step-up envelope — the dialog below re-proves and the
+  // setup retries exactly once. The retry flag is structural, like the
+  // username form's: a second 403 surfaces as a real error instead of
+  // reopening the dialog.
+  const [totpStepUpOpen, setTotpStepUpOpen] = useState(false);
 
   // Two-factor disable (backlog #121). The page has no dedicated "is 2FA
   // on" readout: it treats 2FA as on when the count endpoint reports
@@ -478,7 +485,7 @@ export default function SettingsPage() {
     }
   }
 
-  async function onSetupTotp() {
+  async function attemptSetupTotp(isRetry: boolean) {
     setTotpPending(true);
     setTotpError(null);
     setRecoveryCodes(null);
@@ -486,10 +493,22 @@ export default function SettingsPage() {
       setTotpSetup(await setupTotp());
       setTotpCode('');
     } catch (err) {
+      // Backlog #415: a stale proof opens the re-auth dialog instead
+      // of an error banner; setup takes no argument, so the modal's
+      // retry just re-issues the secret — nothing is minted by the
+      // refused attempt (the backend pin is TotpSetupStepUpTest).
+      if (isStepUpRequired(err) && !isRetry) {
+        setTotpStepUpOpen(true);
+        return;
+      }
       setTotpError(describeTotpError(err));
     } finally {
       setTotpPending(false);
     }
+  }
+
+  async function onSetupTotp() {
+    await attemptSetupTotp(false);
   }
 
   async function onEnableTotp(e: FormEvent) {
@@ -1106,6 +1125,16 @@ export default function SettingsPage() {
           }
         }}
         onCancel={() => setEmailStepUpOpen(false)}
+      />
+      <StepUpModal
+        open={totpStepUpOpen}
+        totpEnabled={user.totpEnabled ?? false}
+        actionLabel="set up two-factor authentication"
+        onProven={() => {
+          setTotpStepUpOpen(false);
+          void attemptSetupTotp(true);
+        }}
+        onCancel={() => setTotpStepUpOpen(false)}
       />
     </div>
   );

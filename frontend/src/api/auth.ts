@@ -241,8 +241,9 @@ export interface TotpSetup {
  * Re-running setup regenerates the secret and resets enrollment.
  * Backlog #250: issuing the secret is step-up gated server-side — a
  * stale token answers the dedicated 403 step-up envelope and mints
- * nothing; the settings setup button surfaces that envelope message,
- * and a modal re-proof retry for setup itself is a follow-up.
+ * nothing. Backlog #415 wires the settings setup button through the
+ * StepUpModal: the dialog re-proves and the setup retries exactly
+ * once; a second 403 surfaces as a real error, never a loop.
  *
  * Throws the ApiError on failure.
  */
