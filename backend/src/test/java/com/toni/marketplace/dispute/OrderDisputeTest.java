@@ -50,10 +50,11 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p>Deliberately NOT {@code @Transactional}, mirroring
  * {@code PriceOfferTest}: rows must be committed by the requests
- * themselves to be asserted here. The window test ages an order by
- * moving its {@code updated_at} directly (the dispute window is
- * measured from it — see {@code DisputeProperties}) instead of moving
- * a shared test clock, so test order cannot matter.
+ * themselves to be asserted here. The window tests age an order by
+ * moving its {@code paid_at} / {@code completed_at} directly (the
+ * dispute window is measured from the transition instant — see
+ * {@code DisputeProperties}) instead of moving a shared test clock,
+ * so test order cannot matter.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -437,8 +438,95 @@ class OrderDisputeTest {
     Item item = newItem(seller, 10_000L);
     long orderId = paidOrder(buyer, seller, item);
     // Age the order past the 7-day window: the window is measured from
-    // updated_at (the PAID transition), so move that timestamp directly.
+    // paidAt (the PAID transition, backlog #418), so move that
+    // timestamp directly.
+    jdbc.update("UPDATE orders SET paid_at = ? WHERE id = ?",
+        Timestamp.from(Instant.now().minus(Duration.ofDays(8))), orderId);
+
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"too late\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findByOrderId(orderId)).isEmpty();
+  }
+
+  @Test
+  void openAfterWindowMeasuredFromPaidAt_updatedAtMovedStaysOpen() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    // Backlog #418: updatedAt moving after the pay transition must not
+    // move the window — the anchor is paidAt, which is still recent.
+    // (Under the pre-#418 updatedAt rule this same row would 422.)
     jdbc.update("UPDATE orders SET updated_at = ? WHERE id = ?",
+        Timestamp.from(Instant.now().minus(Duration.ofDays(8))), orderId);
+
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"parcel never arrived\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.previousStatus").value("PAID"));
+    assertThat(disputes.findByOrderId(orderId)).hasSize(1);
+  }
+
+  @Test
+  void openAfterWindow_fallbackToUpdatedAtWhenPaidAtNull() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    // Backlog #418: a row transitioned before V44 carries no paidAt —
+    // the window falls back to updatedAt instead of refusing the
+    // dispute outright. Age that fallback past the window → 422.
+    jdbc.update("UPDATE orders SET paid_at = NULL, updated_at = ? WHERE id = ?",
+        Timestamp.from(Instant.now().minus(Duration.ofDays(8))), orderId);
+
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"too late\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findByOrderId(orderId)).isEmpty();
+  }
+
+  @Test
+  void openAfterWindowCompleted_measuredFromCompletedAt() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    completeWithCode(seller, buyer, orderId);
+    // Backlog #418: a COMPLETED order's window runs from completedAt,
+    // not paidAt (recent here) and not updatedAt (recent here).
+    jdbc.update("UPDATE orders SET completed_at = ? WHERE id = ?",
+        Timestamp.from(Instant.now().minus(Duration.ofDays(8))), orderId);
+
+    mockMvc.perform(post("/api/orders/{id}/dispute", orderId)
+            .header("Authorization", "Bearer " + token(buyer))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"reason\":\"too late\"}"))
+        .andExpect(status().isUnprocessableEntity());
+    assertThat(disputes.findByOrderId(orderId)).isEmpty();
+  }
+
+  @Test
+  void openAfterWindowShipped_measuredFromPaidAt() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    Item item = newItem(seller, 10_000L);
+    long orderId = paidOrder(buyer, seller, item);
+    mockMvc.perform(post("/api/orders/{id}/ship", orderId)
+            .header("Authorization", "Bearer " + token(seller))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"carrier\":\"SF Express\",\"trackingNumber\":\"SF123456789\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("SHIPPED"));
+    // Backlog #418: a SHIPPED order's window runs from paidAt, not
+    // shippedAt (recent here) — shipping does not restart the window.
+    jdbc.update("UPDATE orders SET paid_at = ? WHERE id = ?",
         Timestamp.from(Instant.now().minus(Duration.ofDays(8))), orderId);
 
     mockMvc.perform(post("/api/orders/{id}/dispute", orderId)

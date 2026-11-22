@@ -72,9 +72,11 @@ class DisputeServiceNullCollaboratorsTest {
     Order order = new Order(item, BUYER_ID, 10_000L);
     order.setStatus(OrderStatus.PAID);
     ReflectionTestUtils.setField(order, "id", ORDER_ID);
-    // openDispute measures the dispute window from updatedAt, which
-    // @PrePersist only stamps on a persisted row — a hand-built order
-    // carries null, so stamp it like a just-paid row.
+    // openDispute measures the dispute window from paidAt for a PAID
+    // order (backlog #418), falling back to updatedAt when the stamp is
+    // null — this hand-built row carries no paidAt, so the fallback is
+    // what applies, and updatedAt (which @PrePersist only stamps on a
+    // persisted row) still needs stamping like a just-paid row.
     ReflectionTestUtils.setField(order, "updatedAt", Instant.now());
     return order;
   }

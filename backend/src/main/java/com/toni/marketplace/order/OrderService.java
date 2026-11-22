@@ -635,6 +635,10 @@ public class OrderService {
    *       stale version: whichever of the two transactions commits second
    *       loses the order-row version check and gets 409 instead of both
    *       writing.</li>
+   *   <li>Backlog #418: the cancel instant is stamped on
+   *       {@code Order.cancelledAt} in the same transaction, so the
+   *       cancellation is dated by its real transition, not by
+   *       {@code updatedAt}.</li>
    * </ul>
    */
   @Transactional
@@ -660,6 +664,10 @@ public class OrderService {
     }
     try {
       order.setStatus(OrderStatus.CANCELLED);
+      // Backlog #418: stamp the real cancellation instant (the idempotent
+      // re-cancel above returns before this point, so a replay never
+      // rewrites it).
+      order.setCancelledAt(clock().instant());
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
               "order points at a missing item"));
@@ -733,6 +741,10 @@ public class OrderService {
       return false;
     }
     order.setStatus(OrderStatus.CANCELLED);
+    // Backlog #418: an expiry is a cancellation too — stamp the same
+    // cancelledAt the buyer path stamps, so a CANCELLED row always
+    // carries its transition instant whichever path cancelled it.
+    order.setCancelledAt(clock().instant());
     Item item = items.findById(order.getItem().getId())
         .orElseThrow(() -> new IllegalStateException(
             "order " + orderId + " points at a missing item"));
@@ -861,9 +873,9 @@ public class OrderService {
           payments.capture(order, captureKey, paymentToken);
       order.setCaptureId(capture.captureId());
       order.setStatus(OrderStatus.PAID);
-      // Backlog #180: stamp the real payment instant for the receipt —
-      // orders previously carried no paidAt, so receipts/dispute windows
-      // had to approximate from updatedAt.
+      // Backlog #180: stamp the real payment instant for the receipt and
+      // the dispute window (#418) — orders previously carried no paidAt,
+      // so both had to approximate from updatedAt.
       order.setPaidAt(clock().instant());
       order.getItem().setStatus(ItemStatus.RESERVED);
       // Backlog #179: mint the buyer's handover code in the same
@@ -1415,6 +1427,12 @@ public class OrderService {
       order.setRefundId(refund.refundId());
       order.setRefundedAmountCents(order.getRefundedAmountCents() + amount);
       order.setRefundCount(order.getRefundCount() + 1);
+      // Backlog #418: stamp the refund instant on every accepted refund —
+      // a partial refund moves money and deserves its timestamp, and the
+      // completing refund re-stamps it, so this is the most recent refund.
+      // An idempotent re-refund returned above, before any fresh refund
+      // call, so a replay never rewrites it.
+      order.setRefundedAt(clock().instant());
       if (completesRefund) {
         order.setStatus(OrderStatus.REFUNDED);
         Item item = items.findById(order.getItem().getId())

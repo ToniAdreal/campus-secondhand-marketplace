@@ -484,10 +484,10 @@ app:
   disputes:
     # Order-dispute window (DisputeService, backlog #169): how long after
     # an order's PAID / COMPLETED transition its buyer may still open a
-    # dispute. Orders carry no paidAt/completedAt column, so the window
-    # is measured from the order's updatedAt — the last status change,
-    # which for a PAID or COMPLETED order is exactly that transition.
-    # Default 7 days.
+    # dispute. Measured from the transition instant (backlog #418) —
+    # paidAt for PAID/SHIPPED, completedAt for COMPLETED — falling back
+    # to the order's updatedAt only for rows transitioned before those
+    # columns existed. Default 7 days.
     window: 7d
   payouts:
     # Seller-payout sweep cadence (SellerPayoutService, backlog #406):

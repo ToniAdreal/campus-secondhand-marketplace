@@ -45,10 +45,11 @@ import org.springframework.web.server.ResponseStatusException;
  *   <li>Only PAID, SHIPPED (backlog #222 — a shipped order that never
  *       arrives is exactly the dispute case) or COMPLETED orders, and
  *       only inside {@code app.disputes.window} (default 7 days) of the transition —
- *       measured from the order's {@code updatedAt}, the last status
- *       change (orders carry no paidAt/completedAt column; see
- *       {@link DisputeProperties}). Outside the window → 422; any other
- *       status → 422.</li>
+ *       measured from the order's {@code paidAt} for PAID/SHIPPED and its
+ *       {@code completedAt} for COMPLETED (backlog #418), falling back to
+ *       {@code updatedAt} only for rows transitioned before those
+ *       columns existed (see {@link DisputeProperties}). Outside the
+ *       window → 422; any other status → 422.</li>
  *   <li>Opening moves the order to DISPUTED and moves NO money. While
  *       DISPUTED, pay / cancel / complete / ship / confirm-receipt /
  *       refund all answer 422 (the
@@ -209,7 +210,20 @@ public class DisputeService {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "this order was already disputed and the dispute was resolved");
     }
-    Instant deadline = order.getUpdatedAt().plus(props.getWindow());
+    // Backlog #418: the window runs from the transition that put the order
+    // in its disputable state — paidAt for PAID/SHIPPED (shipping does not
+    // restart the buyer's window), completedAt for COMPLETED. A row
+    // transitioned before those columns existed carries a null stamp; it
+    // falls back to updatedAt, the last status change, rather than
+    // refusing every legacy dispute outright. updatedAt moving after the
+    // transition (a later write) never moves the window.
+    Instant transition = switch (order.getStatus()) {
+      case PAID, SHIPPED -> order.getPaidAt();
+      case COMPLETED -> order.getCompletedAt();
+      default -> null;
+    };
+    Instant anchor = transition != null ? transition : order.getUpdatedAt();
+    Instant deadline = anchor.plus(props.getWindow());
     if (clock().instant().isAfter(deadline)) {
       throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
           "the dispute window for this order has closed");
@@ -319,6 +333,11 @@ public class DisputeService {
       long remaining = order.getAmountCents() - order.getRefundedAmountCents();
       order.setRefundedAmountCents(order.getAmountCents());
       order.setRefundCount(order.getRefundCount() + 1);
+      // Backlog #418: stamp the refund instant at the claim, next to the
+      // status flip — the dispute refund is a refund, so the row carries
+      // its refundedAt like a voluntary one. An idempotent re-resolve
+      // returns before this point, so a replay never rewrites it.
+      order.setRefundedAt(clock().instant());
       order.setStatus(OrderStatus.REFUNDED);
       Item item = items.findById(order.getItem().getId())
           .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,

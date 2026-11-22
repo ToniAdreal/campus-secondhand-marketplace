@@ -1,0 +1,22 @@
+-- V77: real cancelled_at / refunded_at timestamps on the order row (backlog #418).
+--
+-- Until now orders carried paid_at / completed_at / shipped_at (V44, V66)
+-- but no cancel or refund instant, so nothing could honestly say WHEN an
+-- order was cancelled or refunded. OrderService.cancel and
+-- OrderService.expireStaleOrder stamp cancelled_at, OrderService.refund
+-- stamps refunded_at on every accepted refund (partial or completing),
+-- and DisputeService.resolveRefund stamps it on the dispute-refund path,
+-- all from the injected Clock in the same transaction as the transition.
+-- The dispute window (#169) switches to the relevant transition instant
+-- (paidAt for PAID/SHIPPED, completedAt for COMPLETED) with updatedAt as
+-- the fallback for pre-V44 rows only.
+--
+-- No backfill: rows cancelled/refunded before this migration keep NULL --
+-- their transition instants were never recorded, and deriving them from
+-- updated_at would fabricate a timestamp a receipt would then present
+-- as fact.
+--
+-- Portability: plain H2 rejects multi-ADD-COLUMN in one ALTER, so two
+-- statements -- the same reason V11, V13, V14, V25, V43 and V44 split theirs.
+ALTER TABLE orders ADD COLUMN cancelled_at TIMESTAMP NULL;
+ALTER TABLE orders ADD COLUMN refunded_at TIMESTAMP NULL;

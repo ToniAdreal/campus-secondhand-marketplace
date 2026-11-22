@@ -46,6 +46,17 @@ export interface Order {
   carrier?: string | null;
   trackingNumber?: string | null;
   shippedAt?: string | null;
+  // Transition instants (backend backlogs #180, #222, #418): the real
+  // instant each transition stamped, `null`/absent until that
+  // transition has happened (and for orders transitioned before the
+  // column existed — never backfilled). `refundedAt` is the most recent
+  // refund instant; a partial refund stamps it too. The dispute window
+  // is measured from `paidAt` (PAID/SHIPPED) or `completedAt`
+  // (COMPLETED), so these are what the SPA checks the window from.
+  paidAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  refundedAt?: string | null;
 }
 
 /**

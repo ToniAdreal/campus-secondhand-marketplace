@@ -298,8 +298,9 @@ class OrderShipmentTest {
         .andExpect(jsonPath("$.data.status").value("COMPLETED"))
         .andExpect(jsonPath("$.data.carrier").value("SF Express"))
         .andExpect(jsonPath("$.data.trackingNumber").value("SF123456789"));
-    // completedAt lives on the receipt projection, not on OrderDto (#180):
-    // the receipt must now carry the real completion instant.
+    // completedAt lives on the receipt projection and, since backlog
+    // #418, on OrderDto too: the receipt must now carry the real
+    // completion instant.
     mockMvc.perform(get("/api/orders/{id}/receipt", orderId)
             .header("Authorization", "Bearer " + token(buyer)))
         .andExpect(status().isOk())

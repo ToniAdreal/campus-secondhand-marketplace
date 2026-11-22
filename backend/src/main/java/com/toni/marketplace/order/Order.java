@@ -232,6 +232,36 @@ public class Order {
   private Instant shippedAt;
 
   /**
+   * When the order became CANCELLED (backlog #418, Flyway V77), stamped
+   * by {@code OrderService.cancel} — and by
+   * {@code OrderService.expireStaleOrder}, the expiry path that cancels
+   * with no buyer actor — from the injected Clock in the same
+   * transaction as the PENDING → CANCELLED transition. Nullable until
+   * cancelled (and for orders cancelled before V77 landed — their
+   * transition instant was never recorded and is not backfilled from
+   * {@code updatedAt}, that would fabricate a cancellation timestamp).
+   * An idempotent re-cancel returns before any stamp, so a replay
+   * never rewrites it.
+   */
+  @Column(name = "cancelled_at")
+  private Instant cancelledAt;
+
+  /**
+   * When the order last received a refund (backlog #418, Flyway V77),
+   * stamped by {@code OrderService.refund} on every accepted refund —
+   * partial or completing — and by
+   * {@code DisputeService.resolveRefund} on the dispute-refund path,
+   * from the injected Clock in the same transaction as the money
+   * movement. It is the instant of the most recent refund, not the
+   * first: a partial refund moves money and deserves its timestamp,
+   * and the completing refund re-stamps it. Nullable until the first
+   * refund. An idempotent re-refund returns before any stamp, so a
+   * replay never rewrites it.
+   */
+  @Column(name = "refunded_at")
+  private Instant refundedAt;
+
+  /**
    * Read-only view of the DB-generated guard column behind the
    * {@code uq_order_active_item} unique constraint: equals the item id while
    * the order is active (PENDING/PAID/SHIPPED/DISPUTED), NULL once terminal.
@@ -311,6 +341,10 @@ public class Order {
   public void setTrackingNumber(String trackingNumber) { this.trackingNumber = trackingNumber; }
   public Instant getShippedAt() { return shippedAt; }
   public void setShippedAt(Instant shippedAt) { this.shippedAt = shippedAt; }
+  public Instant getCancelledAt() { return cancelledAt; }
+  public void setCancelledAt(Instant cancelledAt) { this.cancelledAt = cancelledAt; }
+  public Instant getRefundedAt() { return refundedAt; }
+  public void setRefundedAt(Instant refundedAt) { this.refundedAt = refundedAt; }
   public void setHandoverLockedUntil(Instant handoverLockedUntil) {
     this.handoverLockedUntil = handoverLockedUntil;
   }
