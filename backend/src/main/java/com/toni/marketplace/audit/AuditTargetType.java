@@ -25,5 +25,7 @@ public enum AuditTargetType {
   /** A {@code listing_report} row (moderation report resolution, backlog #397). */
   REPORT,
   /** An {@code item} row (listing hidden by a moderation action, backlog #397). */
-  ITEM
+  ITEM,
+  /** A {@code dispute_evidence} row (evidence upload/delete audit, backlog #413). */
+  DISPUTE_EVIDENCE
 }

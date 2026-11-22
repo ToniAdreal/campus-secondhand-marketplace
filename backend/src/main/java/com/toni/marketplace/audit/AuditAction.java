@@ -183,6 +183,28 @@ public enum AuditAction {
    */
   ORDER_DISPUTE_RESOLVED_RELEASE,
   /**
+   * A dispute party (or an ADMIN) attached an evidence photo to an OPEN
+   * dispute ({@code DisputeEvidenceService.addEvidence}, backlog #413).
+   * Actor is the uploader; target is the evidence row
+   * ({@link AuditTargetType#DISPUTE_EVIDENCE}) — the audit table carries
+   * no payload column, so the row stores the evidence id and nothing of
+   * the file (no bytes, no {@code /uploads/} URL). The dispute id and
+   * order id are one lookup away: the evidence row carries
+   * {@code dispute_id} and the dispute carries {@code order_id}, and one
+   * dispute per order (#169) makes the chain unambiguous.
+   */
+  DISPUTE_EVIDENCE_UPLOADED,
+  /**
+   * A dispute party (the uploader) or an ADMIN removed an evidence photo
+   * ({@code DisputeEvidenceService.removeEvidence}, backlog #413). Actor
+   * is the remover; target is the deleted evidence row's id — the row
+   * survives the deletion precisely because the audit table carries no
+   * foreign keys (the {@code CATEGORY_DELETED} rule), so a deleted photo
+   * still leaves a trail where before #413 it left none. Same
+   * no-bytes/no-URL discipline as {@link #DISPUTE_EVIDENCE_UPLOADED}.
+   */
+  DISPUTE_EVIDENCE_DELETED,
+  /**
    * A seller accepted a PENDING price offer ({@code OfferService.accept},
    * backlog #389). Actor is the accepting seller; target is the offer.
    * The order is created at the AGREED price through

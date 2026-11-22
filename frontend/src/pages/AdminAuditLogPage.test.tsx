@@ -243,6 +243,23 @@ describe('AdminAuditLogPage', () => {
     expect(typeValues).toContain('CATEGORY');
   });
 
+  it('offers the dispute-evidence audit actions and target type in the filters (backlog #413)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockResolvedValue(pageEnvelope([paidRow], 0, 1));
+
+    renderAt('/admin/audit-log');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+
+    const actionSelect = screen.getByLabelText(/filter by action/i) as HTMLSelectElement;
+    const actionValues = Array.from(actionSelect.options).map((o) => o.value);
+    expect(actionValues).toContain('DISPUTE_EVIDENCE_UPLOADED');
+    expect(actionValues).toContain('DISPUTE_EVIDENCE_DELETED');
+
+    const typeSelect = screen.getByLabelText(/filter by target type/i) as HTMLSelectElement;
+    const typeValues = Array.from(typeSelect.options).map((o) => o.value);
+    expect(typeValues).toContain('DISPUTE_EVIDENCE');
+  });
+
   it('category URL filters are sent to the API (backlog #132)', async () => {
     useAuthStore.getState().login(adminCaller, 'tok');
     const categoryRow: AuditLogEntry = {

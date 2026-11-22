@@ -9,7 +9,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditLog;
 import com.toni.marketplace.audit.AuditLogRepository;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.auth.JwtTokenService;
 import com.toni.marketplace.auth.PasswordService;
 import com.toni.marketplace.auth.RefreshTokenRepository;
@@ -331,6 +334,82 @@ class DisputeEvidenceTest {
         .andExpect(status().isOk());
     assertThat(evidence.findById(evidenceId)).isEmpty();
     assertThat(file).doesNotExist();
+  }
+
+  private java.util.List<AuditLog> auditRowsForEvidence(long evidenceId) {
+    return auditLog.findByTargetTypeAndTargetIdOrderByIdAsc(
+        AuditTargetType.DISPUTE_EVIDENCE, evidenceId);
+  }
+
+  @Test
+  void uploadAndDeleteWriteAuditRowsWithEvidenceIdOnly() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    long disputeId = openDispute(buyer, seller);
+    long orderId = disputes.findById(disputeId).orElseThrow().getOrderId();
+
+    String body = mockMvc.perform(upload(disputeId, buyer))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long evidenceId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+
+    // The upload writes exactly one row: actor is the uploader, target is
+    // the evidence row id — the only identifier the trail stores (no file
+    // bytes, no /uploads/ URL: the audit table has no payload column).
+    var uploaded = auditRowsForEvidence(evidenceId);
+    assertThat(uploaded).hasSize(1);
+    assertThat(uploaded.get(0).getAction()).isEqualTo(AuditAction.DISPUTE_EVIDENCE_UPLOADED);
+    assertThat(uploaded.get(0).getActorUserId()).isEqualTo(buyer.getId());
+    assertThat(uploaded.get(0).getTargetType()).isEqualTo(AuditTargetType.DISPUTE_EVIDENCE);
+    // The dispute id and order id are one lookup away through the evidence
+    // row and the dispute row (one dispute per order, #169).
+    assertThat(evidence.findById(evidenceId).orElseThrow().getDisputeId()).isEqualTo(disputeId);
+    assertThat(disputes.findById(disputeId).orElseThrow().getOrderId()).isEqualTo(orderId);
+
+    // The uploader removes it: exactly one delete row, same target id —
+    // and the row survives its evidence row, so a deleted photo still
+    // leaves a trail where before #413 it left none.
+    mockMvc.perform(delete("/api/disputes/{d}/evidence/{e}", disputeId, evidenceId)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isOk());
+    assertThat(evidence.findById(evidenceId)).isEmpty();
+    var rows = auditRowsForEvidence(evidenceId);
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(1).getAction()).isEqualTo(AuditAction.DISPUTE_EVIDENCE_DELETED);
+    assertThat(rows.get(1).getActorUserId()).isEqualTo(buyer.getId());
+    assertThat(rows.get(1).getTargetType()).isEqualTo(AuditTargetType.DISPUTE_EVIDENCE);
+  }
+
+  @Test
+  void failedUploadAndRefusedDeleteWriteNoAuditRow() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    long disputeId = openDispute(buyer, seller);
+
+    // A rejected upload (bad magic bytes) writes no row.
+    MockMultipartFile spoofed = new MockMultipartFile(
+        "file", "fake.png", "image/png", "not a png at all".getBytes());
+    mockMvc.perform(multipart("/api/disputes/{id}/evidence", disputeId)
+            .file(spoofed)
+            .header("Authorization", "Bearer " + token(buyer)))
+        .andExpect(status().isBadRequest());
+    assertThat(auditLog.findAll().stream()
+        .filter(a -> a.getAction() == AuditAction.DISPUTE_EVIDENCE_UPLOADED)
+        .toList()).isEmpty();
+
+    // A refused delete (the other party, 403) writes no row either, and a
+    // stranger's 404 upload attempt writes nothing.
+    String body = mockMvc.perform(upload(disputeId, buyer))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long evidenceId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+    mockMvc.perform(delete("/api/disputes/{d}/evidence/{e}", disputeId, evidenceId)
+            .header("Authorization", "Bearer " + token(seller)))
+        .andExpect(status().isForbidden());
+    assertThat(auditRowsForEvidence(evidenceId)).hasSize(1); // only the upload row
+    User stranger = newUser();
+    mockMvc.perform(upload(disputeId, stranger)).andExpect(status().isNotFound());
+    assertThat(auditRowsForEvidence(evidenceId)).hasSize(1);
   }
 
   @Test

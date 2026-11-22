@@ -1,5 +1,8 @@
 package com.toni.marketplace.dispute;
 
+import com.toni.marketplace.audit.AuditAction;
+import com.toni.marketplace.audit.AuditService;
+import com.toni.marketplace.audit.AuditTargetType;
 import com.toni.marketplace.item.ImageStorageService;
 import java.io.IOException;
 import java.util.List;
@@ -39,6 +42,16 @@ import org.springframework.web.server.ResponseStatusException;
  *       rolled back into the row operation, and the nightly orphan
  *       sweeper (#103, whose reference set now includes evidence
  *       URLs) is the backstop for a file that outlives its row.</li>
+ *   <li><b>Audit:</b> upload and removal each write an audit row in the
+ *       same transaction as the evidence row itself
+ *       ({@code DISPUTE_EVIDENCE_UPLOADED} /
+ *       {@code DISPUTE_EVIDENCE_DELETED}, backlog #413) — actor is the
+ *       uploader/remover, target is the evidence row id. Before #413 a
+ *       deleted photo left no trail at all, which is exactly what an
+ *       ADMIN resolving the dispute could not reconstruct. The row
+ *       stores the evidence id and nothing of the file (no bytes, no
+ *       {@code /uploads/} URL); the dispute id and order id are one
+ *       lookup away via the evidence row and the dispute row.</li>
  * </ul>
  */
 @Service
@@ -49,13 +62,16 @@ public class DisputeEvidenceService {
   private final OrderDisputeRepository disputes;
   private final DisputeEvidenceRepository evidence;
   private final ImageStorageService storage;
+  private final AuditService audit;
 
   public DisputeEvidenceService(OrderDisputeRepository disputes,
                                 DisputeEvidenceRepository evidence,
-                                ImageStorageService storage) {
+                                ImageStorageService storage,
+                                AuditService audit) {
     this.disputes = disputes;
     this.evidence = evidence;
     this.storage = storage;
+    this.audit = audit;
   }
 
   /** Adds one evidence photo to an OPEN dispute (see the class javadoc). */
@@ -72,8 +88,12 @@ public class DisputeEvidenceService {
     // row exists, and a rejected upload leaves no file behind.
     String url = storage.store(file);
     try {
-      return DisputeEvidenceDto.from(
-          evidence.save(new DisputeEvidence(disputeId, callerId, url)));
+      DisputeEvidence saved = evidence.save(new DisputeEvidence(disputeId, callerId, url));
+      // The audit row joins this transaction (backlog #413): a rolled-back
+      // save leaves no row, and a rejected upload never reaches here.
+      audit.record(callerId, AuditAction.DISPUTE_EVIDENCE_UPLOADED,
+          AuditTargetType.DISPUTE_EVIDENCE, saved.getId());
+      return DisputeEvidenceDto.from(saved);
     } catch (RuntimeException e) {
       // The row never landed: the just-stored file is an orphan by
       // construction, so remove it best-effort right here (#40).
@@ -106,6 +126,11 @@ public class DisputeEvidenceService {
     }
     String url = row.getUrl();
     evidence.delete(row);
+    // The audit row joins this transaction (backlog #413) and targets the
+    // deleted row's id, so the trail survives the deletion; the best-effort
+    // file cleanup below it must not roll the removal back (#40).
+    audit.record(callerId, AuditAction.DISPUTE_EVIDENCE_DELETED,
+        AuditTargetType.DISPUTE_EVIDENCE, evidenceId);
     // Best-effort file cleanup after the row delete (#40 discipline):
     // a disk failure must not roll the removal back.
     deleteQuietly(url);

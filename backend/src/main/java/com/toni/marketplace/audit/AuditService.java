@@ -48,7 +48,11 @@ import org.springframework.transaction.annotation.Transactional;
  * resolutions (backlog #397): {@code REPORT_DISMISSED} /
  * {@code LISTING_HIDDEN} from {@code ListingReportService} — actor
  * is the resolving ADMIN, target is the report row on dismiss and
- * the listing on action.
+ * the listing on action, and the dispute-evidence writes (backlog
+ * #413): {@code DISPUTE_EVIDENCE_UPLOADED} /
+ * {@code DISPUTE_EVIDENCE_DELETED} from {@code DisputeEvidenceService}
+ * — actor is the uploader/remover, target is the evidence row id
+ * (the row stores no file bytes and no {@code /uploads/} URL).
  * The read side landed in backlog #109:
  * {@link #listAuditLog} behind {@code GET /api/admin/audit-log}, and the
  * CSV export in backlog #232 ({@link #exportAuditLog} behind
