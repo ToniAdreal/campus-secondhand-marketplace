@@ -24,6 +24,16 @@ vi.mock('../api/items', async (importOriginal) => {
     // hook needs a stub because this file renders HomePage without a
     // QueryClientProvider, and the real hook would throw there.
     useItemSuggestions: () => ({ data: [], isLoading: false, isError: false }),
+    // The cursor-mode browse hook (backlog #416) needs the same inert
+    // stub, for the same no-QueryClientProvider reason.
+    useItemsCursor: () => ({
+      data: undefined,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: () => undefined,
+      isLoading: false,
+      isError: false,
+    }),
   };
 });
 

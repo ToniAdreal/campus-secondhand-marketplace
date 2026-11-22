@@ -489,8 +489,14 @@ function emptyPage() {
 
 /** One GET router for every page in the suite — unknown URLs fail, and
  * pages that call them must degrade gracefully (as Settings does). */
-function routeGet(url: string) {
+function routeGet(url: string, params?: Record<string, unknown>) {
   if (url === '/items') {
+    // Backlog #416: the newest-first browse fetches cursor pages
+    // ({items, nextCursor}, signalled by the `limit` param); a price
+    // sort still fetches offset pages. The fixture answers each shape.
+    if (params?.limit != null) {
+      return Promise.resolve(envelope({ items: [fakeItem], nextCursor: null }));
+    }
     return Promise.resolve(
       envelope({ content: [fakeItem], totalElements: 1, totalPages: 1, number: 0 }),
     );
@@ -653,7 +659,10 @@ describe('automated accessibility checks (axe-core, backlog #183)', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     setAccessToken(null);
-    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    getSpy.mockImplementation(
+      (url: string, config?: { params?: Record<string, unknown> }) =>
+        routeGet(url, config?.params) as never,
+    );
   });
 
   afterEach(() => {
@@ -879,7 +888,10 @@ describe('automated accessibility checks, fourth batch (backlog #323)', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     setAccessToken(null);
-    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    getSpy.mockImplementation(
+      (url: string, config?: { params?: Record<string, unknown> }) =>
+        routeGet(url, config?.params) as never,
+    );
     postSpy.mockResolvedValue(envelope(null) as never);
   });
 
@@ -1003,7 +1015,10 @@ describe('automated accessibility checks, fifth batch (backlog #328)', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     setAccessToken(null);
-    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    getSpy.mockImplementation(
+      (url: string, config?: { params?: Record<string, unknown> }) =>
+        routeGet(url, config?.params) as never,
+    );
   });
 
   afterEach(() => {
@@ -1043,7 +1058,10 @@ describe('automated accessibility checks under the dark theme (backlog #227)', (
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     setAccessToken(null);
-    getSpy.mockImplementation((url: string) => routeGet(url) as never);
+    getSpy.mockImplementation(
+      (url: string, config?: { params?: Record<string, unknown> }) =>
+        routeGet(url, config?.params) as never,
+    );
     document.documentElement.classList.add('dark');
   });
 

@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { listingPhotoUrls, useItems, useItemSuggestions } from '../api/items';
+import {
+  flattenCursorPages,
+  listingPhotoUrls,
+  useItems,
+  useItemsCursor,
+  useItemSuggestions,
+} from '../api/items';
 import { useRecentlyViewed } from '../api/recentlyViewed';
 import FavoriteButton from '../components/FavoriteButton';
 import ListingPhoto from '../components/ListingPhoto';
@@ -79,11 +85,36 @@ export default function HomePage() {
   // and leaves no param behind, exactly like ?sort=newest.
   const page = parsePageParam(searchParams.get('page'));
   const categoriesQuery = useCategories();
-  const { data, isLoading, isError } = useItems(page, searchQuery, categoryId, {
-    minPriceCents,
-    maxPriceCents,
-    sort,
-  });
+  // Browse paging (backlog #416): the newest-first browse runs on the
+  // backend's cursor slice — "Load more" appends via nextCursor — while
+  // a price sort stays on the offset query, because the backend 400s a
+  // cursor with a price sort. Both hooks stay mounted and only the
+  // active one fetches (enabled); the inactive one's data is ignored.
+  // ?page= keeps its #144 meaning in offset mode and is inert in
+  // cursor mode. A filter change is a new cursor key, so the cursor
+  // resets to the first page with the filter.
+  const isPriceSort = sort !== 'newest';
+  const offsetQuery = useItems(
+    page,
+    searchQuery,
+    categoryId,
+    { minPriceCents, maxPriceCents, sort },
+    { enabled: isPriceSort },
+  );
+  const cursorQuery = useItemsCursor(
+    searchQuery,
+    categoryId,
+    { minPriceCents, maxPriceCents },
+    { enabled: !isPriceSort },
+  );
+  const cursorItems = useMemo(
+    () => flattenCursorPages(cursorQuery.data?.pages ?? []),
+    [cursorQuery.data],
+  );
+  const items = isPriceSort ? offsetQuery.data?.content ?? [] : cursorItems;
+  const isLoading = isPriceSort ? offsetQuery.isLoading : cursorQuery.isLoading;
+  const isError = isPriceSort ? offsetQuery.isError : cursorQuery.isError;
+  const hasData = isPriceSort ? offsetQuery.data !== undefined : cursorQuery.data !== undefined;
 
   const setPage = (nextPage: number) => {
     setSearchParams(
@@ -346,11 +377,11 @@ export default function HomePage() {
       )}
       {isLoading && <p>Loading listings…</p>}
       {isError && <p className="text-red-600">Failed to load listings.</p>}
-      {data && (
+      {hasData && (
         <>
-          {data.content.length === 0 && <p>{emptyMessage}</p>}
+          {items.length === 0 && <p>{emptyMessage}</p>}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {data.content.map((item) => {
+            {items.map((item) => {
               const photoUrls = listingPhotoUrls(item);
               return (
               <li key={item.id} className="rounded-[14px] border border-apple-hairline bg-white p-4 transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-800">
@@ -383,28 +414,43 @@ export default function HomePage() {
               );
             })}
           </ul>
-          {data.totalPages > 0 && (
-            <nav aria-label="Listing pages" className="mt-6 flex items-center justify-center gap-4">
-              <button
-                type="button"
-                onClick={() => setPage(page - 1)}
-                disabled={page <= 0}
-                className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span>
-                Page {page + 1} of {data.totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage(page + 1)}
-                disabled={page + 1 >= data.totalPages}
-                className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
-              >
-                Next
-              </button>
-            </nav>
+          {isPriceSort ? (
+            offsetQuery.data && offsetQuery.data.totalPages > 0 && (
+              <nav aria-label="Listing pages" className="mt-6 flex items-center justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => setPage(page - 1)}
+                  disabled={page <= 0}
+                  className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {page + 1} of {offsetQuery.data.totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(page + 1)}
+                  disabled={page + 1 >= offsetQuery.data.totalPages}
+                  className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </nav>
+            )
+          ) : (
+            cursorQuery.hasNextPage && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => void cursorQuery.fetchNextPage()}
+                  disabled={cursorQuery.isFetchingNextPage}
+                  className="rounded-full border border-apple-hairline bg-white px-5 py-2 text-sm font-semibold text-apple-ink transition hover:bg-apple-parchment disabled:opacity-50"
+                >
+                  {cursorQuery.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
+            )
           )}
         </>
       )}

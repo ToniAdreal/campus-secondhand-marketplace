@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import HomePage from './HomePage';
-import type { Page, Item } from '../api/items';
+import type { CursorPage, Page, Item } from '../api/items';
 import type { AuthUser } from '../api/auth';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -21,6 +22,21 @@ let mockSuggestions: Array<{ id: number; title: string }> = [];
 
 /** Page-count override for the pagination tests; null derives it from content. */
 let mockTotalPages: number | null = null;
+
+/** Cursor-mode invocations; the enabled flag is what pins "price sort stays on offset". */
+const cursorCalls: Array<{
+  q: string;
+  categoryId: number | null;
+  filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null };
+  enabled: boolean;
+}> = [];
+
+/**
+ * Cursor pages the mocked useItemsCursor serves; null derives a single
+ * page from mockContent (nextCursor null) so the pre-#416 tests that
+ * seed mockContent keep rendering their cards in cursor mode.
+ */
+let mockCursorPages: CursorPage<Item>[] | null = null;
 
 vi.mock('../api/items', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/items')>();
@@ -45,6 +61,44 @@ vi.mock('../api/items', async (importOriginal) => {
     // Suggestions are inert by default (empty list renders no dropdown);
     // the #235 describe seeds mockSuggestions per test.
     useItemSuggestions: () => ({ data: mockSuggestions, isLoading: false, isError: false }),
+    // Cursor-mode browse (backlog #416): a stateful stand-in for the
+    // infinite query — it serves mockCursorPages one at a time through
+    // fetchNextPage, and restarts at the first page when the filter
+    // signature changes, mirroring the real hook's new query key.
+    useItemsCursor: (
+      q = '',
+      categoryId: number | null = null,
+      filters?: { minPriceCents?: number | null; maxPriceCents?: number | null; sort?: string | null },
+      options?: { enabled?: boolean },
+    ) => {
+      const enabled = options?.enabled ?? true;
+      const sig = JSON.stringify([
+        q,
+        categoryId,
+        filters?.minPriceCents ?? null,
+        filters?.maxPriceCents ?? null,
+      ]);
+      cursorCalls.push({ q, categoryId, filters, enabled });
+      const [state, setState] = useState({ sig, shown: 1 });
+      if (state.sig !== sig) {
+        // Filter change: the cursor resets with the result set.
+        setState({ sig, shown: 1 });
+      }
+      const pages = mockCursorPages ?? [{ items: mockContent, nextCursor: null }];
+      const shownPages = pages.slice(0, state.shown);
+      return {
+        data: {
+          pages: shownPages,
+          pageParams: shownPages.map((_, i) => (i === 0 ? undefined : 'cursor')),
+        },
+        hasNextPage: shownPages[shownPages.length - 1]?.nextCursor != null,
+        isFetchingNextPage: false,
+        fetchNextPage: () =>
+          setState((s) => ({ ...s, shown: Math.min(s.shown + 1, pages.length) })),
+        isLoading: false,
+        isError: false,
+      };
+    },
   };
 });
 
@@ -392,6 +446,9 @@ describe('HomePage listing photos', () => {
 });
 
 describe('HomePage pagination (backlog #144)', () => {
+  // Backlog #416: the newest-first browse is cursor-based ("Load more"),
+  // so these offset-paging tests run under a price sort — the only mode
+  // that still pages by ?page= with Prev/Next controls.
   const pagedItem: Item = {
     id: 11,
     title: 'Paged bike',
@@ -423,53 +480,53 @@ describe('HomePage pagination (backlog #144)', () => {
   });
 
   it('direct load of ?page=2 renders that page (refresh-safe, shareable)', () => {
-    renderHome('/?page=2');
+    renderHome('/?page=2&sort=price-asc');
 
     expect(calls[calls.length - 1]).toMatchObject({ page: 2 });
     expect(screen.getByText('Page 3 of 3')).toBeTruthy();
   });
 
   it('Next requests page 1 and syncs ?page= into the URL', () => {
-    renderHome('/');
+    renderHome('/?sort=price-asc');
 
     expect(screen.getByText('Page 1 of 3')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
-    expect(currentSearch).toBe('?page=1');
+    expect(currentSearch).toBe('?sort=price-asc&page=1');
     expect(calls[calls.length - 1]).toMatchObject({ page: 1 });
     expect(screen.getByText('Page 2 of 3')).toBeTruthy();
   });
 
   it('Previous from ?page=2 returns to page 1, and back to page 0 clears the param', () => {
-    renderHome('/?page=2');
+    renderHome('/?page=2&sort=price-asc');
 
     fireEvent.click(screen.getByRole('button', { name: /previous/i }));
-    expect(currentSearch).toBe('?page=1');
+    expect(currentSearch).toBe('?page=1&sort=price-asc');
     expect(calls[calls.length - 1]).toMatchObject({ page: 1 });
 
     fireEvent.click(screen.getByRole('button', { name: /previous/i }));
-    expect(currentSearch).toBe('');
+    expect(currentSearch).toBe('?sort=price-asc');
     expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
   });
 
   it('disables Previous on the first page and Next on the last page', () => {
-    renderHome('/');
+    renderHome('/?sort=price-asc');
     expect((screen.getByRole('button', { name: /previous/i }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: /next/i }) as HTMLButtonElement).disabled).toBe(false);
 
     cleanup();
     calls.length = 0;
-    renderHome('/?page=2');
+    renderHome('/?page=2&sort=price-asc');
     expect((screen.getByRole('button', { name: /previous/i }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: /next/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('a category change drops ?page= so the new result set starts at page 0', () => {
-    renderHome('/?page=2');
+    renderHome('/?page=2&sort=price-asc');
 
     fireEvent.change(screen.getByLabelText(/filter by category/i), { target: { value: '1' } });
 
-    expect(currentSearch).toBe('?categoryId=1');
+    expect(currentSearch).toBe('?sort=price-asc&categoryId=1');
     expect(calls[calls.length - 1]).toMatchObject({ page: 0, categoryId: 1 });
   });
 
@@ -656,5 +713,125 @@ describe('HomePage search suggestions dropdown (backlog #235)', () => {
     typeAndDebounce('bike');
 
     expect(screen.queryByRole('listbox')).toBeNull();
+  });
+});
+
+describe('HomePage cursor pagination (backlog #416)', () => {
+  const cursorItem = (id: number, title: string): Item => ({
+    id,
+    title,
+    description: null,
+    priceCents: 1000,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls.length = 0;
+    cursorCalls.length = 0;
+    currentSearch = '';
+    mockContent = [];
+    mockCursorPages = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mockContent = [];
+    mockCursorPages = null;
+    mockTotalPages = null;
+  });
+
+  function browseTitles(): string[] {
+    return screen
+      .getAllByRole('listitem')
+      .map((li) => li.textContent ?? '')
+      .filter((text) => text.length > 0);
+  }
+
+  it('walks two cursor pages with Load more — no dup, no gap, button gone at the end', () => {
+    mockCursorPages = [
+      { items: [cursorItem(1, 'Bike A'), cursorItem(2, 'Bike B')], nextCursor: 'c1' },
+      { items: [cursorItem(2, 'Bike B'), cursorItem(3, 'Bike C')], nextCursor: null },
+    ];
+    renderHome('/');
+
+    // First page only; the second page's unique row is not there yet.
+    expect(browseTitles().join(' ')).toMatch(/Bike A/);
+    expect(browseTitles().join(' ')).toMatch(/Bike B/);
+    expect(browseTitles().join(' ')).not.toMatch(/Bike C/);
+    expect(screen.getByRole('button', { name: /load more/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /load more/i }));
+
+    // Both pages stitched in order; the row repeated across the page
+    // boundary (Bike B) renders exactly once; the button is gone.
+    const titles = browseTitles();
+    expect(titles.filter((t) => /Bike B/.test(t))).toHaveLength(1);
+    expect(titles.findIndex((t) => /Bike A/.test(t))).toBeLessThan(
+      titles.findIndex((t) => /Bike B/.test(t)),
+    );
+    expect(titles.findIndex((t) => /Bike B/.test(t))).toBeLessThan(
+      titles.findIndex((t) => /Bike C/.test(t)),
+    );
+    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull();
+  });
+
+  it('a filter change resets the cursor — the walk restarts at the first page', () => {
+    mockCursorPages = [
+      { items: [cursorItem(1, 'Bike A')], nextCursor: 'c1' },
+      { items: [cursorItem(2, 'Lamp B')], nextCursor: null },
+    ];
+    renderHome('/');
+
+    fireEvent.click(screen.getByRole('button', { name: /load more/i }));
+    expect(browseTitles().join(' ')).toMatch(/Lamp B/);
+
+    const input = screen.getByLabelText(/search listings/i);
+    fireEvent.change(input, { target: { value: 'lamp' } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    // The committed filter restarts the cursor walk: only the first
+    // page's rows show again, and the new query carries the filter.
+    expect(currentSearch).toBe('?q=lamp');
+    expect(browseTitles().join(' ')).toMatch(/Bike A/);
+    expect(browseTitles().join(' ')).not.toMatch(/Lamp B/);
+    expect(cursorCalls[cursorCalls.length - 1]).toMatchObject({ q: 'lamp' });
+    expect(screen.getByRole('button', { name: /load more/i })).toBeTruthy();
+  });
+
+  it('a price sort stays on offset paging — no Load more, Prev/Next instead', () => {
+    mockContent = [cursorItem(11, 'Paged bike')];
+    mockTotalPages = 3;
+    renderHome('/?sort=price-asc');
+
+    expect(screen.getByText('Page 1 of 3')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /load more/i })).toBeNull();
+    // The cursor hook is mounted but disabled, so it fetches nothing;
+    // the offset hook serves the page.
+    expect(cursorCalls[cursorCalls.length - 1].enabled).toBe(false);
+    expect(calls[calls.length - 1]).toMatchObject({ page: 0 });
+  });
+
+  it('the newest sort serves the cursor query with the filters composed', () => {
+    renderHome('/?q=bike&categoryId=2&minPrice=10');
+
+    expect(cursorCalls[cursorCalls.length - 1]).toMatchObject({
+      q: 'bike',
+      categoryId: 2,
+      enabled: true,
+    });
+    expect(cursorCalls[cursorCalls.length - 1].filters).toMatchObject({
+      minPriceCents: 1000,
+    });
   });
 });

@@ -8,13 +8,16 @@ import {
   describePublishError,
   describeRenewError,
   describeReorderPhotosError,
+  flattenCursorPages,
   isListingExpired,
   isListingExpiringSoon,
   itemKeys,
   listingPhotoUrls,
   publishListing,
   useItems,
+  useItemsCursor,
   useItemSuggestions,
+  type CursorPage,
   type Item,
   type ItemPhoto,
 } from './items';
@@ -426,5 +429,96 @@ describe('describePublishError', () => {
     ['empty object', {}, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describePublishError(error)).toBe(expected);
+  });
+});
+
+describe('useItemsCursor (backlog #416)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function envelopeCursor(items: Array<{ id: number }>, nextCursor: string | null) {
+    return {
+      data: {
+        code: 0,
+        message: 'ok',
+        data: { items, nextCursor },
+      },
+    } as never;
+  }
+
+  it('opens cursor mode with a lone limit — no page/size/cursor on the first page', async () => {
+    getSpy.mockResolvedValue(envelopeCursor([{ id: 1 }], 'abc'));
+
+    const { result } = renderHook(
+      () => useItemsCursor('bike', 2, { minPriceCents: 500 }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/items', {
+      params: { limit: 20, q: 'bike', categoryId: 2, minPriceCents: 500 },
+    });
+    expect(result.current.data?.pages).toHaveLength(1);
+    expect(result.current.hasNextPage).toBe(true);
+  });
+
+  it('hands the previous page nextCursor back as the next page cursor, then stops at null', async () => {
+    getSpy
+      .mockResolvedValueOnce(envelopeCursor([{ id: 1 }], 'cursor-2'))
+      .mockResolvedValueOnce(envelopeCursor([{ id: 2 }], null));
+
+    const { result } = renderHook(() => useItemsCursor(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.hasNextPage).toBe(true);
+
+    result.current.fetchNextPage();
+    await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
+
+    expect(getSpy).toHaveBeenNthCalledWith(2, '/items', {
+      params: { limit: 20, cursor: 'cursor-2' },
+    });
+    expect(result.current.hasNextPage).toBe(false);
+    expect(result.current.data?.pages[1].items).toEqual([{ id: 2 }]);
+  });
+
+  it('never sends a sort — cursor mode is newest-first only, the caller gates price sorts out', async () => {
+    getSpy.mockResolvedValue(envelopeCursor([], null));
+
+    const { result } = renderHook(
+      () => useItemsCursor('', null, { sort: 'price-asc' }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(getSpy).toHaveBeenCalledWith('/items', { params: { limit: 20 } });
+  });
+
+  it('keys the cache by the filter set so a filter change restarts at the first page', () => {
+    expect(itemKeys.cursorList('bike', 2, { minPriceCents: 500 })).not.toEqual(
+      itemKeys.cursorList('lamp', 2, { minPriceCents: 500 }),
+    );
+    expect(itemKeys.cursorList('bike', 2, { minPriceCents: 500 })).not.toEqual(
+      itemKeys.cursorList('bike', 3, { minPriceCents: 500 }),
+    );
+    // sort is not part of the key by design — the hook never sends it
+    // and the page only mounts this hook for the newest sort.
+    expect(itemKeys.cursorList('', null, { sort: 'price-asc' })).toEqual(
+      itemKeys.cursorList('', null, { sort: 'newest' }),
+    );
+  });
+});
+
+describe('flattenCursorPages (backlog #416)', () => {
+  it('stitches pages in order and drops a repeated id (mid-browse insert safety net)', () => {
+    const pages: CursorPage<Item>[] = [
+      { items: [{ id: 1 } as Item, { id: 2 } as Item], nextCursor: 'c1' },
+      { items: [{ id: 2 } as Item, { id: 3 } as Item], nextCursor: null },
+    ];
+    expect(flattenCursorPages(pages).map((item) => item.id)).toEqual([1, 2, 3]);
+  });
+
+  it('is empty for no pages', () => {
+    expect(flattenCursorPages([])).toEqual([]);
   });
 });

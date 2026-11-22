@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 
 /** Mirrors the backend's ItemPhotoDto (backlog #69 gallery). */
@@ -122,6 +122,18 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+/**
+ * One cursor page from GET /api/items (backlog #334 backend slice,
+ * #416 SPA wiring): the rows plus the opaque cursor for the next page,
+ * null at the end. The cursor is base64url of the last row's
+ * (createdAt, id) tuple — the client never decodes it, it only hands
+ * it back as the next page's `cursor` param.
+ */
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
 export interface ItemListFilters {
   minPriceCents?: number | null;
   maxPriceCents?: number | null;
@@ -154,6 +166,23 @@ export const itemKeys = {
       filters?.sort ?? null,
     ] as const,
   suggestions: (q: string) => [...itemKeys.all, 'suggestions', q] as const,
+  /**
+   * Cursor-mode browse key (backlog #416): the filter set only — the
+   * cursor itself never enters the key, the fetched pages carry it.
+   * `sort` is deliberately absent: cursor mode is newest-first only
+   * (a price sort with a cursor is 400 on the backend), so a price
+   * sort never reaches this key — HomePage keeps it on the offset
+   * query instead.
+   */
+  cursorList: (q?: string, categoryId?: number | null, filters?: ItemListFilters) =>
+    [
+      ...itemKeys.all,
+      'cursor-list',
+      q ?? '',
+      categoryId ?? null,
+      filters?.minPriceCents ?? null,
+      filters?.maxPriceCents ?? null,
+    ] as const,
   detail: (id: number) => [...itemKeys.all, 'detail', id] as const,
   priceHistory: (id: number) => [...itemKeys.all, 'price-history', id] as const,
   similar: (id: number) => [...itemKeys.all, 'similar', id] as const,
@@ -165,6 +194,7 @@ export function useItems(
   q = '',
   categoryId?: number | null,
   filters?: ItemListFilters,
+  options?: { enabled?: boolean },
 ) {
   return useQuery({
     // keepPreviousData (backlog #144): paging or re-filtering keeps the
@@ -192,7 +222,80 @@ export function useItems(
           },
         })
         .then((res) => res.data.data),
+    // Backlog #416: HomePage disables the offset query while the
+    // cursor query serves the newest-first browse, and vice versa
+    // under a price sort — both hooks stay mounted, only one fetches.
+    enabled: options?.enabled ?? true,
   });
+}
+
+/**
+ * GET /api/items in cursor mode (backlog #334 backend slice, #416 SPA
+ * wiring): keyset paging over the newest-first browse. The first page
+ * sends a lone `limit` (which opens cursor mode on the backend — no
+ * `page`/`size`, no cursor); each further page hands back the previous
+ * page's opaque `nextCursor`. Filters compose exactly like the offset
+ * query (?q=/?categoryId=/price bounds), but `sort` is never sent:
+ * the caller only mounts this hook for the newest sort, because the
+ * backend 400s a price sort with a cursor. A filter change is a new
+ * query key, so the fetched pages restart at the first page — the
+ * cursor resets with the filter, never carried across result sets.
+ */
+export function useItemsCursor(
+  q = '',
+  categoryId?: number | null,
+  filters?: ItemListFilters,
+  options?: { enabled?: boolean },
+) {
+  return useInfiniteQuery({
+    // Same keepPreviousData contract as useItems (#144): re-filtering
+    // keeps the previous result set's rows on screen until the new
+    // first page lands.
+    keepPreviousData: true,
+    queryKey: itemKeys.cursorList(q, categoryId, filters),
+    queryFn: ({ pageParam }) =>
+      api
+        .get<ApiResponse<CursorPage<Item>>>('/items', {
+          params: {
+            limit: 20,
+            ...(typeof pageParam === 'string' && pageParam !== '' ? { cursor: pageParam } : {}),
+            ...(q.trim() !== '' ? { q: q.trim() } : {}),
+            ...(categoryId != null ? { categoryId } : {}),
+            ...(filters?.minPriceCents != null
+              ? { minPriceCents: filters.minPriceCents }
+              : {}),
+            ...(filters?.maxPriceCents != null
+              ? { maxPriceCents: filters.maxPriceCents }
+              : {}),
+          },
+        })
+        .then((res) => res.data.data),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/**
+ * Flattens an infinite query's cursor pages into one browse list
+ * (backlog #416), deduped by listing id in first-seen order. Keyset
+ * paging should never repeat a row — the cursor is the previous page's
+ * last (createdAt, id) tuple — but a listing created mid-browse can
+ * shift nothing, and a stale cached page refetched after a filter
+ * change could, so the dedupe is the cheap guarantee that "Load more"
+ * never shows the same card twice.
+ */
+export function flattenCursorPages(pages: CursorPage<Item>[]): Item[] {
+  const seen = new Set<number>();
+  const items: Item[] = [];
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        items.push(item);
+      }
+    }
+  }
+  return items;
 }
 
 /**
