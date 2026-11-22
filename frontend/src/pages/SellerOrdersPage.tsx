@@ -13,7 +13,7 @@ import {
   useSellerSalesSummary,
   useShipOrder,
 } from '../api/orders';
-import { OrderDisputeEvidence } from '../components/DisputeEvidencePanel';
+import OrderDisputeControl from '../components/OrderDisputeControl';
 import OrderPspReferences from '../components/OrderPspReferences';
 import PartialRefundNote from '../components/PartialRefundNote';
 import OrderStatusChip from '../components/OrderStatusChip';
@@ -63,6 +63,13 @@ import { useAuthStore } from '../store/useAuthStore';
  * per order, and the server rejects the other path's transition with
  * 422 afterwards. SHIPPED rows show the recorded carrier + tracking
  * number; the listing stays RESERVED until the buyer confirms receipt.
+ *
+ * Dispute control (backlog #414): PAID/SHIPPED/COMPLETED rows carry the
+ * shared "Report a problem" control (the same reason form and 422
+ * mapping as the buyer rows on MyOrdersPage) — the #255 backend path
+ * already let the listing's seller dispute, this page just never
+ * offered the button. DISPUTED rows show the frozen note plus the
+ * evidence panel; the window stays enforced server-side.
  *
  * Status filter (backlog #237): a dropdown above the list, URL-synced
  * (?status=, like #84's category filter) and combinable with the
@@ -313,7 +320,7 @@ export default function SellerOrdersPage() {
                 </div>
                 <PartialRefundNote order={order} />
                 <OrderPspReferences order={order} />
-                {order.status === 'DISPUTED' && <OrderDisputeEvidence orderId={order.id} />}
+                <OrderDisputeControl order={order} />
                 {order.status === 'PAID' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <label className="flex items-center gap-2 text-sm text-neutral-600">

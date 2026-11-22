@@ -30,9 +30,9 @@ export interface OrderDispute {
 export const DISPUTE_STATUSES = ['OPEN', 'RESOLVED_REFUND', 'RESOLVED_RELEASE'] as const;
 
 /**
- * POST /api/orders/{id}/dispute — the buyer disputes a PAID or
- * COMPLETED order. Opening moves no money: the order freezes in
- * DISPUTED until an ADMIN resolves it. Opening while a dispute is
+ * POST /api/orders/{id}/dispute — the buyer or the listing's seller
+ * (backlog #255) disputes a PAID or COMPLETED order. Opening moves no
+ * money: the order freezes in DISPUTED until an ADMIN resolves it. Opening while a dispute is
  * already open returns that dispute unchanged server-side, so a
  * double-click is safe. On success the orders and items subtrees are
  * invalidated — the order's chip flips to DISPUTED everywhere it
