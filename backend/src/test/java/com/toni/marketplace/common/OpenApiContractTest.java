@@ -133,6 +133,7 @@ class OpenApiContractTest {
       "/api/categories/{id}",
       "/api/disputes/{disputeId}/evidence",
       "/api/disputes/{disputeId}/evidence/{evidenceId}",
+      "/api/disputes/{disputeId}/evidence/{evidenceId}/download",
       "/api/items",
       "/api/items/suggestions",
       "/api/items/{id}",
@@ -495,6 +496,12 @@ class OpenApiContractTest {
     // malformed 400, its body-cap 413 and its per-IP throttle 429.
     assertThat(responseCodes(docs, "/api/security/csp-report", "post"))
         .contains("204", "400", "413", "429");
+    // Evidence download (#419): streams the stored bytes (no envelope
+    // on success, like the data export) to a party only — a stranger,
+    // an unknown id or a row whose file is gone is the same 404.
+    assertThat(responseCodes(docs,
+        "/api/disputes/{disputeId}/evidence/{evidenceId}/download", "get"))
+        .contains("200", "401", "404", "500");
     // Frontend error telemetry intake (#223): pins the same code set —
     // beacon 204, malformed 400, body-cap 413, per-IP throttle 429.
     assertThat(responseCodes(docs, "/api/telemetry/errors", "post"))

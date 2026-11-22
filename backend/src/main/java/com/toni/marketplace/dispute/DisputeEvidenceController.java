@@ -1,8 +1,10 @@
 package com.toni.marketplace.dispute;
 
 import com.toni.marketplace.common.ApiResponse;
+import com.toni.marketplace.item.ImageStorageService;
 import java.util.List;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -73,6 +75,41 @@ public class DisputeEvidenceController {
     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
     return ApiResponse.ok(evidenceService.listEvidence(
         (Long) auth.getPrincipal(), isAdmin(auth), disputeId));
+  }
+
+  /**
+   * Streams one evidence photo to a party of the dispute (backlog
+   * #419): the buyer, the seller or an ADMIN gets the stored bytes
+   * with the file's content type; anyone else gets the same 404 as
+   * an unknown dispute or evidence id, and an anonymous caller gets
+   * the chain's 401 before routing. Success is the image itself, not
+   * the {@code {code,message,data}} envelope — like the account-data
+   * export and the sales CSV, a download has no envelope to wrap —
+   * while failures keep the envelope (401/404/500). The SPA renders
+   * evidence through this route, never the raw {@code /uploads/} URL
+   * the list DTO still carries; listing photos stay on the public
+   * mapping, untouched by this item.
+   */
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "the stored image bytes (no envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown dispute/evidence id, a dispute the caller is not a party to, "
+              + "or a row whose file is gone from disk (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500",
+          description = "the stored file exists but could not be read (envelope)")})
+  @GetMapping("/{evidenceId}/download")
+  public ResponseEntity<byte[]> download(@PathVariable Long disputeId,
+                                         @PathVariable Long evidenceId) {
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    ImageStorageService.StoredFile file = evidenceService.downloadEvidence(
+        (Long) auth.getPrincipal(), isAdmin(auth), disputeId, evidenceId);
+    return ResponseEntity.ok()
+        .contentType(MediaType.parseMediaType(file.contentType()))
+        .contentLength(file.bytes().length)
+        .body(file.bytes());
   }
 
   /**

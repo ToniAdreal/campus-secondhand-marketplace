@@ -56,8 +56,13 @@ export function useOpenDispute() {
 
 /**
  * One evidence photo on a dispute, mirroring the backend's
- * DisputeEvidenceDto (backlog #200). `url` is the public /uploads/
- * path of the stored file, served like a listing photo.
+ * DisputeEvidenceDto (backlog #200). `url` is the stored /uploads/
+ * path of the file — a reference, not a render path: since backlog
+ * #419 the panel renders evidence through the authenticated download
+ * route below, never this URL (the files are still served publicly
+ * under /uploads/, and the URL is still returned so a party that
+ * holds one can share a direct link — only the panel no longer
+ * exposes one).
  */
 export interface DisputeEvidence {
   id: number;
@@ -105,6 +110,29 @@ export function useDisputeEvidence(disputeId: number, enabled = true) {
         .then((res) => res.data.data),
     enabled,
   });
+}
+
+/**
+ * GET /api/disputes/{id}/evidence/{evidenceId}/download (backlog
+ * #419) — the authenticated read path for one evidence photo: the
+ * buyer, the seller or an ADMIN gets the stored image bytes with
+ * their content type; anyone else gets the backend's 404, anonymous
+ * callers its 401. Success is the image itself (no envelope), like
+ * the account-data export — callers map failures by status, not by
+ * body, because with responseType 'blob' the error body is a Blob
+ * too. The panel turns the blob into an object URL for the <img>;
+ * a plain <img src> could never carry the Bearer token, which is
+ * exactly why the raw /uploads/ URL is no longer rendered.
+ */
+export async function downloadDisputeEvidencePhoto(
+  disputeId: number,
+  evidenceId: number,
+): Promise<Blob> {
+  const res = await api.get<Blob>(
+    `/disputes/${disputeId}/evidence/${evidenceId}/download`,
+    { responseType: 'blob' },
+  );
+  return res.data;
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   describeAdminDisputesError,
   describeDisputeError,
   describeDisputeEvidenceError,
+  downloadDisputeEvidencePhoto,
   useAddDisputeEvidence,
   useAdminDisputes,
   useDisputeEvidence,
@@ -241,6 +242,25 @@ describe('dispute evidence hooks (backlog #200)', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(deleteSpy).toHaveBeenCalledWith('/disputes/3/evidence/11');
+  });
+
+  it('downloadDisputeEvidencePhoto GETs the download route as a blob (backlog #419)', async () => {
+    const blob = new Blob(['png-bytes'], { type: 'image/png' });
+    getSpy.mockResolvedValue({ data: blob } as never);
+
+    const result = await downloadDisputeEvidencePhoto(3, 11);
+
+    expect(getSpy).toHaveBeenCalledWith('/disputes/3/evidence/11/download', {
+      responseType: 'blob',
+    });
+    expect(result).toBe(blob);
+  });
+
+  it('downloadDisputeEvidencePhoto propagates failures so the panel can map them by status', async () => {
+    const failure = { isApiError: true, response: { status: 404, data: new Blob([]) } };
+    getSpy.mockRejectedValueOnce(failure);
+
+    await expect(downloadDisputeEvidencePhoto(3, 999)).rejects.toBe(failure);
   });
 });
 

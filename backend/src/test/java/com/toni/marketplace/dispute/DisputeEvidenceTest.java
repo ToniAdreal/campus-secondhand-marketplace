@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -78,6 +79,13 @@ class DisputeEvidenceTest {
       0x00, 0x05, 0x00, 0x01, 0x7A, 0x5E, (byte) 0xAB, 0x3F,
       0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
       (byte) 0xAE, 0x42, 0x60, (byte) 0x82};
+
+  /** Structurally complete JPEG (SOI + APP0 JFIF + EOI), the ImageStorageServiceTest fixture. */
+  private static final byte[] JPEG_BYTES = {
+      (byte) 0xFF, (byte) 0xD8,
+      (byte) 0xFF, (byte) 0xE0, 0x00, 0x10,
+      'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+      (byte) 0xFF, (byte) 0xD9};
 
   @Autowired
   private MockMvc mockMvc;
@@ -183,10 +191,25 @@ class DisputeEvidenceTest {
     return new MockMultipartFile("file", "damage.png", "image/png", PNG_BYTES);
   }
 
+  private MockMultipartFile jpeg() {
+    return new MockMultipartFile("file", "damage.jpg", "image/jpeg", JPEG_BYTES);
+  }
+
   private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
       upload(long disputeId, User caller) {
+    return uploadFile(disputeId, caller, png());
+  }
+
+  private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+      uploadFile(long disputeId, User caller, MockMultipartFile file) {
     return multipart("/api/disputes/{id}/evidence", disputeId)
-        .file(png())
+        .file(file)
+        .header("Authorization", "Bearer " + token(caller));
+  }
+
+  private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+      download(long disputeId, long evidenceId, User caller) {
+    return get("/api/disputes/{d}/evidence/{e}/download", disputeId, evidenceId)
         .header("Authorization", "Bearer " + token(caller));
   }
 
@@ -443,5 +466,94 @@ class DisputeEvidenceTest {
     mockMvc.perform(get("/api/orders/{id}/dispute", undisputedOrderId)
             .header("Authorization", "Bearer " + token(lonely)))
         .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void downloadAuthzMatrix_partiesGetBytes_stranger404_anonymous401() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    User admin = newAdmin();
+    User stranger = newUser();
+    long disputeId = openDispute(buyer, seller);
+    long otherDisputeId = openDispute(buyer, seller);
+
+    String body = mockMvc.perform(upload(disputeId, buyer))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long evidenceId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+
+    // Every party downloads the stored bytes with the stored type —
+    // the success is the image itself, not the envelope.
+    for (User caller : java.util.List.of(buyer, seller, admin)) {
+      mockMvc.perform(download(disputeId, evidenceId, caller))
+          .andExpect(status().isOk())
+          .andExpect(content().contentType("image/png"))
+          .andExpect(content().bytes(PNG_BYTES));
+    }
+
+    // A stranger gets the same 404 as an unknown id (no-existence-leak),
+    // and an anonymous caller gets the chain's 401 envelope.
+    mockMvc.perform(download(disputeId, evidenceId, stranger))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(404));
+    mockMvc.perform(get("/api/disputes/{d}/evidence/{e}/download", disputeId, evidenceId))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value(401));
+
+    // Unknown dispute, unknown evidence, and an evidence id from
+    // another dispute are all the same 404.
+    mockMvc.perform(download(999_999L, evidenceId, buyer))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(404));
+    mockMvc.perform(download(disputeId, 999_999L, buyer))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(404));
+    mockMvc.perform(download(otherDisputeId, evidenceId, buyer))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(404));
+  }
+
+  @Test
+  void downloadPreservesJpegContentType() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    long disputeId = openDispute(buyer, seller);
+
+    String body = mockMvc.perform(uploadFile(disputeId, buyer, jpeg()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.url").value(
+            org.hamcrest.Matchers.matchesPattern("/uploads/[0-9a-f-]+\\.jpg")))
+        .andReturn().getResponse().getContentAsString();
+    long evidenceId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+
+    // The type comes from the stored extension, which the upload
+    // verified by magic bytes — a JPEG downloads as image/jpeg.
+    mockMvc.perform(download(disputeId, evidenceId, buyer))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType("image/jpeg"))
+        .andExpect(content().bytes(JPEG_BYTES));
+  }
+
+  @Test
+  void downloadOfRowWithMissingFileGets404() throws Exception {
+    User seller = newUser();
+    User buyer = newUser();
+    long disputeId = openDispute(buyer, seller);
+
+    String body = mockMvc.perform(upload(disputeId, buyer))
+        .andExpect(status().isOk())
+        .andReturn().getResponse().getContentAsString();
+    long evidenceId = ((Number) JsonPath.read(body, "$.data.id")).longValue();
+    String url = JsonPath.read(body, "$.data.url");
+    Path file = UPLOAD_DIR.resolve(fileNameOf(url));
+    assertThat(file).exists();
+
+    // The row survives but its file is gone (operator wipe, sweeper
+    // race): the download is a 404, never a 500 — the row alone does
+    // not prove a servable file.
+    Files.deleteIfExists(file);
+    mockMvc.perform(download(disputeId, evidenceId, buyer))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(404));
   }
 }

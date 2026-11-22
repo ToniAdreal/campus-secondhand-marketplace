@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -76,6 +77,16 @@ public class ImageStorageService {
       "image/jpeg", ".jpg",
       "image/webp", ".webp",
       "image/gif", ".gif");
+
+  /** Stored extension → content type, the reverse of {@link #ALLOWED_TYPES}. */
+  private static final Map<String, String> EXTENSION_TO_TYPE = Map.of(
+      ".png", "image/png",
+      ".jpg", "image/jpeg",
+      ".webp", "image/webp",
+      ".gif", "image/gif");
+
+  /** A stored upload read back from disk: its bytes plus its content type. */
+  public record StoredFile(byte[] bytes, String contentType) {}
 
   /** Public URL prefix of every stored upload; the DB's photoUrl values. */
   static final String PUBLIC_PREFIX = "/uploads/";
@@ -371,5 +382,43 @@ public class ImageStorageService {
       return false;
     }
     return Files.deleteIfExists(target);
+  }
+
+  /**
+   * Reads a previously stored upload, identified by its public URL path
+   * ({@code /uploads/<uuid>.<ext>}), for the authenticated dispute-evidence
+   * download (backlog #419) — the counterpart of {@link #delete}, with the
+   * same inside-the-directory guard: anything else (null/blank, a foreign
+   * prefix, a {@code ..} traversal that resolves outside the directory, a
+   * missing file, or an extension outside the allowlist) is empty, never
+   * an exception — so a caller maps "no such file" to its own 404. The
+   * content type is derived from the stored extension, which {@link #store}
+   * set from the declared type after the magic-byte gate verified it, so
+   * the type is the type the upload was verified as. The whole file is
+   * read into memory: uploads are size-capped (see {@link #store}), so
+   * this stays small by construction — a streaming read would be the next
+   * step if the cap ever grows.
+   *
+   * @return the bytes plus content type, or empty when there is no such
+   *         servable file.
+   * @throws IOException on an unexpected filesystem failure while reading
+   *         a file that does exist — callers must not map that to 404.
+   */
+  public Optional<StoredFile> load(String publicPath) throws IOException {
+    if (publicPath == null || publicPath.isBlank() || !publicPath.startsWith(PUBLIC_PREFIX)) {
+      return Optional.empty();
+    }
+    String filename = publicPath.substring(PUBLIC_PREFIX.length());
+    int dot = filename.lastIndexOf('.');
+    String contentType = dot < 0 ? null : EXTENSION_TO_TYPE.get(
+        filename.substring(dot).toLowerCase(java.util.Locale.ROOT));
+    if (contentType == null) {
+      return Optional.empty();
+    }
+    Path target = dir.resolve(filename).normalize();
+    if (!target.startsWith(dir) || !Files.isRegularFile(target)) {
+      return Optional.empty();
+    }
+    return Optional.of(new StoredFile(Files.readAllBytes(target), contentType));
   }
 }

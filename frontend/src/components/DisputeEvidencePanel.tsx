@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   describeDisputeEvidenceError,
+  downloadDisputeEvidencePhoto,
   useAddDisputeEvidence,
   useDisputeEvidence,
   useOrderDispute,
@@ -8,6 +9,75 @@ import {
 } from '../api/disputes';
 import { useAuthStore } from '../store/useAuthStore';
 import ListingPhoto from './ListingPhoto';
+
+/**
+ * One evidence thumbnail read through the authenticated download
+ * route (backlog #419): the photo bytes arrive as a blob (the Bearer
+ * token rides the fetch, which a plain <img src> could never do),
+ * render from an object URL, and the URL is revoked when the photo
+ * leaves the screen or a different photo takes its slot — so the
+ * raw /uploads/ URL never reaches the DOM. While the blob is in
+ * flight the slot shows the same neutral placeholder the
+ * no-photo path uses; a failed fetch shows that placeholder with
+ * its "No photo" copy, matching ListingPhoto's broken-image rule.
+ */
+function EvidencePhoto({
+  disputeId,
+  evidenceId,
+  uploaderId,
+}: {
+  disputeId: number;
+  evidenceId: number;
+  uploaderId: number;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const placeholderClassName =
+    'flex h-20 w-20 items-center justify-center overflow-hidden rounded bg-neutral-100 text-[10px] text-neutral-500';
+
+  useEffect(() => {
+    let alive = true;
+    let objectUrl: string | null = null;
+    downloadDisputeEvidencePhoto(disputeId, evidenceId)
+      .then((blob) => {
+        if (!alive) {
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch(() => {
+        if (alive) {
+          setFailed(true);
+        }
+      });
+    return () => {
+      alive = false;
+      if (objectUrl !== null) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [disputeId, evidenceId]);
+
+  if (failed) {
+    return (
+      <span data-testid="no-photo-placeholder" className={placeholderClassName}>
+        No photo
+      </span>
+    );
+  }
+  if (src === null) {
+    return <span className={placeholderClassName}>Loading…</span>;
+  }
+  return (
+    <ListingPhoto
+      src={src}
+      alt={`Evidence photo ${evidenceId} uploaded by user ${uploaderId}`}
+      imgClassName="h-20 w-20 rounded object-cover"
+      placeholderClassName={placeholderClassName}
+    />
+  );
+}
 
 /**
  * The evidence panel keyed by order (backlog #200): buyer and seller
@@ -99,11 +169,10 @@ export default function DisputeEvidencePanel({
         <ul className="mt-1 flex flex-wrap gap-2">
           {photos.map((photo) => (
             <li key={photo.id} className="text-center">
-              <ListingPhoto
-                src={photo.url}
-                alt={`Evidence photo ${photo.id} uploaded by user ${photo.uploaderId}`}
-                imgClassName="h-20 w-20 rounded object-cover"
-                placeholderClassName="flex h-20 w-20 items-center justify-center overflow-hidden rounded bg-neutral-100 text-[10px] text-neutral-500"
+              <EvidencePhoto
+                disputeId={disputeId}
+                evidenceId={photo.id}
+                uploaderId={photo.uploaderId}
               />
               {(isAdmin || photo.uploaderId === user?.id) && (
                 <button

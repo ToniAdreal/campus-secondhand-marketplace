@@ -42,6 +42,18 @@ import org.springframework.web.server.ResponseStatusException;
  *       rolled back into the row operation, and the nightly orphan
  *       sweeper (#103, whose reference set now includes evidence
  *       URLs) is the backstop for a file that outlives its row.</li>
+ *   <li><b>Download:</b> a party (or an ADMIN) reads one photo through the
+ *       authenticated download route (backlog #419), which streams the
+ *       stored file with its content type — the same 404 no-leak
+ *       discipline as the list: a stranger, an unknown evidence id, an
+ *       evidence id from another dispute, or a row whose file is gone
+ *       from disk all answer 404. The SPA renders evidence through
+ *       this route, never the raw {@code /uploads/} URL; the stored
+ *       URL still travels in the list DTO and the files are still
+ *       served by the public {@code /uploads/**} mapping, so a party
+ *       that holds a URL can still share a direct link — only the
+ *       panel no longer exposes one. Downloads write no audit row:
+ *       reads are not audited anywhere in this codebase.</li>
  *   <li><b>Audit:</b> upload and removal each write an audit row in the
  *       same transaction as the evidence row itself
  *       ({@code DISPUTE_EVIDENCE_UPLOADED} /
@@ -109,6 +121,35 @@ public class DisputeEvidenceService {
     return evidence.findByDisputeIdOrderByCreatedAtAscIdAsc(disputeId).stream()
         .map(DisputeEvidenceDto::from)
         .toList();
+  }
+
+  /**
+   * Reads one evidence photo back for the authenticated download route
+   * (backlog #419): the caller must be a party to the dispute (same
+   * 404 discipline as the list), the evidence id must belong to this
+   * dispute, and the stored file must still be on disk — a row whose
+   * file is gone is the same 404, never a 500. A disk failure while
+   * reading a file that does exist is the 500 envelope: the file is
+   * there, the server just could not read it, and that must not be
+   * reported as "not found".
+   */
+  @Transactional(readOnly = true)
+  public ImageStorageService.StoredFile downloadEvidence(Long callerId, boolean admin,
+                                                         Long disputeId, Long evidenceId) {
+    requireVisibleDispute(callerId, admin, disputeId);
+    DisputeEvidence row = evidence.findById(evidenceId)
+        .filter(e -> e.getDisputeId().equals(disputeId))
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "dispute evidence not found"));
+    try {
+      return storage.load(row.getUrl())
+          .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+              "dispute evidence not found"));
+    } catch (IOException e) {
+      log.warn("could not read dispute evidence file {}: {}", row.getUrl(), e.toString());
+      throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+          "could not read evidence file");
+    }
   }
 
   /** Removes one piece of evidence (see the class javadoc for who may). */

@@ -13,12 +13,23 @@ const addMutate = vi.fn((_input: unknown, opts?: { onError?: (e: unknown) => voi
   void opts;
 });
 const removeMutate = vi.fn();
+const mockDownloadPhoto = vi.fn(
+  async (_disputeId: number, _evidenceId: number) =>
+    new Blob(['png-bytes'], { type: 'image/png' }),
+);
+const createObjectURL = vi.fn(() => 'blob:mock-evidence-photo');
+const revokeObjectURL = vi.fn();
 
 vi.mock('../api/disputes', () => ({
   useDisputeEvidence: () => ({ data: mockEvidence, isError: false, error: null }),
   useOrderDispute: () => ({ data: mockDispute }),
   useAddDisputeEvidence: () => ({ mutate: addMutate, isLoading: false }),
   useRemoveDisputeEvidence: () => ({ mutate: removeMutate, isLoading: false }),
+  // Lazily evaluated: the vi.mock factory is hoisted above this file's
+  // top-level statements, so a direct reference would throw
+  // "Cannot access 'mockDownloadPhoto' before initialization".
+  downloadDisputeEvidencePhoto: (...args: [number, number]) =>
+    mockDownloadPhoto(...args),
   describeDisputeEvidenceError: () => 'Something went wrong. Please try again.',
 }));
 
@@ -42,6 +53,9 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
     useAuthStore.setState({ user: buyer });
     mockEvidence = [];
     mockDispute = undefined;
+    // jsdom has no createObjectURL: the SettingsPage export test mocks
+    // it the same way, and the panel revokes every URL it creates.
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
   });
 
   afterEach(() => {
@@ -50,13 +64,22 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
     useAuthStore.setState({ user: null });
   });
 
-  it('renders thumbnails and a remove button only on the caller\u2019s own photos', () => {
+  it('renders thumbnails through the authenticated download route, never the raw /uploads/ URL', async () => {
     mockEvidence = [photo(11, 5), photo(12, 3)];
     render(<DisputeEvidencePanel disputeId={3} disputeStatus="OPEN" />);
 
-    const images = screen.getAllByRole('img');
+    const images = await screen.findAllByRole('img');
     expect(images).toHaveLength(2);
-    expect(images[0].getAttribute('src')).toBe('/uploads/photo-11.png');
+    // The <img> src is the blob object URL from the download route —
+    // the stored /uploads/ URL is a reference only and never reaches
+    // the DOM (backlog #419).
+    expect(images[0].getAttribute('src')).toBe('blob:mock-evidence-photo');
+    expect(
+      images.every((img) => !img.getAttribute('src')?.startsWith('/uploads/')),
+    ).toBe(true);
+    expect(mockDownloadPhoto).toHaveBeenCalledWith(3, 11);
+    expect(mockDownloadPhoto).toHaveBeenCalledWith(3, 12);
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
     // Only the buyer's own upload (uploader 5) is removable for a non-admin.
     expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
@@ -64,6 +87,15 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
       { disputeId: 3, evidenceId: 11 },
       expect.anything(),
     );
+  });
+
+  it('a failed photo download shows the placeholder, never the raw URL', async () => {
+    mockEvidence = [photo(11, 5)];
+    mockDownloadPhoto.mockRejectedValueOnce(new Error('boom'));
+    render(<DisputeEvidencePanel disputeId={3} disputeStatus="OPEN" />);
+
+    expect(await screen.findByTestId('no-photo-placeholder')).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
   });
 
   it('attaching a file fires the add mutation with the dispute id and file', () => {
@@ -80,12 +112,12 @@ describe('DisputeEvidencePanel (backlog #200)', () => {
     );
   });
 
-  it('hides the attach control once the dispute is resolved', () => {
+  it('hides the attach control once the dispute is resolved', async () => {
     mockEvidence = [photo(11, 5)];
     render(<DisputeEvidencePanel disputeId={3} disputeStatus="RESOLVED_REFUND" />);
 
     expect(screen.queryByLabelText('Attach evidence photo')).toBeNull();
-    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(await screen.findAllByRole('img')).toHaveLength(1);
   });
 
   it('the order wrapper shows the resolution note on a resolved dispute, never on an open one', () => {
