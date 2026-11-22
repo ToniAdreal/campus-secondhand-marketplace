@@ -74,14 +74,20 @@ class ItemFulltextSearchMySqlIT {
 
   @Test
   void fulltextSearch_returnsRelevanceOrderedMatches() {
-    // "bike" occurs twice in the first listing (title + description) vs once
-    // in the second: natural-language scoring ranks it first. The textbook
-    // matches nothing and is excluded.
+    // Two distinct terms, not one repeated term: MySQL 8.0 natural-language
+    // scoring does not rank a document higher for repeating one term twice —
+    // the "bike"-only query scored both listings equal (observed 2026-11-20,
+    // main runs 44678137904 / 44882267360), so the i.id DESC tiebreak put
+    // the later-inserted lamp first. With "road bike" the bike listing
+    // matches {road, bike} and the lamp only {bike}; per-term relevance
+    // contributions are non-negative and monotone in occurrences, so the
+    // bike listing must score strictly higher. The textbook matches
+    // neither term and is excluded.
     listing("Vintage road bike", "Lightweight road bike, perfect for campus commuting", null);
     listing("Desk lamp", "LED lamp, handy when fixing a bike at night", null);
     listing("Calculus textbook", "Chapters on integrals and derivatives", null);
 
-    Page<ItemDto> page = itemService.listItems(PageRequest.of(0, 20), null, "bike");
+    Page<ItemDto> page = itemService.listItems(PageRequest.of(0, 20), null, "road bike");
 
     assertThat(page.getTotalElements()).isEqualTo(2);
     assertThat(page.getContent()).extracting(ItemDto::title)
