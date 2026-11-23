@@ -19,6 +19,7 @@ import {
   describePaymentAttemptsError,
   describeWebhookEventsError,
   describeWebhookReplayError,
+  downloadAuditLogCsv,
   formatCents,
   isForbidden,
   useAdminAuditLog,
@@ -392,6 +393,87 @@ describe('useAdminAuditLog', () => {
   });
 });
 
+describe('downloadAuditLogCsv', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const csvBlob = new Blob(['id,actor_user_id,action\n10,3,ORDER_COMPLETED\n'], {
+    type: 'text/csv',
+  });
+
+  function exportResponse(headers: Record<string, string>) {
+    return { data: csvBlob, headers } as never;
+  }
+
+  it('fetches the export as a blob with format=csv and keeps the server filename', async () => {
+    getSpy.mockResolvedValueOnce(
+      exportResponse({ 'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"' }),
+    );
+
+    const result = await downloadAuditLogCsv({ action: 'ORDER_COMPLETED', targetType: 'ORDER' });
+
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy).toHaveBeenCalledWith('/admin/audit-log/export', {
+      responseType: 'blob',
+      params: { format: 'csv', action: 'ORDER_COMPLETED', targetType: 'ORDER' },
+    });
+    expect(result.blob).toBe(csvBlob);
+    expect(result.filename).toBe('audit-log-2026-11-23.csv');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('omits null ids and empty filters entirely', async () => {
+    getSpy.mockResolvedValueOnce(
+      exportResponse({ 'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"' }),
+    );
+
+    await downloadAuditLogCsv({ actorUserId: null, action: '', targetType: '', targetId: null });
+
+    expect(getSpy).toHaveBeenCalledWith('/admin/audit-log/export', {
+      responseType: 'blob',
+      params: { format: 'csv' },
+    });
+  });
+
+  it('reports truncation from the X-Audit-Export-Truncated header', async () => {
+    getSpy.mockResolvedValueOnce(
+      exportResponse({
+        'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"',
+        'x-audit-export-truncated': 'true',
+      }),
+    );
+
+    const result = await downloadAuditLogCsv();
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it('falls back to audit-log.csv when the disposition header is missing', async () => {
+    getSpy.mockResolvedValueOnce(exportResponse({}));
+
+    const result = await downloadAuditLogCsv();
+
+    expect(result.filename).toBe('audit-log.csv');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('reads the filename from a fetch Headers instance', async () => {
+    getSpy.mockResolvedValueOnce({
+      data: csvBlob,
+      headers: new Headers({
+        'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"',
+        'x-audit-export-truncated': 'false',
+      }),
+    } as never);
+
+    const result = await downloadAuditLogCsv();
+
+    expect(result.filename).toBe('audit-log-2026-11-23.csv');
+    expect(result.truncated).toBe(false);
+  });
+});
+
 describe('describeAdminUserError', () => {
   it.each([
     ['self-disable guard', envelopeError(403, 'you cannot disable yourself'), 'You cannot disable your own account.'],
@@ -426,6 +508,12 @@ describe('describeAuditLogError', () => {
     ['unknown error keeps the server message', envelopeError(500, 'database unavailable'), 'database unavailable'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
     ['empty object', {}, 'Something went wrong. Please try again.'],
+    // Backlog #428: a blob error body (the CSV export) carries no
+    // envelope, so the HTTP status is the only signal.
+    ['blob 403 falls back to the HTTP status', { isApiError: true, response: { status: 403, data: new Blob(['forbidden']) } }, 'You are not authorized to view the audit log.'],
+    ['blob 401 falls back to the HTTP status', { isApiError: true, response: { status: 401, data: new Blob(['unauthorized']) } }, 'Please log in again to view the audit log.'],
+    ['blob 400 falls back to the HTTP status', { isApiError: true, response: { status: 400, data: new Blob(['bad filter']) } }, 'That filter is not valid.'],
+    ['blob 500 with no envelope message', { isApiError: true, response: { status: 500, data: new Blob(['boom']) } }, 'Something went wrong. Please try again.'],
   ])('%s', (_label, error, expected) => {
     expect(describeAuditLogError(error)).toBe(expected);
   });

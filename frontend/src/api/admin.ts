@@ -223,11 +223,74 @@ export function useAdminAuditLog(
   });
 }
 
+/** A downloaded audit-log CSV: the blob, the server filename, and whether the backend capped the rows. */
+export interface AuditLogCsvDownload {
+  blob: Blob;
+  filename: string;
+  truncated: boolean;
+}
+
+/**
+ * Reads one header from a response (fetch Headers or plain object).
+ * Mirrors auth.ts's copy — the export endpoints share the
+ * attachment-filename shape.
+ */
+function readResponseHeader(headers: unknown, name: string): string | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const bag = headers as { get?: (n: string) => unknown } & Record<string, unknown>;
+  if (typeof bag.get === 'function') {
+    const value = bag.get(name);
+    return value == null ? undefined : String(value);
+  }
+  const value = bag[name] ?? bag[name.toLowerCase()];
+  return value == null ? undefined : String(value);
+}
+
+/**
+ * GET /api/admin/audit-log/export?format=csv (backlog #232, UI #428) —
+ * the filtered trail as a CSV attachment, newest first, capped at the
+ * backend's EXPORT_ROW_CAP rows. Same ADMIN-only guard and same
+ * optional filters as {@link useAdminAuditLog}; the caller saves the
+ * blob under exactly the server filename (audit-log-<yyyy-MM-dd>.csv —
+ * the fallback only fires if a proxy stripped the header). When the
+ * filtered trail is longer than the cap the response carries
+ * X-Audit-Export-Truncated: true instead of silently passing off a
+ * partial file as complete.
+ *
+ * Throws the ApiError on failure; with responseType 'blob' the error
+ * body is a Blob too, so callers map by status, not by body.
+ */
+export async function downloadAuditLogCsv(
+  filters: AuditLogFilters = {},
+): Promise<AuditLogCsvDownload> {
+  const res = await api.get<Blob>('/admin/audit-log/export', {
+    responseType: 'blob',
+    params: {
+      format: 'csv',
+      ...(filters.actorUserId != null ? { actorUserId: filters.actorUserId } : {}),
+      ...(filters.action ? { action: filters.action } : {}),
+      ...(filters.targetType ? { targetType: filters.targetType } : {}),
+      ...(filters.targetId != null ? { targetId: filters.targetId } : {}),
+    },
+  });
+  const disposition = readResponseHeader(res.headers, 'content-disposition');
+  const match = disposition?.match(/filename="([^"]+)"/);
+  const truncatedHeader = readResponseHeader(res.headers, 'x-audit-export-truncated');
+  return {
+    blob: res.data,
+    filename: match?.[1] ?? 'audit-log.csv',
+    truncated: truncatedHeader === 'true',
+  };
+}
+
 /** Maps a failed audit-log call to user-facing copy. */
 export function describeAuditLogError(error: unknown): string {
-  const response = (error as { response?: { data?: { code?: number; message?: string } } })
+  const response = (error as { response?: { status?: number; data?: { code?: number; message?: string } } })
     .response;
-  const code = response?.data?.code;
+  // With responseType 'blob' (the CSV export) the error body is a Blob,
+  // so the envelope code is unavailable and the HTTP status is the only
+  // signal — fall back to it instead of the generic copy.
+  const code = response?.data?.code ?? response?.status;
   const message = response?.data?.message ?? '';
   if (code === 403) {
     return 'You are not authorized to view the audit log.';

@@ -61,6 +61,7 @@ function renderAt(initialEntry: string) {
         <Routes>
           <Route path="/admin/audit-log" element={<AdminAuditLogPage />} />
           <Route path="/" element={<div>home page stub</div>} />
+          <Route path="/login" element={<div>login page stub</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -297,5 +298,107 @@ describe('AdminAuditLogPage', () => {
       expect(screen.getByText('No audit entries match these filters.')).toBeTruthy(),
     );
     expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('clicking Download CSV fetches the export as a blob and saves it under the server filename (backlog #428)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    const createObjectURL = vi.fn(() => 'blob:mock-audit-log');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    const blob = new Blob(['id,actor_user_id,action\n'], { type: 'text/csv' });
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/admin/audit-log/export')
+        ? Promise.resolve({
+            data: blob,
+            headers: {
+              'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"',
+            },
+          } as never)
+        : Promise.resolve(pageEnvelope([paidRow], 0, 1)),
+    );
+
+    renderAt('/admin/audit-log?action=ORDER_COMPLETED');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }));
+
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toBe('Audit log downloaded as audit-log-2026-11-23.csv.');
+    expect(getSpy).toHaveBeenCalledWith('/admin/audit-log/export', {
+      responseType: 'blob',
+      params: { format: 'csv', action: 'ORDER_COMPLETED' },
+    });
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-audit-log');
+    anchorClick.mockRestore();
+  });
+
+  it('a truncated export shows the narrow-the-filters notice (backlog #428)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:mock-audit-log'),
+      revokeObjectURL: vi.fn(),
+    });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/admin/audit-log/export')
+        ? Promise.resolve({
+            data: new Blob(['id,actor_user_id,action\n'], { type: 'text/csv' }),
+            headers: {
+              'content-disposition': 'attachment; filename="audit-log-2026-11-23.csv"',
+              'x-audit-export-truncated': 'true',
+            },
+          } as never)
+        : Promise.resolve(pageEnvelope([paidRow], 0, 1)),
+    );
+
+    renderAt('/admin/audit-log');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/truncated at the row cap/)).toBeTruthy(),
+    );
+    anchorClick.mockRestore();
+  });
+
+  it('a 401 on the export bounces to /login (backlog #428)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/admin/audit-log/export')
+        ? Promise.reject(apiFailure(401, 'unauthorized'))
+        : Promise.resolve(pageEnvelope([paidRow], 0, 1)),
+    );
+
+    renderAt('/admin/audit-log');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }));
+
+    await waitFor(() => expect(screen.getByText('login page stub')).toBeTruthy());
+    expect(getSpy).toHaveBeenCalledWith('/admin/audit-log/export', {
+      responseType: 'blob',
+      params: { format: 'csv' },
+    });
+  });
+
+  it('a failed export maps to the page error copy (backlog #428)', async () => {
+    useAuthStore.getState().login(adminCaller, 'tok');
+    getSpy.mockImplementation((url: string) =>
+      String(url).includes('/admin/audit-log/export')
+        ? Promise.reject(apiFailure(500, 'database unavailable'))
+        : Promise.resolve(pageEnvelope([paidRow], 0, 1)),
+    );
+
+    renderAt('/admin/audit-log');
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'ORDER_COMPLETED' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    expect(screen.getByRole('alert').textContent).toBe('database unavailable');
   });
 });

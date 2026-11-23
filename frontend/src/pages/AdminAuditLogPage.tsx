@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
   describeAuditLogError,
+  downloadAuditLogCsv,
   isForbidden,
   useAdminAuditLog,
   type AuditLogEntry,
 } from '../api/admin';
+import { isUnauthorized } from '../api/categories';
 import { useDebouncedSearchParam } from '../hooks/useDebouncedSearchParam';
 import { useAuthStore } from '../store/useAuthStore';
 
@@ -41,16 +43,29 @@ function allowlisted(raw: string | null, values: readonly string[]): string {
  * backend enum values, so the SPA never sends a value the backend
  * would 400; the id inputs go through the debounced URL pattern and
  * only positive integers reach the query.
+ *
+ * Download CSV (backlog #428) fetches the same filtered trail as a CSV
+ * blob from GET /api/admin/audit-log/export (#232) and saves it under
+ * the server filename. A 401 mid-session bounces to /login, like the
+ * other session-owned pages; any other failure maps to this page's
+ * existing error copy. When the backend caps the export, the page says
+ * so instead of passing off a partial file as complete.
  */
 export default function AdminAuditLogPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user !== null && user.roles.includes('ADMIN');
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [actorInput, actorCommitted, setActorInput] =
     useDebouncedSearchParam('actorUserId', 300);
   const [targetInput, targetCommitted, setTargetInput] =
     useDebouncedSearchParam('targetId', 300);
   const [page, setPage] = useState(0);
+  const [downloadPending, setDownloadPending] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadDone, setDownloadDone] = useState<string | null>(null);
+  const [downloadTruncated, setDownloadTruncated] = useState(false);
+  const [downloadUnauthorized, setDownloadUnauthorized] = useState(false);
 
   const action = allowlisted(searchParams.get('action'), AUDIT_ACTIONS);
   const targetType = allowlisted(searchParams.get('targetType'), AUDIT_TARGET_TYPES);
@@ -68,8 +83,48 @@ export default function AdminAuditLogPage() {
     isAdmin,
   );
 
+  async function handleDownloadCsv() {
+    setDownloadPending(true);
+    setDownloadError(null);
+    setDownloadDone(null);
+    setDownloadTruncated(false);
+    try {
+      const { blob, filename, truncated } = await downloadAuditLogCsv({
+        actorUserId,
+        action,
+        targetType,
+        targetId,
+      });
+      // Save the blob under the server filename (it carries the UTC
+      // export date) through a throwaway object URL + anchor click,
+      // mirroring the account-data export in SettingsPage.
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setDownloadDone(filename);
+      setDownloadTruncated(truncated);
+    } catch (err) {
+      if (isUnauthorized(err)) {
+        setDownloadUnauthorized(true);
+        return;
+      }
+      setDownloadError(describeAuditLogError(err));
+    } finally {
+      setDownloadPending(false);
+    }
+  }
+
   if (!isAdmin) {
     return <Navigate to="/" replace />;
+  }
+
+  if (downloadUnauthorized) {
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
   if (auditLog.isError && isForbidden(auditLog.error)) {
@@ -106,7 +161,17 @@ export default function AdminAuditLogPage() {
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-bold">Admin audit log</h1>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">Admin audit log</h1>
+        <button
+          type="button"
+          onClick={() => void handleDownloadCsv()}
+          disabled={downloadPending}
+          className="rounded bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {downloadPending ? 'Downloading…' : 'Download CSV'}
+        </button>
+      </div>
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label htmlFor="audit-actor" className="sr-only">
@@ -179,6 +244,22 @@ export default function AdminAuditLogPage() {
       {auditLog.isError && (
         <p role="alert" className="text-red-600">
           {describeAuditLogError(auditLog.error)}
+        </p>
+      )}
+      {downloadError !== null && (
+        <p role="alert" className="text-red-600">
+          {downloadError}
+        </p>
+      )}
+      {downloadDone !== null && (
+        <p role="status" className="mb-4 text-sm text-neutral-600">
+          Audit log downloaded as {downloadDone}.
+        </p>
+      )}
+      {downloadTruncated && (
+        <p role="status" className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+          This export was truncated at the row cap. Narrow the filters to download the
+          rest.
         </p>
       )}
       {auditLog.isSuccess && rows.length === 0 && (
