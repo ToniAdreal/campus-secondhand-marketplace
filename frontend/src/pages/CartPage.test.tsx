@@ -4,7 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/useAuthStore';
-import { useCartStore, type CartItem } from '../store/useCartStore';
+import {
+  CART_STORAGE_KEY,
+  CART_STORAGE_VERSION,
+  useCartStore,
+  type CartItem,
+} from '../store/useCartStore';
 import CartPage from './CartPage';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -101,6 +106,7 @@ function renderCart() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   // Default: the detail read fails with a non-404 error, so an
   // on-open revalidation keeps the stale cart instead of dropping
   // rows or reaching the network. Tests that need fresh reads install
@@ -304,5 +310,97 @@ describe('CartPage', () => {
     expect(postSpy).toHaveBeenCalledTimes(1);
     expect(postSpy.mock.calls[0][2]?.headers?.['Idempotency-Key']).toBe(`${batchId}:8`);
     expect(useCartStore.getState().items).toEqual([]);
+  });
+});
+
+describe('CartPage persisted-cart restore (backlog #426)', () => {
+  /** Seeds localStorage with the cart a reload would restore, then rehydrates the live store. */
+  async function restoreSeededCart() {
+    localStorage.setItem(
+      CART_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          items: [book, lamp],
+          sellerId: 3,
+          sellerUsername: 'alice',
+          batchId: 'batch-restore',
+        },
+        version: CART_STORAGE_VERSION,
+      }),
+    );
+    await useCartStore.persist.rehydrate();
+  }
+
+  function readStoredItems(): unknown {
+    const raw = localStorage.getItem(CART_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as { state: { items: unknown } }).state.items : null;
+  }
+
+  it('a reload restores the cart from storage — rows, total and seller survive', async () => {
+    await restoreSeededCart();
+    mockFreshReads();
+    renderCart();
+
+    expect(screen.getByText('Algorithms textbook')).toBeTruthy();
+    expect(screen.getByText('Desk lamp')).toBeTruthy();
+    expect(screen.getByText('Total: ¥65.00')).toBeTruthy();
+    expect(screen.getByText('Seller: alice')).toBeTruthy();
+    expect(useCartStore.getState().batchId).toBe('batch-restore');
+  });
+
+  it('revalidation drops a sold row on restore, with copy naming it', async () => {
+    await restoreSeededCart();
+    mockFreshReads({ 7: { status: 'SOLD' } });
+    renderCart();
+
+    expect(
+      await screen.findByText(
+        'Algorithms textbook was sold and has been removed from your cart.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText('Desk lamp')).toBeTruthy();
+    expect(screen.getByText('Total: ¥20.00')).toBeTruthy();
+    expect(useCartStore.getState().items.map((i) => i.itemId)).toEqual([8]);
+    expect(readStoredItems()).toEqual([lamp]);
+  });
+
+  it('a fully successful checkout clears the stored cart', async () => {
+    await restoreSeededCart();
+    mockFreshReads();
+    postSpy.mockImplementation((_url: string, body: unknown) =>
+      Promise.resolve(envelope(orderFor((body as { itemId: number }).itemId))),
+    );
+    renderCart();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check out' }));
+
+    expect(await screen.findByText(/Ordered: Algorithms textbook/)).toBeTruthy();
+    expect(screen.getByText(/Ordered: Desk lamp/)).toBeTruthy();
+    expect(useCartStore.getState().items).toEqual([]);
+    expect(readStoredItems()).toEqual([]);
+  });
+
+  it('a partially failed checkout keeps the failed row stored for a retry', async () => {
+    await restoreSeededCart();
+    mockFreshReads();
+    postSpy.mockImplementation((_url: string, body: unknown) => {
+      const itemId = (body as { itemId: number }).itemId;
+      if (itemId === 8) {
+        return Promise.reject({
+          response: { data: { code: 409, message: 'already has an active order' } },
+        });
+      }
+      return Promise.resolve(envelope(orderFor(itemId)));
+    });
+    renderCart();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check out' }));
+
+    expect(await screen.findByText(/Ordered: Algorithms textbook/)).toBeTruthy();
+    expect(
+      screen.getByText(/Could not order Desk lamp: Someone just grabbed this item/),
+    ).toBeTruthy();
+    expect(useCartStore.getState().items.map((i) => i.itemId)).toEqual([8]);
+    expect(readStoredItems()).toEqual([lamp]);
   });
 });

@@ -1,10 +1,20 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import type { Order } from '../api/orders';
 
 /**
  * Same-seller bundle cart (backlog #207). Frontend-only v1 by design:
  * there is no cart resource on the backend — the cart is local state
  * and checkout walks the existing POST /api/orders once per item.
+ *
+ * Persistence (backlog #426): the cart survives a page reload in
+ * localStorage under a versioned key (zustand `persist`). The stored
+ * payload carries a schema version; a version mismatch discards the
+ * stored cart instead of crashing on a stale shape, and a corrupt or
+ * malformed payload is sanitised the same way (see
+ * sanitizePersistedCart). The stored cart is revalidated against the
+ * item detail read when /cart opens (backlog #244, unchanged) and a
+ * fully successful checkout clears the stored cart with it.
  *
  * The v1 seller rule: the cart holds listings from ONE seller at a
  * time. Adding another seller's listing does NOT silently drop the
@@ -48,6 +58,73 @@ function newBatchId(): string {
   return crypto.randomUUID();
 }
 
+/** The localStorage key the cart persists under (backlog #426). */
+export const CART_STORAGE_KEY = 'campus-marketplace-cart';
+
+/**
+ * Schema version of the stored cart payload. Bump this when the
+ * persisted shape changes; a stored payload at any other version is
+ * discarded by `migrate` rather than read as the new shape.
+ */
+export const CART_STORAGE_VERSION = 1;
+
+/** The data fields `persist` stores — actions are never persisted. */
+export interface CartPersistedState {
+  items: CartItem[];
+  sellerId: number | null;
+  sellerUsername: string | null;
+  batchId: string | null;
+}
+
+function isValidCartItem(value: unknown): value is CartItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.itemId === 'number' &&
+    Number.isInteger(row.itemId) &&
+    typeof row.title === 'string' &&
+    typeof row.priceCents === 'number' &&
+    Number.isInteger(row.priceCents) &&
+    row.priceCents >= 0 &&
+    typeof row.sellerId === 'number' &&
+    Number.isInteger(row.sellerId) &&
+    (typeof row.sellerUsername === 'string' || row.sellerUsername === null)
+  );
+}
+
+/**
+ * Validates a persisted cart payload (backlog #426). Anything that is
+ * not a well-formed cart — a wrong type, a malformed row, rows from
+ * two sellers — is dropped rather than trusted: malformed rows are
+ * removed, rows after the first seller are removed (the one-seller
+ * invariant), and the seller fields are re-derived from the first
+ * kept row. A cart with items but no usable batch id gets a fresh
+ * one: without it checkout cannot run, and the old keys are gone
+ * with the corrupt payload anyway — the backend's active-order guard
+ * (#9) still stops a second live order on the same listing. An
+ * entirely unusable payload becomes the empty cart.
+ */
+export function sanitizePersistedCart(value: unknown): CartPersistedState {
+  if (typeof value !== 'object' || value === null) {
+    return { ...emptyCart };
+  }
+  const raw = value as Record<string, unknown>;
+  const rows = Array.isArray(raw.items) ? raw.items.filter(isValidCartItem) : [];
+  if (rows.length === 0) {
+    return { ...emptyCart };
+  }
+  const sellerId = rows[0].sellerId;
+  const kept = rows.filter((row) => row.sellerId === sellerId);
+  const batchId =
+    typeof raw.batchId === 'string' && raw.batchId.length > 0 ? raw.batchId : newBatchId();
+  return {
+    items: kept,
+    sellerId,
+    sellerUsername: kept[0].sellerUsername,
+    batchId,
+  };
+}
+
 interface CartState {
   items: CartItem[];
   /** The one seller this cart is bound to; null while the cart is empty. */
@@ -77,45 +154,75 @@ interface CartState {
 
 const emptyCart = { items: [] as CartItem[], sellerId: null, sellerUsername: null, batchId: null };
 
-export const useCartStore = create<CartState>((set, get) => ({
-  ...emptyCart,
-  addItem: (item) => {
-    const { items, sellerId } = get();
-    if (items.some((held) => held.itemId === item.itemId)) {
-      return 'already-in-cart';
-    }
-    if (sellerId !== null && sellerId !== item.sellerId) {
-      return 'different-seller';
-    }
-    set({
-      items: [...items, item],
-      sellerId: item.sellerId,
-      sellerUsername: item.sellerUsername,
-      batchId: get().batchId ?? newBatchId(),
-    });
-    return 'added';
-  },
-  replaceCartWith: (item) => {
-    set({
-      items: [item],
-      sellerId: item.sellerId,
-      sellerUsername: item.sellerUsername,
-      batchId: newBatchId(),
-    });
-  },
-  removeItem: (itemId) => {
-    const remaining = get().items.filter((held) => held.itemId !== itemId);
-    set(remaining.length === 0 ? { ...emptyCart } : { items: remaining });
-  },
-  removeItems: (itemIds) => {
-    const remaining = get().items.filter((held) => !itemIds.includes(held.itemId));
-    set(remaining.length === 0 ? { ...emptyCart } : { items: remaining });
-  },
-  applyRevalidation: (kept) => {
-    set(kept.length === 0 ? { ...emptyCart } : { items: kept });
-  },
-  clear: () => set({ ...emptyCart }),
-}));
+export const useCartStore = create<CartState>()(
+  persist<CartState, [], [], CartPersistedState>(
+    (set, get) => ({
+      ...emptyCart,
+      addItem: (item) => {
+        const { items, sellerId } = get();
+        if (items.some((held) => held.itemId === item.itemId)) {
+          return 'already-in-cart';
+        }
+        if (sellerId !== null && sellerId !== item.sellerId) {
+          return 'different-seller';
+        }
+        set({
+          items: [...items, item],
+          sellerId: item.sellerId,
+          sellerUsername: item.sellerUsername,
+          batchId: get().batchId ?? newBatchId(),
+        });
+        return 'added';
+      },
+      replaceCartWith: (item) => {
+        set({
+          items: [item],
+          sellerId: item.sellerId,
+          sellerUsername: item.sellerUsername,
+          batchId: newBatchId(),
+        });
+      },
+      removeItem: (itemId) => {
+        const remaining = get().items.filter((held) => held.itemId !== itemId);
+        set(remaining.length === 0 ? { ...emptyCart } : { items: remaining });
+      },
+      removeItems: (itemIds) => {
+        const remaining = get().items.filter((held) => !itemIds.includes(held.itemId));
+        set(remaining.length === 0 ? { ...emptyCart } : { items: remaining });
+      },
+      applyRevalidation: (kept) => {
+        set(kept.length === 0 ? { ...emptyCart } : { items: kept });
+      },
+      clear: () => set({ ...emptyCart }),
+    }),
+    {
+      name: CART_STORAGE_KEY,
+      version: CART_STORAGE_VERSION,
+      storage: createJSONStorage(() => localStorage),
+      // Only the data fields persist — the actions are recreated by
+      // the creator on every load.
+      partialize: (state) => ({
+        items: state.items,
+        sellerId: state.sellerId,
+        sellerUsername: state.sellerUsername,
+        batchId: state.batchId,
+      }),
+      // A stored payload at any other schema version is discarded
+      // wholesale: a stale shape must never be read as the new one.
+      // The empty cart is then written back over the stale payload
+      // by the rehydration pass, so the next load starts clean.
+      migrate: () => ({ ...emptyCart }),
+      // A corrupt or malformed payload (wrong types, broken rows,
+      // two sellers) is sanitised, never trusted as-is — see
+      // sanitizePersistedCart. The actions always come from the
+      // live creator, never from storage.
+      merge: (persisted, current) => ({
+        ...current,
+        ...sanitizePersistedCart(persisted),
+      }),
+    },
+  ),
+);
 
 /** The cart's total in cents — a plain sum of the held listings' prices. */
 export function cartTotalCents(items: CartItem[]): number {

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { describeOrderError, type Order } from '../api/orders';
 import {
+  CART_STORAGE_KEY,
+  CART_STORAGE_VERSION,
   cartTotalCents,
   checkoutCart,
   deriveCartIdempotencyKey,
   revalidateCartItems,
+  sanitizePersistedCart,
   useCartStore,
   type CartItem,
 } from './useCartStore';
@@ -32,7 +35,18 @@ const chairOtherSeller: CartItem = {
 };
 
 function reset() {
+  localStorage.clear();
   useCartStore.setState({ items: [], sellerId: null, sellerUsername: null, batchId: null });
+}
+
+/** Seeds localStorage with a stored cart payload, as a reload would find it. */
+function seedStorage(state: unknown, version: number = CART_STORAGE_VERSION) {
+  localStorage.setItem(CART_STORAGE_KEY, JSON.stringify({ state, version }));
+}
+
+function readStored() {
+  const raw = localStorage.getItem(CART_STORAGE_KEY);
+  return raw ? (JSON.parse(raw) as { state: Record<string, unknown>; version: number }) : null;
 }
 
 beforeEach(reset);
@@ -290,5 +304,111 @@ describe('applyRevalidation (backlog #244)', () => {
     useCartStore.getState().applyRevalidation([]);
     expect(useCartStore.getState().items).toEqual([]);
     expect(useCartStore.getState().batchId).toBeNull();
+  });
+});
+
+describe('cart persistence (backlog #426)', () => {
+  it('writes a versioned payload to localStorage on add', () => {
+    useCartStore.getState().addItem(book);
+    useCartStore.getState().addItem(lamp);
+    const stored = readStored();
+    expect(stored?.version).toBe(CART_STORAGE_VERSION);
+    expect(stored?.state.items).toEqual([book, lamp]);
+    expect(stored?.state.sellerId).toBe(3);
+    expect(stored?.state.batchId).toBe(useCartStore.getState().batchId);
+  });
+
+  it('a reload restores the cart with the same batch id — keys stay stable', async () => {
+    seedStorage({
+      items: [book, lamp],
+      sellerId: 3,
+      sellerUsername: 'alice',
+      batchId: 'batch-restore',
+    });
+    await useCartStore.persist.rehydrate();
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([book, lamp]);
+    expect(state.sellerId).toBe(3);
+    expect(state.batchId).toBe('batch-restore');
+  });
+
+  it('a stored payload at another schema version is discarded, never read as the new shape', async () => {
+    seedStorage(
+      {
+        items: [book],
+        sellerId: 3,
+        sellerUsername: 'alice',
+        batchId: 'batch-old',
+      },
+      CART_STORAGE_VERSION + 1,
+    );
+    await useCartStore.persist.rehydrate();
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([]);
+    expect(state.batchId).toBeNull();
+    // The stale payload is overwritten with the empty v1 cart, so the
+    // next load starts clean instead of re-reading the stale shape.
+    expect(readStored()?.version).toBe(CART_STORAGE_VERSION);
+    expect(readStored()?.state.items).toEqual([]);
+  });
+
+  it('corrupt JSON in storage is discarded without throwing', async () => {
+    localStorage.setItem(CART_STORAGE_KEY, '{not json');
+    await expect(useCartStore.persist.rehydrate()).resolves.toBeUndefined();
+    expect(useCartStore.getState().items).toEqual([]);
+  });
+
+  it('malformed rows are dropped on restore and the one-seller rule is re-imposed', async () => {
+    const brokenRow = { itemId: 99, title: 'Broken row' };
+    seedStorage({
+      items: [book, brokenRow, chairOtherSeller],
+      sellerId: 3,
+      sellerUsername: 'alice',
+      batchId: 'batch-mixed',
+    });
+    await useCartStore.persist.rehydrate();
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([book]);
+    expect(state.sellerId).toBe(3);
+    expect(state.batchId).toBe('batch-mixed');
+  });
+
+  it('a cart with items but no usable batch id gets a fresh one on restore', async () => {
+    seedStorage({ items: [book], sellerId: 3, sellerUsername: 'alice', batchId: null });
+    await useCartStore.persist.rehydrate();
+    const state = useCartStore.getState();
+    expect(state.items).toEqual([book]);
+    expect(state.batchId).toBeTruthy();
+  });
+
+  it('clear() clears the stored cart too', () => {
+    useCartStore.getState().addItem(book);
+    expect(readStored()?.state.items).toEqual([book]);
+    useCartStore.getState().clear();
+    expect(readStored()?.state.items).toEqual([]);
+    expect(readStored()?.state.batchId).toBeNull();
+  });
+});
+
+describe('sanitizePersistedCart (backlog #426)', () => {
+  it('an unusable payload becomes the empty cart', () => {
+    expect(sanitizePersistedCart(null)).toEqual({
+      items: [],
+      sellerId: null,
+      sellerUsername: null,
+      batchId: null,
+    });
+    expect(sanitizePersistedCart('garbage')).toEqual({
+      items: [],
+      sellerId: null,
+      sellerUsername: null,
+      batchId: null,
+    });
+    expect(sanitizePersistedCart({ items: 'not-an-array' })).toEqual({
+      items: [],
+      sellerId: null,
+      sellerUsername: null,
+      batchId: null,
+    });
   });
 });
