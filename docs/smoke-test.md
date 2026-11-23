@@ -270,6 +270,38 @@ the main.tsx re-apply with a brief flash, never a broken theme. CI pins
 this: the `docker-compose-smoke` job asserts all four headers on the SPA
 HTML and cross-checks the hash against the checked-out `index.html`.
 
+### Backend CSP on /api/ and /uploads/** (backlog #429)
+
+The backend's strict CSP (`SecurityConfig.CONTENT_SECURITY_POLICY`:
+`default-src 'self'; img-src 'self' data:; script-src 'self';
+connect-src 'self' ws:`) is opt-in via
+`app.security.headers.csp-enabled` and off by default — but
+`docker-compose.yml` turns it on for this stack
+(`APP_SECURITY_HEADERS_CSP_ENABLED=true`), so the deployed stack sends
+the same strict policy on everything the backend serves (`/api/` and
+`/uploads/**`), matching what nginx already sends on the SPA. Local Vite
+dev keeps the flag off (the dev server serves the SPA itself).
+
+Verify against the running stack (after the register/login steps above,
+so a session and a listing with a photo exist — upload one first if the
+listing has none):
+
+```bash
+# /api/ through the proxy carries TWO CSP headers: nginx's (with the
+# theme-script hash) plus the backend's hash-free policy line.
+curl -s -D - http://localhost/api/items -H "Authorization: Bearer $TOKEN" -o /dev/null
+# → Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self' ws:
+#   (backend) alongside the nginx line with 'sha256-…' in script-src
+
+# /uploads/ has no nginx location, so curl the backend directly on :8080:
+curl -s -D - http://localhost:8080/uploads/<uuid>.png -o /dev/null
+# → the same backend CSP line (plus Cache-Control: public, max-age=31536000, immutable)
+```
+
+CI pins this: the `docker-compose-smoke` job uploads a 1x1 PNG and
+asserts the backend CSP line on both an `/api/` read and the
+`/uploads/` read.
+
 ### Actuator probes
 
 The backend exposes Spring Boot Actuator:

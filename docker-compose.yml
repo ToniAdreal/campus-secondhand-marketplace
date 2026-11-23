@@ -89,6 +89,14 @@ services:
       # APP_AUTH_COOKIE_SECURE=true and leave this false instead — never
       # copy this file to production as-is.
       APP_AUTH_ALLOW_INSECURE_COOKIE: ${APP_AUTH_ALLOW_INSECURE_COOKIE:-true}
+      # Content-Security-Policy on the API + /uploads/** (backlog #429):
+      # the backend's opt-in strict policy (SecurityConfig, backlog #80)
+      # is off by default, so a plain jar serves no CSP at all. This stack
+      # turns it on so the deployed stack sends the same strict policy the
+      # nginx layer already sends on the SPA + /api/ (frontend/nginx.conf,
+      # backlog #363). Local dev (Vite) keeps the flag off — the dev
+      # server serves the SPA itself.
+      APP_SECURITY_HEADERS_CSP_ENABLED: "true"
     volumes:
       # Named volume: uploaded listing photos survive a backend container
       # recreate / `docker compose down` (they used to live in the

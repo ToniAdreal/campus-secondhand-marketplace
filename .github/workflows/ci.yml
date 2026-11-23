@@ -414,6 +414,31 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"title":"smoke listing","priceCents":1999}' -o /tmp/listing.json
           echo "smoke OK: register + list + create-listing all answered through the proxy"
+      - name: Backend CSP on /api/ and /uploads/** (backlog #429)
+        run: |
+          # docker-compose.yml turns the backend's opt-in CSP flag on
+          # (APP_SECURITY_HEADERS_CSP_ENABLED=true), so the deployed stack
+          # sends the strict policy on everything the backend serves —
+          # /api/ and /uploads/** — the same policy nginx already sends on
+          # the SPA (frontend/nginx.conf, backlog #363). The /api/ read
+          # goes through the nginx proxy and carries TWO CSP headers
+          # (nginx's, with the theme-script hash, plus the backend's); the
+          # exact-match grep pins the backend's hash-free policy line.
+          # The /uploads/ read goes direct to the backend on :8080 — nginx
+          # has no /uploads/ location, it serves the SPA there — and needs
+          # a real uploaded file, so one is uploaded first (1x1 PNG, part
+          # name `file`, backlog #69).
+          TOKEN=$(cat /tmp/smoke-token.txt)
+          ITEM_ID=$(python3 -c 'import json; print(json.load(open("/tmp/listing.json"))["data"]["id"])')
+          BACKEND_CSP="Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self' ws:"
+          headers=$(curl -sS -D - http://localhost/api/items -H "Authorization: Bearer $TOKEN" -o /dev/null)
+          echo "$headers" | grep -qF "$BACKEND_CSP" || { echo "/api/ read carries no backend CSP:"; echo "$headers"; exit 1; }
+          python3 -c 'import base64; open("/tmp/smoke-1x1.png","wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))'
+          PHOTO_URL=$(curl -fsS -X POST "http://localhost/api/items/$ITEM_ID/photos" -H "Authorization: Bearer $TOKEN" -F 'file=@/tmp/smoke-1x1.png;type=image/png' | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["photos"][0]["url"])')
+          echo "uploaded photo at $PHOTO_URL"
+          headers=$(curl -sS -D - "http://localhost:8080$PHOTO_URL" -o /dev/null)
+          echo "$headers" | grep -qF "$BACKEND_CSP" || { echo "/uploads/ read carries no backend CSP:"; echo "$headers"; exit 1; }
+          echo "backend CSP present on /api/ and /uploads/** (backlog #429)"
       - name: Pay for the listing, then drive the mock-PSP webhook path (backlog #366)
         run: |
           # A buyer cannot order their own listing (422, OrderCreationService),
