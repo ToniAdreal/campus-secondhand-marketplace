@@ -336,9 +336,50 @@ The backend exposes Spring Boot Actuator:
   ```
 
   Honest scope: alert rules and an operator runbook are provided in
-  docs/alert-rules.yml and docs/runbook.md, for loading into an operator's
-  own Prometheus — no Prometheus or Alertmanager is deployed or bundled
-  with this repo.
+  docs/alert-rules.yml and docs/runbook.md. An operator can load them
+  into their own Prometheus — or run the bundled one: the opt-in
+  `observability` compose profile (backlog #430) ships Prometheus +
+  Alertmanager for local use, documented in
+  docs/observability.md and asserted by the `docker-compose-smoke`
+  CI job.
+
+### Observability profile (Prometheus + Alertmanager)
+
+Bring the profile up on top of the running stack (the bootstrap
+ADMIN credentials are the scrape account — see
+docs/observability.md for what they are and why):
+
+```sh
+APP_BOOTSTRAP_ADMIN_USERNAME=metrics \
+APP_BOOTSTRAP_ADMIN_EMAIL=metrics@example.com \
+APP_BOOTSTRAP_ADMIN_PASSWORD='<generate one>' \
+  docker compose --profile observability up -d --build
+```
+
+Then assert the scrape is authenticated and the rules loaded — a
+target that stays down means the refresher has not written a token
+yet (or the scrape is anonymous, which the endpoint answers 401):
+
+```sh
+# Prometheus is ready:
+curl -fsS http://localhost:9090/-/ready
+# The backend target scrapes clean (poll — the first scrape waits
+# for the refresher's login):
+curl -sS 'http://localhost:9090/api/v1/targets?state=active' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(t["labels"]["job"], t["health"]) for t in d["data"]["activeTargets"]])'
+# → [('campus-marketplace-backend', 'up')]
+# All thirteen rules loaded:
+curl -sS http://localhost:9090/api/v1/rules \
+  | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))'
+# → 13
+# Alertmanager is ready (it ships no notification channel — firing
+# alerts are visible in its UI and go nowhere until the operator
+# configures a receiver):
+curl -fsS http://localhost:9093/-/ready
+```
+
+`docker compose down -v` tears the profile down with the rest of
+the stack.
 
 Optionally open http://localhost/ in a browser: the React app, login as `smoke`, and
 walk the create-listing / buy-now flow in the UI.

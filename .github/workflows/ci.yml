@@ -439,6 +439,46 @@ jobs:
           headers=$(curl -sS -D - "http://localhost:8080$PHOTO_URL" -o /dev/null)
           echo "$headers" | grep -qF "$BACKEND_CSP" || { echo "/uploads/ read carries no backend CSP:"; echo "$headers"; exit 1; }
           echo "backend CSP present on /api/ and /uploads/** (backlog #429)"
+      - name: Observability profile — Prometheus targets UP, rules loaded (backlog #430)
+        run: |
+          # The profile needs the same bootstrap ADMIN the up step
+          # seeded (the token refresher logs in as this account — see
+          # docker-compose.yml); the three compose secrets come from
+          # $GITHUB_ENV, set by the generate step at the top of this job.
+          docker compose --profile observability up -d --build
+          # Prometheus readiness, then poll the targets API until the
+          # backend job scrapes clean: the first scrape waits for the
+          # refresher's login to write the bearer-token file, and an
+          # anonymous scrape would answer 401, so target UP proves the
+          # auth-gated scrape works end to end.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9090/-/ready >/dev/null 2>&1; then echo "prometheus ready"; break; fi
+            sleep 10
+          done
+          curl -fsS http://localhost:9090/-/ready
+          ok=""
+          for i in $(seq 1 12); do
+            if curl -fsS 'http://localhost:9090/api/v1/targets?state=active' -o /tmp/targets.json; then
+              if python3 -c 'import json; d=json.load(open("/tmp/targets.json")); ts=[t for t in d["data"]["activeTargets"] if t["labels"].get("job")=="campus-marketplace-backend"]; assert len(ts)==1 and ts[0]["health"]=="up", d; print("backend scrape target up:", ts[0]["scrapeUrl"])' 2>/dev/null; then ok=1; break; fi
+            fi
+            echo "waiting for backend scrape target (attempt $i)…"
+            sleep 10
+          done
+          test -n "$ok" || { echo "backend scrape target never came up:"; cat /tmp/targets.json; docker compose logs prometheus; docker compose logs metrics-token-refresher; exit 1; }
+          # All thirteen rules from docs/alert-rules.yml loaded (the
+          # count is re-derived from the file, never hardcoded).
+          EXPECTED_RULES=$(grep -c '^\s*- alert:' docs/alert-rules.yml)
+          LOADED_RULES=$(curl -fsS http://localhost:9090/api/v1/rules | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))')
+          test "$LOADED_RULES" = "$EXPECTED_RULES" || { echo "rules loaded: $LOADED_RULES, want $EXPECTED_RULES"; exit 1; }
+          echo "rules loaded: $LOADED_RULES"
+          # Alertmanager is ready (no notification channel by design —
+          # firing alerts are visible in its UI and go nowhere).
+          curl -fsS http://localhost:9093/-/ready
+          echo "observability profile OK: target up, $LOADED_RULES rules, alertmanager ready (backlog #430)"
+        env:
+          APP_BOOTSTRAP_ADMIN_USERNAME: 'smokeadmin'
+          APP_BOOTSTRAP_ADMIN_EMAIL: 'smokeadmin@example.com'
+          APP_BOOTSTRAP_ADMIN_PASSWORD: 'SmokeAdmin1234'
       - name: Pay for the listing, then drive the mock-PSP webhook path (backlog #366)
         run: |
           # A buyer cannot order their own listing (422, OrderCreationService),

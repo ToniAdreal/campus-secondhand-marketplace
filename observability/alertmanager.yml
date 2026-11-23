@@ -1,0 +1,24 @@
+# Alertmanager config for the opt-in `observability` compose profile
+# (backlog #430). Local-operator tooling only: this profile ships NO
+# notification channel. The default receiver is a webhook to the
+# closed loopback discard port, so a firing alert is visible in the
+# Alertmanager UI/API and goes nowhere — replace this receiver with
+# your own webhook/email/pager config to actually be paged. Do not
+# mistake "Alertmanager is running" for "someone will be woken up".
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-only
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+
+receivers:
+  - name: local-only
+    webhook_configs:
+      # Blackhole: 127.0.0.1:9 is the discard port — nothing listens,
+      # so deliveries fail and alerts stay visible only in the UI.
+      # Point this at a real webhook to get notified.
+      - url: http://127.0.0.1:9/
+        send_resolved: false

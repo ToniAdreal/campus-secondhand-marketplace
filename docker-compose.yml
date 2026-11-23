@@ -114,6 +114,87 @@ services:
     depends_on:
       - backend
 
+  # Observability profile (backlog #430): Prometheus + Alertmanager as
+  # opt-in local-operator tooling — `docker compose --profile
+  # observability up`. Nothing here runs by default: a plain
+  # `docker compose up` starts only mysql/backend/frontend, exactly as
+  # before. This is NOT a production deployment (no TLS, no Grafana,
+  # no notification channel — see docs/observability.md).
+  prometheus:
+    profiles: ["observability"]
+    # Pinned; verified on Docker Hub 2026-11-23 (prom/prometheus:v3.16.0).
+    image: prom/prometheus:v3.16.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docs/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      # Shared with the token refresher: bearer_token_file is re-read
+      # on every scrape, so token rotation needs no reload.
+      - metrics-token:/etc/prometheus/token:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      backend:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+      metrics-token-refresher:
+        condition: service_started
+
+  alertmanager:
+    profiles: ["observability"]
+    # Pinned; verified on Docker Hub 2026-11-23 (prom/alertmanager:v0.35.0).
+    image: prom/alertmanager:v0.35.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+
+  # Keeps Prometheus's scrape credential fresh (backlog #430).
+  # /actuator/prometheus needs a Bearer token and access tokens live
+  # 15 minutes with no long-lived token in this repo, so this sidecar
+  # logs in as the scrape account and refreshes the token every
+  # 10 minutes into the shared metrics-token volume. It takes its
+  # credentials from the bootstrap ADMIN variables — the same three
+  # the backend service already defaults to empty — so a plain
+  # `docker compose up` never fails interpolation here: with no
+  # credentials the refresher exits with a clear error and only the
+  # observability profile is affected. To use the profile, set all
+  # three (the CI smoke job does):
+  #   APP_BOOTSTRAP_ADMIN_USERNAME=... APP_BOOTSTRAP_ADMIN_EMAIL=...
+  #   APP_BOOTSTRAP_ADMIN_PASSWORD=... docker compose --profile observability up
+  # Any confirmed account works; the bootstrap ADMIN is the one the
+  # compose stack can create without an email round-trip. Each login
+  # increments auth.login.success once — negligible metrics noise,
+  # stated here rather than hidden.
+  metrics-token-refresher:
+    profiles: ["observability"]
+    build: ./observability/token-refresher
+    environment:
+      BACKEND_URL: http://backend:8080
+      METRICS_USERNAME: ${APP_BOOTSTRAP_ADMIN_USERNAME:-}
+      METRICS_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-}
+      TOKEN_FILE: /run/metrics-token/access-token
+    volumes:
+      - metrics-token:/run/metrics-token
+    depends_on:
+      backend:
+        condition: service_started
+
 volumes:
   mysql-data:
   uploads-data:
+  # Shared bearer-token file (refresher writes, Prometheus reads).
+  metrics-token:
+  # Prometheus TSDB + Alertmanager notification log/silences survive
+  # container recreates; `docker compose down -v` drops them with the
+  # rest, like mysql-data.
+  prometheus-data:
+  alertmanager-data:

@@ -8,9 +8,12 @@ boundary + telemetry beacon. Nothing here needs a third-party service.
 
 Honest scope up front: this repo provides the endpoints, the metrics,
 the alert rules, and an operator runbook
-([docs/runbook.md](runbook.md)). It does **not** deploy or bundle
-Prometheus, Alertmanager, Grafana, or any log aggregator — those run in
-the operator's own infrastructure. Every counter and timer below is
+([docs/runbook.md](runbook.md)). The opt-in `observability` compose
+profile (backlog #430) bundles Prometheus + Alertmanager for local
+operator use — `docker compose --profile observability up`, see below.
+It still does **not** bundle Grafana or any log aggregator, and the
+profile is local-operator tooling, not a production deployment (plain
+HTTP, no TLS, no notification channel). Every counter and timer below is
 JVM-local and resets when the backend restarts, so none of them is a
 durable aggregate; durable history lives in the database rows (orders,
 audit log, webhook ledger) and in the operator's own Prometheus.
@@ -43,8 +46,69 @@ scraper cannot use a single static token: the operator must rotate the
 token (login + refresh on a schedule) or terminate scraping behind
 their own reverse proxy. There is no service account or long-lived API
 token in this repo — that is a deliberate gap, stated here rather than
-papered over. The scrape target shape (for an external Prometheus) is
+papered over. The compose `observability` profile automates the
+rotation with its token-refresher sidecar (below); the scrape target
+shape (for an external Prometheus) is
 documented in [docs/smoke-test.md](smoke-test.md).
+
+## Running Prometheus + Alertmanager (compose `observability` profile)
+
+A plain `docker compose up` starts only mysql/backend/frontend. The
+profile adds Prometheus (scraping `/actuator/prometheus` every 15 s),
+Alertmanager (loading the thirteen rules in `docs/alert-rules.yml`),
+and a token-refresher sidecar that keeps the scrape credential fresh:
+
+```sh
+APP_BOOTSTRAP_ADMIN_USERNAME=metrics \
+APP_BOOTSTRAP_ADMIN_EMAIL=metrics@example.com \
+APP_BOOTSTRAP_ADMIN_PASSWORD='<generate one>' \
+  docker compose --profile observability up
+```
+
+The three variables are the first-admin bootstrap the backend already
+supports (backlog #213, #366): set together, the backend seeds that
+ADMIN at boot; unset, no admin is seeded and the refresher exits with
+a clear error instead of scraping anonymously. Any confirmed account
+works — the bootstrap ADMIN is simply the one the stack can create
+without an email round-trip. The `up` itself also needs the
+three compose secrets (`APP_JWT_SECRET`,
+`APP_TOTP_ENCRYPTION_KEY`, `APP_PAYMENTS_WEBHOOK_SECRET`) — see
+[docs/smoke-test.md](smoke-test.md).
+
+How the scrape stays authenticated: the refresher logs in as that
+account, keeps the `refresh_token` cookie in its own jar, writes the
+access token to a volume shared with Prometheus, and rotates it every
+10 minutes via `POST /api/auth/refresh` (a failed refresh falls back
+to a fresh login). Prometheus reads the file on every scrape through
+`bearer_token_file`, so rotation needs no reload and no token ever
+sits in a config file. An anonymous scrape is impossible by
+construction — without a token the endpoint answers 401 and the
+target shows down. Each refresher login increments
+`auth.login.success` once; that is negligible noise, stated here.
+
+Check it is working:
+
+```sh
+# Prometheus is up and the backend target scrapes clean:
+curl -sS 'http://localhost:9090/api/v1/targets?state=active' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(t["labels"]["job"], t["health"]) for t in d["data"]["activeTargets"]])'
+# → [('campus-marketplace-backend', 'up')]
+# All thirteen rules loaded:
+curl -sS http://localhost:9090/api/v1/rules \
+  | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))'
+# → 13
+# Alertmanager is ready:
+curl -fsS http://localhost:9093/-/ready
+```
+
+Open http://localhost:9090 (Prometheus) and http://localhost:9093
+(Alertmanager) in a browser. Firing alerts are visible in the
+Alertmanager UI, but the profile ships **no notification channel**:
+its default receiver is a webhook to a closed loopback port, so
+nothing is paged — replace that receiver in
+`observability/alertmanager.yml` with your own webhook/email/pager
+config to be notified. `docker compose down -v` drops the Prometheus
+TSDB and the Alertmanager state along with the other volumes.
 
 ## Counters and timers on `/actuator/prometheus`
 
@@ -173,8 +237,10 @@ inside the app; an operator's own rules can watch
 
 ## What observability deliberately does not cover
 
-- No Prometheus/Alertmanager/Grafana deployed or bundled; no log
-  shipping, aggregation, or retention.
+- No Grafana, no log shipping, aggregation, or retention. Prometheus
+  and Alertmanager ship only as the opt-in local `observability`
+  compose profile (above) — never as a production deployment, and
+  with no notification channel configured.
 - Counters and timers are JVM-local and reset on restart; the
   per-order declines an operator needs are the durable
   `payment_attempt` rows behind the `/admin/payments` attempts viewer,
