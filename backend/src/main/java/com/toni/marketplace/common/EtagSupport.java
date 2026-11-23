@@ -53,4 +53,36 @@ public final class EtagSupport {
     }
     return false;
   }
+
+  /**
+   * Whether an {@code If-Match} header value matches the current validator
+   * (backlog #425, RFC 9110 §13.1.1 strong comparison): the header may be
+   * a comma-separated list or {@code *} (which matches any current
+   * representation — the caller only evaluates it for a row that exists);
+   * entries are compared STRONGLY, so a weak ({@code W/}) entry never
+   * matches, unlike {@link #matchesIfNoneMatch}. A blank header matches
+   * nothing (a missing header is the caller's unconditional case, never
+   * this method).
+   */
+  public static boolean matchesIfMatch(String ifMatch, String etag) {
+    if (ifMatch == null || ifMatch.isBlank()) {
+      return false;
+    }
+    for (String candidate : ifMatch.split(",")) {
+      String value = candidate.trim();
+      if (value.equals("*")) {
+        return true;
+      }
+      if (value.startsWith("W/")) {
+        continue;
+      }
+      if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+        value = value.substring(1, value.length() - 1);
+      }
+      if (value.equals(etag)) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

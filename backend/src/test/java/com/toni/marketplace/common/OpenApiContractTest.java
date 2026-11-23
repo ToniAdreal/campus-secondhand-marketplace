@@ -395,6 +395,10 @@ class OpenApiContractTest {
     // concurrent-edit 409 alongside the ownership matrix.
     assertThat(responseCodes(docs, "/api/items/{id}/photos/order", "put"))
         .contains("400", "401", "403", "404", "409");
+    // Conditional listing edit (#425): the edit pins its stale-validator
+    // 412 alongside the optimistic-lock 409 and the price/status 422s.
+    assertThat(responseCodes(docs, "/api/items/{id}", "patch"))
+        .contains("200", "400", "401", "403", "404", "409", "412", "422");
     // Saved searches (#164): creation pins its browse-validation 400 and
     // its per-user cap 422; delete pins the no-existence-leak 404.
     assertThat(responseCodes(docs, "/api/users/me/saved-searches", "post"))

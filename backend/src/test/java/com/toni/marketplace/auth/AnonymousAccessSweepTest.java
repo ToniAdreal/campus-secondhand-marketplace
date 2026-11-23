@@ -2,6 +2,8 @@ package com.toni.marketplace.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -377,6 +380,18 @@ class AnonymousAccessSweepTest {
     assertThat(failures)
         .as("public operations whose anonymous probe status drifted")
         .isEmpty();
+  }
+
+  @Test
+  void anonymousPatchWithIfMatchStillAnswers401() throws Exception {
+    // Conditional edit (#425): the precondition is evaluated inside the
+    // edit handler, after the security chain — an anonymous PATCH carrying
+    // an If-Match header must still get the chain 401, never a 412.
+    mockMvc.perform(patch("/api/items/1")
+            .header(HttpHeaders.IF_MATCH, "\"deadbeef\"")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+        .andExpect(status().isUnauthorized());
   }
 
   @Test

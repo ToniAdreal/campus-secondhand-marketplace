@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -390,12 +392,42 @@ public class ItemController {
    * {@link ItemUpdateRequest}; the SOLD transition still lives only on
    * {@code PATCH /api/items/{id}/status}; price changes on a RESERVED or
    * SOLD listing are answered 422 (the live order snapshotted the price).
+   *
+   * <p>Conditional edit (backlog #425): an optional {@code If-Match}
+   * header carrying the strong ETag the detail GET served (#166) is
+   * compared strongly (RFC 9110 §13.1.1 — a weak validator never matches,
+   * {@code *} matches any existing listing) against the listing's current
+   * validator; a stale one answers 412 in the envelope and applies
+   * nothing. A missing header keeps the unconditional behaviour — the SPA
+   * has no edit-listing call yet, so today only API clients send a
+   * validator. The ownership check runs first, so a non-owner with a stale
+   * validator still gets 403, never a 412 that would confirm the listing
+   * changed.
    */
   @PatchMapping("/{id}")
   @PreAuthorize("@itemSecurity.canEdit(authentication, #id)")
+  @io.swagger.v3.oas.annotations.responses.ApiResponses({
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+          description = "the updated listing (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+          description = "blank title or another validation failure (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+          description = "unauthenticated (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+          description = "not the listing's seller or an ADMIN (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+          description = "unknown listing or category id (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+          description = "version conflict with a concurrent edit (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "412",
+          description = "stale If-Match validator — reload and retry (envelope)"),
+      @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+          description = "price locked, or an illegal status value (envelope)")})
   public ApiResponse<ItemDto> update(@PathVariable Long id,
-                                     @Valid @RequestBody ItemUpdateRequest request) {
-    return ApiResponse.ok(itemService.updateItem(id, request));
+                                     @Valid @RequestBody ItemUpdateRequest request,
+                                     @RequestHeader(value = HttpHeaders.IF_MATCH,
+                                             required = false) String ifMatch) {
+    return ApiResponse.ok(itemService.updateItem(id, request, ifMatch));
   }
 
   /**

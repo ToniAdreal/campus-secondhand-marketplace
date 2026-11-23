@@ -704,6 +704,24 @@ public class ItemService {
   }
 
   /**
+   * The listing's current strong ETag (backlog #425): the exact derivation
+   * the detail GET serves — SHA-256 of (id, version, updatedAt, full DTO
+   * without the view counter) — recomputed from the same projection +
+   * gallery merge the detail read uses, but without its DRAFT/expired
+   * visibility gates (see {@link #updateItem(Long, ItemUpdateRequest,
+   * String)}). The caller passes the already-loaded entity so the
+   * version/updatedAt come from the same row the edit will mutate.
+   */
+  private String currentEtag(Long id, Item item) {
+    ItemDto dto = withPhotos(List.of(items.findDetailViewById(id)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"))))
+        .get(0);
+    long version = item.getVersion() == null ? 0L : item.getVersion();
+    return com.toni.marketplace.common.EtagSupport.sha256Hex(
+        id + ":" + version + ":" + item.getUpdatedAt() + ":" + dto.withoutViewCount());
+  }
+
+  /**
    * Creates a listing for the authenticated user. The seller id is the JWT
    * principal ({@link Long}), never a request parameter — a client cannot
    * post on someone else's behalf. An unknown category id is rejected 404
@@ -969,11 +987,43 @@ public class ItemService {
    * reload and retry" (backlog #147); without it the version check would
    * happen at commit and — under a surrounding transaction — possibly
    * outside the request entirely.
+   *
+   * <p>Conditional edit (backlog #425): the three-argument overload takes
+   * the caller's {@code If-Match} validator; a present-but-stale one is
+   * refused 412 before any mutation, a missing one keeps the
+   * unconditional behaviour of this overload.
    */
   @Transactional
   public ItemDto updateItem(Long id, ItemUpdateRequest request) {
+    return updateItem(id, request, null);
+  }
+
+  /**
+   * Conditional edit (backlog #425): like
+   * {@link #updateItem(Long, ItemUpdateRequest)} but an {@code If-Match}
+   * validator, when present, must match the listing's current strong ETag
+   * (the same (id, version, updatedAt, full DTO) derivation the detail
+   * GET serves — see {@link #currentEtag}) or the edit is refused 412 in
+   * the envelope and nothing is applied. The check runs inside the edit's
+   * transaction, before any mutation, so a stale validator can never
+   * half-apply; a concurrent edit landing between the check and the flush
+   * still loses its {@code @Version} race to 409, exactly as an
+   * unconditional edit would. The validator is recomputed without the
+   * detail read's visibility gates (a seller's own DRAFT 404s for
+   * everyone else on the read path but is editable here, and its editor
+   * holds the ETag their own detail GET served) — the edit endpoint's
+   * {@code @PreAuthorize} stays the authority on who may edit.
+   */
+  @Transactional
+  public ItemDto updateItem(Long id, ItemUpdateRequest request, String ifMatch) {
     Item item = items.findById(id)
         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "item not found"));
+    if (ifMatch != null && !ifMatch.isBlank()
+        && !com.toni.marketplace.common.EtagSupport.matchesIfMatch(
+            ifMatch, currentEtag(id, item))) {
+      throw new ResponseStatusException(HttpStatus.PRECONDITION_FAILED,
+          "listing was modified — reload and retry");
+    }
     Category category = null;
     if (request.categoryId() != null) {
       category = categories.findById(request.categoryId())
