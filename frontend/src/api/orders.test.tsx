@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from './client';
+import { LOCALE_STORAGE_KEY, setStoredLocale } from '../locale';
 import { itemKeys } from './items';
 import {
   describeCancelError,
@@ -519,5 +520,80 @@ describe('order mutation invalidation', () => {
     await expect(result.current.mutateAsync({ orderId: 9 })).rejects.toThrow('network down');
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('describe*Error localized (backlog #431)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('returns Chinese copy for every order mapper once zh-CN is stored', () => {
+    setStoredLocale('zh-CN');
+
+    expect(describeOrderError(envelopeError(409, 'conflict'))).toBe(
+      '这件商品刚刚被人买走，现在已不可购买。',
+    );
+    expect(describeOrderError(envelopeError(422, 'own listing'))).toBe(
+      '你不能购买自己发布的商品。',
+    );
+    expect(describePayError(envelopeError(402, 'payment required'))).toBe(
+      '付款被拒绝，订单仍为待付款状态，请换一种付款方式再试。',
+    );
+    expect(describePayError(envelopeError(409, 'conflict'))).toBe(
+      '刚刚有人操作了这笔订单，请刷新后重试。',
+    );
+    expect(describeCancelError(envelopeError(422, 'unprocessable'))).toBe(
+      '这笔订单已无法取消，可能已付款、完成或取消。',
+    );
+    expect(describeCompleteError(envelopeError(400, 'handover mismatch'))).toBe(
+      '交接码不正确，请向买家索取其订单页上的 6 位交接码后重试。',
+    );
+    expect(describeCompleteError(envelopeError(422, 'COMPLETED already'))).toBe(
+      '这笔订单已完成。',
+    );
+    expect(describeShipError(envelopeError(401, 'unauthorized'))).toBe(
+      '请先登录，再发货。',
+    );
+    expect(describeConfirmReceiptError(envelopeError(403, 'forbidden'))).toBe(
+      '只有这笔订单的买家才能确认收货。',
+    );
+    expect(describeRegenerateHandoverError(envelopeError(422, 'unprocessable'))).toBe(
+      '只有订单处于已付款状态时才能生成交接码。',
+    );
+    expect(describeRefundError(envelopeError(422, 'exceeds the remaining refund'))).toBe(
+      '退款金额超过了这笔订单剩余可退的金额。',
+    );
+    expect(describeRefundError(envelopeError(422, 'REFUNDED already'))).toBe(
+      '这笔订单已退款。',
+    );
+    expect(describeReceiptError(envelopeError(404, 'not found'))).toBe(
+      '这张收据暂不可用。',
+    );
+    expect(describeReceiptError(envelopeError(401, 'unauthorized'))).toBe(
+      '请先登录，再查看这张收据。',
+    );
+  });
+
+  it('keeps the raw server message for unknown errors in zh-CN', () => {
+    setStoredLocale('zh-CN');
+
+    expect(describeOrderError(envelopeError(500, 'psp timeout'))).toBe('psp timeout');
+    expect(describePayError(envelopeError(500, 'psp timeout'))).toBe('psp timeout');
+  });
+
+  it('falls back to English for an unknown stored locale', () => {
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, 'fr');
+
+    expect(describePayError(envelopeError(402, 'payment required'))).toBe(
+      'Your payment was declined — the order is still pending, please try a different payment method.',
+    );
+    expect(describeOrderError(envelopeError(409, 'conflict'))).toBe(
+      'Someone just grabbed this item — it is no longer available.',
+    );
   });
 });

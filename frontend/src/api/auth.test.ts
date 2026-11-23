@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, getAccessToken, setAccessToken } from './client';
+import { LOCALE_STORAGE_KEY, setStoredLocale } from '../locale';
 import {
   login,
   me,
@@ -832,6 +833,14 @@ describe('step-up re-authentication (backlog #218)', () => {
   });
 
   describe('describeStepUpError', () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
     it('maps 401 to a wrong-credentials message', () => {
       expect(describeStepUpError(apiFailure(401, 401, 'bad proof'))).toContain('incorrect');
     });
@@ -848,6 +857,34 @@ describe('step-up re-authentication (backlog #218)', () => {
       expect(describeStepUpError(apiFailure(400, 400, 'code must be 6 digits'))).toBe(
         'code must be 6 digits',
       );
+    });
+
+    it('returns Chinese copy once zh-CN is stored (backlog #431)', () => {
+      setStoredLocale('zh-CN');
+
+      expect(describeStepUpError(apiFailure(401, 401, 'bad proof'))).toBe(
+        '当前密码或验证码不正确，请检查后重试。',
+      );
+      expect(describeStepUpError(apiFailure(423, 423, 'locked'))).toBe(
+        '失败次数过多，该账号已被暂时锁定，请几分钟后再试。',
+      );
+      expect(describeStepUpError(apiFailure(429, 429, 'slow down'))).toBe(
+        '验证尝试过于频繁，请稍后再试。',
+      );
+    });
+
+    it('keeps the raw server message for unknown errors in zh-CN (backlog #431)', () => {
+      setStoredLocale('zh-CN');
+
+      expect(describeStepUpError(apiFailure(400, 400, 'code must be 6 digits'))).toBe(
+        'code must be 6 digits',
+      );
+    });
+
+    it('falls back to English for an unknown stored locale (backlog #431)', () => {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, 'fr');
+
+      expect(describeStepUpError(apiFailure(401, 401, 'bad proof'))).toContain('incorrect');
     });
   });
 

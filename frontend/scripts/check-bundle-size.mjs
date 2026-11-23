@@ -56,6 +56,13 @@
 //   SettingsPage chunk, 26.86 kB → 28.52 kB). ENTRY_MAX_BYTES =
 //   332,000 (316,210 measured + ~5%, rounded to the nearest 1,000).
 //   TOTAL_MAX_BYTES stays 573,000 (this tree measures 551,184).
+//   Bump 2026-11-23 (backlog #431): total measured 576,403 bytes on
+//   the #431 tree — the locale dictionary (en + zh-CN copy for the
+//   order/auth error mappers, the login page and the order confirmation
+//   page) lands in the shared entry chunk, +~13,000 over the #427
+//   tree's 563,194. TOTAL_MAX_BYTES = 605,000 (576,403 measured +
+//   ~5%, rounded to the nearest 1,000). The entry chunk (308,339
+//   bytes) stays inside its unchanged budget.
 //
 // Bump procedure (deliberate, never automatic): if a change legitimately
 // needs more room, edit the constant in the same commit, and say in the
@@ -70,7 +77,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ENTRY_MAX_BYTES = 332_000;
-export const TOTAL_MAX_BYTES = 573_000;
+export const TOTAL_MAX_BYTES = 605_000;
 
 /**
  * The entry chunk is whatever dist/index.html loads as its module

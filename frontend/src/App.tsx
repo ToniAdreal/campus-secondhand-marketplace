@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
+import LocaleControl from './components/LocaleControl';
 import RouteFocusManager from './components/RouteFocusManager';
 import { useUnreadMessageCount } from './api/messages';
 import { useNotificationStream, useUnreadNotificationCount } from './api/notifications';
@@ -167,7 +168,12 @@ export default function App() {
           >
             Campus Marketplace
           </Link>
-          <AuthNav />
+          <div className="flex items-center gap-3">
+            {/* Backlog #431: the language toggle sits outside AuthNav so a
+                signed-out visitor can switch language on /login too. */}
+            <LocaleControl />
+            <AuthNav />
+          </div>
         </nav>
       </header>
       <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 py-8">

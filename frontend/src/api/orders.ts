@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { itemKeys, type ApiResponse, type Page } from './items';
+import { t } from '../locale';
 
 export interface Order {
   id: number;
@@ -120,12 +121,12 @@ export function describeReceiptError(error: unknown): string {
     .response;
   const code = response?.data?.code;
   if (code === 404) {
-    return 'This receipt is not available.';
+    return t('order.receiptUnavailable');
   }
   if (code === 401) {
-    return 'Please log in to view this receipt.';
+    return t('order.loginToViewReceipt');
   }
-  return response?.data?.message || 'Something went wrong. Please try again.';
+  return response?.data?.message || t('order.generic');
 }
 
 /**
@@ -320,18 +321,18 @@ export function describeOrderError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 409 || /already has an active order|not available|purchased by someone else/i.test(message)) {
-    return 'Someone just grabbed this item — it is no longer available.';
+    return t('order.noLongerAvailable');
   }
   if (code === 422 || /own listing/i.test(message)) {
-    return 'You cannot buy your own listing.';
+    return t('order.cannotBuyOwn');
   }
   if (code === 401) {
-    return 'Please log in to buy this item.';
+    return t('order.loginToBuy');
   }
   if (code === 404) {
-    return 'This listing no longer exists.';
+    return t('order.listingGone');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -345,24 +346,24 @@ export function describeOrderError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 402 || /declined/i.test(message)) {
-    return 'Your payment was declined — the order is still pending, please try a different payment method.';
+    return t('order.payDeclined');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 422 || /not in PENDING|can no longer|terminal/i.test(message)) {
-    return 'This order can no longer be paid — it was cancelled, completed, or refunded.';
+    return t('order.cannotPayAnymore');
   }
   if (code === 403) {
-    return 'Only the buyer of this order can pay for it.';
+    return t('order.onlyBuyerCanPay');
   }
   if (code === 401) {
-    return 'Please log in to pay for this order.';
+    return t('order.loginToPay');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 function newIdempotencyKey(): string {
@@ -452,21 +453,21 @@ export function describeCancelError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 422 || /cannot be cancelled|no longer cancellable|not in PENDING/i.test(message)) {
-    return 'This order can no longer be cancelled — it was already paid, completed, or cancelled.';
+    return t('order.cannotCancel');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 403) {
-    return 'Only the buyer of this order can cancel it.';
+    return t('order.onlyBuyerCanCancel');
   }
   if (code === 401) {
-    return 'Please log in to cancel this order.';
+    return t('order.loginToCancel');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -502,30 +503,30 @@ export function describeCompleteError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 400 || /handover/i.test(message)) {
-    return 'That handover code is not right — ask the buyer for the 6-digit code from their order page and try again.';
+    return t('order.handoverWrong');
   }
   if (code === 422 || /completion is not allowed|not in PAID/i.test(message)) {
     if (/SHIPPED/i.test(message)) {
-      return 'This order has already shipped — only the buyer can confirm receipt now.';
+      return t('order.alreadyShipped');
     }
     if (/COMPLETED/i.test(message)) {
-      return 'This order was already completed.';
+      return t('order.alreadyCompleted');
     }
-    return 'Only a paid order can be completed — this one is not paid yet, or is already finished.';
+    return t('order.onlyPaidCanComplete');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 403) {
-    return 'Only the seller of this listing can complete the order.';
+    return t('order.onlySellerCanComplete');
   }
   if (code === 401) {
-    return 'Please log in to complete this order.';
+    return t('order.loginToComplete');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -568,24 +569,24 @@ export function describeShipError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 400) {
-    return 'Enter a carrier and tracking number (tracking number at most 128 characters).';
+    return t('order.shipFormInvalid');
   }
   if (code === 422 || /shipping is not allowed|not in PAID/i.test(message)) {
-    return 'Only a paid order can be shipped — this one is not paid, or already shipped or completed.';
+    return t('order.onlyPaidCanShip');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 403) {
-    return 'Only the seller of this listing can ship the order.';
+    return t('order.onlySellerCanShip');
   }
   if (code === 401) {
-    return 'Please log in to ship the order.';
+    return t('order.loginToShip');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -630,21 +631,21 @@ export function describeConfirmReceiptError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 422 || /receipt confirmation is not allowed|not in SHIPPED/i.test(message)) {
-    return 'Only a shipped order can be confirmed — this one has not shipped yet, or is already finished.';
+    return t('order.onlyShippedCanConfirm');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 403) {
-    return 'Only the buyer of this order can confirm receipt.';
+    return t('order.onlyBuyerCanConfirm');
   }
   if (code === 401) {
-    return 'Please log in to confirm receipt.';
+    return t('order.loginToConfirm');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -679,18 +680,18 @@ export function describeRegenerateHandoverError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 403) {
-    return 'Only the buyer of this order can generate a handover code.';
+    return t('order.onlyBuyerCanHandover');
   }
   if (code === 422) {
-    return 'A handover code can only be generated while the order is paid.';
+    return t('order.handoverOnlyWhenPaid');
   }
   if (code === 401) {
-    return 'Please log in to generate a handover code.';
+    return t('order.loginToHandover');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**
@@ -727,35 +728,35 @@ export function describeRefundError(error: unknown): string {
   const message = response?.data?.message ?? '';
   if (code === 422 || /refund is not allowed|not in PAID/i.test(message)) {
     if (/exceeds the remaining/i.test(message)) {
-      return 'That amount is more than what is left to refund on this order.';
+      return t('order.refundExceeds');
     }
     if (/must be positive/i.test(message)) {
-      return 'Enter a refund amount greater than zero.';
+      return t('order.refundPositive');
     }
     if (/REFUNDED/i.test(message)) {
-      return 'This order was already refunded.';
+      return t('order.alreadyRefunded');
     }
     if (/COMPLETED/i.test(message)) {
-      return 'This order was already completed — it can no longer be refunded.';
+      return t('order.completedNoRefund');
     }
-    return 'Only a paid order can be refunded — this one is not paid yet, or is already finished.';
+    return t('order.onlyPaidCanRefund');
   }
   if (code === 400 && /reason/i.test(message)) {
-    return 'Enter a reason for the refund.';
+    return t('order.refundReasonRequired');
   }
   if (code === 409 || /concurrent|version|optimistic/i.test(message)) {
-    return 'Someone just acted on this order — please refresh and try again.';
+    return t('order.concurrentAction');
   }
   if (code === 403) {
-    return 'Only the seller of this listing can refund the order.';
+    return t('order.onlySellerCanRefund');
   }
   if (code === 401) {
-    return 'Please log in to refund this order.';
+    return t('order.loginToRefund');
   }
   if (code === 404) {
-    return 'This order no longer exists.';
+    return t('order.notFound');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**

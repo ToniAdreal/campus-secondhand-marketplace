@@ -6,7 +6,9 @@ import {
 import { type FormEvent, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { authenticateTotp, login, startPasskeyAssertion } from '../api/auth';
+import { t, type MessageKey } from '../locale';
 import { useAuthStore } from '../store/useAuthStore';
+import { useLocaleStore } from '../store/useLocaleStore';
 import {
   assertionOptionsToRequestOptions,
   serializeAssertionCredential,
@@ -15,23 +17,34 @@ import {
 import { throttleWaitCopy } from './authThrottle';
 
 /**
+ * What the page shows in the error alert. Client-side copy is stored as
+ * a message key and translated at render time (backlog #431), so flipping
+ * the language toggle re-renders the visible error in the new language —
+ * a plain string stored at submit time could never do that. The
+ * backend's own message is stored verbatim and never reworded.
+ */
+type LoginError = { kind: 'key'; key: MessageKey } | { kind: 'text'; text: string };
+
+/**
  * Reads the human message out of the backend {code,message,data} envelope.
  * Backlog #242: a 429 carrying Retry-After renders the wait copy instead,
  * and a 429 without a usable header falls back to the generic copy — with
  * no number there is no wait to show. Every other status keeps the
- * previous mapping untouched.
+ * previous mapping untouched. The fallback and the network-error copy are
+ * the caller's locale keys (backlog #431); the backend's own message is
+ * returned verbatim, never reworded.
  */
-function envelopeMessage(err: unknown, fallback: string): string {
-  if (isRequestTimeout(err)) return REQUEST_TIMEOUT_MESSAGE;
+function envelopeMessage(err: unknown, fallbackKey: MessageKey, networkKey: MessageKey): LoginError {
+  if (isRequestTimeout(err)) return { kind: 'text', text: REQUEST_TIMEOUT_MESSAGE };
   const waitCopy = throttleWaitCopy(err);
-  if (waitCopy) return waitCopy;
+  if (waitCopy) return { kind: 'text', text: waitCopy };
   if (isApiError(err)) {
-    if (err.response?.status === 429) return fallback;
+    if (err.response?.status === 429) return { kind: 'key', key: fallbackKey };
     const message = (err.response?.data as { message?: string } | undefined)?.message;
-    if (message) return message;
-    if (!err.response) return 'Network error — is the backend running?';
+    if (message) return { kind: 'text', text: message };
+    if (!err.response) return { kind: 'key', key: networkKey };
   }
-  return fallback;
+  return { kind: 'key', key: fallbackKey };
 }
 
 /**
@@ -52,6 +65,9 @@ export default function LoginPage() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const storeLogin = useAuthStore((s) => s.login);
+  // Backlog #431: subscribing re-renders the page when the nav toggle
+  // flips the language, so the error copy switches live.
+  const locale = useLocaleStore((s) => s.locale);
 
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -60,7 +76,7 @@ export default function LoginPage() {
   const [factors, setFactors] = useState<string[]>([]);
   const [code, setCode] = useState('');
   const [rememberDevice, setRememberDevice] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginError | null>(null);
   const [pending, setPending] = useState(false);
 
   if (user) {
@@ -77,7 +93,7 @@ export default function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (usernameOrEmail.trim() === '' || password === '') {
-      setError('Username or email and password are required.');
+      setError({ kind: 'key', key: 'login.required' });
       return;
     }
     setPending(true);
@@ -101,7 +117,7 @@ export default function LoginPage() {
       }
       finishLogin(outcome.user, outcome.accessToken);
     } catch (err) {
-      setError(envelopeMessage(err, 'Login failed'));
+      setError(envelopeMessage(err, 'login.failed', 'login.networkError'));
     } finally {
       setPending(false);
     }
@@ -111,7 +127,7 @@ export default function LoginPage() {
     e.preventDefault();
     if (!challenge) return;
     if (code.trim() === '') {
-      setError('Enter your two-factor code or a recovery code.');
+      setError({ kind: 'key', key: 'login.totpRequired' });
       return;
     }
     setPending(true);
@@ -128,7 +144,7 @@ export default function LoginPage() {
     } catch (err) {
       // Wrong TOTP code, wrong recovery code and expired challenge all
       // land on the backend's identical 401 — shown verbatim.
-      setError(envelopeMessage(err, 'Two-factor authentication failed'));
+      setError(envelopeMessage(err, 'login.totpFailed', 'login.networkError'));
     } finally {
       setPending(false);
     }
@@ -147,7 +163,7 @@ export default function LoginPage() {
         publicKey: assertionOptionsToRequestOptions(options),
       })) as PublicKeyCredential | null;
       if (!credential) {
-        setError('The passkey ceremony was cancelled.');
+        setError({ kind: 'key', key: 'login.passkeyCancelled' });
         return;
       }
       const { user: loggedIn, accessToken } = await authenticateTotp({
@@ -161,7 +177,7 @@ export default function LoginPage() {
       // A cancelled ceremony, an unknown credential and a failed
       // ceremony all land on the backend's identical 401 — shown
       // verbatim, never a hint about which check failed.
-      setError(envelopeMessage(err, 'Passkey sign-in failed'));
+      setError(envelopeMessage(err, 'login.passkeyFailed', 'login.networkError'));
     } finally {
       setPending(false);
     }
@@ -172,17 +188,16 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto mt-6 max-w-md rounded-[20px] border border-apple-hairline bg-white p-6 sm:mt-10 sm:p-8">
-      <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-apple-ink">Login</h1>
-      <p className="mb-6 text-center text-sm text-apple-muted">Sign in to buy and sell on campus</p>
+      <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-apple-ink">{t('login.title', locale)}</h1>
+      <p className="mb-6 text-center text-sm text-apple-muted">{t('login.subtitle', locale)}</p>
       {passwordResetDone && !challenge && (
         <p role="status" className="mb-4 rounded-[10px] border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-800">
-          Password reset complete. You have been signed out everywhere — log in with your
-          new password.
+          {t('login.resetDone', locale)}
         </p>
       )}
       {error && (
         <p role="alert" className="mb-4 rounded-[10px] border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
-          {error}
+          {error.kind === 'key' ? t(error.key, locale) : error.text}
         </p>
       )}
       {challenge ? (
@@ -190,12 +205,11 @@ export default function LoginPage() {
           {factors.includes('totp') && (
             <>
               <p className="text-sm text-neutral-600">
-                Enter the 6-digit code from your authenticator app — or one of your recovery
-                codes if you no longer have the app.
+                {t('login.totpHint', locale)}
               </p>
               <div>
                 <label htmlFor="login-totp-code" className="mb-1 block text-sm font-semibold text-apple-softink">
-                  Two-factor code
+                  {t('login.totpLabel', locale)}
                 </label>
                 <input
                   id="login-totp-code"
@@ -215,7 +229,7 @@ export default function LoginPage() {
               disabled={pending}
               className="w-full rounded-full border border-apple-blue bg-white px-3 py-3 text-[15px] font-semibold text-apple-blue transition hover:bg-apple-parchment disabled:opacity-50"
             >
-              {pending ? 'Waiting for your passkey…' : 'Use a passkey instead'}
+              {pending ? t('login.waitingPasskey', locale) : t('login.usePasskey', locale)}
             </button>
           )}
           <div>
@@ -228,9 +242,7 @@ export default function LoginPage() {
                 className="mt-0.5"
               />
               <span>
-                Trust this device — skip the code step on this device for 30 days. Your
-                password is still required at every login, and you can revoke the trust
-                at any time from My sessions.
+                {t('login.trustDevice', locale)}
               </span>
             </label>
           </div>
@@ -240,7 +252,7 @@ export default function LoginPage() {
               disabled={pending}
               className="w-full rounded-full bg-apple-blue px-3 py-3 text-[17px] font-semibold text-white transition hover:bg-apple-focus active:scale-[0.99] disabled:opacity-50"
             >
-              {pending ? 'Verifying…' : 'Verify code'}
+              {pending ? t('login.verifying', locale) : t('login.verifyCode', locale)}
             </button>
           )}
           <button
@@ -254,7 +266,7 @@ export default function LoginPage() {
             }}
             className="w-full rounded px-3 py-2 text-sm text-neutral-600 hover:underline"
           >
-            Back to login
+            {t('login.backToLogin', locale)}
           </button>
         </form>
       ) : (
@@ -262,7 +274,7 @@ export default function LoginPage() {
           <form onSubmit={onSubmit} className="space-y-4">
             <div>
               <label htmlFor="login-identifier" className="mb-1 block text-sm font-semibold text-apple-softink">
-                Username or email
+                {t('login.identifierLabel', locale)}
               </label>
               <div className="relative">
                 <input
@@ -277,7 +289,7 @@ export default function LoginPage() {
             </div>
             <div>
               <label htmlFor="login-password" className="mb-1 block text-sm font-semibold text-apple-softink">
-                Password
+                {t('login.passwordLabel', locale)}
               </label>
               <div className="relative">
                 <input
@@ -295,18 +307,18 @@ export default function LoginPage() {
               disabled={pending}
               className="w-full rounded-full bg-apple-blue px-3 py-3 text-[17px] font-semibold text-white transition hover:bg-apple-focus active:scale-[0.99] disabled:opacity-50"
             >
-              {pending ? 'Logging in…' : 'Login'}
+              {pending ? t('login.submitting', locale) : t('login.submit', locale)}
             </button>
           </form>
           <p className="mt-4 text-center text-sm">
             <Link to="/forgot-password" className="text-apple-blue hover:underline">
-              Forgot password?
+              {t('login.forgotPassword', locale)}
             </Link>
           </p>
           <p className="mt-6 border-t border-apple-soft pt-5 text-center text-sm text-apple-muted">
-            New to Campus Marketplace?{' '}
+            {t('login.newHere', locale)}{' '}
             <Link to="/register" className="font-semibold text-blue-600 hover:underline">
-              Create an account
+              {t('login.createAccount', locale)}
             </Link>
           </p>
         </>

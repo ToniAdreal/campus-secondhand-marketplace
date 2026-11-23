@@ -6,6 +6,7 @@ import { api, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
 import { type Order } from '../api/orders';
 import { useAuthStore } from '../store/useAuthStore';
+import { useLocaleStore } from '../store/useLocaleStore';
 import OrderConfirmationPage from './OrderConfirmationPage';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -422,5 +423,70 @@ describe('OrderConfirmationPage PSP references (backlog #119)', () => {
     // the existing order payloads, no dedicated references request exists
     expect(getSpy).toHaveBeenCalledTimes(2);
     expect(postSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OrderConfirmationPage locale (backlog #431)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useLocaleStore.setState({ locale: 'en' });
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    useLocaleStore.setState({ locale: 'en' });
+  });
+
+  it('renders the Chinese copy once zh-CN is stored', async () => {
+    useLocaleStore.getState().setLocale('zh-CN');
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('订单已确认')).toBeTruthy());
+    expect(document.body.textContent).toContain('订单 #9，状态：pending。');
+    expect(document.body.textContent).toContain('该商品现已为你保留。');
+    expect(screen.getByRole('button', { name: '立即付款（演示）' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '取消订单' })).toBeTruthy();
+    expect(screen.getByText('返回商品页')).toBeTruthy();
+  });
+
+  it('a 409 on pay maps to the Chinese retry message in zh-CN', async () => {
+    useLocaleStore.getState().setLocale('zh-CN');
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'order was modified concurrently'));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('订单已确认')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '立即付款（演示）' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/刚刚有人操作了这笔订单/)).toBeTruthy(),
+    );
+  });
+
+  it('a shown pay error switches language live when the locale flips', async () => {
+    useAuthStore.getState().login(buyer, 'tok');
+    getSpy.mockResolvedValue(envelope(pendingOrder));
+    postSpy.mockRejectedValueOnce(apiFailure(409, 'order was modified concurrently'));
+
+    renderAt('/orders/9');
+    await waitFor(() => expect(screen.getByText('Order confirmed')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Pay now (demo)' }));
+    await waitFor(() =>
+      expect(screen.getByText(/Someone just acted on this order/)).toBeTruthy(),
+    );
+
+    // The raw error is stored, not the translated string — describing
+    // at render time lets the visible copy follow the toggle.
+    useLocaleStore.getState().setLocale('zh-CN');
+    await waitFor(() =>
+      expect(screen.getByText(/刚刚有人操作了这笔订单/)).toBeTruthy(),
+    );
   });
 });

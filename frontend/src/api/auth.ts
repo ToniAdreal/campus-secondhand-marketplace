@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, setAccessToken } from './client';
 import type { ApiResponse, Page } from './items';
+import { t } from '../locale';
 
 export interface AuthUser {
   id: number;
@@ -939,15 +940,15 @@ export function describeStepUpError(error: unknown): string {
   const code = response?.data?.code;
   const message = response?.data?.message ?? '';
   if (code === 401) {
-    return 'Current password or code is incorrect — please check and try again.';
+    return t('auth.stepUpIncorrect');
   }
   if (code === 423) {
-    return 'This account is temporarily locked after too many failed attempts — please wait a few minutes and try again.';
+    return t('auth.stepUpLocked');
   }
   if (code === 429) {
-    return 'Too many verification attempts — please wait a moment and try again.';
+    return t('auth.stepUpTooMany');
   }
-  return message || 'Something went wrong. Please try again.';
+  return message || t('order.generic');
 }
 
 /**

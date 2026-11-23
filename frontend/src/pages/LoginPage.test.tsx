@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { api, getAccessToken, setAccessToken } from '../api/client';
 import type { AuthUser } from '../api/auth';
+import LocaleControl from '../components/LocaleControl';
+import { LOCALE_STORAGE_KEY } from '../locale';
 import { useAuthStore } from '../store/useAuthStore';
+import { useLocaleStore } from '../store/useLocaleStore';
 import LoginPage from './LoginPage';
 
 const postSpy = vi.spyOn(api, 'post');
@@ -56,6 +59,9 @@ describe('LoginPage', () => {
   beforeEach(() => {
     currentPath = '';
     localStorage.clear();
+    // Backlog #431: the locale store is module state — reset it with
+    // storage so no test inherits another test's language.
+    useLocaleStore.setState({ locale: 'en' });
     // synchronous local-state reset — the store's logout() now hits the
     // server, which teardowns must not do (it would pollute the api.post spy)
     useAuthStore.setState({ user: null });
@@ -66,6 +72,7 @@ describe('LoginPage', () => {
     cleanup(); // vitest runs with globals off, so RTL's auto-cleanup is not registered
     vi.clearAllMocks();
     useAuthStore.setState({ user: null });
+    useLocaleStore.setState({ locale: 'en' });
     setAccessToken(null);
   });
 
@@ -450,6 +457,53 @@ describe('LoginPage', () => {
       fireEvent.click(await screen.findByRole('button', { name: /use a passkey instead/i }));
       expect((await screen.findByRole('alert')).textContent).toBe('Passkey sign-in failed');
       expect(useAuthStore.getState().user).toBeNull();
+    });
+  });
+
+  describe('locale toggle (backlog #431)', () => {
+    function renderLoginWithToggle() {
+      return render(
+        <MemoryRouter initialEntries={['/login']}>
+          <LocaleControl />
+          <Routes>
+            <Route path="/" element={<div>home probe</div>} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/forgot-password" element={<div>forgot page stub</div>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+
+    it('the toggle switches the login error copy live', async () => {
+      renderLoginWithToggle();
+
+      fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'Username or email and password are required.',
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Switch language to Chinese' }));
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        '请输入用户名或邮箱和密码。',
+      );
+      // The page chrome follows the toggle too.
+      expect(screen.getByRole('heading', { name: '登录' })).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: '切换语言为英文' }));
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'Username or email and password are required.',
+      );
+    });
+
+    it('a persisted zh-CN choice survives a fresh render', async () => {
+      useLocaleStore.getState().setLocale('zh-CN');
+      renderLoginWithToggle();
+
+      fireEvent.click(screen.getByRole('button', { name: /^登录$/ }));
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        '请输入用户名或邮箱和密码。',
+      );
+      expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('zh-CN');
     });
   });
 });

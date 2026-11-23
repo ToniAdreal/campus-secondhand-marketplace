@@ -13,7 +13,9 @@ import OrderPaymentAttempts from '../components/OrderPaymentAttempts';
 import OrderPspReferences from '../components/OrderPspReferences';
 import OrderReceipt from '../components/OrderReceipt';
 import OrderShipmentControl from '../components/OrderShipmentControl';
+import { t } from '../locale';
 import { useAuthStore } from '../store/useAuthStore';
+import { useLocaleStore } from '../store/useLocaleStore';
 
 /**
  * Order confirmation — shown right after a successful buy-now. Reads the
@@ -36,8 +38,17 @@ import { useAuthStore } from '../store/useAuthStore';
 export default function OrderConfirmationPage() {
   const { id } = useParams();
   const user = useAuthStore((s) => s.user);
+  // Backlog #431: subscribing re-renders the page when the nav toggle
+  // flips the language, so the copy switches live.
+  const locale = useLocaleStore((s) => s.locale);
   const { data, isLoading, isError } = useOrder(Number(id));
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // The mutation error is stored raw with its source and described at
+  // render time — a translated string stored at failure time could
+  // never follow a later language toggle.
+  const [pageError, setPageError] = useState<{
+    source: 'pay' | 'cancel' | 'regenerate';
+    error: unknown;
+  } | null>(null);
   // The handover code disclosed by the pay / regenerate response — kept
   // in local state because order reads never carry it again (#179).
   const [handoverCode, setHandoverCode] = useState<string | null>(null);
@@ -45,8 +56,8 @@ export default function OrderConfirmationPage() {
   const cancelOrder = useCancelOrder();
   const regenerateCode = useRegenerateHandoverCode();
 
-  if (isLoading) return <p>Loading…</p>;
-  if (isError || !data) return <p className="text-red-600">Order not found.</p>;
+  if (isLoading) return <p>{t('orderPage.loading', locale)}</p>;
+  if (isError || !data) return <p className="text-red-600">{t('orderPage.notFound', locale)}</p>;
 
   const orderId = Number(id);
   const isBuyer = user !== null && user.id === data.buyerId;
@@ -56,7 +67,7 @@ export default function OrderConfirmationPage() {
   const cancelled = data.status === 'CANCELLED';
 
   const handlePay = () => {
-    setErrorMessage(null);
+    setPageError(null);
     // The server's already-PAID idempotency makes a retry safe: the same
     // click can never trigger a second capture.
     payOrder.mutate(orderId, {
@@ -67,17 +78,17 @@ export default function OrderConfirmationPage() {
           setHandoverCode(order.handoverCode);
         }
       },
-      onError: (error) => setErrorMessage(describePayError(error)),
+      onError: (error) => setPageError({ source: 'pay', error }),
     });
   };
 
   const handleRegenerate = () => {
-    setErrorMessage(null);
+    setPageError(null);
     // Regenerating invalidates the previous code — ask first, mirroring
     // the cancel flow's confirm dialog.
     if (
       !window.confirm(
-        'Generate a new handover code? The previous code will stop working.',
+        t('orderPage.regenerateConfirm', locale),
       )
     ) {
       return;
@@ -88,42 +99,42 @@ export default function OrderConfirmationPage() {
           setHandoverCode(order.handoverCode);
         }
       },
-      onError: (error) => setErrorMessage(describeRegenerateHandoverError(error)),
+      onError: (error) => setPageError({ source: 'regenerate', error }),
     });
   };
 
   const handleCancel = () => {
-    setErrorMessage(null);
+    setPageError(null);
     // Irreversible from the buyer's side (the listing goes back on sale),
     // so ask before sending. The server's re-cancel idempotency makes a
     // double-click safe — it just returns the already-cancelled order.
     if (
       !window.confirm(
-        'Cancel this order? The listing will become available for other buyers again.',
+        t('orderPage.cancelConfirm', locale),
       )
     ) {
       return;
     }
     cancelOrder.mutate(orderId, {
-      onError: (error) => setErrorMessage(describeCancelError(error)),
+      onError: (error) => setPageError({ source: 'cancel', error }),
     });
   };
 
   return (
     <section className="rounded-lg bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-bold">Order confirmed</h1>
+      <h1 className="text-2xl font-bold">{t('orderPage.title', locale)}</h1>
       <p className="mt-2 text-neutral-600">
-        Order #{data.id} is {data.status.toLowerCase()}.
-        {data.status === 'PENDING' && ' The listing is now reserved for you.'}
-        {cancelled && ' The listing has been released for other buyers.'}
+        {t('orderPage.statusLine', locale, { id: data.id, status: data.status.toLowerCase() })}
+        {data.status === 'PENDING' && ` ${t('orderPage.reservedNote', locale)}`}
+        {cancelled && ` ${t('orderPage.releasedNote', locale)}`}
       </p>
       <dl className="mt-4 space-y-1 text-sm">
         <div className="flex gap-2">
-          <dt className="text-neutral-500">Amount:</dt>
+          <dt className="text-neutral-500">{t('orderPage.amount', locale)}</dt>
           <dd>¥{(data.amountCents / 100).toFixed(2)}</dd>
         </div>
         <div className="flex gap-2">
-          <dt className="text-neutral-500">Status:</dt>
+          <dt className="text-neutral-500">{t('orderPage.status', locale)}</dt>
           <dd>{data.status}</dd>
         </div>
       </dl>
@@ -141,18 +152,16 @@ export default function OrderConfirmationPage() {
             disabled={payOrder.isLoading}
             className="rounded bg-green-600 px-5 py-2 font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {payOrder.isLoading ? 'Paying…' : 'Pay now (demo)'}
+            {payOrder.isLoading ? t('orderPage.paying', locale) : t('orderPage.payNow', locale)}
           </button>
           <p className="mt-2 text-sm text-neutral-500">
-            Portfolio-demo note: this is a mock capture — no real money
-            moves. The button is safe to press twice; the backend returns the
-            already-paid order instead of charging again.
+            {t('orderPage.payNote', locale)}
           </p>
         </div>
       )}
       {paid && (
         <p className="mt-4 text-sm text-green-700">
-          Paid (demo capture) — the seller will now confirm the handoff.
+          {t('orderPage.paidNote', locale)}
         </p>
       )}
       {paid && isBuyer && (
@@ -160,19 +169,15 @@ export default function OrderConfirmationPage() {
           {handoverCode ? (
             <>
               <p className="text-sm">
-                Your handover code: <strong className="text-lg tracking-widest">{handoverCode}</strong>
+                {t('orderPage.handoverCode', locale)} <strong className="text-lg tracking-widest">{handoverCode}</strong>
               </p>
               <p className="mt-1 text-sm text-neutral-500">
-                Give this code to the seller when you receive the item — they
-                need it to complete the order. Save it now: for your security
-                it is shown only once and cannot be displayed again.
+                {t('orderPage.handoverHint', locale)}
               </p>
             </>
           ) : (
             <p className="text-sm text-neutral-600">
-              Your handover code was shown once when you paid. If you no
-              longer have it, generate a new one — the seller needs it to
-              complete the order.
+              {t('orderPage.handoverLost', locale)}
             </p>
           )}
           <button
@@ -181,7 +186,7 @@ export default function OrderConfirmationPage() {
             disabled={regenerateCode.isLoading}
             className="mt-2 rounded border border-neutral-600 px-4 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
           >
-            {regenerateCode.isLoading ? 'Generating…' : 'Generate a new handover code'}
+            {regenerateCode.isLoading ? t('orderPage.generating', locale) : t('orderPage.regenerate', locale)}
           </button>
         </div>
       )}
@@ -193,25 +198,29 @@ export default function OrderConfirmationPage() {
             disabled={cancelOrder.isLoading}
             className="rounded border border-red-600 px-5 py-2 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            {cancelOrder.isLoading ? 'Cancelling…' : 'Cancel order'}
+            {cancelOrder.isLoading ? t('orderPage.cancelling', locale) : t('orderPage.cancel', locale)}
           </button>
           <p className="mt-2 text-sm text-neutral-500">
-            Cancelling releases the listing so other buyers can grab it.
+            {t('orderPage.cancelNote', locale)}
           </p>
         </div>
       )}
       {cancelled && (
         <p className="mt-4 text-sm text-neutral-600">
-          This order was cancelled — the listing is available again.
+          {t('orderPage.cancelledNote', locale)}
         </p>
       )}
-      {errorMessage && (
+      {pageError && (
         <p role="alert" className="mt-2 text-sm text-red-600">
-          {errorMessage}
+          {pageError.source === 'pay'
+            ? describePayError(pageError.error)
+            : pageError.source === 'cancel'
+              ? describeCancelError(pageError.error)
+              : describeRegenerateHandoverError(pageError.error)}
         </p>
       )}
       <Link to={`/items/${data.itemId}`} className="mt-4 inline-block text-sm text-blue-600 hover:underline">
-        Back to the listing
+        {t('orderPage.backToListing', locale)}
       </Link>
     </section>
   );
