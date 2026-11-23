@@ -10,6 +10,7 @@ import {
 import { useRecentlyViewed } from '../api/recentlyViewed';
 import FavoriteButton from '../components/FavoriteButton';
 import ListingPhoto from '../components/ListingPhoto';
+import { ListingGridSkeleton } from '../components/ListingSkeleton';
 import SaveSearchButton from '../components/SaveSearchButton';
 import SearchSuggestions from '../components/SearchSuggestions';
 import { useCategories } from '../api/categories';
@@ -375,7 +376,7 @@ export default function HomePage() {
           </ul>
         </section>
       )}
-      {isLoading && <p>Loading listings…</p>}
+      {isLoading && <ListingGridSkeleton />}
       {isError && <p className="text-red-600">Failed to load listings.</p>}
       {hasData && (
         <>

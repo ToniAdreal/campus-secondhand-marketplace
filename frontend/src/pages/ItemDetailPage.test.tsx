@@ -594,3 +594,48 @@ describe('ItemDetailPage view count (backlog #186)', () => {
     expect(screen.queryByText(/views$/)).toBeNull();
   });
 });
+
+describe('ItemDetailPage skeleton loading state (backlog #427)', () => {
+  beforeEach(() => {
+    currentPath = '';
+    useAuthStore.setState({ user: null });
+    setAccessToken(null);
+    getSpy.mockImplementation(() =>
+      Promise.resolve(
+        envelope({ content: [], totalElements: 0, totalPages: 0, number: 0 }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('renders the detail skeleton while the item query is pending, then the real listing', async () => {
+    getSpy.mockResolvedValueOnce(envelope(fakeItem));
+    renderAt('/items/7');
+
+    // Synchronous: the query has not resolved yet, so the skeleton is
+    // what the visitor sees — the old bare `<p>Loading…</p>` is gone.
+    const status = screen.getByRole('status', { name: /loading listing/i });
+    expect(status.getAttribute('aria-busy')).toBe('true');
+    expect(status.getAttribute('data-testid')).toBe('listing-detail-skeleton');
+    expect(status.querySelector('p')).toBeNull();
+    expect(screen.queryByText('Used bike')).toBeNull();
+
+    await waitFor(() => expect(screen.getByText('Used bike')).toBeTruthy());
+    expect(screen.queryByRole('status', { name: /loading listing/i })).toBeNull();
+    expect(screen.queryByTestId('listing-detail-skeleton')).toBeNull();
+  });
+
+  it('the skeleton is replaced by the not-found copy on a failed read', async () => {
+    getSpy.mockRejectedValueOnce(apiFailure(404, 'Item not found'));
+    renderAt('/items/7');
+
+    expect(screen.getByRole('status', { name: /loading listing/i })).toBeTruthy();
+
+    await waitFor(() => expect(screen.getByText('Item not found.')).toBeTruthy());
+    expect(screen.queryByTestId('listing-detail-skeleton')).toBeNull();
+  });
+});

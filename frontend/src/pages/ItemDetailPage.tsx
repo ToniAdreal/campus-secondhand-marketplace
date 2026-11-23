@@ -22,6 +22,7 @@ import FavoriteButton from '../components/FavoriteButton';
 import GalleryOrderEditor from '../components/GalleryOrderEditor';
 import ListingGallery from '../components/ListingGallery';
 import ListingPhoto from '../components/ListingPhoto';
+import { ListingDetailSkeleton } from '../components/ListingSkeleton';
 import MessageThread from '../components/MessageThread';
 
 export default function ItemDetailPage() {
@@ -60,7 +61,7 @@ export default function ItemDetailPage() {
   const [offerDone, setOfferDone] = useState(false);
   const createOffer = useCreateOffer();
 
-  if (isLoading) return <p>Loading…</p>;
+  if (isLoading) return <ListingDetailSkeleton />;
   if (isError || !data) return <p className="text-red-600">Item not found.</p>;
 
   const isSeller = user !== null && user.id === data.sellerId;

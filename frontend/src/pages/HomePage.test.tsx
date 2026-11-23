@@ -17,6 +17,9 @@ const calls: Array<{
 /** Content the mocked useItems serves; empty unless a test seeds listings. */
 let mockContent: Item[] = [];
 
+/** When true, both items mocks answer "pending" with no data (backlog #427). */
+let mockItemsLoading = false;
+
 /** Suggestions the mocked useItemSuggestions serves; empty unless a test seeds titles. */
 let mockSuggestions: Array<{ id: number; title: string }> = [];
 
@@ -56,7 +59,7 @@ vi.mock('../api/items', async (importOriginal) => {
         totalPages: mockTotalPages ?? (mockContent.length === 0 ? 0 : 1),
         number: page,
       };
-      return { data: pageData, isLoading: false, isError: false };
+      return { data: mockItemsLoading ? undefined : pageData, isLoading: mockItemsLoading, isError: false };
     },
     // Suggestions are inert by default (empty list renders no dropdown);
     // the #235 describe seeds mockSuggestions per test.
@@ -87,15 +90,17 @@ vi.mock('../api/items', async (importOriginal) => {
       const pages = mockCursorPages ?? [{ items: mockContent, nextCursor: null }];
       const shownPages = pages.slice(0, state.shown);
       return {
-        data: {
-          pages: shownPages,
-          pageParams: shownPages.map((_, i) => (i === 0 ? undefined : 'cursor')),
-        },
+        data: mockItemsLoading
+          ? undefined
+          : {
+              pages: shownPages,
+              pageParams: shownPages.map((_, i) => (i === 0 ? undefined : 'cursor')),
+            },
         hasNextPage: shownPages[shownPages.length - 1]?.nextCursor != null,
         isFetchingNextPage: false,
         fetchNextPage: () =>
           setState((s) => ({ ...s, shown: Math.min(s.shown + 1, pages.length) })),
-        isLoading: false,
+        isLoading: mockItemsLoading,
         isError: false,
       };
     },
@@ -833,5 +838,80 @@ describe('HomePage cursor pagination (backlog #416)', () => {
     expect(cursorCalls[cursorCalls.length - 1].filters).toMatchObject({
       minPriceCents: 1000,
     });
+  });
+});
+
+describe('HomePage skeleton loading states (backlog #427)', () => {
+  const skeletonItem: Item = {
+    id: 21,
+    title: 'Skeleton bike',
+    description: 'Rides fine',
+    priceCents: 12000,
+    status: 'AVAILABLE',
+    sellerId: 3,
+    sellerUsername: 'seller',
+    categoryId: null,
+    categoryName: null,
+    photoUrl: null,
+    photos: [],
+  };
+
+  beforeEach(() => {
+    calls.length = 0;
+    cursorCalls.length = 0;
+    currentSearch = '';
+    mockContent = [];
+    mockCursorPages = null;
+    mockItemsLoading = false;
+  });
+
+  afterEach(() => {
+    cleanup();
+    mockContent = [];
+    mockCursorPages = null;
+    mockTotalPages = null;
+    mockItemsLoading = false;
+    vi.clearAllMocks();
+  });
+
+  it('renders skeleton cards while the cursor query is pending — no bare loading text', () => {
+    mockItemsLoading = true;
+    renderHome('/');
+
+    const status = screen.getByRole('status', { name: /loading listings/i });
+    expect(status.getAttribute('aria-busy')).toBe('true');
+    expect(screen.getAllByTestId('listing-card-skeleton')).toHaveLength(6);
+    // The old bare `<p>Loading listings…</p>` is gone — the only copy is
+    // the sr-only label inside the status region.
+    expect(status.querySelector('p')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Skeleton bike' })).toBeNull();
+  });
+
+  it('renders skeleton cards while the price-sort offset query is pending', () => {
+    mockItemsLoading = true;
+    renderHome('/?sort=price-asc');
+
+    expect(screen.getByRole('status', { name: /loading listings/i })).toBeTruthy();
+    expect(screen.getAllByTestId('listing-card-skeleton')).toHaveLength(6);
+  });
+
+  it('real content replaces the skeletons once the query resolves', () => {
+    mockItemsLoading = true;
+    const { rerender } = renderHome('/');
+
+    expect(screen.getAllByTestId('listing-card-skeleton')).toHaveLength(6);
+
+    mockItemsLoading = false;
+    mockContent = [skeletonItem];
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <LocationProbe />
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('status', { name: /loading listings/i })).toBeNull();
+    expect(screen.queryByTestId('listing-card-skeleton')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Skeleton bike' })).toBeTruthy();
   });
 });
