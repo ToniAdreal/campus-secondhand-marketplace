@@ -49,6 +49,17 @@ import { defineConfig, devices } from '@playwright/test';
  *   keeps its own bucket, and the production bucket is unchanged. The
  *   bypass is set only on this throwaway e2e backend, never on a real
  *   deployment.
+ * - The backend also runs with the e2e origin on the CORS allowlist
+ *   (APP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4173, backlog #423). The
+ *   explicit allowlist (backlog #63) covers only http://localhost:5173
+ *   and http://localhost, but the e2e SPA is served from
+ *   http://127.0.0.1:4173 — so every browser-driven POST to /api/auth/*
+ *   answered 403 "Invalid CORS request" and every flow stuck on /login
+ *   (main runs 44882267360 and 44893515480, 25 failed each; the #373
+ *   bypass only fixed the origin-less API-context 429, which masked the
+ *   browser 403 behind it). The knob is set only on this throwaway e2e
+ *   backend, never on a real deployment; the production defaults are
+ *   unchanged.
  * - Browsers are downloaded in CI only (`npx playwright install`). This
  *   repo's local sandbox has no Docker and no browsers, so locally the
  *   config + test list are checked (`npx playwright test --list`) and the
@@ -177,6 +188,8 @@ export default defineConfig({
         APP_AUTH_EMAIL_VERIFICATION_ENABLED: 'false',
         // Credential rate-limit bypass for the e2e stack only — see header.
         APP_AUTH_RATE_LIMIT_E2E_BYPASS: 'true',
+        // CORS allowlist for the e2e origin — see header (backlog #423).
+        APP_CORS_ALLOWED_ORIGINS: 'http://127.0.0.1:4173',
         // First-admin bootstrap for the dispute flow — see header. These
         // must match ADMIN_ACCOUNT in e2e/smoke.e2e.ts; the account lives
         // only in this stack's in-memory H2 database.
