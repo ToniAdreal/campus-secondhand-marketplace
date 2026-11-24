@@ -395,7 +395,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   `vite preview` on :4173, whose `preview.proxy` mirrors the dev-server
   and nginx `/api` proxy shapes) against the real backend jar on its
   default H2 profile (:8080) — no Docker, no MySQL.
-- Exactly seventeen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
+- Exactly eighteen flows (plus the color-contrast pass, described below): (1) register lands on browse signed in;
   (2) browse → a listing's detail page renders; (3) login → create a
   listing → it appears in My listings; (4) two-user buy-now → pay → the
   buyer sees the one-time handover code on the confirmation page and
@@ -445,12 +445,15 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   (17) pay → buyer disputes → the ADMIN releases the order in
   /admin/disputes → the buyer sees the order back at PAID in their own
   session, the pre-dispute status restored with no refund, pinned via
-  the API at each step (backlog #411).
-  Alongside the seventeen flows, the color-contrast pass (backlog #369,
+  the API at each step (backlog #411);
+  (18) buyer makes a ¥15.00 offer on a ¥19.99 listing → the seller
+  accepts it in the Offers inbox → the order is created at the offered
+  price, pinned via the API at each step (backlog #433).
+  Alongside the eighteen flows, the color-contrast pass (backlog #369,
   `frontend/e2e/colorContrast.e2e.ts`) runs axe with the
   `color-contrast` rule only over nine key pages in both themes — the
   jsdom axe suite cannot compute contrast, so this pass is where
-  contrast is actually audited. It is a pass, not an eighteenth flow.
+  contrast is actually audited. It is a pass, not a nineteenth flow.
   Its first CI run is the measurement; genuine failures are fixed or
   filed as follow-ups, never worked around by disabling the rule.
   Flows 5, 7 and 17 seed their PAID orders through the real API (the pay
@@ -477,7 +480,7 @@ config in `frontend/playwright.config.ts`) that runs in the CI `e2e` job:
   deployment: with it on, anyone who can reach the backend can read a
   live reset token for any user id.
 - The backend also runs with the credential rate-limit bypass on
-  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the seventeen
+  (`APP_AUTH_RATE_LIMIT_E2E_BYPASS=true`, backlog #373): the eighteen
   flows share one backend and one client IP, so their register/login
   bursts exhaust the production 5/minute credential bucket mid-suite
   (main run 42734704718: register expected 200, got 429). The bypass
