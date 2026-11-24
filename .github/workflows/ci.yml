@@ -465,7 +465,7 @@ jobs:
             sleep 10
           done
           test -n "$ok" || { echo "backend scrape target never came up:"; cat /tmp/targets.json; docker compose logs prometheus; docker compose logs metrics-token-refresher; exit 1; }
-          # All thirteen rules from docs/alert-rules.yml loaded (the
+          # All fourteen rules from docs/alert-rules.yml loaded (the
           # count is re-derived from the file, never hardcoded).
           EXPECTED_RULES=$(grep -c '^\s*- alert:' docs/alert-rules.yml)
           LOADED_RULES=$(curl -fsS http://localhost:9090/api/v1/rules | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))')

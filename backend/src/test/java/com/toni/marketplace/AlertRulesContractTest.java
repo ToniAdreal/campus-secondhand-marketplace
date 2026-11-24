@@ -42,6 +42,9 @@ import org.yaml.snakeyaml.Yaml;
  * a partial refund records a success sample without moving it, so
  * the two surfaces count different refund kinds. No latency rule:
  * the timer publishes no histogram buckets, so no p95 exists.
+ * Backlog #432 added DisputeUnresolvedOver7d over the
+ * {@code disputes.oldest_open_age_hours} gauge: the only rule that
+ * fires on one stale dispute — the rate rule never sees it.
  */
 class AlertRulesContractTest {
 
@@ -83,6 +86,8 @@ class AlertRulesContractTest {
             "offers_counter_accepted_total"));
     EXPECTED_ALERTS.put("RefundFailureRateHigh",
         Set.of("orders_refund_duration_seconds_count"));
+    EXPECTED_ALERTS.put("DisputeUnresolvedOver7d",
+        Set.of("disputes_oldest_open_age_hours"));
   }
 
   /** Prometheus series → the Micrometer builder name that defines it. */
@@ -107,6 +112,7 @@ class AlertRulesContractTest {
     BUILDER_NAMES.put("offers_declined_total", "offers.declined");
     BUILDER_NAMES.put("offers_expired_total", "offers.expired");
     BUILDER_NAMES.put("orders_refund_duration_seconds_count", "orders.refund.duration");
+    BUILDER_NAMES.put("disputes_oldest_open_age_hours", "disputes.oldest_open_age_hours");
   }
 
   /** The Metrics class each builder name must be found in. */
@@ -131,6 +137,7 @@ class AlertRulesContractTest {
     BUILDER_SOURCES.put("offers.declined", "offer/OfferMetrics.java");
     BUILDER_SOURCES.put("offers.expired", "offer/OfferMetrics.java");
     BUILDER_SOURCES.put("orders.refund.duration", "order/OrderMetrics.java");
+    BUILDER_SOURCES.put("disputes.oldest_open_age_hours", "dispute/DisputeMetrics.java");
   }
 
   private static Path repoRoot() {
@@ -207,9 +214,14 @@ class AlertRulesContractTest {
     Path mainJava = repoRoot().resolve("backend/src/main/java/com/toni/marketplace");
     for (Map.Entry<String, String> entry : BUILDER_NAMES.entrySet()) {
       String source = Files.readString(mainJava.resolve(BUILDER_SOURCES.get(entry.getValue())));
+      // The pin matches the builder name without requiring the closing
+      // paren: counters and timers call the single-arg builder, so the
+      // name is followed by `)`; the gauge's builder takes the value
+      // supplier as further arguments (#432), so only the name itself
+      // is pinned — exactly, including the closing quote.
       assertThat(source)
           .as(entry.getKey() + " is defined as " + entry.getValue())
-          .contains(".builder(\"" + entry.getValue() + "\")");
+          .contains(".builder(\"" + entry.getValue() + "\"");
     }
     // The one framework series: pinned to the export the smoke doc records.
     String smoke = Files.readString(repoRoot().resolve("docs/smoke-test.md"));

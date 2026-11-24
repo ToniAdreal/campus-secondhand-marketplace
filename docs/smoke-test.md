@@ -368,10 +368,10 @@ curl -fsS http://localhost:9090/-/ready
 curl -sS 'http://localhost:9090/api/v1/targets?state=active' \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(t["labels"]["job"], t["health"]) for t in d["data"]["activeTargets"]])'
 # → [('campus-marketplace-backend', 'up')]
-# All thirteen rules loaded:
+# All fourteen rules loaded:
 curl -sS http://localhost:9090/api/v1/rules \
   | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))'
-# → 13
+# → 14
 # Alertmanager is ready (it ships no notification channel — firing
 # alerts are visible in its UI and go nowhere until the operator
 # configures a receiver):

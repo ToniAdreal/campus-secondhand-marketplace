@@ -13,6 +13,9 @@
 #   (backend, Micrometer); dots in the Micrometer names become
 #   underscores in the Prometheus export and counters carry the _total
 #   suffix.
+# - disputes.oldest_open_age_hours is a gauge, not a counter — no
+#   _total suffix — defined in DisputeMetrics (backlog #432); it reads
+#   the oldest OPEN dispute's age from DisputeService on every scrape.
 # - http_server_requests_seconds_count is Spring Boot's http.server.requests
 #   timer, part of the same export (documented in docs/smoke-test.md).
 # AlertRulesContractTest pins this list: a rule that references a metric
@@ -186,3 +189,13 @@ groups:
           summary: "More than 1 in 4 refund attempts are failing"
           description: "orders.refund.duration failure samples are growing fast relative to all refund attempts (failure + success samples) over the last day: the ratio is failed attempts / attempted refunds. The rule also requires at least 3 failed attempts in the day, so a quiet day never pages. The denominator is the timer's own success samples, not orders.refunded: a dispute-resolved refund moves orders.refunded without recording a timer sample, while a partial refund records a success sample without moving orders.refunded, so the two surfaces count different refund kinds and must not be mixed. No latency rule: the timer publishes no histogram buckets, so no p95 exists to alert on."
           runbook_url: "docs/runbook.md#refundfailureratehigh"
+      - alert: DisputeUnresolvedOver7d
+        expr: |
+          disputes_oldest_open_age_hours > 168
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "A dispute has sat unresolved for over 7 days"
+          description: "disputes.oldest_open_age_hours (age in hours of the oldest still-OPEN dispute, zero when none is open) is over 168. The dispute-rate rule only sees disputes being opened, so a single dispute ignored for weeks never pages there — this is the only rule that fires on one stale dispute."
+          runbook_url: "docs/runbook.md#disputeunresolvedover7d"

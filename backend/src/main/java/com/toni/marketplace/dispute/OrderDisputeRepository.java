@@ -29,4 +29,12 @@ public interface OrderDisputeRepository extends JpaRepository<OrderDispute, Long
 
   /** Disputes currently in one status — the ADMIN dashboard's open-disputes snapshot (#196). */
   long countByStatus(DisputeStatus status);
+
+  /**
+   * The oldest dispute still in one status — the input to the
+   * oldest-open-age gauge (backlog #432): the age is measured from
+   * this row's {@code created_at}. Backed by V36's
+   * {@code idx_dispute_status_created} index.
+   */
+  Optional<OrderDispute> findFirstByStatusOrderByCreatedAtAsc(DisputeStatus status);
 }

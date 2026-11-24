@@ -55,7 +55,7 @@ documented in [docs/smoke-test.md](smoke-test.md).
 
 A plain `docker compose up` starts only mysql/backend/frontend. The
 profile adds Prometheus (scraping `/actuator/prometheus` every 15 s),
-Alertmanager (loading the thirteen rules in `docs/alert-rules.yml`),
+Alertmanager (loading the fourteen rules in `docs/alert-rules.yml`),
 and a token-refresher sidecar that keeps the scrape credential fresh:
 
 ```sh
@@ -93,10 +93,10 @@ Check it is working:
 curl -sS 'http://localhost:9090/api/v1/targets?state=active' \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print([(t["labels"]["job"], t["health"]) for t in d["data"]["activeTargets"]])'
 # → [('campus-marketplace-backend', 'up')]
-# All thirteen rules loaded:
+# All fourteen rules loaded:
 curl -sS http://localhost:9090/api/v1/rules \
   | python3 -c 'import json,sys; print(sum(len(g["rules"]) for g in json.load(sys.stdin)["data"]["groups"]))'
-# → 13
+# → 14
 # Alertmanager is ready:
 curl -fsS http://localhost:9093/-/ready
 ```
@@ -134,6 +134,7 @@ id, or IP tag, by design.
 | `payments.declined` | A mock-PSP capture attempt is declined. An attempt outcome, not a transition: the order stays PENDING and each declined attempt counts. |
 | `payments.webhook.matched` / `.mismatched` / `.replayed` | A mock-PSP webhook delivery reconciles / fails to reconcile against an order in the matching state / replays an already-seen event id. |
 | `payouts.promoted`, `payouts.paid`, `payouts.skipped`, `payouts.held` | One increment per row outcome in the hourly payout sweep (backlog #341), mirroring the sweep's own counts and run log. A sweep that never acquires its single-instance lease moves nothing. |
+| `disputes.oldest_open_age_hours` | A gauge, not a counter (backlog #432): the age in hours of the oldest still-OPEN dispute, read live from the dispute table on every scrape, zero when none is open. Resolving the oldest hands it to the next-oldest open dispute; resolving the last one drops it to zero. The `DisputeUnresolvedOver7d` alert reads it — the rate rule alone never pages on one stale dispute. |
 | `scheduler.jobs.skipped` | A scheduled job run is skipped (e.g. the lease is held elsewhere). |
 
 ### Latency timers (backlog #153)
@@ -159,8 +160,8 @@ with no app code.
 
 ## Alerts
 
-[docs/alert-rules.yml](alert-rules.yml) defines thirteen alerts over the
-counters above plus the `http.server.requests` 5xx rate:
+[docs/alert-rules.yml](alert-rules.yml) defines fourteen alerts over the
+counters and the gauge above plus the `http.server.requests` 5xx rate:
 
 - `AuthLoginFailureRateHigh`, `AuthLockoutSurge`,
   `AuthRefreshTheftDetected`
@@ -170,6 +171,7 @@ counters above plus the `http.server.requests` 5xx rate:
 - `OrderDisputeRateHigh`, `PaidOrdersNeverHandoverConfirmed`
 - `OfferAcceptanceRateLow`, `OfferExpiryOutrunningAccepted`
 - `RefundFailureRateHigh`
+- `DisputeUnresolvedOver7d`
 
 [docs/runbook.md](runbook.md) gives each alert a short section: what
 it means, the first three checks, and what it is **not**. The alerts

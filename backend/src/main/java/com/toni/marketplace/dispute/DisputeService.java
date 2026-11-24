@@ -15,6 +15,7 @@ import com.toni.marketplace.order.OrderStatus;
 import com.toni.marketplace.order.PaymentService;
 import com.toni.marketplace.order.SellerPayoutService;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -295,6 +296,25 @@ public class DisputeService {
         ? disputes.findAll(pageable)
         : disputes.findByStatus(status, pageable);
     return page.map(DisputeDto::from);
+  }
+
+  /**
+   * Age in hours of the oldest still-OPEN dispute (backlog #432) —
+   * the value behind the {@code disputes.oldest_open_age_hours}
+   * gauge in {@link DisputeMetrics}. Zero when no dispute is open.
+   * The age is measured from the dispute's {@code created_at} (the
+   * instant it was opened), never from {@code updated_at}: a
+   * resolution attempt that touches the row does not restart the
+   * age. Clamped at zero — a {@code created_at} in the future
+   * (clock skew between the writer and this reader) is a data
+   * oddity, not a negative age.
+   */
+  @Transactional(readOnly = true)
+  public double oldestOpenDisputeAgeHours() {
+    return disputes.findFirstByStatusOrderByCreatedAtAsc(DisputeStatus.OPEN)
+        .map(d -> Math.max(0.0,
+            Duration.between(d.getCreatedAt(), clock().instant()).toMillis() / 3_600_000.0))
+        .orElse(0.0);
   }
 
   /**

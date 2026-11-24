@@ -366,6 +366,41 @@ rule: the timer publishes count/sum/max only, no histogram buckets,
 so no p95 exists to alert on. A quiet day with fewer than 3 failed
 attempts can never fire this rule.
 
+## DisputeUnresolvedOver7d
+
+The oldest still-OPEN dispute is over 7 days old
+(`disputes.oldest_open_age_hours` above 168). A dispute opens when
+a buyer or seller escalates a PAID, SHIPPED or COMPLETED order; the
+order moves to DISPUTED without money moving, and complete/refund
+answer 422 until an ADMIN resolves it. This rule is the only one
+that sees a single stale dispute: the dispute-rate rule
+(`OrderDisputeRateHigh`) only counts disputes being opened, so one
+dispute ignored for weeks never moves it.
+
+First three checks:
+
+1. Open the ADMIN dispute queue and read the stale dispute — how
+   old is it exactly (the gauge reads the oldest row's
+   `created_at`), and what does its reason text say? The reason is
+   the only evidence in v1; the evidence panel holds any photos.
+2. Check whether the dispute is waiting on an ADMIN or on a party:
+   an ADMIN resolution needs a resolution note (backlog #240) and
+   either refunds through the mock PSP seam or releases the order
+   back to its pre-dispute status — a dispute nobody picked up is
+   an operations gap, not a code bug.
+3. Check the payout sweep log: an open dispute holds the order's
+   payout, so a stale dispute also stalls seller money — and check
+   whether a recent change touched the dispute open/resolve paths,
+   which could have broken the queue the ADMIN reads.
+
+What it is NOT: it is not proof of fraud or of a lost sale — a
+dispute is a case being opened, not a chargeback (the mock PSP moves
+no real money), and it says nothing about which side is right; only
+the ADMIN resolution decides that. It is also not a rate problem:
+a burst of fresh disputes fires `OrderDisputeRateHigh`, never this
+rule, and a dispute that resolves within 7 days never appears here
+at all.
+
 ## Backup and restore drill (backlog #225)
 
 The compose stack's MySQL data (`mysql-data` volume) and listing photos
