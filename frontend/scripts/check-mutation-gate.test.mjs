@@ -90,7 +90,7 @@ describe('check-mutation-gate', () => {
       'src/api/reviews.ts:113-134',
       'src/api/reviews.ts:151-175',
       'src/api/reviews.ts:178-196',
-      'src/api/auth.ts:936-952',
+      'src/api/auth.ts:934-950',
       'src/api/auth.ts:794-800',
       'src/api/auth.ts:803-809',
       'src/api/auth.ts:817-828',

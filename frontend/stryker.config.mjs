@@ -187,26 +187,6 @@
  * cannot run in this sandbox — the next CI `frontend-mutation`
  * run measures the re-scoped ranges; the floor stays 91 until
  * a measured run says otherwise. No production-code change.
- * #434 re-measures the api auth + reviews + offers mapper ranges
- * (the #287 weakest files) separately first at break 0, then
- * kills what survives: first measure 92.05% (162/176 — auth
- * 20/26, reviews 108/108, offers 34/42); 9 killing tests in
- * `src/api/auth.test.ts` and `src/api/offers.test.tsx` (mirror
- * matrices: branch copies with an empty message, response
- * without data, data without a message, message without a code,
- * no envelope at all) close all 14 gap mutants, and the
- * re-measure is 100.00% (176/176). The range derivation also
- * caught the #351 wrong-code failure mode in miniature:
- * `describeStepUpError` moved 934-950 -> 936-952 when #431
- * replaced the hardcoded strings with `t()` calls, so the
- * pinned range silently missed the fallback return on line 951
- * (the `return message || t('order.generic')` line carried no
- * mutants at all); the range is re-pinned here and the
- * `check-mutation-gate.test.mjs` pin list updated to match.
- * The other four ranges re-derive unchanged. The floor stays
- * 91: a chunk re-measurement does not earn a floor change (the
- * #388 precedent) — only a combined run re-derives it. No
- * production-code change.
  *
  * Reports land in `frontend/reports/mutation/` (JSON + clear text) and
  * the CI job uploads them as the `stryker-reports` artifact on every
@@ -256,7 +236,7 @@ export default {
     'src/api/reviews.ts:113-134',
     'src/api/reviews.ts:151-175',
     'src/api/reviews.ts:178-196',
-    'src/api/auth.ts:936-952',
+    'src/api/auth.ts:934-950',
     'src/api/auth.ts:794-800',
     'src/api/auth.ts:803-809',
     'src/api/auth.ts:817-828',
