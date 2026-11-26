@@ -83,9 +83,10 @@ public class ItemController {
    * 20 and caps at 100; a cursor page is newest-first only (a price
    * sort with a cursor is 400) and always uses the LIKE filter path,
    * never MySQL full-text relevance ranking — see
-   * {@link ItemService#listItemsCursorForCaller}. The SPA keeps offset
-   * pagination in v1 (honest scope — the cursor is a backend slice
-   * with a follow-up, not a silent frontend swap).
+   * {@link ItemService#listItemsCursorForCaller}. The SPA browse uses the
+   * cursor slice since backlog #416 (newest-first Load more via
+   * useItemsCursor; a price sort stays on offset paging, which the
+   * backend 400s with a cursor).
    *
    * <p>OpenAPI shape (backlog #371): the method returns
    * {@code ApiResponse<?>} because the two paging modes answer

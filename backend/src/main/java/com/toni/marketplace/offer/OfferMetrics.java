@@ -52,8 +52,9 @@ import org.springframework.stereotype.Component;
  * usernames, offer ids, or IPs: tag values would be both a
  * cardinality hazard and a PII leak into the metrics store. Honest
  * scope: these meters exist and are scrapeable; alert rules over them
- * are a separate follow-up (backlog #400, the #350/#353 pattern) —
- * this item adds counters only, no rule.
+ * landed in backlog #400 (OfferAcceptanceRateLow and
+ * OfferExpiryOutrunningAccepted, the #350/#353 pattern) — this item added
+ * counters only, no rule.
  */
 @Component
 public class OfferMetrics {

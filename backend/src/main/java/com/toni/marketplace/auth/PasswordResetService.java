@@ -59,9 +59,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Honest scope: delivery is only as real as the injected
  * {@link PasswordResetMailSender} — the default bean logs (token redacted)
- * and sends nothing, because this project has no mail server. The SPA has
- * no reset pages yet; that frontend follow-up is deliberately out of scope
- * here (noted in the README).
+ * and sends nothing, because this project has no mail server. The SPA reset
+ * pages landed in backlog #99 (/forgot-password and /reset-password; see
+ * the README JWT row).
  */
 @Service
 public class PasswordResetService {

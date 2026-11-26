@@ -29,9 +29,10 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
  * {@code AdminUserController}); anonymous callers get the JSON 401
  * envelope and non-admin callers the JSON 403 envelope. There is still
  * no write path here: rows are appended only by {@link AuditService}
- * from inside audited transitions, and no admin UI exists yet. The CSV
- * export (backlog #232) shares this class-level guard and the list
- * endpoint's filters.
+ * from inside audited transitions, and the admin UI reads them at
+ * /admin/audit-log (backlog #120; its CSV download button is backlog
+ * #428). The CSV export (backlog #232) shares this class-level guard and
+ * the list endpoint's filters.
  */
 @RestController
 @Validated

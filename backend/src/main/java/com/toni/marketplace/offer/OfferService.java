@@ -123,8 +123,8 @@ import org.springframework.web.server.ResponseStatusException;
  * {@code offers.declined} / {@code offers.countered} /
  * {@code offers.counter_accepted} / {@code offers.expired}; withdraw
  * and the lazy deadline flip count nothing (the same discipline as
- * the audit rows). Alert rules over them are a separate follow-up
- * (backlog #400).
+ * the audit rows). Alert rules over them landed in backlog #400
+ * (OfferAcceptanceRateLow and OfferExpiryOutrunningAccepted).
  *
  * <p>Honest scope: at most one counter per offer (backlog #193) — there
  * is no back-and-forth chain; a declined offer (original or countered)
