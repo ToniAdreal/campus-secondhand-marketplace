@@ -52,11 +52,16 @@ function wrapperFor(queryClient: QueryClient) {
 describe('describeOfferError', () => {
   it.each([
     ['duplicate live offer', envelopeError(409, 'you already have a pending offer'), 'you already have a pending offer'],
+    ['duplicate live offer, no message', envelopeError(409, ''), 'That is no longer possible — the listing may have been sold, or you already have a pending offer on it.'],
     ['not-pending', envelopeError(422, 'offer is DECLINED'), 'offer is DECLINED'],
+    ['not-pending, no message', envelopeError(422, ''), 'That offer can no longer be changed.'],
     ['unknown', envelopeError(404, 'offer not found'), 'That offer or listing no longer exists.'],
     ['anonymous', envelopeError(401, 'unauthorized'), 'Please log in to make an offer.'],
     ['bad price', envelopeError(400, 'validation'), 'Please enter a price above ¥0.'],
     ['no envelope at all', new Error('boom'), 'Something went wrong. Please try again.'],
+    ['response without data', { response: {} }, 'Something went wrong. Please try again.'],
+    ['data without a message', { response: { data: { code: 500 } } }, 'Something went wrong. Please try again.'],
+    ['data without a code', { response: { data: { message: 'weird' } } }, 'weird'],
   ])('%s', (_label, error, expected) => {
     expect(describeOfferError(error)).toBe(expected);
   });

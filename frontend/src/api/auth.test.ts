@@ -886,6 +886,28 @@ describe('step-up re-authentication (backlog #218)', () => {
 
       expect(describeStepUpError(apiFailure(401, 401, 'bad proof'))).toContain('incorrect');
     });
+
+    it('falls back to the generic copy when the envelope has no message (backlog #434)', () => {
+      expect(describeStepUpError({ response: { data: { code: 400 } } })).toBe(
+        'Something went wrong. Please try again.',
+      );
+    });
+
+    it('falls back to the generic copy when the response has no data (backlog #434)', () => {
+      expect(describeStepUpError({ response: {} })).toBe(
+        'Something went wrong. Please try again.',
+      );
+    });
+
+    it('falls back to the generic copy with no response at all (backlog #434)', () => {
+      expect(describeStepUpError(new Error('network down'))).toBe(
+        'Something went wrong. Please try again.',
+      );
+    });
+
+    it('passes a message through when the envelope has no code (backlog #434)', () => {
+      expect(describeStepUpError({ response: { data: { message: 'weird' } } })).toBe('weird');
+    });
   });
 
   describe('withStepUpRetry', () => {
